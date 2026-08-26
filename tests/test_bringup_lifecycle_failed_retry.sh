@@ -49,7 +49,7 @@ vendor_invocations() {
 }
 
 set +e
-run_wrapper --version 6.5.0 --skip-download --detach >"${TMP}/run1.out" 2>&1
+run_wrapper --version 6.6.0 --skip-download --detach >"${TMP}/run1.out" 2>&1
 run1_rc=$?
 set -e
 # --detach guarantees verified worker handoff, not that the asynchronous worker
@@ -104,7 +104,7 @@ grep -q 'DIAGNOSE_MUTATION=NO' "${TMP}/diagnose.out" \
 pass "--diagnose after FAILED does not invoke vendor"
 
 set +e
-run_wrapper --version 6.5.0 --skip-download --detach >"${TMP}/run2.out" 2>&1
+run_wrapper --version 6.6.0 --skip-download --detach >"${TMP}/run2.out" 2>&1
 run2_rc=$?
 set -e
 grep -q '^BRINGUP_RETRY=YES$' "${TMP}/run2.out" \

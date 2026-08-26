@@ -21,7 +21,7 @@ grep -q 'stage_phase2_ubuntu_prerequisites || die' "$STAGE" \
   || fail "stage still ignores prerequisite failures"
 
 HTTP_ROOT="${WORKDIR}/http"
-mkdir -p "${HTTP_ROOT}/dp-phase2/6.5.0/extras" "${WORKDIR}/artifacts"
+mkdir -p "${HTTP_ROOT}/dp-phase2/6.6.0/extras" "${WORKDIR}/artifacts"
 PORT="$(python3 - <<'PY'
 import socket
 s = socket.socket()
@@ -48,7 +48,7 @@ run_stage() {
     ARTIFACT_DIR="${WORKDIR}/artifacts"
     mkdir -p "$ARTIFACT_DIR"
     MIRROR_URL="http://127.0.0.1:${PORT}"
-    TARGET_DP_VERSION=6.5.0
+    TARGET_DP_VERSION=6.6.0
     AELLA_UID="$(id -u)"
     AELLA_PRIMARY_GID="$(id -g)"
     log() { printf '%s\n' "$*"; }
@@ -61,7 +61,7 @@ run_stage() {
 }
 
 # A. REQUIRED=NO + count=0 => NOT_REQUIRED PASS
-cat >"${HTTP_ROOT}/dp-phase2/6.5.0/extras/phase2-ubuntu-prerequisites.state" <<'EOF'
+cat >"${HTTP_ROOT}/dp-phase2/6.6.0/extras/phase2-ubuntu-prerequisites.state" <<'EOF'
 PHASE2_PREREQ_REQUIRED=NO
 PHASE2_PREREQ_PACKAGE_COUNT=0
 PHASE2_PREREQ_BUILD=PASS
@@ -74,7 +74,7 @@ echo "$OUT" | grep -q 'PHASE2_PREREQ_STAGE=NOT_REQUIRED' \
   || fail "A NOT_REQUIRED: ${OUT}"
 
 # B. state 404 => FAIL
-rm -f "${HTTP_ROOT}/dp-phase2/6.5.0/extras/phase2-ubuntu-prerequisites.state"
+rm -f "${HTTP_ROOT}/dp-phase2/6.6.0/extras/phase2-ubuntu-prerequisites.state"
 OUT="$(run_stage)"
 echo "$OUT" | grep -q 'PHASE2_PREREQ_STAGE=FAIL reason=state_not_published' \
   && echo "$OUT" | grep -q 'RC=1' \
@@ -83,7 +83,7 @@ echo "$OUT" | grep -q 'PHASE2_PREREQ_STAGE=FAIL reason=state_not_published' \
 
 # C. REQUIRED=YES + artifact 404 => FAIL
 YES_SHA="$(printf 'a%.0s' {1..64})"
-cat >"${HTTP_ROOT}/dp-phase2/6.5.0/extras/phase2-ubuntu-prerequisites.state" <<EOF
+cat >"${HTTP_ROOT}/dp-phase2/6.6.0/extras/phase2-ubuntu-prerequisites.state" <<EOF
 PHASE2_PREREQ_REQUIRED=YES
 PHASE2_PREREQ_PACKAGE_COUNT=2
 PHASE2_PREREQ_BUILD=PASS
@@ -98,9 +98,9 @@ echo "$OUT" | grep -q 'PHASE2_PREREQ_STAGE=FAIL reason=artifact_http' \
   || fail "C artifact 404: ${OUT}"
 
 # D. REQUIRED=YES + bad SHA256 => FAIL
-printf 'artifact-bytes\n' >"${HTTP_ROOT}/dp-phase2/6.5.0/extras/phase2-ubuntu-prerequisites.tar.gz"
+printf 'artifact-bytes\n' >"${HTTP_ROOT}/dp-phase2/6.6.0/extras/phase2-ubuntu-prerequisites.tar.gz"
 echo 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef  phase2-ubuntu-prerequisites.tar.gz' \
-  >"${HTTP_ROOT}/dp-phase2/6.5.0/extras/phase2-ubuntu-prerequisites.tar.gz.sha256"
+  >"${HTTP_ROOT}/dp-phase2/6.6.0/extras/phase2-ubuntu-prerequisites.tar.gz.sha256"
 OUT="$(run_stage)"
 echo "$OUT" | grep -q 'PHASE2_PREREQ_STAGE=FAIL reason=sha256' \
   && echo "$OUT" | grep -q 'RC=1' \
@@ -108,11 +108,11 @@ echo "$OUT" | grep -q 'PHASE2_PREREQ_STAGE=FAIL reason=sha256' \
   || fail "D bad sha: ${OUT}"
 
 # E. REQUIRED=YES + matching SHA256 + manifest => PASS
-ART="${HTTP_ROOT}/dp-phase2/6.5.0/extras/phase2-ubuntu-prerequisites.tar.gz"
+ART="${HTTP_ROOT}/dp-phase2/6.6.0/extras/phase2-ubuntu-prerequisites.tar.gz"
 printf 'artifact-bytes-ok\n' >"$ART"
 (cd "$(dirname "$ART")" && sha256sum "$(basename "$ART")" >"$(basename "$ART").sha256")
 GOOD_SHA="$(awk '{print $1; exit}' "${ART}.sha256")"
-cat >"${HTTP_ROOT}/dp-phase2/6.5.0/extras/phase2-ubuntu-prerequisites.state" <<EOF
+cat >"${HTTP_ROOT}/dp-phase2/6.6.0/extras/phase2-ubuntu-prerequisites.state" <<EOF
 PHASE2_PREREQ_REQUIRED=YES
 PHASE2_PREREQ_PACKAGE_COUNT=1
 PHASE2_PREREQ_BUILD=PASS
@@ -121,7 +121,7 @@ PHASE2_PREREQ_ARTIFACT=phase2-ubuntu-prerequisites.tar.gz
 PHASE2_PREREQ_SHA256=${GOOD_SHA}
 EOF
 printf '{"package_count": 1}\n' \
-  >"${HTTP_ROOT}/dp-phase2/6.5.0/extras/phase2-ubuntu-prerequisites.manifest.json"
+  >"${HTTP_ROOT}/dp-phase2/6.6.0/extras/phase2-ubuntu-prerequisites.manifest.json"
 OUT="$(run_stage)"
 echo "$OUT" | grep -q 'PHASE2_PREREQ_STAGE=PASS' \
   && echo "$OUT" | grep -q 'RC=0' \
@@ -129,7 +129,7 @@ echo "$OUT" | grep -q 'PHASE2_PREREQ_STAGE=PASS' \
   || fail "E good sha: ${OUT}"
 
 # F. REQUIRED=YES + good SHA256 but missing manifest => FAIL
-rm -f "${HTTP_ROOT}/dp-phase2/6.5.0/extras/phase2-ubuntu-prerequisites.manifest.json"
+rm -f "${HTTP_ROOT}/dp-phase2/6.6.0/extras/phase2-ubuntu-prerequisites.manifest.json"
 OUT="$(run_stage)"
 echo "$OUT" | grep -q 'PHASE2_PREREQ_STAGE=FAIL reason=manifest_http' \
   && echo "$OUT" | grep -q 'RC=1' \
@@ -138,7 +138,7 @@ echo "$OUT" | grep -q 'PHASE2_PREREQ_STAGE=FAIL reason=manifest_http' \
 
 write_yes_state() {
   local sha="${1:-$GOOD_SHA}"
-  cat >"${HTTP_ROOT}/dp-phase2/6.5.0/extras/phase2-ubuntu-prerequisites.state" <<EOF
+  cat >"${HTTP_ROOT}/dp-phase2/6.6.0/extras/phase2-ubuntu-prerequisites.state" <<EOF
 PHASE2_PREREQ_REQUIRED=YES
 PHASE2_PREREQ_PACKAGE_COUNT=1
 PHASE2_PREREQ_BUILD=${2:-PASS}
@@ -153,7 +153,7 @@ printf 'artifact-bytes-ok\n' >"$ART"
 (cd "$(dirname "$ART")" && sha256sum "$(basename "$ART")" >"$(basename "$ART").sha256")
 GOOD_SHA="$(awk '{print $1; exit}' "${ART}.sha256")"
 printf '{"package_count": 1}\n' \
-  >"${HTTP_ROOT}/dp-phase2/6.5.0/extras/phase2-ubuntu-prerequisites.manifest.json"
+  >"${HTTP_ROOT}/dp-phase2/6.6.0/extras/phase2-ubuntu-prerequisites.manifest.json"
 
 # G. REQUIRED=YES + BUILD=FAIL => FAIL even with leftover artifact
 write_yes_state "$GOOD_SHA" FAIL PASS
@@ -172,7 +172,7 @@ echo "$OUT" | grep -q 'PHASE2_PREREQ_STAGE=FAIL reason=publication_not_pass' \
   || fail "H PUBLICATION=FAIL: ${OUT}"
 
 # I. REQUIRED=NO + missing count => FAIL
-cat >"${HTTP_ROOT}/dp-phase2/6.5.0/extras/phase2-ubuntu-prerequisites.state" <<'EOF'
+cat >"${HTTP_ROOT}/dp-phase2/6.6.0/extras/phase2-ubuntu-prerequisites.state" <<'EOF'
 PHASE2_PREREQ_REQUIRED=NO
 PHASE2_PREREQ_BUILD=PASS
 PHASE2_PREREQ_PUBLICATION=PASS
@@ -184,7 +184,7 @@ echo "$OUT" | grep -q 'PHASE2_PREREQ_STAGE=FAIL reason=count_missing' \
   || fail "I missing count: ${OUT}"
 
 # J. REQUIRED=NO + blank count => FAIL
-cat >"${HTTP_ROOT}/dp-phase2/6.5.0/extras/phase2-ubuntu-prerequisites.state" <<'EOF'
+cat >"${HTTP_ROOT}/dp-phase2/6.6.0/extras/phase2-ubuntu-prerequisites.state" <<'EOF'
 PHASE2_PREREQ_REQUIRED=NO
 PHASE2_PREREQ_PACKAGE_COUNT=
 PHASE2_PREREQ_BUILD=PASS
@@ -197,7 +197,7 @@ echo "$OUT" | grep -q 'PHASE2_PREREQ_STAGE=FAIL reason=count_missing' \
   || fail "J blank count: ${OUT}"
 
 # K. REQUIRED=NO + nonnumeric count => FAIL
-cat >"${HTTP_ROOT}/dp-phase2/6.5.0/extras/phase2-ubuntu-prerequisites.state" <<'EOF'
+cat >"${HTTP_ROOT}/dp-phase2/6.6.0/extras/phase2-ubuntu-prerequisites.state" <<'EOF'
 PHASE2_PREREQ_REQUIRED=NO
 PHASE2_PREREQ_PACKAGE_COUNT=abc
 PHASE2_PREREQ_BUILD=PASS
@@ -210,7 +210,7 @@ echo "$OUT" | grep -q 'PHASE2_PREREQ_STAGE=FAIL reason=count_nonnumeric' \
   || fail "K nonnumeric: ${OUT}"
 
 # L. REQUIRED=NO + count > 0 => FAIL
-cat >"${HTTP_ROOT}/dp-phase2/6.5.0/extras/phase2-ubuntu-prerequisites.state" <<'EOF'
+cat >"${HTTP_ROOT}/dp-phase2/6.6.0/extras/phase2-ubuntu-prerequisites.state" <<'EOF'
 PHASE2_PREREQ_REQUIRED=NO
 PHASE2_PREREQ_PACKAGE_COUNT=2
 PHASE2_PREREQ_BUILD=PASS
@@ -223,7 +223,7 @@ echo "$OUT" | grep -q 'PHASE2_PREREQ_STAGE=FAIL reason=count_nonzero_when_not_re
   || fail "L NO+count: ${OUT}"
 
 # M. REQUIRED=YES + count=0 => FAIL
-cat >"${HTTP_ROOT}/dp-phase2/6.5.0/extras/phase2-ubuntu-prerequisites.state" <<EOF
+cat >"${HTTP_ROOT}/dp-phase2/6.6.0/extras/phase2-ubuntu-prerequisites.state" <<EOF
 PHASE2_PREREQ_REQUIRED=YES
 PHASE2_PREREQ_PACKAGE_COUNT=0
 PHASE2_PREREQ_BUILD=PASS
@@ -238,7 +238,7 @@ echo "$OUT" | grep -q 'PHASE2_PREREQ_STAGE=FAIL reason=count_not_positive' \
   || fail "M YES+count0: ${OUT}"
 
 # N. REQUIRED=YES + missing SHA => FAIL
-cat >"${HTTP_ROOT}/dp-phase2/6.5.0/extras/phase2-ubuntu-prerequisites.state" <<'EOF'
+cat >"${HTTP_ROOT}/dp-phase2/6.6.0/extras/phase2-ubuntu-prerequisites.state" <<'EOF'
 PHASE2_PREREQ_REQUIRED=YES
 PHASE2_PREREQ_PACKAGE_COUNT=1
 PHASE2_PREREQ_BUILD=PASS
@@ -262,7 +262,7 @@ echo "$OUT" | grep -q 'PHASE2_PREREQ_STAGE=FAIL reason=build_not_pass' \
 # P. valid REQUIRED=YES => PASS
 write_yes_state "$GOOD_SHA" PASS PASS
 printf '{"package_count": 1}\n' \
-  >"${HTTP_ROOT}/dp-phase2/6.5.0/extras/phase2-ubuntu-prerequisites.manifest.json"
+  >"${HTTP_ROOT}/dp-phase2/6.6.0/extras/phase2-ubuntu-prerequisites.manifest.json"
 OUT="$(run_stage)"
 echo "$OUT" | grep -q 'PHASE2_PREREQ_STAGE=PASS' \
   && echo "$OUT" | grep -q 'RC=0' \
@@ -270,7 +270,7 @@ echo "$OUT" | grep -q 'PHASE2_PREREQ_STAGE=PASS' \
   || fail "P valid YES: ${OUT}"
 
 # Q. valid REQUIRED=NO => NOT_REQUIRED PASS and stale YES artifacts retracted
-cat >"${HTTP_ROOT}/dp-phase2/6.5.0/extras/phase2-ubuntu-prerequisites.state" <<'EOF'
+cat >"${HTTP_ROOT}/dp-phase2/6.6.0/extras/phase2-ubuntu-prerequisites.state" <<'EOF'
 PHASE2_PREREQ_REQUIRED=NO
 PHASE2_PREREQ_PACKAGE_COUNT=0
 PHASE2_PREREQ_BUILD=PASS

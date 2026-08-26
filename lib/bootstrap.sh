@@ -359,7 +359,7 @@ um_bootstrap_persist_local_mirror_url() {
   tmp="$(mktemp)"
   cat >"$tmp" <<EOF
 # DP Upgrade Mirror Manager configuration (managed by install/bootstrap)
-# Phase 2 target is fixed at 6.5.0 (not user-editable).
+# Phase 2 target is fixed at 6.6.0 (not user-editable).
 PREPARATION_MODE=$(printf '%q' "${prep}")
 ACPS_USERNAME=$(printf '%q' "${user}")
 ACPS_PASSWORD=$(printf '%q' "${pass}")
@@ -397,7 +397,7 @@ um_bootstrap_publish_phase2_helpers_only() {
   mkdir -p "$dest"
   stage="$(mktemp -d "${dest}.helpers.XXXXXX")"
   chmod 0755 "$stage"
-  for f in stage-dp-phase2.sh stage-dp-phase2-6.5.0.sh bringup_py3_dp_lifecycle.sh; do
+  for f in stage-dp-phase2.sh stage-dp-phase2-6.6.0.sh stage-dp-phase2-6.5.0.sh bringup_py3_dp_lifecycle.sh; do
     if [[ -f "${src_root}/client/${f}" ]]; then
       install -m 0755 "${src_root}/client/${f}" "${stage}/${f}"
       um_bootstrap_write_sha256_sidecar "${stage}/${f}"
@@ -800,7 +800,7 @@ Next steps (Mirror Manager GUI):
   4. Verify Upgrade Readiness
   7. Show DP Client Upgrade Commands
 
-Phase 2 Target is fixed at 6.5.0.
+Phase 2 Target is fixed at 6.6.0.
 Supported Starting DP Versions: 6.2.0 / 6.3.0 / 6.4.0 / 6.5.0
 If the DP is already on Ubuntu 24.04, choose Phase 2 Only.
 
@@ -869,7 +869,7 @@ um_bootstrap_report_install_outcome() {
   client_p=NO
   [[ -f "${confdir}/dp-upgrade-mirror.conf" ]] && config_p=YES
   [[ -d "${base}/selective/ubuntu" || -f "${base}/selective/state/READY" ]] && selective_p=YES
-  [[ -d "${base}/dp-phase2/6.5.0" ]] && phase2_p=YES
+  [[ -d "${base}/dp-phase2/6.6.0" ]] && phase2_p=YES
   [[ -f "${confdir}/client-signing/private.gpg" ]] && signing_p=YES
   [[ -f "${base}/client/stage-dp-phase2.sh" \
     || -f "${base}/client/dp-offline-upgrade-xenial-to-bionic.sh" ]] && client_p=YES
@@ -916,7 +916,7 @@ um_bootstrap_run() {
   http_before="$(um_bootstrap_http_state_label 2>/dev/null || printf 'UNKNOWN')"
   [[ -f "${confdir}/dp-upgrade-mirror.conf" ]] && config_p=YES
   [[ -d "${base}/selective/ubuntu" || -f "${base}/selective/state/READY" ]] && selective_p=YES
-  [[ -d "${base}/dp-phase2/6.5.0" ]] && phase2_p=YES
+  [[ -d "${base}/dp-phase2/6.6.0" ]] && phase2_p=YES
   [[ -f "${confdir}/client-signing/private.gpg" ]] && signing_p=YES
   [[ -f "${base}/client/stage-dp-phase2.sh" \
     || -f "${base}/client/dp-offline-upgrade-xenial-to-bionic.sh" ]] && client_p=YES
@@ -955,7 +955,7 @@ um_bootstrap_run() {
     config_p=NO; selective_p=NO; phase2_p=NO; signing_p=NO; client_p=NO
     [[ -f "${confdir}/dp-upgrade-mirror.conf" ]] && config_p=YES
     [[ -d "${base}/selective/ubuntu" || -f "${base}/selective/state/READY" ]] && selective_p=YES
-    [[ -d "${base}/dp-phase2/6.5.0" ]] && phase2_p=YES
+    [[ -d "${base}/dp-phase2/6.6.0" ]] && phase2_p=YES
     [[ -f "${confdir}/client-signing/private.gpg" ]] && signing_p=YES
     [[ -f "${base}/client/stage-dp-phase2.sh" \
       || -f "${base}/client/dp-offline-upgrade-xenial-to-bionic.sh" ]] && client_p=YES

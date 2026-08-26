@@ -55,7 +55,7 @@ make_upstream_bringup() {
   local dest="$1"
   local want h
   want="$(awk '{print $1; exit}' "$UPSTREAM_BASELINE")"
-  local prod="/var/spool/apt-mirror/dp-phase2/6.5.0/releases/20260726T155911Z/files/bringup_py3_dp_after_os_upgrade.sh"
+  local prod="/var/spool/apt-mirror/dp-phase2/6.6.0/releases/20260726T155911Z/files/bringup_py3_dp_after_os_upgrade.sh"
   if [[ -r "$prod" ]]; then
     h="$(sha1sum "$prod" | awk '{print $1}')"
     if [[ "${h,,}" == "${want,,}" ]]; then cp -f "$prod" "$dest"; return 0; fi
@@ -79,7 +79,7 @@ ensure_upstream_bytes() {
 }
 
 make_acps_payload() {
-  local dir="$1" ver="${2:-6.5.0}"
+  local dir="$1" ver="${2:-6.6.0}"
   mkdir -p "$dir"
   phase2_prereq_write_zero_extra_common "${dir}/aelladeb_py3_common.tar.gz" "common-payload"
   sha1sum "${dir}/aelladeb_py3_common.tar.gz" | awk '{print $1}' >"${dir}/aelladeb_py3_common.tar.gz.sha1"
@@ -376,7 +376,7 @@ grep -q 'passwordbox' "$INSTALLER" && grep -q '"1" "Preparation Mode"' "$INSTALL
   && pass "B configuration fields" || fail "B config"
 grep -qE 'Current DP Version|Target DP Version|"DP Version"' "$INSTALLER" \
   && fail "B DP version config labels present" || pass "B no DP version config labels"
-grep -Fq 'Phase 2 Target:      6.5.0 (fixed)' "$COMMON" \
+grep -Fq 'Phase 2 Target:      6.6.0 (fixed)' "$COMMON" \
   && pass "B exact Phase 2 footer present" || fail "B exact Phase 2 footer missing"
 grep -qE 'Enter R2 URL|Enter ACPS URL|R2 URL input|ACPS URL input|Set R2 URL|Set ACPS URL' "$INSTALLER" \
   && fail "B URL menus present" || pass "B no URL menus"
@@ -441,7 +441,7 @@ echo "======== Prepare fixtures for install flow ========"
 common_env
 USE_WORKDIR_VENDOR=0
 ACPS_ROOT="${WORKDIR}/acps-http"
-make_acps_payload "$ACPS_ROOT" 6.5.0
+make_acps_payload "$ACPS_ROOT" 6.6.0
 setup_project_shadow_if_needed
 write_gui_config "$MM_CONFIG_FILE"
 
@@ -455,9 +455,9 @@ export DP_PHASE2_SOURCE_BASE="http://127.0.0.1:${HTTP_PORT}"
 echo "======== H/J/K/L/M. happy path prepare ========"
 if run_prepare; then pass "H download-and-prepare"; else fail "H prepare"; fi
 
-DP_DIR="${WORKDIR}/mirror/dp-phase2/6.5.0"
-[[ -f "${DP_DIR}/release.env" ]] && [[ -f "${DP_DIR}/dp_bundle_6.5.0-current.tar" ]] \
-  && [[ -f "${DP_DIR}/dp_bundle_6.5.0-current.tar.sha256" ]] && pass "J final bundle files" || fail "J files"
+DP_DIR="${WORKDIR}/mirror/dp-phase2/6.6.0"
+[[ -f "${DP_DIR}/release.env" ]] && [[ -f "${DP_DIR}/dp_bundle_6.6.0-current.tar" ]] \
+  && [[ -f "${DP_DIR}/dp_bundle_6.6.0-current.tar.sha256" ]] && pass "J final bundle files" || fail "J files"
 [[ ! -e "${DP_DIR}/releases" ]] && [[ ! -L "${DP_DIR}/current" ]] && [[ ! -L "${DP_DIR}/previous" ]] \
   && pass "K no generation paths" || fail "K generation present"
 [[ -d "${WORKDIR}/mirror/selective/hops/xenial-to-bionic" ]] && pass "M OS selective hops" || fail "M hops"
@@ -465,8 +465,8 @@ DP_DIR="${WORKDIR}/mirror/dp-phase2/6.5.0"
   && pass "K selective no current/previous" || fail "K selective generation"
 # shellcheck source=../scripts/lib/dp-phase2-common.sh
 source "${ROOT}/scripts/lib/dp-phase2-common.sh"
-dp2_set_version 6.5.0
-dp2_assert_safe_tar_list "${DP_DIR}/dp_bundle_6.5.0-current.tar" && pass "J bundle contract" || fail "J tar"
+dp2_set_version 6.6.0
+dp2_assert_safe_tar_list "${DP_DIR}/dp_bundle_6.6.0-current.tar" && pass "J bundle contract" || fail "J tar"
 EXPECTED_PATCHED="${WORKDIR}/expected-patched-bringup.sh"
 python3 "${ROOT}/scripts/lib/patch_dp_phase2_bringup.py" \
   --upstream "${ACPS_ROOT}/bringup_py3_dp_after_os_upgrade.sh" \
@@ -474,7 +474,7 @@ python3 "${ROOT}/scripts/lib/patch_dp_phase2_bringup.py" \
 WANT_PATCH="$(sha1sum "$EXPECTED_PATCHED" | awk '{print $1}')"
 # extract bringup from bundle and check
 TMPB="${WORKDIR}/bundle-check"; mkdir -p "$TMPB"
-tar -C "$TMPB" -xf "${DP_DIR}/dp_bundle_6.5.0-current.tar" bringup_py3_dp_after_os_upgrade.sh
+tar -C "$TMPB" -xf "${DP_DIR}/dp_bundle_6.6.0-current.tar" bringup_py3_dp_after_os_upgrade.sh
 GOT="$(sha1sum "${TMPB}/bringup_py3_dp_after_os_upgrade.sh" | awk '{print $1}')"
 [[ "${GOT,,}" == "${WANT_PATCH,,}" ]] && pass "H patched bringup generated from ACPS upstream" || fail "H patched got=${GOT} want=${WANT_PATCH}"
 grep -q -- '--worker-password' "${TMPB}/bringup_py3_dp_after_os_upgrade.sh" \
@@ -488,27 +488,27 @@ cmp -s "$PATCHED_BRINGUP" "${TMPB}/bringup_py3_dp_after_os_upgrade.sh" \
   || pass "H generated from synthetic fixture (not frozen vendor blob)"
 
 # L cleanup
-compgen -G "${WORKDIR}/mirror/.install-cache/acps/6.5.0/*" >/dev/null 2>&1 \
+compgen -G "${WORKDIR}/mirror/.install-cache/acps/6.6.0/*" >/dev/null 2>&1 \
   && fail "L acps cache remains" || pass "L acps cache cleaned"
 compgen -G "${WORKDIR}/mirror/.install-cache/r2/*.tar" >/dev/null 2>&1 \
   && fail "L r2 archive remains" || pass "L r2 archive cleaned"
 find "${WORKDIR}/mirror" -name '*.part' | grep -q . && fail "L .part remains" || pass "L no .part"
-find "${WORKDIR}/mirror/dp-phase2" -maxdepth 1 -name '6.5.0.old.*' | grep -q . \
+find "${WORKDIR}/mirror/dp-phase2" -maxdepth 1 -name '6.6.0.old.*' | grep -q . \
   && fail "L .old generation remains" || pass "L no .old generation"
 
 echo "======== REUSE. valid final skips ACPS re-download ========"
 ACPS_GETS_BEFORE="$(cat "${WORKDIR}/http-counts/gets" 2>/dev/null || echo 0)"
-BUNDLE_FP_BEFORE="$(sha256sum "${DP_DIR}/dp_bundle_6.5.0-current.tar" | awk '{print $1}')"
+BUNDLE_FP_BEFORE="$(sha256sum "${DP_DIR}/dp_bundle_6.6.0-current.tar" | awk '{print $1}')"
 if run_prepare; then pass "REUSE download-and-prepare"; else fail "REUSE prepare"; fi
 ACPS_GETS_AFTER="$(cat "${WORKDIR}/http-counts/gets" 2>/dev/null || echo 0)"
-BUNDLE_FP_AFTER="$(sha256sum "${DP_DIR}/dp_bundle_6.5.0-current.tar" | awk '{print $1}')"
+BUNDLE_FP_AFTER="$(sha256sum "${DP_DIR}/dp_bundle_6.6.0-current.tar" | awk '{print $1}')"
 [[ "$ACPS_GETS_AFTER" == "$ACPS_GETS_BEFORE" ]] \
   && pass "REUSE ACPS HTTP gets unchanged (${ACPS_GETS_AFTER})" \
   || fail "REUSE ACPS re-downloaded gets ${ACPS_GETS_BEFORE}->${ACPS_GETS_AFTER}"
 [[ "$BUNDLE_FP_AFTER" == "$BUNDLE_FP_BEFORE" ]] \
   && pass "REUSE bundle fingerprint unchanged" \
   || fail "REUSE bundle was rebuilt/replaced"
-find "${WORKDIR}/mirror/dp-phase2" -maxdepth 1 -name '6.5.0.old.*' | grep -q . \
+find "${WORKDIR}/mirror/dp-phase2" -maxdepth 1 -name '6.6.0.old.*' | grep -q . \
   && fail "REUSE created .old" || pass "REUSE no .old generation"
 
 echo "======== N. readiness ========"
@@ -617,15 +617,15 @@ echo "$out_drift" | grep -q 'INSTALL_RESULT=FAIL' && fail "I INSTALL_RESULT=FAIL
   || pass "I no INSTALL_RESULT=FAIL on SHA change"
 echo "$out_drift" | grep -q 'UPSTREAM_BRINGUP_DRIFT=YES' && fail "I blocking DRIFT=YES" \
   || pass "I no blocking DRIFT=YES"
-[[ -f "${WORKDIR}/mirror-drift/dp-phase2/6.5.0/dp_bundle_6.5.0-current.tar" ]] \
+[[ -f "${WORKDIR}/mirror-drift/dp-phase2/6.6.0/dp_bundle_6.6.0-current.tar" ]] \
   && pass "I final bundle published after SHA change" || fail "I bundle missing after SHA change"
 
 echo "======== G resume ========"
 kill "$HTTP_PID" 2>/dev/null || true; wait "$HTTP_PID" 2>/dev/null || true; HTTP_PID=""
 kill "$R2_PID" 2>/dev/null || true; wait "$R2_PID" 2>/dev/null || true; R2_PID=""
 ACPS_G="${WORKDIR}/acps-g"; cp -a "$ACPS_ROOT" "$ACPS_G"
-dd if=/dev/urandom of="${ACPS_G}/images-6.5.0.tar" bs=1024 count=64 status=none
-sha256sum "${ACPS_G}/images-6.5.0.tar" | awk '{print $1}' >"${ACPS_G}/images-6.5.0.tar.sha256"
+dd if=/dev/urandom of="${ACPS_G}/images-6.6.0.tar" bs=1024 count=64 status=none
+sha256sum "${ACPS_G}/images-6.6.0.tar" | awk '{print $1}' >"${ACPS_G}/images-6.6.0.tar.sha256"
 start_r2 "$R2_ROOT2"
 start_http "$ACPS_G" none
 export DP_PHASE2_SOURCE_BASE="http://127.0.0.1:${HTTP_PORT}"
@@ -636,15 +636,15 @@ export MM_CACHE_ROOT="${WORKDIR}/mirror-g/.install-cache"
 export MM_SELECTIVE_ROOT="${WORKDIR}/mirror-g/selective"
 export MM_DP_PHASE2_ROOT="${WORKDIR}/mirror-g/dp-phase2"
 export MM_CLIENT_ROOT="${WORKDIR}/mirror-g/client"
-mkdir -p "${WORKDIR}/mirror-g/.install-cache/acps/6.5.0"
+mkdir -p "${WORKDIR}/mirror-g/.install-cache/acps/6.6.0"
 seed_client_files "$MM_CLIENT_ROOT"
 for f in aelladeb_py3_common.tar.gz aelladeb_py3_common.tar.gz.sha1 \
-  aella-uvp-2404_6.5.0ubuntu1_amd64.deb aella-uvp-2404_6.5.0ubuntu1_amd64.deb.sha1 \
+  aella-uvp-2404_6.6.0ubuntu1_amd64.deb aella-uvp-2404_6.6.0ubuntu1_amd64.deb.sha1 \
   bringup_py3_dp_after_os_upgrade.sh bringup_py3_dp_after_os_upgrade.sh.sha1 \
-  images-6.5.0.list images-6.5.0.tar.sha256; do
-  cp -f "${ACPS_G}/$f" "${WORKDIR}/mirror-g/.install-cache/acps/6.5.0/$f"
+  images-6.6.0.list images-6.6.0.tar.sha256; do
+  cp -f "${ACPS_G}/$f" "${WORKDIR}/mirror-g/.install-cache/acps/6.6.0/$f"
 done
-dd if="${ACPS_G}/images-6.5.0.tar" of="${WORKDIR}/mirror-g/.install-cache/acps/6.5.0/images-6.5.0.tar.part" bs=1024 count=10 status=none
+dd if="${ACPS_G}/images-6.6.0.tar" of="${WORKDIR}/mirror-g/.install-cache/acps/6.6.0/images-6.6.0.tar.part" bs=1024 count=10 status=none
 if run_prepare; then pass "G resume"; else fail "G resume"; fi
 
 echo "======== R2. production downloader resume safety ========"
@@ -795,11 +795,11 @@ grep -nE "ACPS_PASS='|ACPS_USER=\"Aella" "${ROOT}/scripts/download-dp-phase2.sh"
   && fail "F hardcoded in download-dp-phase2" || pass "F download-dp-phase2 creds removed"
 
 echo "======== Q. production safety ========"
-PROD_CUR="$(readlink /var/spool/apt-mirror/dp-phase2/6.5.0/current 2>/dev/null || true)"
-PROD_PREV="$(readlink /var/spool/apt-mirror/dp-phase2/6.5.0/previous 2>/dev/null || true)"
+PROD_CUR="$(readlink /var/spool/apt-mirror/dp-phase2/6.6.0/current 2>/dev/null || true)"
+PROD_PREV="$(readlink /var/spool/apt-mirror/dp-phase2/6.6.0/previous 2>/dev/null || true)"
 if [[ -z "$PROD_CUR" && -z "$PROD_PREV" ]]; then
   skip "Q production dp-phase2 current/previous absent (clean host; optional smoke)"
-elif [[ ! -e /var/spool/apt-mirror/dp-phase2/6.5.0/current ]]; then
+elif [[ ! -e /var/spool/apt-mirror/dp-phase2/6.6.0/current ]]; then
   skip "Q production current symlink absent (clean host; optional smoke)"
 else
   [[ "$PROD_CUR" == "releases/20260728T110548Z" ]] && pass "Q production current" || fail "Q current=$PROD_CUR"
@@ -883,15 +883,15 @@ run_gui_enable_http_mock() {
     mm_has_whiptail() { return 0; }
     clear() { return 0; }
     load_mirror_defaults() { :; }
-    mm_load_gui_config() { TARGET_DP_VERSION=6.5.0; }
+    mm_load_gui_config() { TARGET_DP_VERSION=6.6.0; }
     engine_resolve_paths() { :; }
     dp2_set_version() { :; }
-    dp2_stable_bundle_name() { printf "%s\n" "dp_bundle_6.5.0-current.tar"; }
+    dp2_stable_bundle_name() { printf "%s\n" "dp_bundle_6.6.0-current.tar"; }
     mm_format_bytes() { printf "%s\n" "$1"; }
     mm_artifacts_ready_for_http() { return 0; }
     engine_enable_http_distribution() {
       printf "ENGINE_START\n" >>"$TRACE"
-      printf "SHA256_VERIFICATION_START operation=enable-http file=dp_bundle_6.5.0-current.tar\n" | tee -a "$TRACE"
+      printf "SHA256_VERIFICATION_START operation=enable-http file=dp_bundle_6.6.0-current.tar\n" | tee -a "$TRACE"
       printf "SHA256_BEGIN\n" >>"$TRACE"
       sleep 0.2
       printf "SHA256_END\n" >>"$TRACE"
@@ -989,13 +989,13 @@ LIFE_OUT="$(
     mm_whiptail_yesno() { return 0; }
     mm_whiptail_input() { printf "%s\n" "${3:-6.3.0}"; return 0; }
     load_mirror_defaults() { :; }
-    mm_load_gui_config() { TARGET_DP_VERSION=6.5.0; MIRROR_HTTP_URL="http://192.0.2.10"; }
+    mm_load_gui_config() { TARGET_DP_VERSION=6.6.0; MIRROR_HTTP_URL="http://192.0.2.10"; }
     engine_resolve_paths() {
       printf "PATH_RESOLVE\n" >>"$TRACE"
       return 0
     }
     dp2_set_version() { :; }
-    dp2_stable_bundle_name() { printf "%s\n" "dp_bundle_6.5.0-current.tar"; }
+    dp2_stable_bundle_name() { printf "%s\n" "dp_bundle_6.6.0-current.tar"; }
     engine_enable_http_distribution() { echo ENABLED; return 0; }
     engine_compute_readiness() { printf "UPGRADE_READINESS=FAIL\n"; return 1; }
     engine_validate_http_layout() { return 0; }
@@ -1024,7 +1024,7 @@ LIFE_OUT="$(
     gui_verify_readiness() {
       printf "ACTION_4\n" >>"$TRACE"
       local tmp; tmp="$(mktemp)"
-      printf "UPGRADE_READINESS=FAIL\nTARGET_DP_VERSION=6.5.0\n" >"$tmp"
+      printf "UPGRADE_READINESS=FAIL\nTARGET_DP_VERSION=6.6.0\n" >"$tmp"
       mm_whiptail_textbox "Verify Upgrade Readiness" "$tmp" || true
       rm -f "$tmp"
       return 0
@@ -1032,7 +1032,7 @@ LIFE_OUT="$(
     gui_show_status() {
       printf "ACTION_5\n" >>"$TRACE"
       local tmp; tmp="$(mktemp)"
-      printf "Preparation Mode: Full OS Upgrade + Phase 2\nPhase 2 Target: 6.5.0\nHTTP Distribution: DISABLED\n" >"$tmp"
+      printf "Preparation Mode: Full OS Upgrade + Phase 2\nPhase 2 Target: 6.6.0\nHTTP Distribution: DISABLED\n" >"$tmp"
       mm_whiptail_textbox "Current Status" "$tmp" || true
       rm -f "$tmp"
       return 0
@@ -1106,7 +1106,7 @@ FAIL_LIFE="$(
     mm_whiptail_infobox() { return 0; }
     mm_whiptail_textbox() { return 0; }
     load_mirror_defaults() { :; }
-    mm_load_gui_config() { TARGET_DP_VERSION=6.5.0; }
+    mm_load_gui_config() { TARGET_DP_VERSION=6.6.0; }
     engine_resolve_paths() { :; }
     mm_collect_workflow_status() {
       MM_WF_CONFIG_COMPLETED=0

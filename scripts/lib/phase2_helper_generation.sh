@@ -82,7 +82,7 @@ phase2_helper_generation_verify() {
 phase2_upgrade_wrapper_write() {
   local root="${1:?client root required}"
   local mirror="${2:?mirror URL required}"
-  local ver="${3:-6.5.0}"
+  local ver="${3:-6.6.0}"
   local dest="${root}/upgrade-phase2.sh"
   local man="${root}/${PHASE2_HELPER_GENERATION_MANIFEST_NAME}"
   local sha

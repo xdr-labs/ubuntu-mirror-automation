@@ -38,8 +38,8 @@ source "$ACPS"
 # shellcheck source=/dev/null
 source "$ENGINE"
 
-dp2_set_version 6.5.0
-CACHE="$(acps_cache_dir 6.5.0)"
+dp2_set_version 6.6.0
+CACHE="$(acps_cache_dir 6.6.0)"
 mkdir -p "$CACHE"
 
 seed_cache() {
@@ -48,16 +48,16 @@ seed_cache() {
   printf 'common-payload\n' >"${dir}/aelladeb_py3_common.tar.gz"
   sha1sum "${dir}/aelladeb_py3_common.tar.gz" | awk '{print $1}' \
     >"${dir}/aelladeb_py3_common.tar.gz.sha1"
-  printf 'uvp-payload\n' >"${dir}/aella-uvp-2404_6.5.0ubuntu1_amd64.deb"
-  sha1sum "${dir}/aella-uvp-2404_6.5.0ubuntu1_amd64.deb" | awk '{print $1}' \
-    >"${dir}/aella-uvp-2404_6.5.0ubuntu1_amd64.deb.sha1"
+  printf 'uvp-payload\n' >"${dir}/aella-uvp-2404_6.6.0ubuntu1_amd64.deb"
+  sha1sum "${dir}/aella-uvp-2404_6.6.0ubuntu1_amd64.deb" | awk '{print $1}' \
+    >"${dir}/aella-uvp-2404_6.6.0ubuntu1_amd64.deb.sha1"
   printf 'bringup-payload\n' >"${dir}/bringup_py3_dp_after_os_upgrade.sh"
   sha1sum "${dir}/bringup_py3_dp_after_os_upgrade.sh" | awk '{print $1}' \
     >"${dir}/bringup_py3_dp_after_os_upgrade.sh.sha1"
-  seq 1 3 >"${dir}/images-6.5.0.list"
-  printf 'IMAGES-PAYLOAD-LINE\n' >"${dir}/images-6.5.0.tar"
-  sha256sum "${dir}/images-6.5.0.tar" | awk '{print $1 "  images-6.5.0.tar"}' \
-    >"${dir}/images-6.5.0.tar.sha256"
+  seq 1 3 >"${dir}/images-6.6.0.list"
+  printf 'IMAGES-PAYLOAD-LINE\n' >"${dir}/images-6.6.0.tar"
+  sha256sum "${dir}/images-6.6.0.tar" | awk '{print $1 "  images-6.6.0.tar"}' \
+    >"${dir}/images-6.6.0.tar.sha256"
 }
 
 count_sha256_on() {
@@ -89,21 +89,21 @@ acps_is_verified_cache "$CACHE" || fail "fresh marker should verify"
 pass "verified marker written after checksum pass"
 
 : >"$SHA256_CALL_LOG"
-if acps_acquire_all 6.5.0 >"${TMP}/reuse.log" 2>&1; then
+if acps_acquire_all 6.6.0 >"${TMP}/reuse.log" 2>&1; then
   :
 else
   fail "acps_acquire_all reuse failed"
 fi
 grep -q 'ACPS_DOWNLOAD=REUSED' "${TMP}/reuse.log" || fail "missing ACPS_DOWNLOAD=REUSED"
-img_reads="$(grep -c 'images-6.5.0.tar$' "$SHA256_CALL_LOG" || true)"
+img_reads="$(grep -c 'images-6.6.0.tar$' "$SHA256_CALL_LOG" || true)"
 # sha256sum wrapper logs argv; reuse must not checksum the large payload again.
-if grep -E '(^| )'"${CACHE}/images-6.5.0.tar"'( |$)' "$SHA256_CALL_LOG"; then
+if grep -E '(^| )'"${CACHE}/images-6.6.0.tar"'( |$)' "$SHA256_CALL_LOG"; then
   fail "unchanged cache re-hashed images tar"
 fi
 pass "unchanged verified cache REUSED without images SHA256"
 
 # size change
-printf 'IMAGES-PAYLOAD-LINE\nEXTRA\n' >"${CACHE}/images-6.5.0.tar"
+printf 'IMAGES-PAYLOAD-LINE\nEXTRA\n' >"${CACHE}/images-6.6.0.tar"
 acps_is_verified_cache "$CACHE" && fail "size change still trusted" || pass "size change invalidates marker"
 
 # restore payload + marker, then mtime/ctime mutation
@@ -111,7 +111,7 @@ seed_cache
 mm_acps_verify_payload_checksums "$CACHE" >/dev/null
 acps_write_verified_marker "$CACHE"
 # Explicit old timestamp: same-second `touch` is a no-op on 1s-resolution filesystems.
-touch -d '2001-01-01T00:00:00Z' "${CACHE}/images-6.5.0.tar"
+touch -d '2001-01-01T00:00:00Z' "${CACHE}/images-6.6.0.tar"
 acps_is_verified_cache "$CACHE" && fail "mtime/ctime mutation still trusted" \
   || pass "mtime/ctime mutation invalidates marker"
 
@@ -119,7 +119,7 @@ acps_is_verified_cache "$CACHE" && fail "mtime/ctime mutation still trusted" \
 seed_cache
 mm_acps_verify_payload_checksums "$CACHE" >/dev/null
 acps_write_verified_marker "$CACHE"
-orig="${CACHE}/images-6.5.0.tar"
+orig="${CACHE}/images-6.6.0.tar"
 ref="${TMP}/mtime-ref"
 cp -a "$orig" "$ref"
 # 1s filesystems will not change %Z in the same second as the marker write.
@@ -133,8 +133,8 @@ acps_is_verified_cache "$CACHE" && fail "same-size rewrite still trusted" \
 seed_cache
 mm_acps_verify_payload_checksums "$CACHE" >/dev/null
 acps_write_verified_marker "$CACHE"
-printf 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef  images-6.5.0.tar\n' \
-  >"${CACHE}/images-6.5.0.tar.sha256"
+printf 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef  images-6.6.0.tar\n' \
+  >"${CACHE}/images-6.6.0.tar.sha256"
 acps_is_verified_cache "$CACHE" && fail "sidecar mutation still trusted" \
   || pass "checksum sidecar mutation invalidates trust"
 
@@ -164,7 +164,7 @@ pass "successful revalidation refreshes marker"
 seed_cache
 acps_write_verified_marker "$CACHE"
 good="$(cat "${CACHE}/.VERIFIED")"
-printf 'broken' >"${CACHE}/images-6.5.0.tar.sha256"
+printf 'broken' >"${CACHE}/images-6.6.0.tar.sha256"
 set +e
 mm_acps_verify_payload_checksums "$CACHE" >/dev/null 2>&1
 vrc=$?
@@ -180,25 +180,25 @@ pass "failed revalidation never refreshes marker"
 seed_cache
 mm_acps_verify_payload_checksums "$CACHE" >/dev/null
 acps_write_verified_marker "$CACHE"
-WORK="${MM_CACHE_ROOT}/acps-work/6.5.0/meta"
+WORK="${MM_CACHE_ROOT}/acps-work/6.6.0/meta"
 engine_stage_acps_work_from_cache "$CACHE" "$WORK"
 cp -f "${CACHE}/bringup_py3_dp_after_os_upgrade.sh" \
   "${WORK}/bringup_py3_dp_after_os_upgrade.sh"
 cp -f "${CACHE}/bringup_py3_dp_after_os_upgrade.sh.sha1" \
   "${WORK}/bringup_py3_dp_after_os_upgrade.sh.sha1"
 : >"$SHA256_CALL_LOG"
-engine_assert_work_ready_for_bundle "$CACHE" "$WORK" 6.5.0 >"${TMP}/ready.log" 2>&1 \
+engine_assert_work_ready_for_bundle "$CACHE" "$WORK" 6.6.0 >"${TMP}/ready.log" 2>&1 \
   || fail "work ready after verified cache"
 grep -q 'ACPS_WORK_IMAGES_HARDLINK_TRUSTED=YES' "${TMP}/ready.log" \
   || fail "hardlink not trusted after verified cache"
-if grep -E "acps-work|${WORK}/images-6.5.0.tar" "$SHA256_CALL_LOG"; then
+if grep -E "acps-work|${WORK}/images-6.6.0.tar" "$SHA256_CALL_LOG"; then
   fail "hardlink path still hashed images tar"
 fi
 pass "hardlink trust only after verified-cache PASS"
 
 # Without a valid marker, same-inode work is not blindly trusted.
 rm -f "${CACHE}/.VERIFIED"
-engine_assert_work_ready_for_bundle "$CACHE" "$WORK" 6.5.0 >"${TMP}/ready2.log" 2>&1 \
+engine_assert_work_ready_for_bundle "$CACHE" "$WORK" 6.6.0 >"${TMP}/ready2.log" 2>&1 \
   || fail "unverified cache should still be able to re-hash work"
 grep -q 'reason=cache_not_verified\|ACPS_WORK_IMAGES_HARDLINK_TRUSTED=NO' "${TMP}/ready2.log" \
   || fail "unverified cache still claimed hardlink trust"

@@ -92,20 +92,20 @@ run_parse() {
   set -e
 }
 
-run_parse --version 6.5.0 --worker-ips '192.0.2.10,' --worker-password secret
+run_parse --version 6.6.0 --worker-ips '192.0.2.10,' --worker-password secret
 [[ "$PARSE_RC" -ne 0 ]] && grep -q 'reason=empty_ip' <<<"$PARSE_ERR" \
   && pass "trailing empty IP fails closed" || fail "trailing empty IP rc=$PARSE_RC err=$PARSE_ERR"
 
-run_parse --version 6.5.0 --worker-ips 192.0.2.10 --worker-password --skip-download
+run_parse --version 6.6.0 --worker-ips 192.0.2.10 --worker-password --skip-download
 [[ "$PARSE_RC" -ne 0 ]] && grep -q -- '--worker-password requires a value' <<<"$PARSE_ERR" \
   && pass "vendor password cannot swallow option" || fail "vendor password swallow rc=$PARSE_RC err=$PARSE_ERR"
 
-run_parse --version 6.5.0 --standby --skip-download --worker-password secret
+run_parse --version 6.6.0 --standby --skip-download --worker-password secret
 [[ "$PARSE_RC" -ne 0 ]] && grep -q -- '--standby requires a value' <<<"$PARSE_ERR" \
   && pass "vendor standby cannot swallow option" || fail "vendor standby swallow rc=$PARSE_RC err=$PARSE_ERR"
 
 EXPECT_DASH=1
-run_parse --version 6.5.0 --worker-ips 192.0.2.10 --worker-password=--dashpass
+run_parse --version 6.6.0 --worker-ips 192.0.2.10 --worker-password=--dashpass
 unset EXPECT_DASH
 [[ "$PARSE_RC" -eq 0 ]] && pass "vendor equals-form option-looking password" \
   || fail "vendor equals-form password rc=$PARSE_RC err=$PARSE_ERR"
@@ -190,7 +190,7 @@ WRAP_BAD="$(
   (
     DP_PHASE2_BRINGUP_LIB_ONLY=1
     source "$WRAPPER"
-    parse_args --version 6.5.0 --worker-password --detach
+    parse_args --version 6.6.0 --worker-password --detach
   ) 2>&1
 )"
 WRAP_BAD_RC=$?
@@ -203,7 +203,7 @@ WRAP_EQ_RC=0
 (
   DP_PHASE2_BRINGUP_LIB_ONLY=1
   source "$WRAPPER"
-  parse_args --version 6.5.0 --worker-password=--dashpass --detach
+  parse_args --version 6.6.0 --worker-password=--dashpass --detach
   [[ "$ATTACH_MONITOR" -eq 0 ]]
   [[ "${PASSTHRU[2]}" == --worker-password ]]
   [[ "${PASSTHRU[3]}" == --dashpass ]]

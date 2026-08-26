@@ -85,7 +85,7 @@ run_parse() {
 }
 
 # AIO / no workers: password not required
-run_parse --version 6.5.0 --skip-download
+run_parse --version 6.6.0 --skip-download
 if [[ "$PARSE_RC" -eq 0 ]]; then
   echo "$PARSE_OUT" | grep -qx 'WORKER_IPS=' || fail "unexpected worker ips on AIO"
   echo "$PARSE_OUT" | grep -qx 'WORKER_PASSWORD=' || fail "unexpected worker password on AIO"
@@ -94,15 +94,15 @@ else
   fail "AIO parse failed: ${PARSE_ERR}"
 fi
 
-run_parse --version 6.5.0
+run_parse --version 6.6.0
 if [[ "$PARSE_RC" -eq 0 ]]; then
-  pass "bringup --version 6.5.0 still parses"
+  pass "bringup --version 6.6.0 still parses"
 else
-  fail "bringup --version 6.5.0 parse failed: ${PARSE_ERR}"
+  fail "bringup --version 6.6.0 parse failed: ${PARSE_ERR}"
 fi
 
 # worker-ips without password → error
-run_parse --version 6.5.0 --skip-download --worker-ips "192.168.124.23,192.168.124.25"
+run_parse --version 6.6.0 --skip-download --worker-ips "192.168.124.23,192.168.124.25"
 [[ "$PARSE_RC" -ne 0 ]] || fail "worker-ips without password accepted"
 echo "$PARSE_ERR" | grep -q -- '--worker-ips/--standby requires --worker-password\|--worker-ips requires --worker-password' \
   || fail "missing validation error: ${PARSE_ERR}"
@@ -110,7 +110,7 @@ pass "worker-ips without password is rejected"
 
 # worker-password parsed (including special characters)
 for spec_pass in 'something' 'Test123!' 'Abc$123!' 'worker@Pass#2026' 'A&b!c$123'; do
-  run_parse --version 6.5.0 --skip-download \
+  run_parse --version 6.6.0 --skip-download \
       --worker-ips "192.168.124.23" --worker-password "$spec_pass"
   if [[ "$PARSE_RC" -eq 0 ]]; then
     echo "$PARSE_OUT" | grep -Fxq "WORKER_PASSWORD=${spec_pass}" \
@@ -171,7 +171,7 @@ ORCH_RUNNER="${WORKDIR}/run_orch.sh"
 cat >"$ORCH_RUNNER" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-VERSION="6.5.0"
+VERSION="6.6.0"
 WORKER_IPS="192.168.124.23"
 WORKER_PASSWORD='Abc\$123!'
 ROLE="DL-master"

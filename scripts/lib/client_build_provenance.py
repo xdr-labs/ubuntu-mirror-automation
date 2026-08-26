@@ -81,6 +81,7 @@ CATEGORY_PATTERNS = {
         "scripts/lib/atomic_dir_swap.py",
         "scripts/lib/phase2_helper_generation.sh",
         "client/stage-dp-phase2.sh",
+        "client/stage-dp-phase2-6.6.0.sh",
         "client/stage-dp-phase2-6.5.0.sh",
     ),
 }
@@ -451,7 +452,7 @@ def verify_client_set_integrity(root, current, expected_mirror="", expected_fing
         raise RuntimeError("CLIENT_WRAPPER_PHASE2_HELPER_VERIFY_MISSING")
     if "stage-dp-phase2.sh" not in phase2_text:
         raise RuntimeError("CLIENT_WRAPPER_PHASE2_STAGE_MISSING")
-    if "--target-version" not in phase2_text or "6.5.0" not in phase2_text:
+    if "--target-version" not in phase2_text or "6.6.0" not in phase2_text:
         raise RuntimeError("CLIENT_WRAPPER_PHASE2_TARGET_VERSION_MISSING")
     if "--same-version-recovery" not in phase2_text:
         raise RuntimeError("CLIENT_WRAPPER_PHASE2_SAME_VERSION_MISSING")

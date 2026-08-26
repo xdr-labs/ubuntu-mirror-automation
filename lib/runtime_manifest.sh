@@ -109,6 +109,7 @@ UM_RUNTIME_CLIENT_FILES=(
   dp-client-hop-launcher.sh.in
   dp-postboot-readiness-policy.sh.inc
   stage-dp-phase2.sh
+  stage-dp-phase2-6.6.0.sh
   stage-dp-phase2-6.5.0.sh
   bringup_py3_dp_lifecycle.sh
   phase2-helper-generation.manifest

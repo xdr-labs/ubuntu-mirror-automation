@@ -17,7 +17,7 @@ trap cleanup EXIT
 DEST_ROOT="${TMP}/client"
 READY_PATH="${TMP}/READY"
 DP_PHASE2_ROOT="${TMP}/dp-phase2"
-TARGET_DP_VERSION=6.5.0
+TARGET_DP_VERSION=6.6.0
 mkdir -p "$DEST_ROOT" \
   "${DP_PHASE2_ROOT}/${TARGET_DP_VERSION}/current" \
   "$(dirname "$READY_PATH")"
@@ -75,8 +75,8 @@ bash "${ROOT}/scripts/deploy-stage-dp-phase2-client-atomic.sh" >"${TMP}/deploy.o
 UNIT=(
   stage-dp-phase2.sh
   stage-dp-phase2.sh.sha256
-  stage-dp-phase2-6.5.0.sh
-  stage-dp-phase2-6.5.0.sh.sha256
+  stage-dp-phase2-6.6.0.sh
+  stage-dp-phase2-6.6.0.sh.sha256
   bringup_py3_dp_lifecycle.sh
   bringup_py3_dp_lifecycle.sh.sha256
   lib/dp-offline-source-product-version.sh

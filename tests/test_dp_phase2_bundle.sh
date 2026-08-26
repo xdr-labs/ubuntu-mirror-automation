@@ -24,17 +24,17 @@ make_payload() {
   phase2_prereq_write_zero_extra_common "${dir}/aelladeb_py3_common.tar.gz" "common-payload"
   sha1sum "${dir}/aelladeb_py3_common.tar.gz" | awk '{print $1"  /build/server/aelladeb_py3_common.tar.gz"}' \
     >"${dir}/aelladeb_py3_common.tar.gz.sha1"
-  printf 'uvp-deb\n' >"${dir}/aella-uvp-2404_6.5.0ubuntu1_amd64.deb"
-  sha1sum "${dir}/aella-uvp-2404_6.5.0ubuntu1_amd64.deb" | awk '{print $1"  /abs/path/uvp.deb"}' \
-    >"${dir}/aella-uvp-2404_6.5.0ubuntu1_amd64.deb.sha1"
+  printf 'uvp-deb\n' >"${dir}/aella-uvp-2404_6.6.0ubuntu1_amd64.deb"
+  sha1sum "${dir}/aella-uvp-2404_6.6.0ubuntu1_amd64.deb" | awk '{print $1"  /abs/path/uvp.deb"}' \
+    >"${dir}/aella-uvp-2404_6.6.0ubuntu1_amd64.deb.sha1"
   printf '#!/bin/bash\necho bringup\n' >"${dir}/bringup_py3_dp_after_os_upgrade.sh"
   sha1sum "${dir}/bringup_py3_dp_after_os_upgrade.sh" | awk '{print $1}' \
     >"${dir}/bringup_py3_dp_after_os_upgrade.sh.sha1"
   # 156-line list
-  seq 1 156 >"${dir}/images-6.5.0.list"
-  printf 'images-tar-body\n' >"${dir}/images-6.5.0.tar"
-  sha256sum "${dir}/images-6.5.0.tar" | awk '{print $1"  /build/images-6.5.0.tar"}' \
-    >"${dir}/images-6.5.0.tar.sha256"
+  seq 1 156 >"${dir}/images-6.6.0.list"
+  printf 'images-tar-body\n' >"${dir}/images-6.6.0.tar"
+  sha256sum "${dir}/images-6.6.0.tar" | awk '{print $1"  /build/images-6.6.0.tar"}' \
+    >"${dir}/images-6.6.0.tar.sha256"
 }
 
 echo "[test] required file list count"
@@ -44,7 +44,7 @@ echo "[test] checksum first-field with absolute path in second column"
 make_payload "$FIXTURE"
 dp2_verify_sha1_pair "${FIXTURE}/aelladeb_py3_common.tar.gz" "${FIXTURE}/aelladeb_py3_common.tar.gz.sha1" \
   && pass "sha1 ignores abs path column" || fail "sha1 abs path"
-dp2_verify_sha256_pair "${FIXTURE}/images-6.5.0.tar" "${FIXTURE}/images-6.5.0.tar.sha256" \
+dp2_verify_sha256_pair "${FIXTURE}/images-6.6.0.tar" "${FIXTURE}/images-6.6.0.tar.sha256" \
   && pass "sha256 ignores abs path column" || fail "sha256 abs path"
 
 echo "[test] zero-byte reject"
@@ -74,8 +74,8 @@ fi
 make_payload "$FIXTURE"
 
 echo "[test] bad SHA256 reject"
-echo 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff  x' >"${FIXTURE}/images-6.5.0.tar.sha256"
-if ( dp2_verify_sha256_pair "${FIXTURE}/images-6.5.0.tar" "${FIXTURE}/images-6.5.0.tar.sha256" ) 2>/dev/null; then
+echo 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff  x' >"${FIXTURE}/images-6.6.0.tar.sha256"
+if ( dp2_verify_sha256_pair "${FIXTURE}/images-6.6.0.tar" "${FIXTURE}/images-6.6.0.tar.sha256" ) 2>/dev/null; then
   fail "bad sha256 should reject"
 else
   pass "bad sha256 rejected"
@@ -106,7 +106,7 @@ else
 fi
 
 echo "[test] image list line count warning vs pass"
-lines="$(dp2_check_image_list "${FIXTURE}/images-6.5.0.list" | tail -n1)"
+lines="$(dp2_check_image_list "${FIXTURE}/images-6.6.0.list" | tail -n1)"
 [[ "$lines" == "156" ]] && pass "image list 156" || fail "image list count got=${lines}"
 printf 'only\none\n' >"${WORKDIR}/short.list"
 if out="$(dp2_check_image_list "${WORKDIR}/short.list" 2>&1)"; then
@@ -116,7 +116,7 @@ else
 fi
 
 echo "[test] release.env has no secrets helper"
-printf 'DP_PHASE2_VERSION=6.5.0\n' >"${WORKDIR}/clean.env"
+printf 'DP_PHASE2_VERSION=6.6.0\n' >"${WORKDIR}/clean.env"
 dp2_release_has_secret "${WORKDIR}/clean.env" && fail "clean env flagged" || pass "clean env OK"
 printf 'ACPS_PASS=secret\n' >"${WORKDIR}/dirty.env"
 dp2_release_has_secret "${WORKDIR}/dirty.env" && pass "secret detected" || fail "secret not detected"
@@ -124,7 +124,7 @@ dp2_release_has_secret "${WORKDIR}/dirty.env" && pass "secret detected" || fail 
 echo "[test] atomic current + previous + failure preserves current"
 DP_ROOT="${WORKDIR}/dp-phase2"
 export DP_PHASE2_ROOT="$DP_ROOT"
-export DP_PHASE2_VERSION="6.5.0"
+export DP_PHASE2_VERSION="6.6.0"
 export DP_PHASE2_MIN_FREE_GIB="0"
 export DP_PHASE2_SKIP_ROOT_CHECK=1
 export DP_PHASE2_LOCK_FILE="${WORKDIR}/dp2.lock"
@@ -146,17 +146,17 @@ sleep 0.4
 export DP_PHASE2_SOURCE_BASE="http://127.0.0.1:8765"
 
 # First sync
-if ! bash "${ROOT}/scripts/download-dp-phase2-6.5.0.sh" sync; then
+if ! bash "${ROOT}/scripts/download-dp-phase2-6.6.0.sh" sync; then
   fail "first sync"
 else
   pass "first sync"
 fi
-CUR1="$(readlink -f "${DP_ROOT}/6.5.0/current")"
+CUR1="$(readlink -f "${DP_ROOT}/6.6.0/current")"
 [[ -d "$CUR1" ]] && pass "current exists" || fail "current missing"
-[[ -f "${CUR1}/dp_bundle_6.5.0-current.tar" ]] && pass "stable bundle" || fail "stable bundle"
+[[ -f "${CUR1}/dp_bundle_6.6.0-current.tar" ]] && pass "stable bundle" || fail "stable bundle"
 [[ -f "${CUR1}/release.env" ]] && pass "release.env" || fail "release.env"
-grep -q '^TARGET_DP_VERSION=6.5.0$' "${CUR1}/release.env" && pass "TARGET_DP_VERSION in release.env" || fail "TARGET_DP_VERSION"
-grep -q '^PHASE2_ARTIFACT_VERSION=6.5.0$' "${CUR1}/release.env" && pass "PHASE2_ARTIFACT_VERSION" || fail "PHASE2_ARTIFACT_VERSION"
+grep -q '^TARGET_DP_VERSION=6.6.0$' "${CUR1}/release.env" && pass "TARGET_DP_VERSION in release.env" || fail "TARGET_DP_VERSION"
+grep -q '^PHASE2_ARTIFACT_VERSION=6.6.0$' "${CUR1}/release.env" && pass "PHASE2_ARTIFACT_VERSION" || fail "PHASE2_ARTIFACT_VERSION"
 if grep -Eiq 'ACPS_PASS|password=' "${CUR1}/release.env"; then
   fail "secret in release.env"
 else
@@ -165,11 +165,11 @@ fi
 dp2_verify_manifest_sha256 "$CUR1" && pass "manifest verify" || fail "manifest verify"
 # hardlink check
 ino1="$(stat -c%i "${CUR1}/dp_bundle_"*.tar | head -1)"
-ino2="$(stat -c%i "${CUR1}/dp_bundle_6.5.0-current.tar")"
+ino2="$(stat -c%i "${CUR1}/dp_bundle_6.6.0-current.tar")"
 # timestamp bundle + stable should share inode
 ts="$(ls "${CUR1}"/dp_bundle_2*.tar 2>/dev/null | head -1 || true)"
 if [[ -n "$ts" ]]; then
-  [[ "$(stat -c%i "$ts")" == "$(stat -c%i "${CUR1}/dp_bundle_6.5.0-current.tar")" ]] \
+  [[ "$(stat -c%i "$ts")" == "$(stat -c%i "${CUR1}/dp_bundle_6.6.0-current.tar")" ]] \
     && pass "stable hardlink same inode" || fail "stable hardlink"
 fi
 
@@ -179,49 +179,49 @@ phase2_prereq_write_zero_extra_common \
 sha1sum "${WORKDIR}/http_root/aelladeb_py3_common.tar.gz" | awk '{print $1"  /build/x"}' \
   >"${WORKDIR}/http_root/aelladeb_py3_common.tar.gz.sha1"
 sleep 1
-if ! bash "${ROOT}/scripts/download-dp-phase2-6.5.0.sh" sync; then
+if ! bash "${ROOT}/scripts/download-dp-phase2-6.6.0.sh" sync; then
   fail "second sync"
 else
   pass "second sync"
 fi
-CUR2="$(readlink -f "${DP_ROOT}/6.5.0/current")"
-PREV="$(readlink -f "${DP_ROOT}/6.5.0/previous" 2>/dev/null || true)"
+CUR2="$(readlink -f "${DP_ROOT}/6.6.0/current")"
+PREV="$(readlink -f "${DP_ROOT}/6.6.0/previous" 2>/dev/null || true)"
 [[ "$CUR2" != "$CUR1" ]] && pass "current advanced" || fail "current not advanced"
 [[ "$PREV" == "$CUR1" ]] && pass "previous preserved" || fail "previous not preserved prev=${PREV}"
 
 # Failure must not move current: break checksum then sync
-printf 'corrupt\n' >"${WORKDIR}/http_root/images-6.5.0.tar"
+printf 'corrupt\n' >"${WORKDIR}/http_root/images-6.6.0.tar"
 # leave old sha256 → mismatch
-if bash "${ROOT}/scripts/download-dp-phase2-6.5.0.sh" sync 2>/dev/null; then
+if bash "${ROOT}/scripts/download-dp-phase2-6.6.0.sh" sync 2>/dev/null; then
   fail "corrupt sync should fail"
 else
   pass "corrupt sync failed"
 fi
-CUR3="$(readlink -f "${DP_ROOT}/6.5.0/current")"
+CUR3="$(readlink -f "${DP_ROOT}/6.6.0/current")"
 [[ "$CUR3" == "$CUR2" ]] && pass "current unchanged after failure" || fail "current changed after failure"
 
 echo "[test] verify/status commands"
-bash "${ROOT}/scripts/download-dp-phase2-6.5.0.sh" verify && pass "verify" || fail "verify"
-bash "${ROOT}/scripts/download-dp-phase2-6.5.0.sh" status | grep -q 'FINAL_VERIFY=PASS' && pass "status" || fail "status"
+bash "${ROOT}/scripts/download-dp-phase2-6.6.0.sh" verify && pass "verify" || fail "verify"
+bash "${ROOT}/scripts/download-dp-phase2-6.6.0.sh" status | grep -q 'FINAL_VERIFY=PASS' && pass "status" || fail "status"
 
 echo "[test] UOM CLI wiring + bash -n"
 grep -q 'sync-dp-phase2' "${ROOT}/scripts/ubuntu-offline-mirror.sh" || fail "missing sync-dp-phase2"
 grep -q 'verify-dp-phase2' "${ROOT}/scripts/ubuntu-offline-mirror.sh" || fail "missing verify-dp-phase2"
 grep -q 'status-dp-phase2' "${ROOT}/scripts/ubuntu-offline-mirror.sh" || fail "missing status-dp-phase2"
 bash -n "${ROOT}/scripts/download-dp-phase2.sh" && pass "bash -n download" || fail "bash -n download"
-bash -n "${ROOT}/scripts/download-dp-phase2-6.5.0.sh" && pass "bash -n download wrapper" || fail "bash -n download wrapper"
+bash -n "${ROOT}/scripts/download-dp-phase2-6.6.0.sh" && pass "bash -n download wrapper" || fail "bash -n download wrapper"
 bash -n "${ROOT}/scripts/lib/dp-phase2-common.sh" && pass "bash -n common" || fail "bash -n common"
 bash -n "${ROOT}/scripts/deploy-stage-dp-phase2-client-atomic.sh" && pass "bash -n deploy" || fail "bash -n deploy"
 
-echo "[test] nginx template/generator include /dp-phase2/6.5.0/"
-grep -q 'location /dp-phase2/6.5.0/' "${ROOT}/templates/nginx.conf" && pass "template location" || fail "template location"
+echo "[test] nginx template/generator include /dp-phase2/6.6.0/"
+grep -q 'location /dp-phase2/6.6.0/' "${ROOT}/templates/nginx.conf" && pass "template location" || fail "template location"
 # shellcheck source=../lib/common.sh
 source "${ROOT}/lib/common.sh"
 # shellcheck source=../lib/config.sh
 source "${ROOT}/lib/config.sh"
 um_load_config "${ROOT}/mirror.conf"
 gen="$(um_generate_nginx_conf)"
-echo "$gen" | grep -q 'location /dp-phase2/6.5.0/' && pass "generator location" || fail "generator location"
+echo "$gen" | grep -q 'location /dp-phase2/6.6.0/' && pass "generator location" || fail "generator location"
 echo "$gen" | grep -q 'location /ubuntu/' && pass "ubuntu preserved" || fail "ubuntu"
 echo "$gen" | grep -q 'location /offline/' && pass "offline preserved" || fail "offline"
 echo "$gen" | grep -q 'location /hops/' && pass "hops preserved" || fail "hops"
@@ -231,7 +231,7 @@ if command -v shellcheck >/dev/null 2>&1; then
   shellcheck -x -e SC1090,SC1091,SC2015,SC2034,SC2119,SC2120,SC2317 \
     "${ROOT}/scripts/lib/dp-phase2-common.sh" \
     "${ROOT}/scripts/download-dp-phase2.sh" \
-    "${ROOT}/scripts/download-dp-phase2-6.5.0.sh" \
+    "${ROOT}/scripts/download-dp-phase2-6.6.0.sh" \
     && pass "shellcheck dp-phase2" || fail "shellcheck dp-phase2"
 else
   echo "  SKIP: shellcheck not installed"

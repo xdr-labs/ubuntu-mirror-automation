@@ -34,8 +34,8 @@ source "$DP2_COMMON"
 source "$ACPS"
 
 # Small deterministic fixture for the per-file remote-size-bounded resume scan.
-DP_PHASE2_VERSION=6.5.0
-TARGET_DP_VERSION=6.5.0
+DP_PHASE2_VERSION=6.6.0
+TARGET_DP_VERSION=6.6.0
 DP_PHASE2_REQUIRED_FILES=(complete.bin partial.bin missing.bin oversized.bin)
 CACHE="$(acps_cache_dir "$DP_PHASE2_VERSION")"
 mkdir -p "$CACHE" "${TMP}/bin"
@@ -77,12 +77,12 @@ pass "per-file resume bytes are bounded by final Content-Length"
 # Reproduce the observed 2026-08-08 field failure exactly:
 #   expected ACPS = 30,307,522,091
 #   completed files = 360,908,248
-#   images-6.5.0.tar.part = 15,706,435,584
+#   images-6.6.0.tar.part = 15,706,435,584
 #   physical available = 68,987,588,608
 # Old logic required 71,889,333,334 and failed. Correct future growth is
 # remaining ACPS + full bundle + 512MiB metadata + 10GiB reserve.
-cat >"$(acps_disk_preflight_state_file 6.5.0)" <<'EOF_STATE'
-ACPS_PREFLIGHT_VERSION=6.5.0
+cat >"$(acps_disk_preflight_state_file 6.6.0)" <<'EOF_STATE'
+ACPS_PREFLIGHT_VERSION=6.6.0
 ACPS_EXPECTED_BYTES=30307522091
 ACPS_COMPLETED_CACHE_BYTES=360908248
 ACPS_PARTIAL_BYTES=15706435584

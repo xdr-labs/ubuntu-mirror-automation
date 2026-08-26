@@ -14,7 +14,7 @@ source "${ROOT}/scripts/lib/dp-phase2-common.sh"
 # shellcheck source=lib/mirror_host_ip.sh
 source "${ROOT}/scripts/lib/mirror_host_ip.sh"
 
-TARGET_DP_VERSION="${TARGET_DP_VERSION:-6.5.0}"
+TARGET_DP_VERSION="${TARGET_DP_VERSION:-6.6.0}"
 MIRROR_BASE="${RESOLVED_MIRROR_BASE_URL:-${MIRROR_BASE:-}}"
 MIRROR_BASE="${MIRROR_BASE%/}"
 if [[ -z "$MIRROR_BASE" ]]; then

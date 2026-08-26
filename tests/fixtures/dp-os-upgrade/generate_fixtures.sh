@@ -92,7 +92,7 @@ doc={
   "input":{"path":"synthetic","type":"directory","collector_script_version":"1.0.2","collector_schema_version":"1.0","collector_status":"complete","collection_id":"synth","integrity_status":"ok"},
   "target":{"hostname":"$hostname","os_version":"$os_ver","os_codename":"$os_code","dp_version_raw":"${dp_ver}ubuntu1","dp_version_normalized":"$dp_ver","role":"AIO","cluster_detected":True,"worker_ips":[]},
   "requested_path":{"package_source_mode":"$mode","package_source_url":$url_py,"bringup_mode":"offline","snapshot_reference_present":True,"backup_reference_present":False,"snapshot_reference":"$snap","backup_reference":None},
-  "upgrade_plan":{"supported_start":True,"phase1_required":$phase1,"phase1_hops":json.loads('''$hops_json'''),"phase2_required":$phase2,"target_os":"24.04","target_dp":"6.5.0","recommended_action":"$action","upgrade_required":True},
+  "upgrade_plan":{"supported_start":True,"phase1_required":$phase1,"phase1_hops":json.loads('''$hops_json'''),"phase2_required":$phase2,"target_os":"24.04","target_dp":"6.6.0","recommended_action":"$action","upgrade_required":True},
   "result":{"overall_status":"$status","exit_code":$exit_code,"pass_count":10,"warning_count":$warn_count,"blocker_count":$blocker_count,"unknown_count":0},
   "checks":[]
 }

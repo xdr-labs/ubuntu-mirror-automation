@@ -8,7 +8,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=lib/dp-phase2-common.sh
 source "${ROOT_DIR}/scripts/lib/dp-phase2-common.sh"
 
-TARGET_DP_VERSION="${1:-6.5.0}"
+TARGET_DP_VERSION="${1:-6.6.0}"
 if ! [[ "$TARGET_DP_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "malformed TARGET_DP_VERSION=${TARGET_DP_VERSION}" >&2
   exit 1

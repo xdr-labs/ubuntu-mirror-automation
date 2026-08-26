@@ -45,8 +45,8 @@ export MM_CONFIG_DIR="${TMP}/config"
 export MM_STATUS_FILE="${MM_CONFIG_DIR}/status"
 export MM_LOG_FILE="${TMP}/mirror-manager.log"
 export MM_LONG_STEP_HEARTBEAT_SEC=1
-export TARGET_DP_VERSION=6.5.0
-export PHASE2_TARGET_VERSION=6.5.0
+export TARGET_DP_VERSION=6.6.0
+export PHASE2_TARGET_VERSION=6.6.0
 mkdir -p "$MM_CACHE_ROOT" "$MM_SELECTIVE_ROOT" "$MM_CLIENT_ROOT" \
   "$MM_STATE_ROOT" "$MM_CONFIG_DIR"
 : >"$MM_STATUS_FILE"
@@ -59,13 +59,13 @@ source "$DP2"
 # shellcheck source=../scripts/lib/mirror_install_engine.sh
 source "$ENGINE"
 
-dp2_set_version 6.5.0
+dp2_set_version 6.6.0
 
 make_sparse_bundle() {
-  local dest="${MM_DP_PHASE2_ROOT}/6.5.0"
-  local stable="dp_bundle_6.5.0-current.tar"
+  local dest="${MM_DP_PHASE2_ROOT}/6.6.0"
+  local stable="dp_bundle_6.6.0-current.tar"
   local work="${TMP}/phase2-work"
-  local ver="6.5.0"
+  local ver="6.6.0"
   local f
   rm -rf "$dest" "$work"
   mkdir -p "$dest" "$work"
@@ -100,8 +100,8 @@ make_sparse_bundle() {
     /usr/bin/sha256sum "$stable" >"${stable}.sha256"
   )
   cat >"${dest}/release.env" <<EOF
-TARGET_DP_VERSION=6.5.0
-PHASE2_ARTIFACT_VERSION=6.5.0
+TARGET_DP_VERSION=6.6.0
+PHASE2_ARTIFACT_VERSION=6.6.0
 STABLE_BUNDLE_NAME=${stable}
 PHASE2_BUNDLE_ENTRY_COUNT=9
 BRINGUP_PATCHED_SHA1=$(sha1sum "${work}/bringup_py3_dp_after_os_upgrade.sh" | awk '{print $1}')
@@ -113,7 +113,7 @@ EOF
 run_assess() {
   : >"$LOG"
   set +e
-  engine_assess_phase2_final 6.5.0 >>"$LOG" 2>&1
+  engine_assess_phase2_final 6.6.0 >>"$LOG" 2>&1
   ASSESS_RC=$?
   set -e
 }
@@ -160,7 +160,7 @@ grep -q 'PHASE2_BUNDLE_FULL_HASH_REQUIRED=NO' "$LOG" \
 pass "second run: CACHE=HIT fast (${ELAPSED2}s)"
 
 # Changing bundle metadata forces full hash again
-echo "PHASE2_ARTIFACT_VERSION=6.5.0" >>"${MM_DP_PHASE2_ROOT}/6.5.0/release.env"
+echo "PHASE2_ARTIFACT_VERSION=6.6.0" >>"${MM_DP_PHASE2_ROOT}/6.6.0/release.env"
 mm_status_set PHASE2_REUSE_VERIFIED_FINGERPRINT ""
 mm_status_set PHASE2_REUSE_VERIFIED_SHA256 ""
 START3="$(date +%s)"

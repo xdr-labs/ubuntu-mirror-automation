@@ -404,16 +404,16 @@ echo "$OUT_UNCHANGED" | grep -q 'CLIENT_SET_ACTION=REUSE_CURRENT' \
 
 # mm_record_download_validated must not demote CLIENT_SET_PUBLISHED
 export MM_DP_PHASE2_ROOT="${MIRROR_ROOT}/dp-phase2"
-mkdir -p "${MM_DP_PHASE2_ROOT}/6.5.0"
-printf 'phase2-fixture\n' >"${MM_DP_PHASE2_ROOT}/6.5.0/dp_bundle_6.5.0-current.tar"
+mkdir -p "${MM_DP_PHASE2_ROOT}/6.6.0"
+printf 'phase2-fixture\n' >"${MM_DP_PHASE2_ROOT}/6.6.0/dp_bundle_6.6.0-current.tar"
 (
-  cd "${MM_DP_PHASE2_ROOT}/6.5.0"
-  sha256sum dp_bundle_6.5.0-current.tar >dp_bundle_6.5.0-current.tar.sha256
+  cd "${MM_DP_PHASE2_ROOT}/6.6.0"
+  sha256sum dp_bundle_6.6.0-current.tar >dp_bundle_6.6.0-current.tar.sha256
 )
-cat >"${MM_DP_PHASE2_ROOT}/6.5.0/release.env" <<EOF
-TARGET_DP_VERSION=6.5.0
-PHASE2_ARTIFACT_VERSION=6.5.0
-STABLE_BUNDLE_NAME=dp_bundle_6.5.0-current.tar
+cat >"${MM_DP_PHASE2_ROOT}/6.6.0/release.env" <<EOF
+TARGET_DP_VERSION=6.6.0
+PHASE2_ARTIFACT_VERSION=6.6.0
+STABLE_BUNDLE_NAME=dp_bundle_6.6.0-current.tar
 EOF
 export MM_WORKFLOW_FILE="${MM_CONFIG_DIR}/dp-upgrade-workflow.state"
 # shellcheck source=../scripts/lib/mirror_workflow_state.sh

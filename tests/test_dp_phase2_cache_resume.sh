@@ -24,11 +24,11 @@ export DP_PHASE2_HEARTBEAT_SECONDS=1
 # shellcheck disable=SC1090
 source "$HELPER"
 
-TARGET_DP_VERSION="6.5.0"
-PHASE2_ARTIFACT_VERSION="6.5.0"
+TARGET_DP_VERSION="6.6.0"
+PHASE2_ARTIFACT_VERSION="6.6.0"
 set_target_bundle_files "$TARGET_DP_VERSION"
 CACHE_DIR="${WORKDIR}/cache/${TARGET_DP_VERSION}"
-mkdir -p "$CACHE_DIR" "${WORKDIR}/http/dp-phase2/6.5.0"
+mkdir -p "$CACHE_DIR" "${WORKDIR}/http/dp-phase2/6.6.0"
 
 HTTP_PORT="$(python3 - <<'PY'
 import socket
@@ -49,21 +49,21 @@ for f in "${REQUIRED_BUNDLE_FILES[@]}"; do
   esac
 done
 sha1sum "${TMPF}/aelladeb_py3_common.tar.gz" | awk '{print $1}' >"${TMPF}/aelladeb_py3_common.tar.gz.sha1"
-sha1sum "${TMPF}/aella-uvp-2404_6.5.0ubuntu1_amd64.deb" | awk '{print $1}' >"${TMPF}/aella-uvp-2404_6.5.0ubuntu1_amd64.deb.sha1"
+sha1sum "${TMPF}/aella-uvp-2404_6.6.0ubuntu1_amd64.deb" | awk '{print $1}' >"${TMPF}/aella-uvp-2404_6.6.0ubuntu1_amd64.deb.sha1"
 sha1sum "${TMPF}/bringup_py3_dp_after_os_upgrade.sh" | awk '{print $1}' >"${TMPF}/bringup_py3_dp_after_os_upgrade.sh.sha1"
-sha256sum "${TMPF}/images-6.5.0.tar" | awk '{print $1}' >"${TMPF}/images-6.5.0.tar.sha256"
+sha256sum "${TMPF}/images-6.6.0.tar" | awk '{print $1}' >"${TMPF}/images-6.6.0.tar.sha256"
 (
   cd "$TMPF"
-  tar -cf "${WORKDIR}/http/dp-phase2/6.5.0/dp_bundle_6.5.0-current.tar" "${REQUIRED_BUNDLE_FILES[@]}"
+  tar -cf "${WORKDIR}/http/dp-phase2/6.6.0/dp_bundle_6.6.0-current.tar" "${REQUIRED_BUNDLE_FILES[@]}"
 )
-sha256sum "${WORKDIR}/http/dp-phase2/6.5.0/dp_bundle_6.5.0-current.tar" \
-  | awk '{print $1"  dp_bundle_6.5.0-current.tar"}' \
-  >"${WORKDIR}/http/dp-phase2/6.5.0/dp_bundle_6.5.0-current.tar.sha256"
-cat >"${WORKDIR}/http/dp-phase2/6.5.0/release.env" <<EOF
-TARGET_DP_VERSION=6.5.0
-PHASE2_ARTIFACT_VERSION=6.5.0
-DP_PHASE2_VERSION=6.5.0
-STABLE_BUNDLE_NAME=dp_bundle_6.5.0-current.tar
+sha256sum "${WORKDIR}/http/dp-phase2/6.6.0/dp_bundle_6.6.0-current.tar" \
+  | awk '{print $1"  dp_bundle_6.6.0-current.tar"}' \
+  >"${WORKDIR}/http/dp-phase2/6.6.0/dp_bundle_6.6.0-current.tar.sha256"
+cat >"${WORKDIR}/http/dp-phase2/6.6.0/release.env" <<EOF
+TARGET_DP_VERSION=6.6.0
+PHASE2_ARTIFACT_VERSION=6.6.0
+DP_PHASE2_VERSION=6.6.0
+STABLE_BUNDLE_NAME=dp_bundle_6.6.0-current.tar
 FILE_COUNT=9
 VERIFICATION_RESULT=PASS
 EOF
@@ -139,16 +139,16 @@ ensure_verified_bundle
 
 echo "[test] checksum change invalidates cache"
 echo '0000000000000000000000000000000000000000000000000000000000000001  x' \
-  >"${WORKDIR}/http/dp-phase2/6.5.0/dp_bundle_6.5.0-current.tar.sha256"
+  >"${WORKDIR}/http/dp-phase2/6.6.0/dp_bundle_6.6.0-current.tar.sha256"
 set +e
 out="$(ensure_verified_bundle 2>&1)"
 rc=$?
 set -e
 [[ "$rc" -ne 0 ]] && pass "checksum change STOP" || fail "checksum change should fail"
 # restore good checksum
-sha256sum "${WORKDIR}/http/dp-phase2/6.5.0/dp_bundle_6.5.0-current.tar" \
-  | awk '{print $1"  dp_bundle_6.5.0-current.tar"}' \
-  >"${WORKDIR}/http/dp-phase2/6.5.0/dp_bundle_6.5.0-current.tar.sha256"
+sha256sum "${WORKDIR}/http/dp-phase2/6.6.0/dp_bundle_6.6.0-current.tar" \
+  | awk '{print $1"  dp_bundle_6.6.0-current.tar"}' \
+  >"${WORKDIR}/http/dp-phase2/6.6.0/dp_bundle_6.6.0-current.tar.sha256"
 rm -f "${CACHE_DIR}/bundle.tar" "${CACHE_DIR}/VERIFIED" "${CACHE_DIR}/bundle.tar.part"
 ensure_verified_bundle
 g3="$(body_gets)"

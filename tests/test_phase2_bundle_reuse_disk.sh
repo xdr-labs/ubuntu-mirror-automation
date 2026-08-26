@@ -38,8 +38,8 @@ export MM_MOCK_SAFETY_RESERVE_BYTES=$((10 * 1024 * 1024 * 1024))
 export OS_CORE_PACKAGE_BYTES=100
 export OS_CORE_PAYLOAD_BYTES=200
 export ACPS_EXPECTED_BYTES=300
-export TARGET_DP_VERSION=6.5.0
-export PHASE2_TARGET_VERSION=6.5.0
+export TARGET_DP_VERSION=6.6.0
+export PHASE2_TARGET_VERSION=6.6.0
 export ACPS_USERNAME=testuser
 export ACPS_PASSWORD=testpass
 export OS_CORE_R2_URL='http://127.0.0.1:9/os-core.tar'
@@ -52,7 +52,7 @@ write_cfg() {
   local mode="$1"
   cat >"$MM_CONFIG_FILE" <<EOF
 PREPARATION_MODE=${mode}
-TARGET_DP_VERSION=6.5.0
+TARGET_DP_VERSION=6.6.0
 ACPS_USERNAME=testuser
 ACPS_PASSWORD=testpass
 OS_CORE_R2_URL=http://127.0.0.1:9/os-core.tar
@@ -75,7 +75,7 @@ source "$R2"
 # shellcheck source=../scripts/lib/mirror_install_engine.sh
 source "$ENGINE"
 
-dp2_set_version 6.5.0
+dp2_set_version 6.6.0
 
 # This suite validates Phase 2 bundle REUSE / disk accounting. Client rebuild is
 # out of scope — keep a complete on-disk set and skip provenance rebuild.
@@ -99,21 +99,21 @@ make_acps_work_tree() {
   printf 'common\n' >"${work}/aelladeb_py3_common.tar.gz"
   sha1sum "${work}/aelladeb_py3_common.tar.gz" | awk '{print $1}' \
     >"${work}/aelladeb_py3_common.tar.gz.sha1"
-  printf 'uvp\n' >"${work}/aella-uvp-2404_6.5.0ubuntu1_amd64.deb"
-  sha1sum "${work}/aella-uvp-2404_6.5.0ubuntu1_amd64.deb" | awk '{print $1}' \
-    >"${work}/aella-uvp-2404_6.5.0ubuntu1_amd64.deb.sha1"
+  printf 'uvp\n' >"${work}/aella-uvp-2404_6.6.0ubuntu1_amd64.deb"
+  sha1sum "${work}/aella-uvp-2404_6.6.0ubuntu1_amd64.deb" | awk '{print $1}' \
+    >"${work}/aella-uvp-2404_6.6.0ubuntu1_amd64.deb.sha1"
   cp -f "$PATCHED_BRINGUP" "${work}/bringup_py3_dp_after_os_upgrade.sh"
   sha1sum "${work}/bringup_py3_dp_after_os_upgrade.sh" | awk '{print $1}' \
     >"${work}/bringup_py3_dp_after_os_upgrade.sh.sha1"
-  seq 1 156 >"${work}/images-6.5.0.list"
-  printf 'images-body\n' >"${work}/images-6.5.0.tar"
-  sha256sum "${work}/images-6.5.0.tar" | awk '{print $1}' >"${work}/images-6.5.0.tar.sha256"
+  seq 1 156 >"${work}/images-6.6.0.list"
+  printf 'images-body\n' >"${work}/images-6.6.0.tar"
+  sha256sum "${work}/images-6.6.0.tar" | awk '{print $1}' >"${work}/images-6.6.0.tar.sha256"
 }
 
 make_valid_final() {
   local work="${TMP}/valid-work"
-  local dest="${MM_DP_PHASE2_ROOT}/6.5.0"
-  local stable="dp_bundle_6.5.0-current.tar"
+  local dest="${MM_DP_PHASE2_ROOT}/6.6.0"
+  local stable="dp_bundle_6.6.0-current.tar"
   local patched_sha
   rm -rf "$dest" "$work"
   make_acps_work_tree "$work"
@@ -121,20 +121,20 @@ make_valid_final() {
   tar -cf "${dest}/${stable}" -C "$work" \
     aelladeb_py3_common.tar.gz \
     aelladeb_py3_common.tar.gz.sha1 \
-    aella-uvp-2404_6.5.0ubuntu1_amd64.deb \
-    aella-uvp-2404_6.5.0ubuntu1_amd64.deb.sha1 \
+    aella-uvp-2404_6.6.0ubuntu1_amd64.deb \
+    aella-uvp-2404_6.6.0ubuntu1_amd64.deb.sha1 \
     bringup_py3_dp_after_os_upgrade.sh \
     bringup_py3_dp_after_os_upgrade.sh.sha1 \
-    images-6.5.0.list \
-    images-6.5.0.tar \
-    images-6.5.0.tar.sha256
+    images-6.6.0.list \
+    images-6.6.0.tar \
+    images-6.6.0.tar.sha256
   (cd "$dest" && sha256sum "$stable" >"${stable}.sha256")
   patched_sha="$(sha1sum "$PATCHED_BRINGUP" | awk '{print $1}')"
   gen="$(python3 "${ROOT}/scripts/lib/patch_dp_phase2_bringup.py" --print-generation \
     | awk -F= '$1=="BRINGUP_PATCH_GENERATION"{print $2; exit}')"
   cat >"${dest}/release.env" <<EOF
-TARGET_DP_VERSION=6.5.0
-PHASE2_ARTIFACT_VERSION=6.5.0
+TARGET_DP_VERSION=6.6.0
+PHASE2_ARTIFACT_VERSION=6.6.0
 STABLE_BUNDLE_NAME=${stable}
 PHASE2_BUNDLE_ENTRY_COUNT=9
 BRINGUP_PATCHED_SHA1=${patched_sha}
@@ -181,7 +181,7 @@ install_create_mocks() {
       printf '1\n' >"${COUNTERS}/r2_during_phase2"
     fi
     local cache
-    cache="$(acps_cache_dir 6.5.0)"
+    cache="$(acps_cache_dir 6.6.0)"
     make_acps_work_tree "$cache"
   }
   engine_stage_acps_work_from_cache() {
@@ -258,7 +258,7 @@ mm_check_client_build_prerequisites_ready() {
 install_create_mocks
 
 engine_prepare_phase2_ubuntu_prerequisites() {
-  local extras="${MM_DP_PHASE2_ROOT}/${TARGET_DP_VERSION:-6.5.0}/extras"
+  local extras="${MM_DP_PHASE2_ROOT}/${TARGET_DP_VERSION:-6.6.0}/extras"
   mkdir -p "$extras"
   cat >"${extras}/phase2-ubuntu-prerequisites.state" <<'EOF'
 PHASE2_PREREQ_REQUIRED=NO
@@ -283,7 +283,7 @@ run_prepare_to() {
 
 # --- 1. Valid existing bundle → REUSE ---
 make_valid_final
-engine_assess_phase2_final 6.5.0
+engine_assess_phase2_final 6.6.0
 [[ "$PHASE2_EXISTING_BUNDLE" == "VALID" ]] || fail "assess should be VALID got=${PHASE2_EXISTING_BUNDLE}"
 reset_counters
 write_cfg PHASE2_ONLY
@@ -296,8 +296,8 @@ grep -q 'FINAL_PHASE2_BUNDLE_COUNT=1' "$OUT" || fail "FINAL_PHASE2_BUNDLE_COUNT 
 [[ "$(count_of acps)" -eq 0 ]] || fail "valid REUSE ACPS acquire count=$(count_of acps)"
 [[ "$(count_of place)" -eq 0 ]] || fail "valid REUSE place count=$(count_of place)"
 [[ "$(count_of r2)" -eq 0 ]] || fail "PHASE2_ONLY R2 download count=$(count_of r2)"
-find "$MM_DP_PHASE2_ROOT" -maxdepth 1 -name '6.5.0.new.*' | grep -q . && fail ".new on REUSE" || true
-find "$MM_DP_PHASE2_ROOT" -maxdepth 1 -name '6.5.0.old.*' | grep -q . && fail ".old on REUSE" || true
+find "$MM_DP_PHASE2_ROOT" -maxdepth 1 -name '6.6.0.new.*' | grep -q . && fail ".new on REUSE" || true
+find "$MM_DP_PHASE2_ROOT" -maxdepth 1 -name '6.6.0.old.*' | grep -q . && fail ".old on REUSE" || true
 pass "1 VALID existing bundle REUSE (ACPS=0 place=0 .new=0 .old=0)"
 
 # --- 6/7 FULL REUSE ---
@@ -315,7 +315,7 @@ grep -q 'R2_PACKAGE_REMOVED_AFTER_MATERIALIZE=YES' "$OUT" || fail "R2 early clea
 pass "6/7 FULL REUSE keeps OS path; Phase2 ACPS/place=0"
 
 # --- 2. Missing bundle → CREATE ---
-rm -rf "${MM_DP_PHASE2_ROOT}/6.5.0"
+rm -rf "${MM_DP_PHASE2_ROOT}/6.6.0"
 reset_counters
 write_cfg PHASE2_ONLY
 PREPARATION_MODE=PHASE2_ONLY
@@ -324,16 +324,16 @@ run_prepare_to "$OUT" || { cat "$OUT"; fail "CREATE prepare failed"; }
 grep -q 'PHASE2_BUNDLE_ACTION=CREATE' "$OUT" || fail "CREATE action missing"
 [[ "$(count_of acps)" -eq 1 ]] || fail "CREATE ACPS count=$(count_of acps)"
 [[ "$(count_of place)" -eq 1 ]] || fail "CREATE place count=$(count_of place)"
-[[ -f "${MM_DP_PHASE2_ROOT}/6.5.0/dp_bundle_6.5.0-current.tar" ]] || fail "CREATE final missing"
-find "$MM_DP_PHASE2_ROOT" -maxdepth 1 -name '6.5.0.old.*' | grep -q . && fail ".old on CREATE" || true
+[[ -f "${MM_DP_PHASE2_ROOT}/6.6.0/dp_bundle_6.6.0-current.tar" ]] || fail "CREATE final missing"
+find "$MM_DP_PHASE2_ROOT" -maxdepth 1 -name '6.6.0.old.*' | grep -q . && fail ".old on CREATE" || true
 pass "2 missing bundle CREATE atomic final count=1"
 
 # --- 3. Invalid SHA256 ---
-printf '0000000000000000000000000000000000000000000000000000000000000000  dp_bundle_6.5.0-current.tar\n' \
-  >"${MM_DP_PHASE2_ROOT}/6.5.0/dp_bundle_6.5.0-current.tar.sha256"
+printf '0000000000000000000000000000000000000000000000000000000000000000  dp_bundle_6.6.0-current.tar\n' \
+  >"${MM_DP_PHASE2_ROOT}/6.6.0/dp_bundle_6.6.0-current.tar.sha256"
 mm_status_set HTTP_DISTRIBUTION ENABLED
 reset_counters
-OLD_MARK="${MM_DP_PHASE2_ROOT}/6.5.0/SHOULD_BE_REMOVED"
+OLD_MARK="${MM_DP_PHASE2_ROOT}/6.6.0/SHOULD_BE_REMOVED"
 printf 'x\n' >"$OLD_MARK"
 OUT="${TMP}/prepare_invalid_sha.log"
 run_prepare_to "$OUT" || { cat "$OUT"; fail "INVALID sha rebuild failed"; }
@@ -342,15 +342,15 @@ grep -q 'INVALID_FINAL_REMOVED=YES' "$OUT" || fail "INVALID remove missing"
 grep -q 'PHASE2_BUNDLE_ACTION=REBUILD' "$OUT" || fail "REBUILD action missing"
 [[ ! -e "$OLD_MARK" ]] || fail "invalid final not removed before rebuild"
 [[ "$(count_of acps)" -eq 1 ]] || fail "INVALID rebuild ACPS=$(count_of acps)"
-find "$MM_DP_PHASE2_ROOT" -maxdepth 1 -name '6.5.0.old.*' | grep -q . && fail ".old on INVALID rebuild" || true
+find "$MM_DP_PHASE2_ROOT" -maxdepth 1 -name '6.6.0.old.*' | grep -q . && fail ".old on INVALID rebuild" || true
 [[ "$(mm_status_get HTTP_DISTRIBUTION)" == "DISABLED" ]] \
   || fail "HTTP not DISABLED after invalid rebuild path"
 pass "3 invalid SHA256 deletes final before ACPS; no .old"
 
 # --- 4. Invalid release.env ---
 make_valid_final
-printf 'TARGET_DP_VERSION=9.9.9\nPHASE2_ARTIFACT_VERSION=9.9.9\nSTABLE_BUNDLE_NAME=dp_bundle_6.5.0-current.tar\n' \
-  >"${MM_DP_PHASE2_ROOT}/6.5.0/release.env"
+printf 'TARGET_DP_VERSION=9.9.9\nPHASE2_ARTIFACT_VERSION=9.9.9\nSTABLE_BUNDLE_NAME=dp_bundle_6.6.0-current.tar\n' \
+  >"${MM_DP_PHASE2_ROOT}/6.6.0/release.env"
 printf "0\n" >"${COUNTERS}/acps"
 OUT="${TMP}/prepare_invalid_env.log"
 run_prepare_to "$OUT" || { cat "$OUT"; fail "invalid env rebuild failed"; }
@@ -358,15 +358,15 @@ grep -q 'INVALID_FINAL_REMOVED=YES' "$OUT" || fail "invalid env not removed"
 pass "4 invalid release.env rebuild (no old preserve)"
 
 # --- 5. Interrupted partial download resume (.part kept) ---
-PART="${MM_CACHE_ROOT}/acps/6.5.0/images-6.5.0.tar.part"
+PART="${MM_CACHE_ROOT}/acps/6.6.0/images-6.6.0.tar.part"
 mkdir -p "$(dirname "$PART")"
 printf 'partial-bytes\n' >"$PART"
-engine_remove_invalid_phase2_final 6.5.0 >/dev/null || true
+engine_remove_invalid_phase2_final 6.6.0 >/dev/null || true
 [[ -f "$PART" ]] || fail "ACPS .part must survive invalid-final cleanup"
 pass "5 partial .part retained for resume"
 
 # --- 8. R2 cleanup ordering during CREATE FULL ---
-rm -rf "${MM_DP_PHASE2_ROOT}/6.5.0"
+rm -rf "${MM_DP_PHASE2_ROOT}/6.6.0"
 reset_counters
 write_cfg FULL
 PREPARATION_MODE=FULL
@@ -395,8 +395,8 @@ pass "REUSE disk preflight Phase2 required bytes=0"
 # --- patched bringup generation mismatch invalidates reuse ---
 make_valid_final
 sed -i 's/^BRINGUP_PATCHED_SHA1=.*/BRINGUP_PATCHED_SHA1=deadbeefdeadbeefdeadbeefdeadbeefdeadbeef/' \
-  "${MM_DP_PHASE2_ROOT}/6.5.0/release.env"
-engine_assess_phase2_final 6.5.0
+  "${MM_DP_PHASE2_ROOT}/6.6.0/release.env"
+engine_assess_phase2_final 6.6.0
 [[ "$PHASE2_EXISTING_BUNDLE" == "INVALID" ]] \
   || fail "stale patched bringup SHA should be INVALID got=${PHASE2_EXISTING_BUNDLE}"
 [[ "${PHASE2_EXISTING_INVALID_REASON}" == "patched_bringup_changed" ]] \
@@ -404,18 +404,18 @@ engine_assess_phase2_final 6.5.0
 pass "stale BRINGUP_PATCHED_SHA1 invalidates existing bundle"
 
 make_valid_final
-grep -v '^BRINGUP_PATCHED_SHA1=' "${MM_DP_PHASE2_ROOT}/6.5.0/release.env" \
+grep -v '^BRINGUP_PATCHED_SHA1=' "${MM_DP_PHASE2_ROOT}/6.6.0/release.env" \
   >"${TMP}/release.env.nosha"
-mv -f "${TMP}/release.env.nosha" "${MM_DP_PHASE2_ROOT}/6.5.0/release.env"
-engine_assess_phase2_final 6.5.0
+mv -f "${TMP}/release.env.nosha" "${MM_DP_PHASE2_ROOT}/6.6.0/release.env"
+engine_assess_phase2_final 6.6.0
 [[ "$PHASE2_EXISTING_BUNDLE" == "INVALID" ]] \
   || fail "missing patched bringup SHA should be INVALID got=${PHASE2_EXISTING_BUNDLE}"
 [[ "${PHASE2_EXISTING_INVALID_REASON}" == "patched_bringup_sha_missing" ]] \
   || fail "missing SHA reason want=patched_bringup_sha_missing got=${PHASE2_EXISTING_INVALID_REASON}"
 pass "missing BRINGUP_PATCHED_SHA1 invalidates existing bundle"
 
-[[ "$PHASE2_TARGET_VERSION" == "6.5.0" ]] || fail "phase2 target"
-pass "13 workflow markers (target 6.5.0 fixed)"
+[[ "$PHASE2_TARGET_VERSION" == "6.6.0" ]] || fail "phase2 target"
+pass "13 workflow markers (target 6.6.0 fixed)"
 
 # --- 100GB-class EXISTING_FINAL local-rebuild disk preflight ---
 # Production case: ~100GB filesystem, ~30GiB existing final, no ACPS cache,
@@ -424,8 +424,8 @@ pass "13 workflow markers (target 6.5.0 fixed)"
 # existing + ACPS download + extracted source + new final.
 make_valid_final
 sed -i 's/^BRINGUP_PATCHED_SHA1=.*/BRINGUP_PATCHED_SHA1=deadbeefdeadbeefdeadbeefdeadbeefdeadbeef/' \
-  "${MM_DP_PHASE2_ROOT}/6.5.0/release.env"
-engine_assess_phase2_final 6.5.0
+  "${MM_DP_PHASE2_ROOT}/6.6.0/release.env"
+engine_assess_phase2_final 6.6.0
 [[ "$PHASE2_EXISTING_BUNDLE" == "INVALID" ]] \
   || fail "100GB stale bundle not INVALID got=${PHASE2_EXISTING_BUNDLE}"
 [[ "${PHASE2_EXISTING_INVALID_REASON}" == "patched_bringup_changed" ]] \
@@ -441,7 +441,7 @@ REAL_SOURCE=30307553280
 GIB=$((1024 * 1024 * 1024))
 METADATA_OH=$((512 * 1024 * 1024))
 SAFETY=$((10 * GIB))
-BUNDLE_100="${MM_DP_PHASE2_ROOT}/6.5.0/dp_bundle_6.5.0-current.tar"
+BUNDLE_100="${MM_DP_PHASE2_ROOT}/6.6.0/dp_bundle_6.6.0-current.tar"
 truncate -s "$REAL_SOURCE" "$BUNDLE_100"
 [[ "$(mm_file_bytes "$BUNDLE_100")" -eq "$REAL_SOURCE" ]] \
   || fail "sparse existing final size want=${REAL_SOURCE} got=$(mm_file_bytes "$BUNDLE_100")"

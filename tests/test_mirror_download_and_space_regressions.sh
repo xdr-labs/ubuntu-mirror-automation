@@ -103,7 +103,7 @@ MM_MOCK_SAFETY_RESERVE_BYTES=$((10 * 1024 * 1024 * 1024))
 OS_CORE_PACKAGE_BYTES=100
 OS_CORE_PAYLOAD_BYTES=200
 ACPS_EXPECTED_BYTES=300
-TARGET_DP_VERSION=6.5.0
+TARGET_DP_VERSION=6.6.0
 
 # shellcheck source=../scripts/lib/mirror_manager_common.sh
 source "$COMMON"
@@ -140,8 +140,8 @@ pass "PHASE2_ONLY disk estimate excludes OS stage"
 
 PREPARATION_MODE=FULL
 # Existing final must NOT double-count against current available (overhead=0).
-mkdir -p "${MM_DP_PHASE2_ROOT}/6.5.0"
-dd if=/dev/zero of="${MM_DP_PHASE2_ROOT}/6.5.0/dp_bundle_6.5.0-current.tar" bs=1 count=400 status=none
+mkdir -p "${MM_DP_PHASE2_ROOT}/6.6.0"
+dd if=/dev/zero of="${MM_DP_PHASE2_ROOT}/6.6.0/dp_bundle_6.6.0-current.tar" bs=1 count=400 status=none
 mm_calc_disk_requirements >/dev/null
 [[ "$DISK_PREFLIGHT_REPLACEMENT_OVERHEAD_BYTES" -eq 0 ]] \
   || fail "replacement overhead expected=0 actual=${DISK_PREFLIGHT_REPLACEMENT_OVERHEAD_BYTES}"
@@ -162,7 +162,7 @@ reuse_expected=$((reuse_os_stage + (10 * 1024 * 1024 * 1024)))
 [[ "$TOTAL_REQUIRED_BYTES" -eq "$reuse_expected" ]] \
   || fail "REUSE FULL estimate expected=${reuse_expected} actual=${TOTAL_REQUIRED_BYTES}"
 unset PHASE2_BUNDLE_ACTION PHASE2_REBUILD_REQUIRED
-rm -f "${MM_DP_PHASE2_ROOT}/6.5.0/dp_bundle_6.5.0-current.tar"
+rm -f "${MM_DP_PHASE2_ROOT}/6.6.0/dp_bundle_6.6.0-current.tar"
 pass "existing final reported; REUSE zeros Phase 2 stage bytes"
 
 HTTP_ROOT="${TMP}/http"
@@ -353,7 +353,7 @@ MM_STATE_DIR="${PIPE}/state"
 MM_LOG_FILE="${PIPE}/pipe.log"
 MM_DRY_RUN=0
 MM_KEEP_PHASE2_SOURCES=0
-TARGET_DP_VERSION=6.5.0
+TARGET_DP_VERSION=6.6.0
 mkdir -p "$MM_CACHE_ROOT" "$MM_SELECTIVE_ROOT" "$MM_DP_PHASE2_ROOT" "$MM_STATE_DIR"
 : >"$MM_LOG_FILE"
 
@@ -377,9 +377,9 @@ pass "existing selective tree not double-counted in future required"
 
 # Interrupted .part files are cleaned by engine helpers and must not be in the
 # permanent final layout model (preflight still uses ACPS expected sizes).
-mkdir -p "${MM_CACHE_ROOT}/r2" "${MM_CACHE_ROOT}/acps/6.5.0"
+mkdir -p "${MM_CACHE_ROOT}/r2" "${MM_CACHE_ROOT}/acps/6.6.0"
 : >"${MM_CACHE_ROOT}/r2/pkg.tar.part"
-: >"${MM_CACHE_ROOT}/acps/6.5.0/images-6.5.0.tar.part"
+: >"${MM_CACHE_ROOT}/acps/6.6.0/images-6.6.0.tar.part"
 mm_calc_disk_requirements >/dev/null
 [[ "$CURRENT_AVAILABLE_BASED_REQUIRED_BYTES" -eq "$sel_expected" ]] \
   || fail ".part presence changed available-based required"
@@ -419,19 +419,19 @@ MM_CACHE_ROOT="${PIPE}/.install-cache"
 MM_SELECTIVE_ROOT="${PIPE}/selective"
 MM_DP_PHASE2_ROOT="${PIPE}/dp-phase2"
 
-dp2_set_version 6.5.0
+dp2_set_version 6.6.0
 EMPTY_BYTES="$(du -xsb "$PIPE" | awk '{print $1}')"
-CACHE="$(acps_cache_dir 6.5.0)"
+CACHE="$(acps_cache_dir 6.6.0)"
 mkdir -p "$CACHE"
 # Representative payload: ~120MiB images tar dominates (~80%+ of source).
-dd if=/dev/urandom of="${CACHE}/images-6.5.0.tar" bs=1M count=120 status=none
-sha256sum "${CACHE}/images-6.5.0.tar" | awk '{print $1}' >"${CACHE}/images-6.5.0.tar.sha256"
+dd if=/dev/urandom of="${CACHE}/images-6.6.0.tar" bs=1M count=120 status=none
+sha256sum "${CACHE}/images-6.6.0.tar" | awk '{print $1}' >"${CACHE}/images-6.6.0.tar.sha256"
 printf 'common\n' >"${CACHE}/aelladeb_py3_common.tar.gz"
 sha1sum "${CACHE}/aelladeb_py3_common.tar.gz" | awk '{print $1}' >"${CACHE}/aelladeb_py3_common.tar.gz.sha1"
-printf 'uvp\n' >"${CACHE}/aella-uvp-2404_6.5.0ubuntu1_amd64.deb"
-sha1sum "${CACHE}/aella-uvp-2404_6.5.0ubuntu1_amd64.deb" | awk '{print $1}' \
-  >"${CACHE}/aella-uvp-2404_6.5.0ubuntu1_amd64.deb.sha1"
-seq 1 156 >"${CACHE}/images-6.5.0.list"
+printf 'uvp\n' >"${CACHE}/aella-uvp-2404_6.6.0ubuntu1_amd64.deb"
+sha1sum "${CACHE}/aella-uvp-2404_6.6.0ubuntu1_amd64.deb" | awk '{print $1}' \
+  >"${CACHE}/aella-uvp-2404_6.6.0ubuntu1_amd64.deb.sha1"
+seq 1 156 >"${CACHE}/images-6.6.0.list"
 # Place a synthetic upstream bringup; engine_verify is skipped here — we call stage+patch+place.
 printf 'SYNTHETIC_UPSTREAM_FOR_DISK_PIPE\n' >"${CACHE}/bringup_py3_dp_after_os_upgrade.sh"
 sha1sum "${CACHE}/bringup_py3_dp_after_os_upgrade.sh" | awk '{print $1}' \
@@ -443,13 +443,13 @@ printf 'FIXTURE_SOURCE_TOTAL_BYTES=%s\n' "$SOURCE_TOTAL_BYTES"
 printf 'FIXTURE_EMPTY_BYTES=%s\n' "$EMPTY_BYTES"
 printf 'FIXTURE_BEFORE_BYTES=%s\n' "$BEFORE_BYTES"
 
-CACHE_IMG_INODE="$(stat -c '%d %i %b %s' "${CACHE}/images-6.5.0.tar")"
-WORK="${MM_CACHE_ROOT}/acps-work/6.5.0/pipe-run"
+CACHE_IMG_INODE="$(stat -c '%d %i %b %s' "${CACHE}/images-6.6.0.tar")"
+WORK="${MM_CACHE_ROOT}/acps-work/6.6.0/pipe-run"
 engine_stage_acps_work_from_cache "$CACHE" "$WORK"
-WORK_IMG_INODE="$(stat -c '%d %i %b %s' "${WORK}/images-6.5.0.tar")"
+WORK_IMG_INODE="$(stat -c '%d %i %b %s' "${WORK}/images-6.6.0.tar")"
 [[ "$CACHE_IMG_INODE" == "$WORK_IMG_INODE" ]] \
   || fail "images tar not hard-linked cache=${CACHE_IMG_INODE} work=${WORK_IMG_INODE}"
-HARDLINK_COUNT="$(stat -c %h "${CACHE}/images-6.5.0.tar")"
+HARDLINK_COUNT="$(stat -c %h "${CACHE}/images-6.6.0.tar")"
 [[ "$HARDLINK_COUNT" -ge 2 ]] || fail "expected nlink>=2 after hardlink got=${HARDLINK_COUNT}"
 pass "ACPS large file hard-linked (same device/inode, nlink=${HARDLINK_COUNT})"
 
@@ -471,12 +471,12 @@ fi
 pass "staging increment bounded (${STAGE_INCREMENT} bytes)"
 
 # Seed an existing final to prove failure/preserve + replacement path.
-EXIST_DIR="${MM_DP_PHASE2_ROOT}/6.5.0"
+EXIST_DIR="${MM_DP_PHASE2_ROOT}/6.6.0"
 mkdir -p "$EXIST_DIR"
-printf 'OLD_BUNDLE_PAYLOAD_SHOULD_BE_PRESERVED_ON_FAIL\n' >"${EXIST_DIR}/dp_bundle_6.5.0-current.tar"
-printf 'deadbeef  dp_bundle_6.5.0-current.tar\n' >"${EXIST_DIR}/dp_bundle_6.5.0-current.tar.sha256"
-printf 'TARGET_DP_VERSION=6.5.0\n' >"${EXIST_DIR}/release.env"
-OLD_FP="$(sha256sum "${EXIST_DIR}/dp_bundle_6.5.0-current.tar" | awk '{print $1}')"
+printf 'OLD_BUNDLE_PAYLOAD_SHOULD_BE_PRESERVED_ON_FAIL\n' >"${EXIST_DIR}/dp_bundle_6.6.0-current.tar"
+printf 'deadbeef  dp_bundle_6.6.0-current.tar\n' >"${EXIST_DIR}/dp_bundle_6.6.0-current.tar.sha256"
+printf 'TARGET_DP_VERSION=6.6.0\n' >"${EXIST_DIR}/release.env"
+OLD_FP="$(sha256sum "${EXIST_DIR}/dp_bundle_6.6.0-current.tar" | awk '{print $1}')"
 
 # Failure path: force tar list assertion to fail by breaking required file set after stage.
 # Use a copy of work with a missing required name so place fails before publish.
@@ -487,18 +487,18 @@ for f in "${DP_PHASE2_REQUIRED_FILES[@]}"; do
   [[ -e "${WORK}/${f}" ]] || continue
   ln "${WORK}/${f}" "${BAD_WORK}/${f}" 2>/dev/null || cp -f "${WORK}/${f}" "${BAD_WORK}/${f}"
 done
-rm -f "${BAD_WORK}/images-6.5.0.list"
+rm -f "${BAD_WORK}/images-6.6.0.list"
 # mm_die/dp2_die call exit — must isolate in a subshell.
 set +e
-( engine_place_dp_phase2_final "$BAD_WORK" 6.5.0 >/dev/null 2>&1 )
+( engine_place_dp_phase2_final "$BAD_WORK" 6.6.0 >/dev/null 2>&1 )
 PLACE_FAIL_RC=$?
 set -e
 [[ "$PLACE_FAIL_RC" -ne 0 ]] || fail "place should fail with incomplete work dir"
-[[ -f "${EXIST_DIR}/dp_bundle_6.5.0-current.tar" ]] || fail "existing final missing after failed place"
-NEW_FP="$(sha256sum "${EXIST_DIR}/dp_bundle_6.5.0-current.tar" | awk '{print $1}')"
+[[ -f "${EXIST_DIR}/dp_bundle_6.6.0-current.tar" ]] || fail "existing final missing after failed place"
+NEW_FP="$(sha256sum "${EXIST_DIR}/dp_bundle_6.6.0-current.tar" | awk '{print $1}')"
 [[ "$NEW_FP" == "$OLD_FP" ]] || fail "existing final changed after failed place"
 # No orphan .new dirs left for this version
-find "$MM_DP_PHASE2_ROOT" -maxdepth 1 -name '6.5.0.new.*' | grep -q . \
+find "$MM_DP_PHASE2_ROOT" -maxdepth 1 -name '6.6.0.new.*' | grep -q . \
   && fail "orphan .new dir remains after failed place" || true
 pass "failure preserves existing final artifact"
 
@@ -522,7 +522,7 @@ BUNDLE_NEW_INODE_BEFORE=""
 # We still verify cleanup timing separately after a second run with default cleanup.
 MM_KEEP_PHASE2_SOURCES=1
 set +e
-PLACE_OUT="$(engine_place_dp_phase2_final "$WORK" 6.5.0 2>&1)"
+PLACE_OUT="$(engine_place_dp_phase2_final "$WORK" 6.6.0 2>&1)"
 PLACE_RC=$?
 set -e
 kill "$PEAK_PID" 2>/dev/null || true
@@ -534,7 +534,7 @@ grep -q 'DP_PHASE2_ATOMIC_PUBLISH=PASS' <<<"$PLACE_OUT" \
   || grep -q 'DP_PHASE2_ATOMIC_PUBLISH=PASS' "$MM_LOG_FILE" \
   || fail "atomic publish marker missing"
 
-FINAL_BUNDLE="${EXIST_DIR}/dp_bundle_6.5.0-current.tar"
+FINAL_BUNDLE="${EXIST_DIR}/dp_bundle_6.6.0-current.tar"
 [[ -f "$FINAL_BUNDLE" ]] || fail "final bundle missing"
 BUNDLE_OUTPUT_BYTES="$(stat -c%s "$FINAL_BUNDLE")"
 FINAL_ENTRY_COUNT="$(tar -tf "$FINAL_BUNDLE" | wc -l | tr -d ' ')"
@@ -542,7 +542,7 @@ FINAL_ENTRY_COUNT="$(tar -tf "$FINAL_BUNDLE" | wc -l | tr -d ' ')"
 dp2_verify_sha256_pair "$FINAL_BUNDLE" "${FINAL_BUNDLE}.sha256"
 NEW_FP2="$(sha256sum "$FINAL_BUNDLE" | awk '{print $1}')"
 [[ "$NEW_FP2" != "$OLD_FP" ]] || fail "final bundle was not replaced on success"
-find "$MM_DP_PHASE2_ROOT" -maxdepth 1 -name '6.5.0.old.*' | grep -q . \
+find "$MM_DP_PHASE2_ROOT" -maxdepth 1 -name '6.6.0.old.*' | grep -q . \
   && fail ".old generation created on publish" || true
 pass "direct final-directory bundle publish (entries=9, no .old)"
 
@@ -572,7 +572,7 @@ awk -v m="$MULT" 'BEGIN{ exit !(m >= 1.80 && m <= 2.40) }' \
   || fail "peak multiplier ${MULT} outside 1.80-2.40 (increment=${PEAK_INCREMENT} source=${SOURCE_TOTAL_BYTES})"
 pass "fixture peak multiplier ${MULT} in 1.80-2.40"
 
-# Project real 6.5.0 sizes for FULL vs PHASE2_ONLY (GB decimal ≠ GiB).
+# Project real 6.6.0 sizes for FULL vs PHASE2_ONLY (GB decimal ≠ GiB).
 REAL_SOURCE=30307553280
 REAL_BUNDLE=30307553280
 REAL_R2=3562915840

@@ -13,11 +13,11 @@ source "${ROOT}/scripts/ubuntu-offline-mirror-entrypoint.sh"
 MM_SELECTIVE_ROOT="$TMP/selective"
 MM_CLIENT_ROOT="$TMP/client"
 MM_DP_PHASE2_ROOT="$TMP/dp-phase2"
-PHASE2_TARGET_VERSION=6.5.0
-TARGET_DP_VERSION=6.5.0
+PHASE2_TARGET_VERSION=6.6.0
+TARGET_DP_VERSION=6.6.0
 PREPARATION_MODE=FULL
-MM_WF_PHASE2_RELEASE="$MM_DP_PHASE2_ROOT/6.5.0/release.env"
-MM_WF_PHASE2_BUNDLE="$MM_DP_PHASE2_ROOT/6.5.0/dp_bundle_6.5.0-current.tar"
+MM_WF_PHASE2_RELEASE="$MM_DP_PHASE2_ROOT/6.6.0/release.env"
+MM_WF_PHASE2_BUNDLE="$MM_DP_PHASE2_ROOT/6.6.0/dp_bundle_6.6.0-current.tar"
 MM_WF_PHASE2_SIDECAR="$MM_WF_PHASE2_BUNDLE.sha256"
 mkdir -p "$MM_SELECTIVE_ROOT/ubuntu" "$MM_CLIENT_ROOT" "$(dirname "$MM_WF_PHASE2_RELEASE")"
 : >"$MM_WF_PHASE2_RELEASE"
@@ -119,7 +119,7 @@ source "${ROOT}/scripts/lib/mirror_workflow_state.sh"
 PREPARATION_MODE=FULL
 MIRROR_SERVER_IP=192.0.2.10
 MIRROR_HTTP_URL=http://192.0.2.10
-PHASE2_TARGET_VERSION=6.5.0
+PHASE2_TARGET_VERSION=6.6.0
 mm_wf_mark_configured >/dev/null
 GEN="$(mm_wf_get WORKFLOW_GENERATION_ID)"
 mm_wf_mark_prepared "os-${GEN}" "p2-${GEN}" >/dev/null

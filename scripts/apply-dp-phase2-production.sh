@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-shot production apply for DP Phase 2 6.5.0 on the mirror server.
+# One-shot production apply for DP Phase 2 6.6.0 on the mirror server.
 # Requires root. Preserves selective READY / current. Does NOT run DP bringup.
 #
 # Recommended interactive invocation (does NOT exit the SSH login shell):
@@ -47,7 +47,7 @@ fi
 mkdir -p /usr/local/lib/ubuntu-mirror/lib /usr/local/lib/ubuntu-mirror/templates
 install -m 0644 "${ROOT}/scripts/lib/dp-phase2-common.sh" /usr/local/lib/ubuntu-mirror/lib/dp-phase2-common.sh
 install -m 0755 "${ROOT}/scripts/download-dp-phase2.sh" /usr/local/lib/ubuntu-mirror/download-dp-phase2.sh
-install -m 0755 "${ROOT}/scripts/download-dp-phase2-6.5.0.sh" /usr/local/lib/ubuntu-mirror/download-dp-phase2-6.5.0.sh
+install -m 0755 "${ROOT}/scripts/download-dp-phase2-6.6.0.sh" /usr/local/lib/ubuntu-mirror/download-dp-phase2-6.6.0.sh
 install -m 0755 "${ROOT}/scripts/deploy-stage-dp-phase2-client-atomic.sh" /usr/local/lib/ubuntu-mirror/deploy-stage-dp-phase2-client-atomic.sh
 install -m 0644 "${ROOT}/templates/nginx.conf" /usr/local/lib/ubuntu-mirror/templates/nginx.conf
 install -m 0755 "${ROOT}/scripts/ubuntu-offline-mirror.sh" /usr/local/sbin/ubuntu-offline-mirror.sh
@@ -69,22 +69,22 @@ echo "DP_PHASE2_SYNC_START log=${LOG}"
 export DP_PHASE2_LOG_FILE="$LOG"
 export DP_PHASE2_ROOT="/var/spool/apt-mirror/dp-phase2"
 export DP_PHASE2_MIN_FREE_GIB="70"
-bash "${ROOT}/scripts/download-dp-phase2.sh" --version 6.5.0 sync 2>&1 | tee -a "$LOG"
+bash "${ROOT}/scripts/download-dp-phase2.sh" --version 6.6.0 sync 2>&1 | tee -a "$LOG"
 
 # 6) Verify + status
-bash "${ROOT}/scripts/download-dp-phase2.sh" --version 6.5.0 verify | tee -a "$LOG"
-bash "${ROOT}/scripts/download-dp-phase2.sh" --version 6.5.0 status | tee -a "$LOG"
+bash "${ROOT}/scripts/download-dp-phase2.sh" --version 6.6.0 verify | tee -a "$LOG"
+bash "${ROOT}/scripts/download-dp-phase2.sh" --version 6.6.0 status | tee -a "$LOG"
 
 # 7) HTTP checks (no full re-download of 30GiB)
 for url in \
-  "http://127.0.0.1/dp-phase2/6.5.0/" \
-  "http://127.0.0.1/dp-phase2/6.5.0/release.env" \
-  "http://127.0.0.1/dp-phase2/6.5.0/manifest.sha256" \
-  "http://127.0.0.1/dp-phase2/6.5.0/dp_bundle_6.5.0-current.tar.sha256" \
+  "http://127.0.0.1/dp-phase2/6.6.0/" \
+  "http://127.0.0.1/dp-phase2/6.6.0/release.env" \
+  "http://127.0.0.1/dp-phase2/6.6.0/manifest.sha256" \
+  "http://127.0.0.1/dp-phase2/6.6.0/dp_bundle_6.6.0-current.tar.sha256" \
   "http://127.0.0.1/client/stage-dp-phase2.sh" \
   "http://127.0.0.1/client/stage-dp-phase2.sh.sha256" \
-  "http://127.0.0.1/client/stage-dp-phase2-6.5.0.sh" \
-  "http://127.0.0.1/client/stage-dp-phase2-6.5.0.sh.sha256"
+  "http://127.0.0.1/client/stage-dp-phase2-6.6.0.sh" \
+  "http://127.0.0.1/client/stage-dp-phase2-6.6.0.sh.sha256"
 do
   code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 "$url" || echo 000)"
   echo "HTTP_CHECK url=${url} code=${code}"
@@ -92,9 +92,9 @@ do
 done
 
 # HEAD + Content-Length for stable bundle
-local_bundle="/var/spool/apt-mirror/dp-phase2/6.5.0/current/dp_bundle_6.5.0-current.tar"
+local_bundle="/var/spool/apt-mirror/dp-phase2/6.6.0/current/dp_bundle_6.6.0-current.tar"
 local_size="$(stat -c%s "$local_bundle")"
-hdr="$(curl -sS -I --max-time 60 "http://127.0.0.1/dp-phase2/6.5.0/dp_bundle_6.5.0-current.tar" | tr -d '\r')"
+hdr="$(curl -sS -I --max-time 60 "http://127.0.0.1/dp-phase2/6.6.0/dp_bundle_6.6.0-current.tar" | tr -d '\r')"
 echo "$hdr" | grep -qi 'HTTP/.*200\|HTTP/.*206' || { echo "BUNDLE_HEAD=FAIL" >&2; exit 1; }
 remote_len="$(echo "$hdr" | awk -F': ' 'tolower($1)=="content-length"{print $2; exit}')"
 echo "BUNDLE_SIZE_LOCAL=${local_size}"
@@ -103,7 +103,7 @@ echo "BUNDLE_SIZE_HTTP=${remote_len}"
 
 # Range request smoke
 range_code="$(curl -sS -o /dev/null -w '%{http_code}' -H 'Range: bytes=0-1023' --max-time 30 \
-  "http://127.0.0.1/dp-phase2/6.5.0/dp_bundle_6.5.0-current.tar" || echo 000)"
+  "http://127.0.0.1/dp-phase2/6.6.0/dp_bundle_6.6.0-current.tar" || echo 000)"
 echo "RANGE_CHECK code=${range_code}"
 [[ "$range_code" == "206" || "$range_code" == "200" ]] || { echo "RANGE_CHECK=FAIL" >&2; exit 1; }
 

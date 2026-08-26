@@ -300,7 +300,7 @@ grep -q 'passwordbox' "$INST" && pass "passwordbox present" || fail "passwordbox
 export MM_CONFIG_FILE="${WORKDIR}/gui.conf"
 export MM_STATUS_FILE="${WORKDIR}/status.env"
 export MM_WORKFLOW_FILE="${WORKDIR}/dp-upgrade-workflow.state"
-TARGET_DP_VERSION=6.5.0
+TARGET_DP_VERSION=6.6.0
 ACPS_USERNAME=demo
 ACPS_PASSWORD='s3cret-value'
 mm_save_gui_config
@@ -327,22 +327,22 @@ HTTP_ROOT="${WORKDIR}/http-layout"
 mkdir -p "${HTTP_ROOT}/selective/hops/jammy-to-noble/ubuntu" \
   "${HTTP_ROOT}/selective/shared/offline" \
   "${HTTP_ROOT}/client" \
-  "${HTTP_ROOT}/dp-phase2/6.5.0"
+  "${HTTP_ROOT}/dp-phase2/6.6.0"
 ln -sfn hops/jammy-to-noble/ubuntu "${HTTP_ROOT}/selective/ubuntu"
 seed_complete_client_http_set "${HTTP_ROOT}/client" "http://192.0.2.10" "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-printf 'TARGET_DP_VERSION=6.5.0\n' >"${HTTP_ROOT}/dp-phase2/6.5.0/release.env"
-mkdir -p "${HTTP_ROOT}/dp-phase2/6.5.0/extras"
-cat >"${HTTP_ROOT}/dp-phase2/6.5.0/extras/phase2-ubuntu-prerequisites.state" <<'EOF'
+printf 'TARGET_DP_VERSION=6.6.0\n' >"${HTTP_ROOT}/dp-phase2/6.6.0/release.env"
+mkdir -p "${HTTP_ROOT}/dp-phase2/6.6.0/extras"
+cat >"${HTTP_ROOT}/dp-phase2/6.6.0/extras/phase2-ubuntu-prerequisites.state" <<'EOF'
 PHASE2_PREREQ_REQUIRED=NO
 PHASE2_PREREQ_PACKAGE_COUNT=0
 PHASE2_PREREQ_BUILD=PASS
 PHASE2_PREREQ_PUBLICATION=PASS
 EOF
 # Minimal valid-looking bundle + sha for layout check
-tar -cf "${HTTP_ROOT}/dp-phase2/6.5.0/dp_bundle_6.5.0-current.tar" -C "${HTTP_ROOT}/dp-phase2/6.5.0" release.env
+tar -cf "${HTTP_ROOT}/dp-phase2/6.6.0/dp_bundle_6.6.0-current.tar" -C "${HTTP_ROOT}/dp-phase2/6.6.0" release.env
 (
-  cd "${HTTP_ROOT}/dp-phase2/6.5.0"
-  sha256sum dp_bundle_6.5.0-current.tar >dp_bundle_6.5.0-current.tar.sha256
+  cd "${HTTP_ROOT}/dp-phase2/6.6.0"
+  sha256sum dp_bundle_6.6.0-current.tar >dp_bundle_6.6.0-current.tar.sha256
 )
 
 export MM_MIRROR_ROOT="$HTTP_ROOT"
@@ -357,17 +357,17 @@ export MM_NGINX_SITE_AVAIL="${WORKDIR}/nginx/sites-available/apt-mirror"
 export MM_NGINX_SITE_ENABLED="${WORKDIR}/nginx/sites-enabled/apt-mirror"
 export MM_NGINX_BIN="${MOCKBIN}/nginx"
 export MM_SYSTEMCTL_BIN="${MOCKBIN}/systemctl"
-export TARGET_DP_VERSION=6.5.0
+export TARGET_DP_VERSION=6.6.0
 export MM_STATUS_FILE="${WORKDIR}/http-status.env"
 export MM_CONFIG_FILE="${WORKDIR}/http-gui.conf"
 export MM_WORKFLOW_FILE="${WORKDIR}/http-workflow.state"
 mkdir -p "$(dirname "$MM_NGINX_SITE_AVAIL")" "$(dirname "$MM_NGINX_SITE_ENABLED")"
 # Exercise default-site removal under the same sites-enabled as $site_en
 ln -sfn /dev/null "${WORKDIR}/nginx/sites-enabled/default"
-printf 'TARGET_DP_VERSION=6.5.0\nACPS_USERNAME=u\nACPS_PASSWORD=p\nMIRROR_SERVER_IP=192.0.2.10\nMIRROR_HTTP_URL=http://192.0.2.10\n' >"$MM_CONFIG_FILE"
+printf 'TARGET_DP_VERSION=6.6.0\nACPS_USERNAME=u\nACPS_PASSWORD=p\nMIRROR_SERVER_IP=192.0.2.10\nMIRROR_HTTP_URL=http://192.0.2.10\n' >"$MM_CONFIG_FILE"
 chmod 600 "$MM_CONFIG_FILE"
 export SKIP_MIRROR_HOST_VALIDATE=1
-dp2_set_version 6.5.0
+dp2_set_version 6.6.0
 
 # Run enable in a subprocess so mm_die cannot abort this test script.
 run_enable_http() {
@@ -387,7 +387,7 @@ run_enable_http() {
     MM_SYSTEMCTL_BIN="$MM_SYSTEMCTL_BIN" \
     MM_NGINX_TEST_FAIL="${MM_NGINX_TEST_FAIL:-0}" \
     MM_HTTP_VALIDATE_MOCK_FAIL="${MM_HTTP_VALIDATE_MOCK_FAIL:-0}" \
-    TARGET_DP_VERSION=6.5.0 \
+    TARGET_DP_VERSION=6.6.0 \
     MM_STATUS_FILE="$MM_STATUS_FILE" \
     MM_CONFIG_FILE="$MM_CONFIG_FILE" \
     MM_WORKFLOW_FILE="$MM_WORKFLOW_FILE" \
@@ -399,7 +399,7 @@ run_enable_http() {
       source "'"${ROOT}"'/scripts/lib/acps_acquire.sh"
       source "'"${ROOT}"'/scripts/lib/r2_acquire.sh"
       source "'"${ROOT}"'/scripts/lib/mirror_install_engine.sh"
-      dp2_set_version 6.5.0
+      dp2_set_version 6.6.0
       engine_enable_http_distribution
     '
 }

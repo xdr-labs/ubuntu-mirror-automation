@@ -390,12 +390,13 @@ def apply_install_python3_gates(text):
         '    # Ubuntu 24.04 ships python3.12 -- no tarball needed\n',
         'install_python3_prereq_call',
     )
-    text = replace_exactly_once(
-        text,
+    dpkg_prev = (
         '        if ls "$apt_tmpdir"/*.deb &>/dev/null; then\n'
         '            dpkg -i --force-depends "$apt_tmpdir"/*.deb 2>&1 | tail -10 || \\\n'
         '                log "WARNING: some debs in py3-apt-packages.tar.gz failed (continuing)"\n'
-        '        fi\n',
+        '        fi\n'
+    )
+    dpkg_prev_new = (
         '        if ls "$apt_tmpdir"/*.deb &>/dev/null; then\n'
         '            local py3_apt_rc=0\n'
         '            set +e\n'
@@ -412,7 +413,70 @@ def apply_install_python3_gates(text):
         '            else\n'
         '                log "ACPS_PY3_APT_DPKG=PASS force_depends=NO"\n'
         '            fi\n'
-        '        fi\n',
+        '        fi\n'
+    )
+    # 3af369: AELDEV-74638 filters out debs that would downgrade a newer base
+    # package, then still bulk-installs with --force-depends as the success
+    # path. Keep the filter; do not treat force-depends as success.
+    dpkg_3af369 = (
+        '        if ls "$apt_tmpdir"/*.deb &>/dev/null; then\n'
+        '            local deb pkg dver iver install_list=()\n'
+        '            for deb in "$apt_tmpdir"/*.deb; do\n'
+        '                pkg=$(dpkg-deb -f "$deb" Package 2>/dev/null)\n'
+        '                dver=$(dpkg-deb -f "$deb" Version 2>/dev/null)\n'
+        '                [[ -z "$pkg" || -z "$dver" ]] && continue\n'
+        '                iver=$(dpkg-query -W -f \'${Version}\' "$pkg" 2>/dev/null || true)\n'
+        '                if [[ -n "$iver" ]] && dpkg --compare-versions "$iver" gt "$dver"; then\n'
+        '                    continue    # installed is newer -- never downgrade\n'
+        '                fi\n'
+        '                install_list+=("$deb")\n'
+        '            done\n'
+        '            log "py3-apt-packages: installing ${#install_list[@]} of $(ls "$apt_tmpdir"/*.deb | wc -l) debs (rest already current)"\n'
+        '            if [[ ${#install_list[@]} -gt 0 ]]; then\n'
+        '                dpkg -i --force-depends "${install_list[@]}" 2>&1 | tail -10 || \\\n'
+        '                    log "WARNING: some debs in py3-apt-packages.tar.gz failed (continuing)"\n'
+        '            fi\n'
+        '        fi\n'
+    )
+    dpkg_3af369_new = (
+        '        if ls "$apt_tmpdir"/*.deb &>/dev/null; then\n'
+        '            local deb pkg dver iver install_list=()\n'
+        '            for deb in "$apt_tmpdir"/*.deb; do\n'
+        '                pkg=$(dpkg-deb -f "$deb" Package 2>/dev/null)\n'
+        '                dver=$(dpkg-deb -f "$deb" Version 2>/dev/null)\n'
+        '                [[ -z "$pkg" || -z "$dver" ]] && continue\n'
+        '                iver=$(dpkg-query -W -f \'${Version}\' "$pkg" 2>/dev/null || true)\n'
+        '                if [[ -n "$iver" ]] && dpkg --compare-versions "$iver" gt "$dver"; then\n'
+        '                    continue    # installed is newer -- never downgrade\n'
+        '                fi\n'
+        '                install_list+=("$deb")\n'
+        '            done\n'
+        '            log "py3-apt-packages: installing ${#install_list[@]} of $(ls "$apt_tmpdir"/*.deb | wc -l) debs (rest already current)"\n'
+        '            if [[ ${#install_list[@]} -gt 0 ]]; then\n'
+        '                local py3_apt_rc=0\n'
+        '                set +e\n'
+        '                dpkg -i "${install_list[@]}"\n'
+        '                py3_apt_rc=$?\n'
+        '                set -e\n'
+        '                if [[ "$py3_apt_rc" -ne 0 ]]; then\n'
+        '                    log "ACPS_PY3_APT_DPKG=RETRY force_depends=YES (intra-bundle unpack order)"\n'
+        '                    set +e\n'
+        '                    dpkg -i --force-depends "${install_list[@]}"\n'
+        '                    py3_apt_rc=$?\n'
+        '                    set -e\n'
+        '                    log "ACPS_PY3_APT_FORCE_DEPENDS=USED rc=${py3_apt_rc} (not a success criterion)"\n'
+        '                else\n'
+        '                    log "ACPS_PY3_APT_DPKG=PASS force_depends=NO"\n'
+        '                fi\n'
+        '            fi\n'
+        '        fi\n'
+    )
+    text = replace_exactly_one_mapping(
+        text,
+        (
+            (dpkg_prev, dpkg_prev_new),
+            (dpkg_3af369, dpkg_3af369_new),
+        ),
         'install_python3_dpkg_no_force_depends',
     )
     text = replace_exactly_once(
@@ -426,12 +490,7 @@ def apply_install_python3_gates(text):
         '        if apt-get install -y -qq python3-pip python3-wheel python3-setuptools 2>&1 | tail -3; then\n',
         'install_python3_no_apt_fix_broken',
     )
-    text = replace_exactly_once(
-        text,
-        '    python3 -c "import psutil" 2>/dev/null || log "WARNING: psutil still missing"\n'
-        '    python3 -c "import pymongo" 2>/dev/null || log "WARNING: pymongo still missing"\n'
-        '    python3 -c "import flask" 2>/dev/null || log "WARNING: flask still missing"\n'
-        '    log "Python 3 system packages installed"\n',
+    hard_gates_body = (
         '    # dpkg --audit and --force-depends are not sufficient. The APT graph\n'
         '    # must be consistent before Python runtime validation or worker orch.\n'
         '    validate_apt_dependency_graph python3_apt || \\\n'
@@ -440,9 +499,64 @@ def apply_install_python3_gates(text):
         '    # installed" is not sufficient — Flask without click still fails to import.\n'
         '    validate_critical_python_runtime || \\\n'
         '        die "CRITICAL_PYTHON_RUNTIME=FAIL Phase 2 cannot continue"\n'
+    )
+    hard_prev = (
         '    python3 -c "import psutil" 2>/dev/null || log "WARNING: psutil still missing"\n'
         '    python3 -c "import pymongo" 2>/dev/null || log "WARNING: pymongo still missing"\n'
-        '    log "Python 3 system packages installed"\n',
+        '    python3 -c "import flask" 2>/dev/null || log "WARNING: flask still missing"\n'
+        '    log "Python 3 system packages installed"\n'
+    )
+    hard_prev_new = (
+        hard_gates_body
+        + '    python3 -c "import psutil" 2>/dev/null || log "WARNING: psutil still missing"\n'
+        + '    python3 -c "import pymongo" 2>/dev/null || log "WARNING: pymongo still missing"\n'
+        + '    log "Python 3 system packages installed"\n'
+    )
+    # 3af369 names flask/click as critical but still continues on WARNING.
+    # Project policy is fail-closed; keep the upstream diagnostic text as
+    # comments only after the hard gates.
+    hard_3af369 = (
+        '    # Verify critical imports.\n'
+        '    # AELDEV-74638: aella_da_restful imports flask (which imports click); if\n'
+        '    # these cannot import, the master never binds :8003 and worker joins\n'
+        '    # stall silently. Do NOT abort here -- the rest of the master bringup is\n'
+        '    # independent of flask and completing it leaves the operator ONE small\n'
+        '    # manual fix + rerun (exactly how the field recovery worked). Instead:\n'
+        '    # name precisely what is missing + how to fix, and let the\n'
+        '    # pre-orchestration :8003 gate stop things before any worker can hang.\n'
+        '    MISSING_PY3_PKGS=""\n'
+        '    local mod\n'
+        '    for mod in psutil pymongo flask click; do\n'
+        '        python3 -c "import $mod" 2>/dev/null || MISSING_PY3_PKGS="$MISSING_PY3_PKGS python3-$mod"\n'
+        '    done\n'
+        '    if [[ -n "$MISSING_PY3_PKGS" ]]; then\n'
+        '        log "WARNING: critical python3 module(s) failed to import; missing apt packages:$MISSING_PY3_PKGS"\n'
+        '        log "  py3-apt-packages.tar.gz in the staged bundle is incomplete (AELDEV-74638;"\n'
+        '        log "  bundles published before 2026-08 lack python3-click and others)."\n'
+        '        log "  Bringup will continue, but aella_da_restful cannot start without flask,"\n'
+        '        log "  so :8003 will not bind and worker joins would hang. FIX (then rerun or"\n'
+        '        log "  let the pre-worker gate instructions guide you):"\n'
+        '        log "    online:    apt-get install -y$MISSING_PY3_PKGS"\n'
+        '        log "    dark-site: on any internet Ubuntu 24.04 host: apt-get download$MISSING_PY3_PKGS"\n'
+        '        log "               copy the .debs to this DP and run: dpkg -i <debs>"\n'
+        '    else\n'
+        '        log "Python 3 system packages installed (psutil pymongo flask click OK)"\n'
+        '    fi\n'
+    )
+    hard_3af369_new = (
+        '    # AELDEV-74638 named flask/click as critical, but warning-and-continue\n'
+        '    # is not sufficient for dark-site Phase 2. APT graph + runtime imports\n'
+        '    # are hard gates; wait_for_da_restful_8003 remains as an additional\n'
+        '    # listen check before worker orchestration.\n'
+        + hard_gates_body
+        + '    log "Python 3 system packages installed (psutil pymongo flask click OK)"\n'
+    )
+    text = replace_exactly_one_mapping(
+        text,
+        (
+            (hard_prev, hard_prev_new),
+            (hard_3af369, hard_3af369_new),
+        ),
         'install_python3_hard_gates',
     )
     return text
@@ -860,6 +974,15 @@ def apply_main_orchestration_gates(text):
         '        orchestrate_workers\n'
         '    fi\n'
     )
+    main_3af369 = (
+        '    # Phase 13: Orchestrate workers + standby (master only, after self is fully up)\n'
+        '    if [[ "$WORKER_MODE" != "true" && ( -n "$WORKER_IPS" || -n "$STANDBY_IPS" ) ]]; then\n'
+        '        # AELDEV-74638: verify the join-token endpoint is actually up before\n'
+        '        # spending 60+ min orchestrating workers that would hang on it.\n'
+        '        wait_for_da_restful_8003\n'
+        '        orchestrate_workers\n'
+        '    fi\n'
+    )
     gates_body = (
         '        if ! validate_critical_python_runtime; then\n'
         '            die "CRITICAL_PYTHON_RUNTIME=FAIL before worker orchestration"\n'
@@ -890,6 +1013,18 @@ def apply_main_orchestration_gates(text):
                 '    # Token API / TCP 8003 must be functionally ready first. systemctl is-active\n'
                 '    # aellad is not sufficient — the failed lab had aellad active with 8003 down.\n'
                 '    if [[ "$WORKER_MODE" != "true" && ( -n "$WORKER_IPS" || -n "$STANDBY_IPS" ) ]]; then\n'
+                + gates_body +
+                '    fi\n',
+            ),
+            (
+                main_3af369,
+                '    # Phase 13: Orchestrate workers + standby (master only, after self is fully up).\n'
+                '    # Token API / TCP 8003 must be functionally ready first. systemctl is-active\n'
+                '    # aellad is not sufficient — the failed lab had aellad active with 8003 down.\n'
+                '    if [[ "$WORKER_MODE" != "true" && ( -n "$WORKER_IPS" || -n "$STANDBY_IPS" ) ]]; then\n'
+                '        # AELDEV-74638: listen-gate on :8003 (upstream). Project layer still\n'
+                '        # requires a functional token API, not TCP listen alone.\n'
+                '        wait_for_da_restful_8003\n'
                 + gates_body +
                 '    fi\n',
             ),
@@ -1008,6 +1143,16 @@ def apply_dp_resume_notices(text):
         '    echo "========================================================================"\n'
         '}\n'
     )
+    resume_3af369 = (
+        '    log ""\n'
+        '    log "========================================================================"\n'
+        '    log "  Bringup complete: $(date)"\n'
+        '    log "  Role: $ROLE"\n'
+        '    log "  Version: $VERSION"\n'
+        '    log "  Log: $LOG_FILE"\n'
+        '    log "========================================================================"\n'
+        '}\n'
+    )
     text = replace_exactly_one_mapping(
         text,
         (
@@ -1025,6 +1170,18 @@ def apply_dp_resume_notices(text):
                 '    echo "  Version: $VERSION"\n'
                 '    echo "  Log: $LOG_FILE"\n'
                 '    echo "========================================================================"\n'
+                '    emit_dp_resume_post_complete_notice\n'
+                '}\n',
+            ),
+            (
+                resume_3af369,
+                '    log ""\n'
+                '    log "========================================================================"\n'
+                '    log "  Bringup complete: $(date)"\n'
+                '    log "  Role: $ROLE"\n'
+                '    log "  Version: $VERSION"\n'
+                '    log "  Log: $LOG_FILE"\n'
+                '    log "========================================================================"\n'
                 '    emit_dp_resume_post_complete_notice\n'
                 '}\n',
             ),
@@ -1131,6 +1288,8 @@ def main(argv=None):
     )
     parser.add_argument('--print-generation', action='store_true',
                         help='Print BRINGUP_PATCH_GENERATION and exit')
+    parser.add_argument('--validate', action='store_true',
+                        help='Apply transforms in memory and report BRINGUP_PATCH_COMPAT')
     parser.add_argument('--upstream', help='Immutable ACPS upstream bringup path')
     parser.add_argument('--output', help='Generated patched bringup path')
     args = parser.parse_args(argv)
@@ -1140,8 +1299,39 @@ def main(argv=None):
         print('BRINGUP_PATCH_GENERATION=%s' % generation)
         return 0
 
+    if args.validate:
+        if not args.upstream:
+            parser.error('--upstream is required with --validate')
+        try:
+            upstream = _read_text(args.upstream)
+            upstream_sha = _sha1_text(upstream)
+            print('BRINGUP_PATCH_GENERATION=%s' % generation)
+            print('BRINGUP_UPSTREAM_SHA1=%s' % upstream_sha)
+            patched, applied = patch_bringup_text(upstream)
+            patched_sha = _sha1_text(patched)
+            if patched_sha == upstream_sha:
+                raise PatchCompatError('generation', 'patched_sha_equals_upstream_sha')
+            print('PATCHED_BRINGUP_GENERATION=PASS')
+            print('BRINGUP_PATCHED_SHA1=%s' % patched_sha)
+            print('BRINGUP_PATCH_COMPAT=PASS')
+            print('PATCH_TRANSFORM_COUNT=%d' % len(applied))
+            return 0
+        except PatchCompatError as exc:
+            print('BRINGUP_PATCH_GENERATION=%s' % generation)
+            print('BRINGUP_PATCH_COMPAT=FAIL')
+            print('PATCHED_BRINGUP_GENERATION=FAIL')
+            print('BRINGUP_PATCH_COMPAT_FAIL_TRANSFORM=%s' % exc.transform)
+            print('BRINGUP_PATCH_COMPAT_FAIL_REASON=%s' % exc.reason)
+            return 2
+        except Exception as exc:
+            print('BRINGUP_PATCH_GENERATION=%s' % generation)
+            print('BRINGUP_PATCH_COMPAT=FAIL')
+            print('PATCHED_BRINGUP_GENERATION=FAIL')
+            print('BRINGUP_PATCH_COMPAT_FAIL_REASON=%s' % exc)
+            return 1
+
     if not args.upstream or not args.output:
-        parser.error('--upstream and --output are required unless --print-generation')
+        parser.error('--upstream and --output are required unless --print-generation or --validate')
 
     upstream_abs = os.path.abspath(args.upstream)
     output_abs = os.path.abspath(args.output)

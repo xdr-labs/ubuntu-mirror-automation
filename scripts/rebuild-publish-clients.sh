@@ -380,7 +380,7 @@ if [[ -f "$LOCAL_SIGNING_FINGERPRINT_FILE" ]]; then
 fi
 
 # Phase 2 helpers from source tree (not host-pinned hop clients).
-for f in stage-dp-phase2.sh stage-dp-phase2-6.5.0.sh bringup_py3_dp_lifecycle.sh; do
+for f in stage-dp-phase2.sh stage-dp-phase2-6.6.0.sh stage-dp-phase2-6.5.0.sh bringup_py3_dp_lifecycle.sh; do
   if [[ -f "${ROOT}/client/${f}" ]]; then
     install -m 0755 "${ROOT}/client/${f}" "${STAGE_DIR}/${f}"
     ( cd "$STAGE_DIR" && sha256sum "$f" >"${f}.sha256" )
@@ -447,7 +447,7 @@ if ! phase2_helper_generation_write "$STAGE_DIR" >/dev/null; then
 fi
 evidence_echo "PHASE2_HELPER_GENERATION=PASS"
 if ! phase2_upgrade_wrapper_write "$STAGE_DIR" "$MIRROR_BASE" \
-  "${PHASE2_TARGET_VERSION:-6.5.0}" >/dev/null
+  "${PHASE2_TARGET_VERSION:-6.6.0}" >/dev/null
 then
   fail_build "" "phase2_upgrade_wrapper" "PHASE2_UPGRADE_WRAPPER=FAIL" 1
 fi
@@ -470,7 +470,7 @@ CLIENT_SET_GENERATION_ID=${CLIENT_BUILD_GENERATION_ID}
 CLIENT_SIGNING_FINGERPRINT=${LOCAL_KEY_FINGERPRINT}
 MIRROR_HTTP_URL=${MIRROR_BASE}
 PREPARATION_MODE=${PREPARATION_MODE:-FULL}
-PHASE2_TARGET_VERSION=${PHASE2_TARGET_VERSION:-6.5.0}
+PHASE2_TARGET_VERSION=${PHASE2_TARGET_VERSION:-6.6.0}
 CLIENT_PROVENANCE_SCHEMA_VERSION=${CLIENT_PROVENANCE_SCHEMA_VERSION}
 CLIENT_BUILD_INPUT_SHA256=${CLIENT_BUILD_INPUT_SHA256}
 CLIENT_SOURCE_REVISION=${CLIENT_SOURCE_REVISION}

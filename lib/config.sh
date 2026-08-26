@@ -112,12 +112,17 @@ um_load_config() {
   PROJECTED_SIZE_GIB_FULL="${PROJECTED_SIZE_GIB_FULL:-700}"
   MIN_FREE_GIB="${MIN_FREE_GIB:-350}"
 
-  # DP Phase 2 (6.5.0) defaults — credentials never loaded from conf
+  # DP Phase 2 (6.6.0) is immutable. Stale mirror.conf (e.g. 6.5.0) must not
+  # restore a previous production target.
   DP_PHASE2_ENABLED="${DP_PHASE2_ENABLED:-true}"
-  DP_PHASE2_VERSION="${DP_PHASE2_VERSION:-6.5.0}"
+  if [[ "${MM_ALLOW_TARGET_OVERRIDE:-0}" == "1" ]]; then
+    DP_PHASE2_VERSION="${DP_PHASE2_VERSION:-6.6.0}"
+  else
+    DP_PHASE2_VERSION="6.6.0"
+  fi
   DP_PHASE2_ROOT="${DP_PHASE2_ROOT:-${BASE_PATH}/dp-phase2}"
   DP_PHASE2_MIN_FREE_GIB="${DP_PHASE2_MIN_FREE_GIB:-70}"
-  DP_PHASE2_PUBLIC_PATH="${DP_PHASE2_PUBLIC_PATH:-/dp-phase2/${DP_PHASE2_VERSION}/}"
+  DP_PHASE2_PUBLIC_PATH="/dp-phase2/${DP_PHASE2_VERSION}/"
   DP_PHASE2_KEEP_PREVIOUS="${DP_PHASE2_KEEP_PREVIOUS:-true}"
 
   um_apply_mirror_mode_components
@@ -267,21 +272,17 @@ um_migrate_selective_runtime_config() {
   um_conf_set_key "$conf" "PROJECTED_SIZE_GIB_SELECTIVE" "$projected" || return 1
   um_conf_set_key "$conf" "SUITE_SUFFIXES" "${SUITE_SUFFIXES:-updates security backports}" || return 1
 
-  # DP Phase 2 keys (no secrets). Preserve operator overrides when already set.
+  # Always pin production Phase 2 target; do not preserve stale 6.5.0.
+  um_conf_set_key "$conf" "DP_PHASE2_VERSION" "6.6.0" || return 1
+  um_conf_set_key "$conf" "DP_PHASE2_PUBLIC_PATH" "/dp-phase2/6.6.0/" || return 1
   if ! grep -qE '^DP_PHASE2_ENABLED=' "$conf" 2>/dev/null; then
     um_conf_set_key "$conf" "DP_PHASE2_ENABLED" "${DP_PHASE2_ENABLED:-true}" || return 1
-  fi
-  if ! grep -qE '^DP_PHASE2_VERSION=' "$conf" 2>/dev/null; then
-    um_conf_set_key "$conf" "DP_PHASE2_VERSION" "${DP_PHASE2_VERSION:-6.5.0}" || return 1
   fi
   if ! grep -qE '^DP_PHASE2_ROOT=' "$conf" 2>/dev/null; then
     um_conf_set_key "$conf" "DP_PHASE2_ROOT" "${DP_PHASE2_ROOT:-${base_path}/dp-phase2}" || return 1
   fi
   if ! grep -qE '^DP_PHASE2_MIN_FREE_GIB=' "$conf" 2>/dev/null; then
     um_conf_set_key "$conf" "DP_PHASE2_MIN_FREE_GIB" "${DP_PHASE2_MIN_FREE_GIB:-70}" || return 1
-  fi
-  if ! grep -qE '^DP_PHASE2_PUBLIC_PATH=' "$conf" 2>/dev/null; then
-    um_conf_set_key "$conf" "DP_PHASE2_PUBLIC_PATH" "${DP_PHASE2_PUBLIC_PATH:-/dp-phase2/6.5.0/}" || return 1
   fi
   if ! grep -qE '^DP_PHASE2_KEEP_PREVIOUS=' "$conf" 2>/dev/null; then
     um_conf_set_key "$conf" "DP_PHASE2_KEEP_PREVIOUS" "${DP_PHASE2_KEEP_PREVIOUS:-true}" || return 1
@@ -525,6 +526,10 @@ um_migrate_selective_runtime() {
     um_migrate_atomic_install "${src_root}/scripts/lib/dp-phase2-common.sh" \
       "${libdir}/lib/dp-phase2-common.sh" 0644 || rc=1
   fi
+  if [[ -f "${src_root}/scripts/download-dp-phase2-6.6.0.sh" ]]; then
+    um_migrate_atomic_install "${src_root}/scripts/download-dp-phase2-6.6.0.sh" \
+      "${libdir}/download-dp-phase2-6.6.0.sh" 0755 || rc=1
+  fi
   if [[ -f "${src_root}/scripts/download-dp-phase2-6.5.0.sh" ]]; then
     um_migrate_atomic_install "${src_root}/scripts/download-dp-phase2-6.5.0.sh" \
       "${libdir}/download-dp-phase2-6.5.0.sh" 0755 || rc=1
@@ -739,14 +744,14 @@ um_generate_nginx_conf() {
   fi
 
   local dp2_root="${DP_PHASE2_ROOT:-${BASE_PATH}/dp-phase2}"
-  local dp2_ver="${DP_PHASE2_VERSION:-6.5.0}"
+  local dp2_ver="${DP_PHASE2_VERSION:-6.6.0}"
   local dp2_final="${dp2_root}/${dp2_ver}"
 
   if tpl="$(um_nginx_template_path)"; then
     rendered="$(sed \
       -e "s|/var/spool/apt-mirror/selective|${sel_root}|g" \
       -e "s|/var/spool/apt-mirror/client|${BASE_PATH}/client|g" \
-      -e "s|/var/spool/apt-mirror/dp-phase2/6.5.0|${dp2_final}|g" \
+      -e "s|/var/spool/apt-mirror/dp-phase2/6.6.0|${dp2_final}|g" \
       -e "s|/var/spool/apt-mirror/dp-phase2|${dp2_root}|g" \
       -e "s|listen 80 default_server;|listen ${MIRROR_PORT}${default_flag};|g" \
       -e "s|listen \\[::\\]:80 default_server;|listen [::]:${MIRROR_PORT}${default_flag};|g" \

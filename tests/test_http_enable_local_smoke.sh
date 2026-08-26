@@ -34,7 +34,7 @@ source "${ROOT}/scripts/lib/http_publication_permissions.sh"
 
 SPOOL="${WORKDIR}/spool"
 CLIENT="${SPOOL}/client"
-DP="${SPOOL}/dp-phase2/6.5.0"
+DP="${SPOOL}/dp-phase2/6.6.0"
 PORT=18765
 mkdir -p "$CLIENT" "$DP" "${WORKDIR}/logs" "${WORKDIR}/tmp" "${WORKDIR}/body"
 
@@ -42,12 +42,12 @@ mkdir -p "$CLIENT" "$DP" "${WORKDIR}/logs" "${WORKDIR}/tmp" "${WORKDIR}/body"
 printf '#!/bin/bash\necho stage\n' >"${CLIENT}/stage-dp-phase2.sh"
 chmod 0755 "${CLIENT}/stage-dp-phase2.sh"
 ( cd "$CLIENT" && sha256sum stage-dp-phase2.sh >stage-dp-phase2.sh.sha256 )
-printf 'TARGET_DP_VERSION=6.5.0\n' >"${DP}/release.env"
-printf 'bundle-bytes\n' >"${DP}/dp_bundle_6.5.0-current.tar"
-( cd "$DP" && sha256sum dp_bundle_6.5.0-current.tar >dp_bundle_6.5.0-current.tar.sha256 )
+printf 'TARGET_DP_VERSION=6.6.0\n' >"${DP}/release.env"
+printf 'bundle-bytes\n' >"${DP}/dp_bundle_6.6.0-current.tar"
+( cd "$DP" && sha256sum dp_bundle_6.6.0-current.tar >dp_bundle_6.6.0-current.tar.sha256 )
 chmod 0755 "$SPOOL" "$CLIENT" "$(dirname "$DP")" "$DP"
 chmod 0644 "${CLIENT}/stage-dp-phase2.sh.sha256" "${DP}/release.env" \
-  "${DP}/dp_bundle_6.5.0-current.tar" "${DP}/dp_bundle_6.5.0-current.tar.sha256"
+  "${DP}/dp_bundle_6.6.0-current.tar" "${DP}/dp_bundle_6.6.0-current.tar.sha256"
 
 write_nginx_conf() {
   local use_www_data="${1:-0}"
@@ -75,7 +75,7 @@ http {
       alias ${CLIENT}/;
       autoindex off;
     }
-    location /dp-phase2/6.5.0/ {
+    location /dp-phase2/6.6.0/ {
       alias ${DP}/;
       autoindex off;
     }
@@ -173,8 +173,8 @@ probe() {
 
 probe "/client/stage-dp-phase2.sh"
 probe "/client/stage-dp-phase2.sh.sha256"
-probe "/dp-phase2/6.5.0/release.env"
-probe "/dp-phase2/6.5.0/dp_bundle_6.5.0-current.tar.sha256"
+probe "/dp-phase2/6.6.0/release.env"
+probe "/dp-phase2/6.6.0/dp_bundle_6.6.0-current.tar.sha256"
 
 if mm_verify_http_access_as_nginx_user "${CLIENT}/stage-dp-phase2.sh"; then
   pass "HTTP_LOCAL_SMOKE nginx-user read PASS"

@@ -4,7 +4,8 @@
 #
 # Publishes:
 #   stage-dp-phase2.sh (+ .sha256)
-#   stage-dp-phase2-6.5.0.sh (+ .sha256)
+#   stage-dp-phase2-6.6.0.sh (+ .sha256)
+#   stage-dp-phase2-6.5.0.sh (+ .sha256, retired fail-closed shim)
 #   bringup_py3_dp_lifecycle.sh (+ .sha256)
 #   lib/dp-offline-source-product-version.sh
 #   lib/dp-phase2-operation-progress.sh
@@ -34,6 +35,7 @@ fi
 # Relative paths under client/. Scripts with sidecars first; lib helpers follow.
 PHASE2_CLIENT_UNIT_SCRIPTS=(
   stage-dp-phase2.sh
+  stage-dp-phase2-6.6.0.sh
   stage-dp-phase2-6.5.0.sh
   bringup_py3_dp_lifecycle.sh
 )
@@ -187,7 +189,7 @@ if [[ -z "$MIRROR_BASE" ]]; then
   exit 1
 fi
 phase2_upgrade_wrapper_write "$DEST_ROOT" "$MIRROR_BASE" \
-  "${TARGET_DP_VERSION:-6.5.0}" >/dev/null
+  "${TARGET_DP_VERSION:-6.6.0}" >/dev/null
 echo "ARTIFACT_SHA256=$(sha256sum "${DEST_ROOT}/upgrade-phase2.sh" | awk '{print $1}') name=upgrade-phase2.sh"
 
 # Leave no partial temp files behind.

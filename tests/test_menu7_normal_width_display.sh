@@ -78,7 +78,7 @@ chmod +x "${CLIENT_ROOT}/stage-dp-phase2.sh" "${CLIENT_ROOT}/bringup_py3_dp_life
 # shellcheck source=/dev/null
 source "${ROOT}/scripts/lib/phase2_helper_generation.sh"
 phase2_helper_generation_write "$CLIENT_ROOT" >/dev/null
-phase2_upgrade_wrapper_write "$CLIENT_ROOT" "$MIRROR" "6.5.0" >/dev/null
+phase2_upgrade_wrapper_write "$CLIENT_ROOT" "$MIRROR" "6.6.0" >/dev/null
 P2_SHA="$(sha256sum "${CLIENT_ROOT}/upgrade-phase2.sh" | awk '{print $1}')"
 bash -n "${CLIENT_ROOT}/upgrade-phase2.sh"
 
@@ -106,7 +106,7 @@ EOF_HOP
   done
   cat <<EOF_PHASE2
 
-STEP 6 — STAGE DP 6.5.0 FILES
+STEP 6 — STAGE DP 6.6.0 FILES
 
 CLUSTER:
 Run STEP 6 on the DL master, every DL worker,
@@ -261,7 +261,7 @@ done
   PATH="${TMP}/fakebin:${PATH}" bash "$phase2_block" >"${TMP}/phase2.out"
 )
 grep -q '^PHASE2_HELPER_FETCH_E2E=PASS$' "${TMP}/phase2.out"
-grep -q -- '--target-version 6.5.0 --same-version-recovery --mirror-url' "${TMP}/phase2.out"
+grep -q -- '--target-version 6.6.0 --same-version-recovery --mirror-url' "${TMP}/phase2.out"
 
 # Inner wrapper still pins the generation manifest SHA256.
 GEN_SHA="$(phase2_helper_generation_sha256 "${CLIENT_ROOT}/phase2-helper-generation.manifest")"

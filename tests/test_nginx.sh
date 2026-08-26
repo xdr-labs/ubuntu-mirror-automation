@@ -23,11 +23,11 @@ grep -q 'location /ubuntu-security/' "${TMPDIR_TEST}/apt-mirror.conf" || FAIL=1
 grep -q 'location /offline/' "${TMPDIR_TEST}/apt-mirror.conf" || FAIL=1
 grep -q 'location /hops/' "${TMPDIR_TEST}/apt-mirror.conf" || FAIL=1
 grep -q 'location /client/' "${TMPDIR_TEST}/apt-mirror.conf" || FAIL=1
-grep -q 'location /dp-phase2/6.5.0/' "${TMPDIR_TEST}/apt-mirror.conf" || FAIL=1
-grep -q 'dp-phase2/6.5.0/' "${TMPDIR_TEST}/apt-mirror.conf" || FAIL=1
+grep -q 'location /dp-phase2/6.6.0/' "${TMPDIR_TEST}/apt-mirror.conf" || FAIL=1
+grep -q 'dp-phase2/6.6.0/' "${TMPDIR_TEST}/apt-mirror.conf" || FAIL=1
 grep -q 'selective/' "${TMPDIR_TEST}/apt-mirror.conf" || FAIL=1
 # Direct paths only — no current/previous generation aliases
-if grep -qE 'selective/current|dp-phase2/6\.5\.0/current' "${TMPDIR_TEST}/apt-mirror.conf"; then
+if grep -qE 'selective/current|dp-phase2/6\.[0-9]+\.[0-9]+/current' "${TMPDIR_TEST}/apt-mirror.conf"; then
   echo "  FAIL: generated nginx still uses current symlink paths"
   FAIL=1
 fi
@@ -47,9 +47,9 @@ grep -q 'location /ubuntu/' "${ROOT}/templates/nginx.conf" || FAIL=1
 grep -q 'location /ubuntu-security/' "${ROOT}/templates/nginx.conf" || FAIL=1
 grep -q 'location /offline/' "${ROOT}/templates/nginx.conf" || FAIL=1
 grep -q 'location /client/' "${ROOT}/templates/nginx.conf" || FAIL=1
-grep -q 'location /dp-phase2/6.5.0/' "${ROOT}/templates/nginx.conf" || FAIL=1
+grep -q 'location /dp-phase2/6.6.0/' "${ROOT}/templates/nginx.conf" || FAIL=1
 grep -q 'root /var/spool/apt-mirror/selective;' "${ROOT}/templates/nginx.conf" || FAIL=1
-if grep -qE 'selective/current|dp-phase2/6\.5\.0/current' "${ROOT}/templates/nginx.conf"; then
+if grep -qE 'selective/current|dp-phase2/6\.[0-9]+\.[0-9]+/current' "${ROOT}/templates/nginx.conf"; then
   echo "  FAIL: nginx template still uses current symlink paths"
   FAIL=1
 fi

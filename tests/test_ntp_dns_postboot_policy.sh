@@ -332,7 +332,7 @@ ntpq_skew_bad=$'     remote           refid      st t when poll reach   delay   
 ) && pass "time: no internal NTP alone does not fail" || fail "time: no internal only"
 
 (
-  TARGET_DP_VERSION=6.5.0
+  TARGET_DP_VERSION=6.6.0
   BRINGUP_SCRIPT=/home/aella/bringup_py3_dp_after_os_upgrade.sh
   TIME_READINESS=PASS_WITH_WARNING
   BRINGUP_READY=YES
@@ -350,7 +350,7 @@ ntpq_skew_bad=$'     remote           refid      st t when poll reach   delay   
   SOURCE_DP_VERSION_RAW=6.4.0
   SOURCE_DP_VERSION_ORIGIN=test
   SOURCE_DP_VERSION_CHECK=PASS
-  PHASE2_ARTIFACT_VERSION=6.5.0
+  PHASE2_ARTIFACT_VERSION=6.6.0
   TARGET_VERSION_COMPATIBILITY=PASS
   AELLA_UID=1000
   AELLA_PRIMARY_GID=1000

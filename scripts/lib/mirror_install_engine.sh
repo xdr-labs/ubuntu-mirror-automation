@@ -158,7 +158,7 @@ engine_ensure_phase2_helpers() {
   mkdir -p "$dest"
   stage="$(mktemp -d "${dest}.helpers.XXXXXX")"
   chmod 0755 "$stage"
-  for f in stage-dp-phase2.sh stage-dp-phase2-6.5.0.sh bringup_py3_dp_lifecycle.sh; do
+  for f in stage-dp-phase2.sh stage-dp-phase2-6.6.0.sh stage-dp-phase2-6.5.0.sh bringup_py3_dp_lifecycle.sh; do
     if [[ -f "${root}/client/${f}" ]]; then
       install -m 0755 "${root}/client/${f}" "${stage}/${f}"
       ( cd "$stage" && sha256sum "$f" >"${f}.sha256" )
@@ -191,7 +191,7 @@ engine_ensure_phase2_helpers() {
     return 1
   fi
   if ! phase2_upgrade_wrapper_write "$stage" "$mirror" \
-    "${PHASE2_TARGET_VERSION:-6.5.0}" >/dev/null
+    "${PHASE2_TARGET_VERSION:-6.6.0}" >/dev/null
   then
     rm -rf "$stage"
     return 1
@@ -959,7 +959,8 @@ engine_bringup_reference_sha1() {
 
 # Coarse layout checks before the deterministic patcher runs. Missing =>
 # incompatible upstream (fatal), distinct from reference-SHA drift (warning).
-# Fine-grained exact-anchor checks live in patch_dp_phase2_bringup.py.
+# This is NOT BRINGUP_PATCH_COMPAT. Fine-grained exact-anchor checks and
+# BRINGUP_PATCH_COMPAT live only in patch_dp_phase2_bringup.py.
 engine_bringup_required_upstream_anchors() {
   printf '%s\n' \
     'parse_args()' \
@@ -1113,8 +1114,47 @@ engine_verify_acps_upstream_bringup() {
   fi
 
   engine_bringup_require_bash_n "$upstream_file" "UPSTREAM_BRINGUP_SYNTAX"
+
+  # Single source of truth: the production patch generator. Layout markers
+  # are extra evidence, not a substitute PASS that can disagree with --validate.
+  engine_bringup_validate_patcher "$upstream_file"
   mapfile -t anchors < <(engine_bringup_required_upstream_anchors)
-  engine_bringup_require_markers "$upstream_file" "BRINGUP_PATCH_COMPAT" "${anchors[@]}"
+  engine_bringup_require_markers "$upstream_file" "UPSTREAM_LAYOUT_ANCHORS" "${anchors[@]}"
+}
+
+# Run the deterministic patcher in-memory. Never prints BRINGUP_PATCH_COMPAT=PASS
+# unless the generator applied every transform and produced a distinct result.
+engine_bringup_validate_patcher() {
+  local upstream_file="$1"
+  local py out rc=0
+  local fail_transform="" fail_reason=""
+  py="$(engine_bringup_patcher_py)"
+  [[ -f "$py" ]] || mm_die "BRINGUP_PATCHER_MISSING path=${py}"
+  engine_bringup_require_nonempty "$upstream_file"
+  set +e
+  out="$(python3 "$py" --validate --upstream "$upstream_file" 2>&1)"
+  rc=$?
+  set -e
+  printf '%s\n' "$out"
+  if [[ "$rc" -ne 0 ]]; then
+    fail_transform="$(printf '%s\n' "$out" | awk 'sub(/^BRINGUP_PATCH_COMPAT_FAIL_TRANSFORM=/, "") { print; exit }')"
+    fail_reason="$(printf '%s\n' "$out" | awk 'sub(/^BRINGUP_PATCH_COMPAT_FAIL_REASON=/, "") { print; exit }')"
+    mm_error "BRINGUP_PATCH_COMPAT=FAIL"
+    mm_error "PATCHED_BRINGUP_GENERATION=FAIL"
+    if [[ -n "$fail_transform" ]]; then
+      mm_error "BRINGUP_PATCH_COMPAT_FAIL_TRANSFORM=${fail_transform}"
+    fi
+    if [[ -n "$fail_reason" ]]; then
+      mm_error "BRINGUP_PATCH_COMPAT_FAIL_REASON=${fail_reason}"
+    fi
+    engine_bringup_fail "BRINGUP_PATCH_COMPAT"
+  fi
+  printf '%s\n' "$out" | grep -qx 'BRINGUP_PATCH_COMPAT=PASS' \
+    || engine_bringup_fail "BRINGUP_PATCH_COMPAT"
+  printf '%s\n' "$out" | grep -qx 'PATCHED_BRINGUP_GENERATION=PASS' \
+    || engine_bringup_fail "PATCHED_BRINGUP_GENERATION"
+  mm_ok "BRINGUP_PATCH_COMPAT=PASS"
+  mm_ok "PATCHED_BRINGUP_GENERATION=PASS"
 }
 
 # Generate FINAL_BRINGUP = current ACPS upstream + project patch layer.
@@ -1420,7 +1460,7 @@ engine_phase2_verify_existing_final_integrity() {
 }
 
 engine_assess_phase2_final() {
-  # Sets PHASE2_EXISTING_BUNDLE=VALID|INVALID|ABSENT for the fixed 6.5.0 final.
+  # Sets PHASE2_EXISTING_BUNDLE=VALID|INVALID|ABSENT for the fixed Phase 2 final.
   # PHASE2_EXISTING_INVALID_REASON names the INVALID cause. Stale patched
   # bringup still runs outer SHA256 + tar validation so a verified final can
   # be the local rebuild source without another ACPS download.
@@ -1650,6 +1690,7 @@ engine_place_dp_phase2_final() {
   local dest_tmp="${dest}.new.$$"
   local list_count stable actual work_upstream
   local expected_input_bytes=0 f sz publish_start publish_elapsed
+  local uvp_sha1 images_sha256
   rm -rf "$dest_tmp"
   # Stray .old from older builds — never used as rollback in this workflow.
   find "${MM_DP_PHASE2_ROOT}" -maxdepth 1 -name "${ver}.old.*" -exec rm -rf {} + 2>/dev/null || true
@@ -1747,6 +1788,10 @@ engine_place_dp_phase2_final() {
   local created_at commit
   created_at="$(mm_ts)"
   commit="$(git -C "${MM_PROJECT_ROOT}" rev-parse HEAD 2>/dev/null || echo UNKNOWN)"
+  uvp_sha1="$(dp2_read_hash_field "${files_src}/aella-uvp-2404_${ver}ubuntu1_amd64.deb.sha1")"
+  images_sha256="$(dp2_read_hash_field "${files_src}/images-${ver}.tar.sha256")"
+  dp2_validate_sha1_hex "$uvp_sha1" || { rm -rf "$dest_tmp"; mm_die "UVP_SHA1=FAIL"; }
+  dp2_validate_sha256_hex "$images_sha256" || { rm -rf "$dest_tmp"; mm_die "IMAGES_SHA256=FAIL"; }
   cat >"${dest_tmp}/release.env" <<EOF
 TARGET_DP_VERSION=${ver}
 PHASE2_ARTIFACT_VERSION=${ver}
@@ -1763,6 +1808,10 @@ SOURCE_REPOSITORY_COMMIT=${commit}
 BRINGUP_UPSTREAM_SHA1=${BRINGUP_UPSTREAM_SHA1:-}
 BRINGUP_PATCH_GENERATION=${BRINGUP_PATCH_GENERATION:-}
 BRINGUP_PATCHED_SHA1=${BRINGUP_PATCHED_SHA1}
+UVP_VERSION=${ver}
+UVP_SHA1=${uvp_sha1}
+IMAGES_VERSION=${ver}
+IMAGES_SHA256=${images_sha256}
 ACPS_SOURCE_VERSION=${ver}
 EOF
   if dp2_release_has_secret "${dest_tmp}/release.env"; then
@@ -2498,7 +2547,7 @@ engine_render_nginx_site() {
   # Render nginx site for the single final selective + Phase 2 layout.
   local tpl=""
   local base="${MM_MIRROR_ROOT}"
-  local ver="${TARGET_DP_VERSION:-6.5.0}"
+  local ver="${TARGET_DP_VERSION:-6.6.0}"
   local candidates=(
     "${MM_PROJECT_ROOT}/templates/nginx.conf"
     "${MM_PROJECT_ROOT}/../templates/nginx.conf"
@@ -2515,10 +2564,10 @@ engine_render_nginx_site() {
   sed \
     -e "s|/var/spool/apt-mirror/selective|${base}/selective|g" \
     -e "s|/var/spool/apt-mirror/client|${base}/client|g" \
-    -e "s|/var/spool/apt-mirror/dp-phase2/6.5.0|${base}/dp-phase2/${ver}|g" \
+    -e "s|/var/spool/apt-mirror/dp-phase2/6.6.0|${base}/dp-phase2/${ver}|g" \
     -e "s|/var/spool/apt-mirror/dp-phase2|${base}/dp-phase2|g" \
-    -e "s|/dp-phase2/6.5.0/|/dp-phase2/${ver}/|g" \
-    -e "s|location = /dp-phase2/6.5.0|location = /dp-phase2/${ver}|g" \
+    -e "s|/dp-phase2/6.6.0/|/dp-phase2/${ver}/|g" \
+    -e "s|location = /dp-phase2/6.6.0|location = /dp-phase2/${ver}|g" \
     "$tpl"
 }
 

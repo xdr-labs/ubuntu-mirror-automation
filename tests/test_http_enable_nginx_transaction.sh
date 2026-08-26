@@ -23,7 +23,7 @@ export MM_SKIP_HTTP_VALIDATE=1
 export MM_SKIP_BUNDLE_SHA256=1
 export MM_SKIP_NGINX_APPLY=0
 export SKIP_MIRROR_HOST_VALIDATE=1
-export TARGET_DP_VERSION=6.5.0
+export TARGET_DP_VERSION=6.6.0
 mkdir -p "$MM_CONFIG_DIR" "$MM_LOG_DIR" "$MM_STATE_ROOT"
 
 # shellcheck source=../scripts/lib/mirror_manager_common.sh
@@ -101,34 +101,34 @@ HTTP_ROOT="${WORKDIR}/http-layout"
 mkdir -p "${HTTP_ROOT}/selective/hops/jammy-to-noble/ubuntu" \
   "${HTTP_ROOT}/selective/shared/offline" \
   "${HTTP_ROOT}/client" \
-  "${HTTP_ROOT}/dp-phase2/6.5.0"
+  "${HTTP_ROOT}/dp-phase2/6.6.0"
 ln -sfn hops/jammy-to-noble/ubuntu "${HTTP_ROOT}/selective/ubuntu"
 seed_complete_client_http_set "${HTTP_ROOT}/client" "http://192.0.2.10" "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-printf 'TARGET_DP_VERSION=6.5.0\n' >"${HTTP_ROOT}/dp-phase2/6.5.0/release.env"
-mkdir -p "${HTTP_ROOT}/dp-phase2/6.5.0/extras"
-cat >"${HTTP_ROOT}/dp-phase2/6.5.0/extras/phase2-ubuntu-prerequisites.state" <<'EOF'
+printf 'TARGET_DP_VERSION=6.6.0\n' >"${HTTP_ROOT}/dp-phase2/6.6.0/release.env"
+mkdir -p "${HTTP_ROOT}/dp-phase2/6.6.0/extras"
+cat >"${HTTP_ROOT}/dp-phase2/6.6.0/extras/phase2-ubuntu-prerequisites.state" <<'EOF'
 PHASE2_PREREQ_REQUIRED=NO
 PHASE2_PREREQ_PACKAGE_COUNT=0
 PHASE2_PREREQ_BUILD=PASS
 PHASE2_PREREQ_PUBLICATION=PASS
 EOF
-tar -cf "${HTTP_ROOT}/dp-phase2/6.5.0/dp_bundle_6.5.0-current.tar" \
-  -C "${HTTP_ROOT}/dp-phase2/6.5.0" release.env
+tar -cf "${HTTP_ROOT}/dp-phase2/6.6.0/dp_bundle_6.6.0-current.tar" \
+  -C "${HTTP_ROOT}/dp-phase2/6.6.0" release.env
 (
-  cd "${HTTP_ROOT}/dp-phase2/6.5.0"
-  sha256sum dp_bundle_6.5.0-current.tar >dp_bundle_6.5.0-current.tar.sha256
+  cd "${HTTP_ROOT}/dp-phase2/6.6.0"
+  sha256sum dp_bundle_6.6.0-current.tar >dp_bundle_6.6.0-current.tar.sha256
 )
 printf 'prepared-artifact\n' >"${HTTP_ROOT}/client/.prepared-marker"
-printf 'prepared-bundle\n' >"${HTTP_ROOT}/dp-phase2/6.5.0/.prepared-marker"
+printf 'prepared-bundle\n' >"${HTTP_ROOT}/dp-phase2/6.6.0/.prepared-marker"
 
 export MM_MIRROR_ROOT="$HTTP_ROOT"
 export MM_SELECTIVE_ROOT="${HTTP_ROOT}/selective"
 export MM_DP_PHASE2_ROOT="${HTTP_ROOT}/dp-phase2"
 export MM_CLIENT_ROOT="${HTTP_ROOT}/client"
-printf 'TARGET_DP_VERSION=6.5.0\nACPS_USERNAME=u\nACPS_PASSWORD=p\nMIRROR_SERVER_IP=192.0.2.10\nMIRROR_HTTP_URL=http://192.0.2.10\n' \
+printf 'TARGET_DP_VERSION=6.6.0\nACPS_USERNAME=u\nACPS_PASSWORD=p\nMIRROR_SERVER_IP=192.0.2.10\nMIRROR_HTTP_URL=http://192.0.2.10\n' \
   >"$MM_CONFIG_FILE"
 chmod 600 "$MM_CONFIG_FILE"
-dp2_set_version 6.5.0
+dp2_set_version 6.6.0
 
 ngx_case=0
 setup_nginx_case() {
@@ -167,7 +167,7 @@ run_enable_http() {
     MOCK_SYSTEMCTL_STATE="$MOCK_SYSTEMCTL_STATE" \
     MM_NGINX_TEST_FAIL="${MM_NGINX_TEST_FAIL:-0}" \
     MM_HTTP_VALIDATE_MOCK_FAIL="${MM_HTTP_VALIDATE_MOCK_FAIL:-0}" \
-    TARGET_DP_VERSION=6.5.0 \
+    TARGET_DP_VERSION=6.6.0 \
     MM_STATUS_FILE="$MM_STATUS_FILE" \
     MM_CONFIG_FILE="$MM_CONFIG_FILE" \
     MM_WORKFLOW_FILE="$MM_WORKFLOW_FILE" \
@@ -182,15 +182,15 @@ run_enable_http() {
       source "'"${ROOT}"'/scripts/lib/acps_acquire.sh"
       source "'"${ROOT}"'/scripts/lib/r2_acquire.sh"
       source "'"${ROOT}"'/scripts/lib/mirror_install_engine.sh"
-      dp2_set_version 6.5.0
+      dp2_set_version 6.6.0
       engine_enable_http_distribution
     '
 }
 
 artifacts_preserved() {
   [[ -f "${HTTP_ROOT}/client/.prepared-marker" ]] \
-    && [[ -f "${HTTP_ROOT}/dp-phase2/6.5.0/.prepared-marker" ]] \
-    && [[ -f "${HTTP_ROOT}/dp-phase2/6.5.0/dp_bundle_6.5.0-current.tar" ]]
+    && [[ -f "${HTTP_ROOT}/dp-phase2/6.6.0/.prepared-marker" ]] \
+    && [[ -f "${HTTP_ROOT}/dp-phase2/6.6.0/dp_bundle_6.6.0-current.tar" ]]
 }
 
 echo "======== P2 enable fail-closed ========"

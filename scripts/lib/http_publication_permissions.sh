@@ -334,7 +334,7 @@ mm_verify_http_publication_permission_closure() {
   local base="${1:-${MM_MIRROR_ROOT:-/var/spool/apt-mirror}}"
   local client="${2:-${MM_CLIENT_ROOT:-${base}/client}}"
   local dp_root="${3:-${MM_DP_PHASE2_ROOT:-${base}/dp-phase2}}"
-  local ver="${4:-${TARGET_DP_VERSION:-${PHASE2_TARGET_VERSION:-6.5.0}}}"
+  local ver="${4:-${TARGET_DP_VERSION:-${PHASE2_TARGET_VERSION:-6.6.0}}}"
   local stable="${5:-}"
   local f paths=()
 

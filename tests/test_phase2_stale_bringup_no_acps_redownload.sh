@@ -39,8 +39,8 @@ export MM_LOCK_FILE="${TMP}/install.lock"
 export MM_MOCK_AVAILABLE_BYTES=$((80 * 1024 * 1024 * 1024))
 export MM_MOCK_FS_SIZE_BYTES=$((100 * 1000 * 1000 * 1000))
 export MM_MOCK_SAFETY_RESERVE_BYTES=$((10 * 1024 * 1024 * 1024))
-export TARGET_DP_VERSION=6.5.0
-export PHASE2_TARGET_VERSION=6.5.0
+export TARGET_DP_VERSION=6.6.0
+export PHASE2_TARGET_VERSION=6.6.0
 export ACPS_USERNAME=testuser
 export ACPS_PASSWORD=testpass
 export OS_CORE_R2_URL='http://127.0.0.1:9/os-core.tar'
@@ -55,7 +55,7 @@ seed_complete_client_http_set "$MM_CLIENT_ROOT" "http://192.0.2.10" \
 write_cfg() {
   cat >"$MM_CONFIG_FILE" <<EOF
 PREPARATION_MODE=PHASE2_ONLY
-TARGET_DP_VERSION=6.5.0
+TARGET_DP_VERSION=6.6.0
 ACPS_USERNAME=testuser
 ACPS_PASSWORD=testpass
 OS_CORE_R2_URL=http://127.0.0.1:9/os-core.tar
@@ -76,7 +76,7 @@ source "$ACPS"
 source "$R2"
 # shellcheck source=../scripts/lib/mirror_install_engine.sh
 source "$ENGINE"
-dp2_set_version 6.5.0
+dp2_set_version 6.6.0
 
 CURRENT_SHA="$(sha1sum "$PATCHED_BRINGUP" | awk '{print $1}')"
 CURRENT_GEN="$(python3 "${ROOT}/scripts/lib/patch_dp_phase2_bringup.py" --print-generation \
@@ -134,38 +134,38 @@ make_work_tree() {
   printf 'common-payload\n' >"${work}/aelladeb_py3_common.tar.gz"
   sha1sum "${work}/aelladeb_py3_common.tar.gz" | awk '{print $1}' \
     >"${work}/aelladeb_py3_common.tar.gz.sha1"
-  printf 'uvp-payload\n' >"${work}/aella-uvp-2404_6.5.0ubuntu1_amd64.deb"
-  sha1sum "${work}/aella-uvp-2404_6.5.0ubuntu1_amd64.deb" | awk '{print $1}' \
-    >"${work}/aella-uvp-2404_6.5.0ubuntu1_amd64.deb.sha1"
+  printf 'uvp-payload\n' >"${work}/aella-uvp-2404_6.6.0ubuntu1_amd64.deb"
+  sha1sum "${work}/aella-uvp-2404_6.6.0ubuntu1_amd64.deb" | awk '{print $1}' \
+    >"${work}/aella-uvp-2404_6.6.0ubuntu1_amd64.deb.sha1"
   cp -f "$bringup_src" "${work}/bringup_py3_dp_after_os_upgrade.sh"
   sha1sum "${work}/bringup_py3_dp_after_os_upgrade.sh" | awk '{print $1}' \
     >"${work}/bringup_py3_dp_after_os_upgrade.sh.sha1"
-  seq 1 156 >"${work}/images-6.5.0.list"
-  printf 'images-body\n' >"${work}/images-6.5.0.tar"
-  sha256sum "${work}/images-6.5.0.tar" | awk '{print $1}' \
-    >"${work}/images-6.5.0.tar.sha256"
+  seq 1 156 >"${work}/images-6.6.0.list"
+  printf 'images-body\n' >"${work}/images-6.6.0.tar"
+  sha256sum "${work}/images-6.6.0.tar" | awk '{print $1}' \
+    >"${work}/images-6.6.0.tar.sha256"
 }
 
 publish_bundle_from_work() {
   local work="$1" patched_sha="${2:-}"
-  local dest="${MM_DP_PHASE2_ROOT}/6.5.0"
-  local stable="dp_bundle_6.5.0-current.tar"
+  local dest="${MM_DP_PHASE2_ROOT}/6.6.0"
+  local stable="dp_bundle_6.6.0-current.tar"
   rm -rf "$dest"
   mkdir -p "$dest"
   tar -cf "${dest}/${stable}" -C "$work" \
     aelladeb_py3_common.tar.gz \
     aelladeb_py3_common.tar.gz.sha1 \
-    aella-uvp-2404_6.5.0ubuntu1_amd64.deb \
-    aella-uvp-2404_6.5.0ubuntu1_amd64.deb.sha1 \
+    aella-uvp-2404_6.6.0ubuntu1_amd64.deb \
+    aella-uvp-2404_6.6.0ubuntu1_amd64.deb.sha1 \
     bringup_py3_dp_after_os_upgrade.sh \
     bringup_py3_dp_after_os_upgrade.sh.sha1 \
-    images-6.5.0.list \
-    images-6.5.0.tar \
-    images-6.5.0.tar.sha256
+    images-6.6.0.list \
+    images-6.6.0.tar \
+    images-6.6.0.tar.sha256
   (cd "$dest" && sha256sum "$stable" >"${stable}.sha256")
   cat >"${dest}/release.env" <<EOF
-TARGET_DP_VERSION=6.5.0
-PHASE2_ARTIFACT_VERSION=6.5.0
+TARGET_DP_VERSION=6.6.0
+PHASE2_ARTIFACT_VERSION=6.6.0
 STABLE_BUNDLE_NAME=${stable}
 PHASE2_BUNDLE_ENTRY_COUNT=9
 EOF
@@ -203,7 +203,7 @@ install_recovery_acps() {
   acps_acquire_all() {
     bump acps
     local cache
-    cache="$(acps_cache_dir 6.5.0)"
+    cache="$(acps_cache_dir 6.6.0)"
     make_work_tree "$cache" "$UPSTREAM_FIXTURE"
   }
 }
@@ -218,7 +218,7 @@ run_prepare_to() {
 }
 
 engine_prepare_phase2_ubuntu_prerequisites() {
-  local extras="${MM_DP_PHASE2_ROOT}/${TARGET_DP_VERSION:-6.5.0}/extras"
+  local extras="${MM_DP_PHASE2_ROOT}/${TARGET_DP_VERSION:-6.6.0}/extras"
   mkdir -p "$extras"
   cat >"${extras}/phase2-ubuntu-prerequisites.state" <<'EOF'
 PHASE2_PREREQ_REQUIRED=NO
@@ -231,8 +231,8 @@ EOF
 }
 
 assert_rebuilt_current_final() {
-  local dest="${MM_DP_PHASE2_ROOT}/6.5.0"
-  local stable="dp_bundle_6.5.0-current.tar"
+  local dest="${MM_DP_PHASE2_ROOT}/6.6.0"
+  local stable="dp_bundle_6.6.0-current.tar"
   local extract="${TMP}/extract-$$"
   local expected actual inner_sha published_sha
   [[ -f "${dest}/${stable}" ]] || fail "rebuilt final bundle missing"
@@ -267,7 +267,7 @@ publish_bundle_from_work "$OLD_WORK" "$OLD_SHA"
 rm -rf "${MM_CACHE_ROOT}/acps"
 [[ ! -e "${MM_CACHE_ROOT}/acps" ]] || fail "ACPS cache must be absent for this regression"
 
-engine_assess_phase2_final 6.5.0
+engine_assess_phase2_final 6.6.0
 [[ "$PHASE2_EXISTING_BUNDLE" == "INVALID" ]] \
   || fail "stale bundle not INVALID got=${PHASE2_EXISTING_BUNDLE}"
 [[ "${PHASE2_EXISTING_INVALID_REASON}" == "patch_generation_missing" ]] \
@@ -295,12 +295,12 @@ grep -q 'verified_cache_reuse' "$OUT" && fail "must not claim verified_cache_reu
 grep -q 'PHASE2_BUNDLE_ACTION=REBUILD' "$OUT" || fail "REBUILD action missing"
 [[ "$(count_of acps)" -eq 0 ]] || fail "ACPS_ACQUIRE_INVOCATIONS=$(count_of acps) want=0"
 assert_rebuilt_current_final
-engine_assess_phase2_final 6.5.0
+engine_assess_phase2_final 6.6.0
 [[ "$PHASE2_EXISTING_BUNDLE" == "VALID" ]] \
   || fail "rebuilt final not VALID got=${PHASE2_EXISTING_BUNDLE}"
 [[ "$(mm_status_get HTTP_DISTRIBUTION)" == "DISABLED" ]] \
   || fail "HTTP still ENABLED during/after stale rebuild"
-find "$MM_DP_PHASE2_ROOT" -maxdepth 1 -name '6.5.0.old.*' | grep -q . \
+find "$MM_DP_PHASE2_ROOT" -maxdepth 1 -name '6.6.0.old.*' | grep -q . \
   && fail ".old leftover after local rebuild" || true
 echo "ACPS_ACQUIRE_INVOCATIONS=$(count_of acps)"
 pass "stale bringup + no ACPS cache rebuilds from existing final (ACPS=0)"
@@ -308,7 +308,7 @@ pass "stale bringup + no ACPS cache rebuilds from existing final (ACPS=0)"
 # --- 2. Older generation missing BRINGUP_PATCHED_SHA1: still no ACPS download ---
 publish_bundle_from_work "$OLD_WORK" ""
 rm -rf "${MM_CACHE_ROOT}/acps"
-engine_assess_phase2_final 6.5.0
+engine_assess_phase2_final 6.6.0
 [[ "$PHASE2_EXISTING_BUNDLE" == "INVALID" ]] \
   || fail "missing SHA bundle not INVALID"
 [[ "${PHASE2_EXISTING_INVALID_REASON}" == "patch_generation_missing" ]] \
@@ -327,10 +327,10 @@ pass "missing BRINGUP_PATCHED_SHA1 rebuilds from verified final (ACPS=0)"
 
 # --- 3. Stale SHA + corrupt sidecar: must NOT reuse; ACPS recovery invoked ---
 publish_bundle_from_work "$OLD_WORK" "$OLD_SHA"
-printf '0000000000000000000000000000000000000000000000000000000000000000  dp_bundle_6.5.0-current.tar\n' \
-  >"${MM_DP_PHASE2_ROOT}/6.5.0/dp_bundle_6.5.0-current.tar.sha256"
+printf '0000000000000000000000000000000000000000000000000000000000000000  dp_bundle_6.6.0-current.tar\n' \
+  >"${MM_DP_PHASE2_ROOT}/6.6.0/dp_bundle_6.6.0-current.tar.sha256"
 rm -rf "${MM_CACHE_ROOT}/acps"
-engine_assess_phase2_final 6.5.0
+engine_assess_phase2_final 6.6.0
 [[ "$PHASE2_EXISTING_BUNDLE" == "INVALID" ]] \
   || fail "corrupt sidecar not INVALID"
 [[ "${PHASE2_EXISTING_INVALID_REASON}" == "sha256" ]] \
@@ -356,21 +356,21 @@ publish_bundle_from_work "$OLD_WORK" "$OLD_SHA"
 INNER_WORK="${TMP}/inner-corrupt-work"
 rm -rf "$INNER_WORK"
 mkdir -p "$INNER_WORK"
-tar -xf "${MM_DP_PHASE2_ROOT}/6.5.0/dp_bundle_6.5.0-current.tar" -C "$INNER_WORK"
-# Mutate images tar only. Keep images-6.5.0.tar.sha256 and both SHA1 pairs.
-printf 'images-body-CORRUPT-INNER\n' >"${INNER_WORK}/images-6.5.0.tar"
-dest="${MM_DP_PHASE2_ROOT}/6.5.0"
-stable="dp_bundle_6.5.0-current.tar"
+tar -xf "${MM_DP_PHASE2_ROOT}/6.6.0/dp_bundle_6.6.0-current.tar" -C "$INNER_WORK"
+# Mutate images tar only. Keep images-6.6.0.tar.sha256 and both SHA1 pairs.
+printf 'images-body-CORRUPT-INNER\n' >"${INNER_WORK}/images-6.6.0.tar"
+dest="${MM_DP_PHASE2_ROOT}/6.6.0"
+stable="dp_bundle_6.6.0-current.tar"
 tar -cf "${dest}/${stable}" -C "$INNER_WORK" \
   aelladeb_py3_common.tar.gz \
   aelladeb_py3_common.tar.gz.sha1 \
-  aella-uvp-2404_6.5.0ubuntu1_amd64.deb \
-  aella-uvp-2404_6.5.0ubuntu1_amd64.deb.sha1 \
+  aella-uvp-2404_6.6.0ubuntu1_amd64.deb \
+  aella-uvp-2404_6.6.0ubuntu1_amd64.deb.sha1 \
   bringup_py3_dp_after_os_upgrade.sh \
   bringup_py3_dp_after_os_upgrade.sh.sha1 \
-  images-6.5.0.list \
-  images-6.5.0.tar \
-  images-6.5.0.tar.sha256
+  images-6.6.0.list \
+  images-6.6.0.tar \
+  images-6.6.0.tar.sha256
 (cd "$dest" && sha256sum "$stable" >"${stable}.sha256")
 
 outer_expected="$(awk '{print $1}' "${dest}/${stable}.sha256")"
@@ -379,23 +379,23 @@ outer_actual="$(sha256sum "${dest}/${stable}" | awk '{print $1}')"
   || fail "crafted outer SHA256 sidecar does not match rewritten tar"
 dp2_assert_safe_tar_list "${dest}/${stable}" >/dev/null \
   || fail "crafted outer tar list is not safe/required-entry exact"
-inner_expected="$(awk '{print $1}' "${INNER_WORK}/images-6.5.0.tar.sha256")"
-inner_actual="$(sha256sum "${INNER_WORK}/images-6.5.0.tar" | awk '{print $1}')"
+inner_expected="$(awk '{print $1}' "${INNER_WORK}/images-6.6.0.tar.sha256")"
+inner_actual="$(sha256sum "${INNER_WORK}/images-6.6.0.tar" | awk '{print $1}')"
 [[ "${inner_expected,,}" != "${inner_actual,,}" ]] \
   || fail "inner images SHA256 still matches; corruption did not take"
 common_expected="$(tr -d '[:space:]' <"${INNER_WORK}/aelladeb_py3_common.tar.gz.sha1")"
 common_actual="$(sha1sum "${INNER_WORK}/aelladeb_py3_common.tar.gz" | awk '{print $1}')"
 [[ "${common_expected,,}" == "${common_actual,,}" ]] \
   || fail "common SHA1 pair should remain valid"
-uvp_expected="$(tr -d '[:space:]' <"${INNER_WORK}/aella-uvp-2404_6.5.0ubuntu1_amd64.deb.sha1")"
-uvp_actual="$(sha1sum "${INNER_WORK}/aella-uvp-2404_6.5.0ubuntu1_amd64.deb" | awk '{print $1}')"
+uvp_expected="$(tr -d '[:space:]' <"${INNER_WORK}/aella-uvp-2404_6.6.0ubuntu1_amd64.deb.sha1")"
+uvp_actual="$(sha1sum "${INNER_WORK}/aella-uvp-2404_6.6.0ubuntu1_amd64.deb" | awk '{print $1}')"
 [[ "${uvp_expected,,}" == "${uvp_actual,,}" ]] \
   || fail "uvp SHA1 pair should remain valid"
 echo "OUTER_SHA256_PASS_IN_TEST=YES"
 echo "INNER_IMAGES_SHA256_FAIL_IN_TEST=YES"
 
 rm -rf "${MM_CACHE_ROOT}/acps"
-engine_assess_phase2_final 6.5.0
+engine_assess_phase2_final 6.6.0
 [[ "$PHASE2_EXISTING_BUNDLE" == "INVALID" ]] \
   || fail "inner-corrupt bundle not INVALID got=${PHASE2_EXISTING_BUNDLE}"
 [[ "${PHASE2_EXISTING_INVALID_REASON}" == "inner_images_sha256" ]] \
@@ -416,7 +416,7 @@ grep -q 'PHASE2_INNER_IMAGES_SHA256=FAIL' "$OUT" \
   || fail "PHASE2_INNER_IMAGES_SHA256=FAIL missing"
 grep -q 'SHA1_VERIFY=PASS file=aelladeb_py3_common.tar.gz' "$OUT" \
   || fail "common SHA1 pair was not verified before rejecting reuse"
-grep -q 'SHA1_VERIFY=PASS file=aella-uvp-2404_6.5.0ubuntu1_amd64.deb' "$OUT" \
+grep -q 'SHA1_VERIFY=PASS file=aella-uvp-2404_6.6.0ubuntu1_amd64.deb' "$OUT" \
   || fail "uvp SHA1 pair was not verified before rejecting reuse"
 grep -q 'PHASE2_REBUILD_SOURCE=ACPS' "$OUT" || fail "PHASE2_REBUILD_SOURCE=ACPS missing"
 grep -q 'ACPS_DOWNLOAD_REQUIRED=YES' "$OUT" || fail "ACPS_DOWNLOAD_REQUIRED=YES missing"
@@ -429,9 +429,9 @@ assert_rebuilt_current_final
 REBUILT_EXTRACT="${TMP}/rebuilt-inner-check"
 rm -rf "$REBUILT_EXTRACT"
 mkdir -p "$REBUILT_EXTRACT"
-tar -xf "${MM_DP_PHASE2_ROOT}/6.5.0/dp_bundle_6.5.0-current.tar" -C "$REBUILT_EXTRACT" \
-  images-6.5.0.tar
-grep -q 'CORRUPT-INNER' "${REBUILT_EXTRACT}/images-6.5.0.tar" \
+tar -xf "${MM_DP_PHASE2_ROOT}/6.6.0/dp_bundle_6.6.0-current.tar" -C "$REBUILT_EXTRACT" \
+  images-6.6.0.tar
+grep -q 'CORRUPT-INNER' "${REBUILT_EXTRACT}/images-6.6.0.tar" \
   && fail "corrupt existing final became the source of the new bundle" || true
 echo "ACPS_ACQUIRE_INVOCATIONS=$(count_of acps)"
 pass "inner images SHA256 fail-closed; ACPS recovery; corrupt final not reused"

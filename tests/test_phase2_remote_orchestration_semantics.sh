@@ -111,38 +111,38 @@ run_parse() {
 }
 
 # CASE 1: AIO, no password
-run_parse --version 6.5.0 --skip-download
+run_parse --version 6.6.0 --skip-download
 [[ "$PARSE_RC" -eq 0 ]] && pass "CASE1 aio no password accepted" \
   || fail "CASE1 aio: rc=${PARSE_RC} ${PARSE_ERR}"
 
 # CASE 2: worker only, password missing
-run_parse --version 6.5.0 --skip-download --worker-ips 192.0.2.10
+run_parse --version 6.6.0 --skip-download --worker-ips 192.0.2.10
 [[ "$PARSE_RC" -ne 0 ]] \
   && echo "$PARSE_ERR" | grep -q -- '--worker-ips/--standby requires --worker-password' \
   && pass "CASE2 worker-only missing password rejected before orch" \
   || fail "CASE2: rc=${PARSE_RC} ${PARSE_ERR}"
 
 # CASE 3: worker only, password provided
-run_parse --version 6.5.0 --skip-download --worker-ips 192.0.2.10 --worker-password 'secret'
+run_parse --version 6.6.0 --skip-download --worker-ips 192.0.2.10 --worker-password 'secret'
 [[ "$PARSE_RC" -eq 0 ]] && echo "$PARSE_OUT" | grep -Fxq 'WORKER_PASSWORD=secret' \
   && pass "CASE3 worker-only with password accepted" \
   || fail "CASE3: rc=${PARSE_RC} ${PARSE_ERR}"
 
 # CASE 4: standby only, password missing
-run_parse --version 6.5.0 --skip-download --standby 192.0.2.20
+run_parse --version 6.6.0 --skip-download --standby 192.0.2.20
 [[ "$PARSE_RC" -ne 0 ]] \
   && echo "$PARSE_ERR" | grep -q -- '--worker-ips/--standby requires --worker-password' \
   && pass "CASE4 standby-only missing password rejected before orch" \
   || fail "CASE4: rc=${PARSE_RC} ${PARSE_ERR}"
 
 # CASE 5: standby only, password provided
-run_parse --version 6.5.0 --skip-download --standby 192.0.2.20 --worker-password 'secret'
+run_parse --version 6.6.0 --skip-download --standby 192.0.2.20 --worker-password 'secret'
 [[ "$PARSE_RC" -eq 0 ]] && echo "$PARSE_OUT" | grep -Fxq 'STANDBY_IPS=192.0.2.20' \
   && pass "CASE5 standby-only with password accepted" \
   || fail "CASE5: rc=${PARSE_RC} ${PARSE_ERR}"
 
 # CASE 6: workers + standby, password provided
-run_parse --version 6.5.0 --skip-download \
+run_parse --version 6.6.0 --skip-download \
   --worker-ips 192.0.2.10 --standby 192.0.2.20 --worker-password 'secret'
 [[ "$PARSE_RC" -eq 0 ]] \
   && echo "$PARSE_OUT" | grep -Fxq 'WORKER_IPS=192.0.2.10' \
@@ -151,14 +151,14 @@ run_parse --version 6.5.0 --skip-download \
   || fail "CASE6: rc=${PARSE_RC} ${PARSE_OUT} ${PARSE_ERR}"
 
 # CASE 7: conflicting IP between worker and standby
-run_parse --version 6.5.0 --skip-download \
+run_parse --version 6.6.0 --skip-download \
   --worker-ips 192.0.2.10 --standby 192.0.2.10 --worker-password 'secret'
 [[ "$PARSE_RC" -ne 0 ]] \
   && echo "$PARSE_ERR" | grep -q 'reason=role_conflict_ip' \
   && pass "CASE7 worker/standby role conflict fail-closed" \
   || fail "CASE7: rc=${PARSE_RC} ${PARSE_ERR}"
 
-run_parse --version 6.5.0 --skip-download \
+run_parse --version 6.6.0 --skip-download \
   --worker-ips '192.0.2.10,192.0.2.10' --worker-password 'secret'
 [[ "$PARSE_RC" -ne 0 ]] \
   && echo "$PARSE_ERR" | grep -q 'reason=duplicate_worker_ip' \
@@ -166,7 +166,7 @@ run_parse --version 6.5.0 --skip-download \
   || fail "CASE7b: rc=${PARSE_RC} ${PARSE_ERR}"
 
 # CASE 8: whitespace around comma-separated IPs
-run_parse --version 6.5.0 --skip-download \
+run_parse --version 6.6.0 --skip-download \
   --worker-ips ' 192.0.2.10 , 192.0.2.11 ' --standby ' 192.0.2.20 ' \
   --worker-password 'secret'
 [[ "$PARSE_RC" -eq 0 ]] \
@@ -205,7 +205,7 @@ PREV_ERR="$(
   check_version_guard() { return 0; }
   source "$COMPAT"
   source "${WORKDIR}/parse_prev.sh"
-  parse_args --version 6.5.0 --skip-download --worker-ips 192.0.2.10
+  parse_args --version 6.6.0 --skip-download --worker-ips 192.0.2.10
   echo SHOULD_NOT_REACH
 )"
 PREV_RC=$?
@@ -395,7 +395,7 @@ run_orch() {
   local worker_ips="${1:-}"
   local standby_ips="${2:-}"
   PATH="${ORCH_BIN}:$PATH"
-  VERSION=6.5.0
+  VERSION=6.6.0
   WORKER_IPS="$worker_ips"
   STANDBY_IPS="$standby_ips"
   WORKER_PASSWORD='orch-secret-not-for-logs'
@@ -581,7 +581,7 @@ WRAP_OUT="$(
   DP_PHASE2_BRINGUP_LIB_ONLY=1
   # shellcheck disable=SC1090
   source "$WRAPPER"
-  parse_args --version 6.5.0 --standby 192.0.2.20 --worker-password 'wrap-secret' --skip-download
+  parse_args --version 6.6.0 --standby 192.0.2.20 --worker-password 'wrap-secret' --skip-download
   printf 'TARGET=%s\n' "$TARGET_VERSION"
   printf 'PASSTHRU=%s\n' "${PASSTHRU[*]}"
 )"
@@ -607,7 +607,7 @@ WRAP_BAD="$(
   PASSTHRU=()
   DP_PHASE2_BRINGUP_LIB_ONLY=1
   source "$WRAPPER"
-  parse_args --version 6.5.0 --standby --detach 2>&1
+  parse_args --version 6.6.0 --standby --detach 2>&1
 )"
 WRAP_BAD_RC=$?
 set -e
@@ -626,7 +626,7 @@ p2b_ensure_dir
 : >"$PHASE2_BRINGUP_LOG_DEFAULT"
 write_file() { printf '%s\n' "$2" >"$1"; }
 write_file "$(p2b_dir)/run-id" "run-extra"
-write_file "$(p2b_dir)/target-version" "6.5.0"
+write_file "$(p2b_dir)/target-version" "6.6.0"
 write_file "$(p2b_dir)/log-path" "$PHASE2_BRINGUP_LOG_DEFAULT"
 write_file "$(p2b_dir)/started-at" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 VENDOR_EXTRA="${WORKDIR}/vendor-extra.sh"
@@ -649,7 +649,7 @@ set -e
 p2b_ensure_dir
 : >"$PHASE2_BRINGUP_LOG_DEFAULT"
 write_file "$(p2b_dir)/run-id" "run-standby"
-write_file "$(p2b_dir)/target-version" "6.5.0"
+write_file "$(p2b_dir)/target-version" "6.6.0"
 write_file "$(p2b_dir)/log-path" "$PHASE2_BRINGUP_LOG_DEFAULT"
 write_file "$(p2b_dir)/started-at" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 rm -f "$(p2b_dir)/result.env" "$(p2b_dir)/completion.sentinel" "$(p2b_dir)/state"

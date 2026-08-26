@@ -2,7 +2,7 @@
 
 Prepare one HTTP mirror server for Stellar Cyber DP upgrades:
 
-**Ubuntu 16.04 → 18.04 → 20.04 → 22.04 → 24.04**, followed by DP **6.5.0 Phase 2 bringup**.
+**Ubuntu 16.04 → 18.04 → 20.04 → 22.04 → 24.04**, followed by DP **6.6.0 Phase 2 bringup**.
 
 The Mirror Server downloads what it needs from Cloudflare R2 and ACPS. **DP hosts download only from the Mirror Server over HTTP**; DP hosts do not need direct access to R2 or ACPS.
 
@@ -29,7 +29,7 @@ Use a clean **Ubuntu 24.04 LTS amd64** server.
 Current data sizes are approximately:
 
 - Ubuntu OS Core / selective mirror: **3.4 GiB**
-- DP 6.5.0 Phase 2 bundle: **28.2 GiB**
+- DP 6.6.0 Phase 2 bundle: **28.2 GiB**
 - Fresh `Download and Prepare` peak requirement: approximately **70 GiB**, including build overhead and safety reserve
 
 The application performs a free-space preflight before large download/build steps. **100 GB is the validated baseline for the current artifacts, not a promise that every future artifact set will fit.**
@@ -121,12 +121,12 @@ Do **not** repeat steps that already completed successfully. Continue from the f
 
 | DP starting state | Preparation Mode | Result |
 | --- | --- | --- |
-| DP 6.2.x / 6.3.x / 6.4.x on Ubuntu 16.04 | **Full OS Upgrade + Phase 2** | Ubuntu 24.04 + DP 6.5.0 |
-| DP 6.5.0 on Ubuntu 16.04 | **Full OS Upgrade + Phase 2** | Ubuntu 24.04 + DP 6.5.0 same-version recovery/bringup |
-| Supported DP version already on Ubuntu 24.04 | **Phase 2 Only** | DP 6.5.0 Phase 2 stage/bringup only |
-| Healthy DP 6.5.0 already on Ubuntu 24.04 | Normally no upgrade is required | No change |
+| DP 6.2.x / 6.3.x / 6.4.x on Ubuntu 16.04 | **Full OS Upgrade + Phase 2** | Ubuntu 24.04 + DP 6.6.0 |
+| DP 6.5.0 on Ubuntu 16.04 | **Full OS Upgrade + Phase 2** | Ubuntu 24.04 + DP 6.6.0 |
+| Supported DP 6.2–6.5 already on Ubuntu 24.04 | **Phase 2 Only** | DP 6.6.0 Phase 2 stage/bringup only |
+| Healthy DP 6.6.0 already on Ubuntu 24.04 | Normally no upgrade is required | No change |
 
-The Phase 2 target is fixed at **6.5.0**. Starting DP version is detected on the DP host; it is not entered on the Mirror Server.
+The Phase 2 target is fixed at **6.6.0**. Starting DP version is detected on the DP host; it is not entered on the Mirror Server.
 
 ---
 
@@ -158,10 +158,10 @@ ACPS ──────────────┘
 | Source | Used for | Who connects to it |
 | --- | --- | --- |
 | Cloudflare R2 | Ubuntu OS Core selective mirror | Mirror Server only, Full mode only |
-| ACPS | DP 6.5.0 Phase 2 artifacts | Mirror Server only |
+| ACPS | DP 6.6.0 Phase 2 artifacts | Mirror Server only |
 | Mirror Server HTTP | OS-hop and Phase 2 client files | DP hosts |
 
-The project does **not** create a full Ubuntu archive mirror and does **not** use `apt-mirror` for the active upgrade workflow. It keeps one selective OS data set and one final DP 6.5.0 Phase 2 bundle.
+The project does **not** create a full Ubuntu archive mirror and does **not** use `apt-mirror` for the active upgrade workflow. It keeps one selective OS data set and one final DP 6.6.0 Phase 2 bundle.
 
 ---
 
@@ -256,7 +256,7 @@ Leave both worker-IP fields empty for a single DP / AIO / master without workers
 
 Read-only/fixed values:
 
-- Phase 2 target: **6.5.0**
+- Phase 2 target: **6.6.0**
 - ACPS endpoint: fixed in the application
 - OS Core source: Cloudflare R2 in Full mode
 
@@ -276,13 +276,13 @@ Credentials are redacted from application logs.
 - otherwise downloads OS Core from R2 and materializes the selective mirror
 - downloads/reuses ACPS Phase 2 files
 - verifies checksums
-- creates one DP 6.5.0 final bundle
+- creates one DP 6.6.0 final bundle
 - prepares client upgrade artifacts
 
 **Phase 2 Only**:
 
 - skips R2 and all OS-hop mirror preparation
-- prepares/reuses only the DP 6.5.0 Phase 2 artifacts
+- prepares/reuses only the DP 6.6.0 Phase 2 artifacts
 
 Long checksum and tar operations emit progress/heartbeat messages. Do not assume a several-minute SHA256 operation is hung while those messages continue.
 
@@ -348,7 +348,7 @@ Menu 7 guides the operator through the required sequence, which is conceptually:
    - 18.04 → 20.04
    - 20.04 → 22.04
    - 22.04 → 24.04
-4. Stage DP 6.5.0 Phase 2 on **every** DL/DA master and worker (same STEP 6 command)
+4. Stage DP 6.6.0 Phase 2 on **every** DL/DA master and worker (same STEP 6 command)
 5. Run STEP 7A on the **DL master only** and STEP 7B on the **DA master only**
 6. Resume DP services
 7. Verify DP/cluster status
@@ -413,7 +413,7 @@ The workflow supports retry/reuse behavior:
 - ACPS partial download data can resume
 - completed ACPS files are reused
 - a valid existing OS Core tree is reused
-- a valid existing DP 6.5.0 final bundle is reused
+- a valid existing DP 6.6.0 final bundle is reused
 
 If the GUI was closed or SSH disconnected, that alone is **not** a reason to reinstall.
 
@@ -437,9 +437,9 @@ The final HTTP layout is intentionally simple: one selective OS tree, one client
 /offline/
 /hops/
 /client/
-/dp-phase2/6.5.0/release.env
-/dp-phase2/6.5.0/dp_bundle_6.5.0-current.tar
-/dp-phase2/6.5.0/dp_bundle_6.5.0-current.tar.sha256
+/dp-phase2/6.6.0/release.env
+/dp-phase2/6.6.0/dp_bundle_6.6.0-current.tar
+/dp-phase2/6.6.0/dp_bundle_6.6.0-current.tar.sha256
 ```
 
 The word `current` in the Phase 2 **filename** is only part of the client contract name. It is not a `current` symlink or generation directory.
@@ -449,8 +449,8 @@ Menu 4 is the authoritative readiness test. For manual troubleshooting, test con
 ```bash
 curl -fsS  http://MIRROR_IP/offline/meta-release-lts >/dev/null
 curl -fsSI http://MIRROR_IP/client/dp-offline-upgrade-xenial-to-bionic.sh
-curl -fsS  http://MIRROR_IP/dp-phase2/6.5.0/release.env
-curl -fsSI http://MIRROR_IP/dp-phase2/6.5.0/dp_bundle_6.5.0-current.tar.sha256
+curl -fsS  http://MIRROR_IP/dp-phase2/6.6.0/release.env
+curl -fsSI http://MIRROR_IP/dp-phase2/6.6.0/dp_bundle_6.6.0-current.tar.sha256
 ```
 
 In **Phase 2 Only** mode, OS-hop files are not required.

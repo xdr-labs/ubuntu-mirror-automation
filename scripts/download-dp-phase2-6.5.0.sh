@@ -1,14 +1,9 @@
 #!/usr/bin/env bash
-# Compatibility wrapper for DP Phase 2 target artifact version 6.5.0.
-# Prefer: scripts/download-dp-phase2.sh --version 6.5.0 <sync|verify|status>
+# Retired: production Phase 2 target is 6.6.0. A 6.5.0-named wrapper must not
+# download or publish 6.5.0 target artifacts.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-GENERIC="${SCRIPT_DIR}/download-dp-phase2.sh"
-
-if [[ ! -f "$GENERIC" ]]; then
-  printf 'ERROR: missing canonical script %s\n' "$GENERIC" >&2
-  exit 1
-fi
-
-exec bash "$GENERIC" --version 6.5.0 "$@"
+printf 'ERROR: production Phase 2 target is 6.6.0; download-dp-phase2-6.5.0.sh is retired.\n' >&2
+printf 'Use: scripts/download-dp-phase2.sh --version 6.6.0\n' >&2
+printf '  or: scripts/download-dp-phase2-6.6.0.sh\n' >&2
+exit 1

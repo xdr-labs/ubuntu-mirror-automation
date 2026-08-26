@@ -297,5 +297,93 @@ class ProductionF1a73PatchTests(unittest.TestCase):
             shutil.rmtree(tmp)
 
 
+PRODUCTION_3AF369 = os.path.join(
+    ROOT, 'tests', 'fixtures', 'dp-phase2', 'production-3af369',
+    'bringup_py3_dp_after_os_upgrade.sh',
+)
+PRODUCTION_3AF369_SHA1 = '3af369660c3e0dfb0b7421ab455dee1ced365b1d'
+N3_VENDOR_MARKERS = (
+    'STANDBY_IPS=""',
+    'AELDEV-73583',
+    'token_extra="&standby=1"',
+    'wait_for_da_restful_8003',
+    'rebuild_resolv_conf',
+    'AELDEV-74638',
+)
+
+
+class Production3af369PatchTests(unittest.TestCase):
+    def setUp(self):
+        with open(PRODUCTION_3AF369, 'r', encoding='utf-8') as fh:
+            self.upstream = fh.read()
+        with open(PRODUCTION_3AF369, 'rb') as fh:
+            self.raw = fh.read()
+        self.assertEqual(hashlib.sha1(self.raw).hexdigest(), PRODUCTION_3AF369_SHA1)
+
+    def test_fixture_sha1_is_production_3af369(self):
+        self.assertEqual(
+            hashlib.sha1(self.raw).hexdigest(), PRODUCTION_3AF369_SHA1,
+        )
+
+    def test_3af369_patch_generation_pass(self):
+        tmp = tempfile.mkdtemp()
+        try:
+            dest = os.path.join(tmp, 'patched.sh')
+            result = patcher.patch_bringup_file(PRODUCTION_3AF369, dest)
+            self.assertEqual(result['upstream_sha1'], PRODUCTION_3AF369_SHA1)
+            self.assertNotEqual(result['patched_sha1'], result['upstream_sha1'])
+            with open(dest, 'r', encoding='utf-8') as fh:
+                text = fh.read()
+            for marker in patcher.RESULT_MARKERS:
+                self.assertIn(marker, text, marker)
+            for marker in N3_VENDOR_MARKERS:
+                self.assertIn(marker, text, marker)
+            self.assertIn('ACPS_PY3_APT_DPKG', text)
+            self.assertIn('validate_apt_dependency_graph', text)
+            self.assertNotIn(
+                'WARNING: critical python3 module(s) failed to import', text,
+            )
+            rc = os.system("bash -n %s" % dest)
+            self.assertEqual(rc, 0)
+            with open(PRODUCTION_3AF369, 'rb') as fh:
+                self.assertEqual(
+                    hashlib.sha1(fh.read()).hexdigest(), PRODUCTION_3AF369_SHA1,
+                )
+        finally:
+            shutil.rmtree(tmp)
+
+    def test_3af369_validate_matches_generate(self):
+        proc = subprocess.Popen(
+            [
+                sys.executable,
+                os.path.join(LIB, 'patch_dp_phase2_bringup.py'),
+                '--validate',
+                '--upstream', PRODUCTION_3AF369,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True,
+        )
+        out, _err = proc.communicate()
+        self.assertEqual(proc.returncode, 0)
+        self.assertIn('BRINGUP_PATCH_COMPAT=PASS', out)
+        self.assertIn('PATCHED_BRINGUP_GENERATION=PASS', out)
+
+    def test_3af369_mutated_anchor_fails_closed(self):
+        src = self.upstream.replace(
+            '            dpkg -i --force-depends "${install_list[@]}" 2>&1 | tail -10 || \\\n'
+            '                    log "WARNING: some debs in py3-apt-packages.tar.gz failed (continuing)"\n',
+            '            dpkg -i --force-depends "${install_list[@]}" || true\n',
+            1,
+        )
+        self.assertNotEqual(src, self.upstream)
+        with self.assertRaises(patcher.PatchCompatError) as ctx:
+            patcher.patch_bringup_text(src, emit=False)
+        self.assertEqual(
+            ctx.exception.transform, 'install_python3_dpkg_no_force_depends',
+        )
+        self.assertEqual(ctx.exception.reason, 'anchor_count=0 expected=1')
+
+
 if __name__ == '__main__':
     unittest.main()

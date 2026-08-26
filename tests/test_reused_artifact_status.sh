@@ -14,11 +14,11 @@ source "${ROOT}/scripts/ubuntu-offline-mirror-entrypoint.sh"
 MM_SELECTIVE_ROOT="$TMP/selective"
 MM_CLIENT_ROOT="$TMP/client"
 MM_DP_PHASE2_ROOT="$TMP/dp-phase2"
-PHASE2_TARGET_VERSION=6.5.0
-TARGET_DP_VERSION=6.5.0
+PHASE2_TARGET_VERSION=6.6.0
+TARGET_DP_VERSION=6.6.0
 PREPARATION_MODE=FULL
-MM_WF_PHASE2_RELEASE="$MM_DP_PHASE2_ROOT/6.5.0/release.env"
-MM_WF_PHASE2_BUNDLE="$MM_DP_PHASE2_ROOT/6.5.0/dp_bundle_6.5.0-current.tar"
+MM_WF_PHASE2_RELEASE="$MM_DP_PHASE2_ROOT/6.6.0/release.env"
+MM_WF_PHASE2_BUNDLE="$MM_DP_PHASE2_ROOT/6.6.0/dp_bundle_6.6.0-current.tar"
 MM_WF_PHASE2_SIDECAR="$MM_WF_PHASE2_BUNDLE.sha256"
 mkdir -p "$MM_SELECTIVE_ROOT/ubuntu" "$MM_CLIENT_ROOT" "$(dirname "$MM_WF_PHASE2_RELEASE")"
 : >"$MM_WF_PHASE2_RELEASE"
@@ -99,12 +99,12 @@ mm_whiptail_textbox() { cp "$2" "$STATUS_OUT"; }
 STATUS_R2=FAIL
 uom_gui_show_status
 grep -q '^OS Upgrade Files: NOT READY$' "$STATUS_OUT"
-grep -q '^DP 6.5.0 Bundle: READY (9 files)$' "$STATUS_OUT"
+grep -q '^DP 6.6.0 Bundle: READY (9 files)$' "$STATUS_OUT"
 
 STATUS_R2=REUSED
 uom_gui_show_status
 grep -q '^OS Upgrade Files: READY$' "$STATUS_OUT"
-grep -q '^DP 6.5.0 Bundle: READY (9 files)$' "$STATUS_OUT"
+grep -q '^DP 6.6.0 Bundle: READY (9 files)$' "$STATUS_OUT"
 grep -q '^Upgrade Readiness: PASS$' "$STATUS_OUT"
 grep -q '^Progress: 4 of 4 workflow steps completed$' "$STATUS_OUT"
 

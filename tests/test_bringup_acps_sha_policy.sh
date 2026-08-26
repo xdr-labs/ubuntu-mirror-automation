@@ -203,7 +203,8 @@ rc4="$(run_in_subshell "$OUT4" run_verify_then_patch "$CACHE4" "$WORK4")"
 [[ "$rc4" -ne 0 ]] && pass "TEST 4 incompat fails" || fail "TEST 4 should fail"
 grep -q 'ACPS_BRINGUP_CHECKSUM=PASS' "$OUT4" && pass "TEST 4 sidecar PASS" || fail "TEST 4 sidecar PASS"
 grep -q 'UPSTREAM_BRINGUP_DRIFT=NON_BLOCKING' "$OUT4" && pass "TEST 4 drift warning" || fail "TEST 4 drift warning"
-grep -q 'BRINGUP_PATCH_COMPAT=FAIL' "$OUT4" && pass "TEST 4 patch compat FAIL" || fail "TEST 4 patch compat FAIL"
+grep -qE 'BRINGUP_PATCH_COMPAT=FAIL|UPSTREAM_LAYOUT_ANCHORS=FAIL' "$OUT4" \
+  && pass "TEST 4 patch compat FAIL" || fail "TEST 4 patch compat FAIL"
 grep -q 'UPSTREAM_BRINGUP_DRIFT=YES' "$OUT4" && fail "TEST 4 died on SHA drift" || pass "TEST 4 not SHA-drift fatal"
 [[ ! -f "${WORK4}/bringup_py3_dp_after_os_upgrade.sh" ]] \
   && pass "TEST 4 did not apply patch" || fail "TEST 4 applied patch after incompat"

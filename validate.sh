@@ -568,7 +568,7 @@ check_legacy_releases() {
 check_dp_phase2() {
   # Separate from OS mirror READY checks. Missing Phase 2 => WARNING/PENDING only.
   local enabled="${DP_PHASE2_ENABLED:-true}"
-  local ver="${DP_PHASE2_VERSION:-6.5.0}"
+  local ver="${DP_PHASE2_VERSION:-6.6.0}"
   local root="${DP_PHASE2_ROOT:-${BASE_PATH}/dp-phase2}"
   local current="${root}/${ver}/current"
   local public_path="${DP_PHASE2_PUBLIC_PATH:-/dp-phase2/${ver}/}"
@@ -589,13 +589,13 @@ check_dp_phase2() {
   local required=(
     aelladeb_py3_common.tar.gz
     aelladeb_py3_common.tar.gz.sha1
-    aella-uvp-2404_6.5.0ubuntu1_amd64.deb
-    aella-uvp-2404_6.5.0ubuntu1_amd64.deb.sha1
+    "aella-uvp-2404_${ver}ubuntu1_amd64.deb"
+    "aella-uvp-2404_${ver}ubuntu1_amd64.deb.sha1"
     bringup_py3_dp_after_os_upgrade.sh
     bringup_py3_dp_after_os_upgrade.sh.sha1
-    images-6.5.0.list
-    images-6.5.0.tar
-    images-6.5.0.tar.sha256
+    "images-${ver}.list"
+    "images-${ver}.tar"
+    "images-${ver}.tar.sha256"
   )
   local f missing=0
   for f in "${required[@]}"; do
@@ -616,8 +616,8 @@ check_dp_phase2() {
   expected="$(awk 'NF {print $1; exit}' "${current}/files/aelladeb_py3_common.tar.gz.sha1")"
   actual="$(sha1sum "${current}/files/aelladeb_py3_common.tar.gz" | awk '{print $1}')"
   [[ "${expected,,}" == "${actual,,}" ]] || ok_sum=0
-  expected="$(awk 'NF {print $1; exit}' "${current}/files/images-6.5.0.tar.sha256")"
-  actual="$(sha256sum "${current}/files/images-6.5.0.tar" | awk '{print $1}')"
+  expected="$(awk 'NF {print $1; exit}' "${current}/files/images-${ver}.tar.sha256")"
+  actual="$(sha256sum "${current}/files/images-${ver}.tar" | awk '{print $1}')"
   [[ "${expected,,}" == "${actual,,}" ]] || ok_sum=0
   if [[ "$ok_sum" -ne 1 ]]; then
     um_result FAIL "DP Phase 2 checksums" "ACPS checksum mismatch"

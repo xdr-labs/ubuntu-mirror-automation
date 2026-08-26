@@ -55,7 +55,7 @@ write_tiny_uvp_deb() {
   mkdir -p "${pkg_work}/DEBIAN"
   cat >"${pkg_work}/DEBIAN/control" <<'EOF'
 Package: aella-uvp-2404
-Version: 6.5.0ubuntu1
+Version: 6.6.0ubuntu1
 Architecture: amd64
 Maintainer: fixture@example.com
 Description: hermetic UVP fixture
@@ -146,8 +146,8 @@ set +e
 PHASE2_PREREQ_ACPS_COMMON="$MISSING" \
   PHASE2_PREREQ_INDEX_ROOT="$NOBLE" \
   PHASE2_PREREQ_OUT_DIR="${WORKDIR}/extras-b" \
-  DP_PHASE2_VERSION=6.5.0 \
-  bash "$PREPARE" 6.5.0 >"$OUT_B" 2>&1
+  DP_PHASE2_VERSION=6.6.0 \
+  bash "$PREPARE" 6.6.0 >"$OUT_B" 2>&1
 B_RC=$?
 set -e
 [[ "$B_RC" -ne 0 ]] \
@@ -168,8 +168,8 @@ set +e
 PHASE2_PREREQ_ACPS_COMMON="$MULTI" \
   PHASE2_PREREQ_INDEX_ROOT="$NOBLE" \
   PHASE2_PREREQ_OUT_DIR="${WORKDIR}/extras-c" \
-  DP_PHASE2_VERSION=6.5.0 \
-  bash "$PREPARE" 6.5.0 >"$OUT_C" 2>&1
+  DP_PHASE2_VERSION=6.6.0 \
+  bash "$PREPARE" 6.6.0 >"$OUT_C" 2>&1
 C_RC=$?
 set -e
 [[ "$C_RC" -ne 0 ]] \
@@ -188,8 +188,8 @@ set +e
 PHASE2_PREREQ_ACPS_COMMON="$CORRUPT" \
   PHASE2_PREREQ_INDEX_ROOT="$NOBLE" \
   PHASE2_PREREQ_OUT_DIR="${WORKDIR}/extras-d" \
-  DP_PHASE2_VERSION=6.5.0 \
-  bash "$PREPARE" 6.5.0 >"$OUT_D" 2>&1
+  DP_PHASE2_VERSION=6.6.0 \
+  bash "$PREPARE" 6.6.0 >"$OUT_D" 2>&1
 D_RC=$?
 set -e
 [[ "$D_RC" -ne 0 ]] \
@@ -210,8 +210,8 @@ PHASE2_PREREQ_ACPS_COMMON="$GOOD" \
   PHASE2_PREREQ_OUT_DIR="${WORKDIR}/extras-e" \
   PHASE2_PREREQ_ARCHIVE_BASE="http://127.0.0.1:1/ubuntu" \
   PHASE2_PREREQ_SECURITY_BASE="http://127.0.0.1:1/ubuntu" \
-  DP_PHASE2_VERSION=6.5.0 \
-  bash "$PREPARE" 6.5.0 >"$OUT_E" 2>&1
+  DP_PHASE2_VERSION=6.6.0 \
+  bash "$PREPARE" 6.6.0 >"$OUT_E" 2>&1
 E_RC=$?
 set -e
 [[ "$E_RC" -eq 0 ]] \
@@ -238,8 +238,8 @@ export MM_DP_PHASE2_ROOT="${MM_MIRROR_ROOT}/dp-phase2"
 export MM_SELECTIVE_ROOT="${MM_MIRROR_ROOT}/selective"
 export MM_CLIENT_ROOT="${MM_MIRROR_ROOT}/client"
 export MM_LOCK_FILE="${WORKDIR}/install-f.lock"
-export TARGET_DP_VERSION=6.5.0
-export PHASE2_TARGET_VERSION=6.5.0
+export TARGET_DP_VERSION=6.6.0
+export PHASE2_TARGET_VERSION=6.6.0
 export PREPARATION_MODE=PHASE2_ONLY
 export SKIP_MIRROR_HOST_VALIDATE=1
 mkdir -p "$MM_CLIENT_ROOT" "$MM_CACHE_ROOT" "$MM_DP_PHASE2_ROOT" "$MM_LOG_DIR" \
@@ -249,7 +249,7 @@ phase2_prereq_write_empty_noble_index \
   "${MM_SELECTIVE_ROOT}/hops/jammy-to-noble/ubuntu"
 cat >"$MM_CONFIG_FILE" <<'EOF'
 PREPARATION_MODE=PHASE2_ONLY
-TARGET_DP_VERSION=6.5.0
+TARGET_DP_VERSION=6.6.0
 ACPS_USERNAME=testuser
 ACPS_PASSWORD=testpass
 OS_CORE_R2_URL=http://127.0.0.1:9/os-core.tar
@@ -269,7 +269,7 @@ source "$R2"
 # shellcheck source=/dev/null
 source "$ENGINE"
 mm_state_init 2>/dev/null || true
-dp2_set_version 6.5.0
+dp2_set_version 6.6.0
 
 WORK_F="${WORKDIR}/work-f"
 mkdir -p "$WORK_F"
@@ -324,7 +324,7 @@ phase2_prereq_write_empty_noble_index \
   "${MM_SELECTIVE_ROOT}/hops/jammy-to-noble/ubuntu"
 cat >"$MM_CONFIG_FILE" <<'EOF'
 PREPARATION_MODE=PHASE2_ONLY
-TARGET_DP_VERSION=6.5.0
+TARGET_DP_VERSION=6.6.0
 ACPS_USERNAME=testuser
 ACPS_PASSWORD=testpass
 OS_CORE_R2_URL=http://127.0.0.1:9/os-core.tar
@@ -335,7 +335,7 @@ chmod 600 "$MM_CONFIG_FILE"
 
 # Re-source engine in this env. Functions already defined; refresh paths via exports.
 mm_state_init 2>/dev/null || true
-dp2_set_version 6.5.0
+dp2_set_version 6.6.0
 
 make_acps_work_tree() {
   local work="$1"
@@ -343,21 +343,21 @@ make_acps_work_tree() {
   phase2_prereq_write_zero_extra_common "${work}/aelladeb_py3_common.tar.gz" "reuse-common"
   sha1sum "${work}/aelladeb_py3_common.tar.gz" | awk '{print $1}' \
     >"${work}/aelladeb_py3_common.tar.gz.sha1"
-  printf 'uvp\n' >"${work}/aella-uvp-2404_6.5.0ubuntu1_amd64.deb"
-  sha1sum "${work}/aella-uvp-2404_6.5.0ubuntu1_amd64.deb" | awk '{print $1}' \
-    >"${work}/aella-uvp-2404_6.5.0ubuntu1_amd64.deb.sha1"
+  printf 'uvp\n' >"${work}/aella-uvp-2404_6.6.0ubuntu1_amd64.deb"
+  sha1sum "${work}/aella-uvp-2404_6.6.0ubuntu1_amd64.deb" | awk '{print $1}' \
+    >"${work}/aella-uvp-2404_6.6.0ubuntu1_amd64.deb.sha1"
   cp -f "$PATCHED_BRINGUP" "${work}/bringup_py3_dp_after_os_upgrade.sh"
   sha1sum "${work}/bringup_py3_dp_after_os_upgrade.sh" | awk '{print $1}' \
     >"${work}/bringup_py3_dp_after_os_upgrade.sh.sha1"
-  seq 1 156 >"${work}/images-6.5.0.list"
-  printf 'images-body\n' >"${work}/images-6.5.0.tar"
-  sha256sum "${work}/images-6.5.0.tar" | awk '{print $1}' >"${work}/images-6.5.0.tar.sha256"
+  seq 1 156 >"${work}/images-6.6.0.list"
+  printf 'images-body\n' >"${work}/images-6.6.0.tar"
+  sha256sum "${work}/images-6.6.0.tar" | awk '{print $1}' >"${work}/images-6.6.0.tar.sha256"
 }
 
 make_valid_final() {
   local work="${WORKDIR}/valid-work"
-  local dest="${MM_DP_PHASE2_ROOT}/6.5.0"
-  local stable="dp_bundle_6.5.0-current.tar"
+  local dest="${MM_DP_PHASE2_ROOT}/6.6.0"
+  local stable="dp_bundle_6.6.0-current.tar"
   local patched_sha gen
   rm -rf "$dest" "$work"
   make_acps_work_tree "$work"
@@ -365,20 +365,20 @@ make_valid_final() {
   tar -cf "${dest}/${stable}" -C "$work" \
     aelladeb_py3_common.tar.gz \
     aelladeb_py3_common.tar.gz.sha1 \
-    aella-uvp-2404_6.5.0ubuntu1_amd64.deb \
-    aella-uvp-2404_6.5.0ubuntu1_amd64.deb.sha1 \
+    aella-uvp-2404_6.6.0ubuntu1_amd64.deb \
+    aella-uvp-2404_6.6.0ubuntu1_amd64.deb.sha1 \
     bringup_py3_dp_after_os_upgrade.sh \
     bringup_py3_dp_after_os_upgrade.sh.sha1 \
-    images-6.5.0.list \
-    images-6.5.0.tar \
-    images-6.5.0.tar.sha256
+    images-6.6.0.list \
+    images-6.6.0.tar \
+    images-6.6.0.tar.sha256
   (cd "$dest" && sha256sum "$stable" >"${stable}.sha256")
   patched_sha="$(sha1sum "$PATCHED_BRINGUP" | awk '{print $1}')"
   gen="$(python3 "${ROOT}/scripts/lib/patch_dp_phase2_bringup.py" --print-generation \
     | awk -F= '$1=="BRINGUP_PATCH_GENERATION"{print $2; exit}')"
   cat >"${dest}/release.env" <<EOF
-TARGET_DP_VERSION=6.5.0
-PHASE2_ARTIFACT_VERSION=6.5.0
+TARGET_DP_VERSION=6.6.0
+PHASE2_ARTIFACT_VERSION=6.6.0
 STABLE_BUNDLE_NAME=${stable}
 PHASE2_BUNDLE_ENTRY_COUNT=9
 BRINGUP_PATCHED_SHA1=${patched_sha}
@@ -437,15 +437,15 @@ mm_check_client_build_prerequisites_ready() {
 }
 
 make_valid_final
-PRESERVED="$(engine_phase2_prereq_src_dir 6.5.0)"
+PRESERVED="$(engine_phase2_prereq_src_dir 6.6.0)"
 mkdir -p "$PRESERVED"
 phase2_prereq_write_zero_extra_common "${PRESERVED}/aelladeb_py3_common.tar.gz" "preserved"
 sha1sum "${PRESERVED}/aelladeb_py3_common.tar.gz" | awk '{print $1}' \
   >"${PRESERVED}/aelladeb_py3_common.tar.gz.sha1"
-write_tiny_uvp_deb "${PRESERVED}/aella-uvp-2404_6.5.0ubuntu1_amd64.deb"
-sha1sum "${PRESERVED}/aella-uvp-2404_6.5.0ubuntu1_amd64.deb" | awk '{print $1}' \
-  >"${PRESERVED}/aella-uvp-2404_6.5.0ubuntu1_amd64.deb.sha1"
-FINAL_BEFORE="$(sha256sum "${MM_DP_PHASE2_ROOT}/6.5.0/dp_bundle_6.5.0-current.tar" | awk '{print $1}')"
+write_tiny_uvp_deb "${PRESERVED}/aella-uvp-2404_6.6.0ubuntu1_amd64.deb"
+sha1sum "${PRESERVED}/aella-uvp-2404_6.6.0ubuntu1_amd64.deb" | awk '{print $1}' \
+  >"${PRESERVED}/aella-uvp-2404_6.6.0ubuntu1_amd64.deb.sha1"
+FINAL_BEFORE="$(sha256sum "${MM_DP_PHASE2_ROOT}/6.6.0/dp_bundle_6.6.0-current.tar" | awk '{print $1}')"
 
 reset_counters
 OUT_G="${WORKDIR}/out-g"
@@ -453,7 +453,7 @@ set +e
 ( engine_download_and_prepare ) >"$OUT_G" 2>&1
 G_RC=$?
 set -e
-FINAL_AFTER="$(sha256sum "${MM_DP_PHASE2_ROOT}/6.5.0/dp_bundle_6.5.0-current.tar" | awk '{print $1}')"
+FINAL_AFTER="$(sha256sum "${MM_DP_PHASE2_ROOT}/6.6.0/dp_bundle_6.6.0-current.tar" | awk '{print $1}')"
 if [[ "$G_RC" -eq 0 ]] \
   && grep -q 'PHASE2_EXISTING_BUNDLE=VALID' "$OUT_G" \
   && grep -q 'PHASE2_BUNDLE_ACTION=REUSE' "$OUT_G" \
@@ -464,7 +464,7 @@ if [[ "$G_RC" -eq 0 ]] \
   && [[ "$(count_of place)" -eq 0 ]] \
   && [[ "$FINAL_BEFORE" == "$FINAL_AFTER" ]] \
   && [[ -f "${PRESERVED}/aelladeb_py3_common.tar.gz" ]] \
-  && [[ -f "${MM_DP_PHASE2_ROOT}/6.5.0/extras/phase2-ubuntu-prerequisites.state" ]]
+  && [[ -f "${MM_DP_PHASE2_ROOT}/6.6.0/extras/phase2-ubuntu-prerequisites.state" ]]
 then
   pass "G VALID final reuse: no ACPS, no rebuild, prereq retried, final preserved"
 else

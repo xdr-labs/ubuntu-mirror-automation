@@ -13,6 +13,8 @@ PATCHER="${ROOT}/scripts/lib/patch_dp_phase2_bringup.py"
 FIXTURE="${ROOT}/tests/fixtures/dp-phase2/upstream_bringup_unpatched.sh"
 PRODUCTION_F1A73="${ROOT}/tests/fixtures/dp-phase2/production-f1a73/bringup_py3_dp_after_os_upgrade.sh"
 EXPECTED_F1A73_SHA1="f1a73c1d4502e2efcf55197865d2ade345d9c82f"
+PRODUCTION_3AF369="${ROOT}/tests/fixtures/dp-phase2/production-3af369/bringup_py3_dp_after_os_upgrade.sh"
+EXPECTED_3AF369_SHA1="3af369660c3e0dfb0b7421ab455dee1ced365b1d"
 VENDOR="${ROOT}/vendor/dp-phase2/bringup_py3_dp_after_os_upgrade.sh"
 WRAPPER="${ROOT}/client/bringup_py3_dp_lifecycle.sh"
 
@@ -49,7 +51,7 @@ source "$R2"
 # shellcheck source=../scripts/lib/mirror_install_engine.sh
 source "$ENGINE"
 mm_state_init 2>/dev/null || true
-dp2_set_version 6.5.0
+dp2_set_version 6.6.0
 
 CURRENT_GEN="$(engine_current_bringup_patch_generation)"
 [[ -n "$CURRENT_GEN" ]] || { echo "missing patch generation" >&2; exit 1; }
@@ -147,7 +149,8 @@ OUTC="${WORKDIR}/c.log"
 rcc="$(run_in_subshell "$OUTC" engine_verify_acps_upstream_bringup "$CACHEC")"
 [[ "$rcc" -eq 0 ]] && pass "C verify rc=0" || { fail "C verify rc=${rcc}"; cat "$OUTC"; }
 grep -q 'UPSTREAM_BRINGUP_CHANGED=YES' "$OUTC" && pass "C UPSTREAM_BRINGUP_CHANGED=YES" || fail "C changed warning"
-grep -q 'BRINGUP_PATCH_COMPAT=PASS' "$OUTC" && pass "C coarse compat PASS" || fail "C coarse compat"
+grep -q 'UPSTREAM_LAYOUT_ANCHORS=PASS' "$OUTC" && pass "C layout anchors PASS" || fail "C layout anchors"
+grep -q 'BRINGUP_PATCH_COMPAT=PASS' "$OUTC" && pass "C patcher validate PASS" || fail "C patcher validate"
 WORKC="${WORKDIR}/workC"; mkdir -p "$WORKC"
 OUTC2="${WORKDIR}/c2.log"
 rcc2="$(run_in_subshell "$OUTC2" engine_apply_local_bringup_patch "$WORKC" \
@@ -205,7 +208,7 @@ grep -q -- '--worker-password' "${WORKA}/bringup_py3_dp_after_os_upgrade.sh" \
   || fail "I generated vendor supports --worker-password"
 
 # F. Same upstream, different patch-generation invalidates reuse.
-DESTF="${MM_DP_PHASE2_ROOT}/6.5.0"
+DESTF="${MM_DP_PHASE2_ROOT}/6.6.0"
 rm -rf "$DESTF"
 mkdir -p "$DESTF"
 make_work_tree() {
@@ -214,16 +217,16 @@ make_work_tree() {
   printf 'common\n' >"${work}/aelladeb_py3_common.tar.gz"
   sha1sum "${work}/aelladeb_py3_common.tar.gz" | awk '{print $1}' \
     >"${work}/aelladeb_py3_common.tar.gz.sha1"
-  printf 'uvp\n' >"${work}/aella-uvp-2404_6.5.0ubuntu1_amd64.deb"
-  sha1sum "${work}/aella-uvp-2404_6.5.0ubuntu1_amd64.deb" | awk '{print $1}' \
-    >"${work}/aella-uvp-2404_6.5.0ubuntu1_amd64.deb.sha1"
+  printf 'uvp\n' >"${work}/aella-uvp-2404_6.6.0ubuntu1_amd64.deb"
+  sha1sum "${work}/aella-uvp-2404_6.6.0ubuntu1_amd64.deb" | awk '{print $1}' \
+    >"${work}/aella-uvp-2404_6.6.0ubuntu1_amd64.deb.sha1"
   cp -f "$bringup" "${work}/bringup_py3_dp_after_os_upgrade.sh"
   sha1sum "${work}/bringup_py3_dp_after_os_upgrade.sh" | awk '{print $1}' \
     >"${work}/bringup_py3_dp_after_os_upgrade.sh.sha1"
-  seq 1 156 >"${work}/images-6.5.0.list"
-  printf 'images-body\n' >"${work}/images-6.5.0.tar"
-  sha256sum "${work}/images-6.5.0.tar" | awk '{print $1}' \
-    >"${work}/images-6.5.0.tar.sha256"
+  seq 1 156 >"${work}/images-6.6.0.list"
+  printf 'images-body\n' >"${work}/images-6.6.0.tar"
+  sha256sum "${work}/images-6.6.0.tar" | awk '{print $1}' \
+    >"${work}/images-6.6.0.tar.sha256"
 }
 WORKF="${WORKDIR}/workF"
 make_work_tree "$WORKF" "${WORKA}/bringup_py3_dp_after_os_upgrade.sh"
@@ -235,16 +238,16 @@ export MM_KEEP_PHASE2_SOURCES=1
 BRINGUP_UPSTREAM_SHA1="$(sha1sum "$FIXTURE" | awk '{print $1}')"
 BRINGUP_PATCH_GENERATION="$CURRENT_GEN"
 BRINGUP_PATCHED_SHA1="$(sha1sum "${WORKF}/bringup_py3_dp_after_os_upgrade.sh" | awk '{print $1}')"
-engine_place_dp_phase2_final "$WORKF" 6.5.0 >/dev/null
+engine_place_dp_phase2_final "$WORKF" 6.6.0 >/dev/null
 grep -q "^BRINGUP_PATCH_GENERATION=${CURRENT_GEN}$" "${DESTF}/release.env" \
   && pass "F published patch generation" \
   || fail "F published patch generation"
-engine_assess_phase2_final 6.5.0
+engine_assess_phase2_final 6.6.0
 [[ "$PHASE2_EXISTING_BUNDLE" == "VALID" ]] && pass "F current generation VALID" \
   || fail "F current generation VALID got=${PHASE2_EXISTING_BUNDLE}"
 sed -i 's/^BRINGUP_PATCH_GENERATION=.*/BRINGUP_PATCH_GENERATION=ffffffffffffffffffffffffffffffffffffffff/' \
   "${DESTF}/release.env"
-engine_assess_phase2_final 6.5.0
+engine_assess_phase2_final 6.6.0
 [[ "$PHASE2_EXISTING_BUNDLE" == "INVALID" ]] \
   && [[ "${PHASE2_EXISTING_INVALID_REASON}" == "patch_generation_changed" ]] \
   && pass "F patch-generation change invalidates reuse" \
@@ -254,13 +257,13 @@ engine_assess_phase2_final 6.5.0
 sed -i "s/^BRINGUP_PATCH_GENERATION=.*/BRINGUP_PATCH_GENERATION=${CURRENT_GEN}/" \
   "${DESTF}/release.env"
 # Restore VALID generation, then plant a cache with a new upstream SHA.
-CACHEG="$(acps_cache_dir 6.5.0)"
+CACHEG="$(acps_cache_dir 6.6.0)"
 mkdir -p "$CACHEG"
 sed 's/log "download_artifacts placeholder"/log "download_artifacts placeholder"\n    NEW_UPSTREAM_VENDOR_FIX_MARKER=YES/' \
   "$FIXTURE" >"${CACHEG}/bringup_py3_dp_after_os_upgrade.sh"
 write_sidecar_for "${CACHEG}/bringup_py3_dp_after_os_upgrade.sh"
 # Copy remaining dummy payloads so cache looks present; assess only hashes bringup.
-engine_assess_phase2_final 6.5.0
+engine_assess_phase2_final 6.6.0
 [[ "$PHASE2_EXISTING_BUNDLE" == "INVALID" ]] \
   && [[ "${PHASE2_EXISTING_INVALID_REASON}" == "upstream_bringup_changed" ]] \
   && pass "G new upstream SHA invalidates reuse" \
@@ -277,7 +280,7 @@ rch="$(run_in_subshell "$OUTH" engine_apply_local_bringup_patch "$WORKH" \
 grep -q 'NEW_UPSTREAM_VENDOR_FIX_MARKER=YES' "${WORKH}/bringup_py3_dp_after_os_upgrade.sh" \
   && pass "H rebuilt from new upstream, not stale bundle" \
   || fail "H rebuilt from new upstream, not stale bundle"
-old_published="$(tar -xOf "${DESTF}/dp_bundle_6.5.0-current.tar" bringup_py3_dp_after_os_upgrade.sh)"
+old_published="$(tar -xOf "${DESTF}/dp_bundle_6.6.0-current.tar" bringup_py3_dp_after_os_upgrade.sh)"
 printf '%s\n' "$old_published" | grep -q 'NEW_UPSTREAM_VENDOR_FIX_MARKER=YES' \
   && fail "H old bundle already had new marker" \
   || pass "H old published bundle lacked new upstream marker"
@@ -315,6 +318,36 @@ bash -n "${WORKP}/bringup_py3_dp_after_os_upgrade.sh" \
 cmp -s "${CACHEP}/bringup_py3_dp_after_os_upgrade.sh" "$PRODUCTION_F1A73" \
   && pass "P cache upstream not mutated" \
   || fail "P cache upstream mutated"
+
+# Q. Exact production 3af369 upstream patches through verify then apply.
+QSHA="$(sha1sum "$PRODUCTION_3AF369" | awk '{print $1}')"
+[[ "$QSHA" == "$EXPECTED_3AF369_SHA1" ]] \
+  && pass "Q production fixture SHA1=${QSHA}" \
+  || fail "Q production fixture SHA1 want=${EXPECTED_3AF369_SHA1} got=${QSHA}"
+CACHEQ="${WORKDIR}/cacheQ"; mkdir -p "$CACHEQ"
+cp -f "$PRODUCTION_3AF369" "${CACHEQ}/bringup_py3_dp_after_os_upgrade.sh"
+write_sidecar_for "${CACHEQ}/bringup_py3_dp_after_os_upgrade.sh"
+OUTQ="${WORKDIR}/q.log"
+rcq="$(run_in_subshell "$OUTQ" engine_verify_acps_upstream_bringup "$CACHEQ")"
+[[ "$rcq" -eq 0 ]] && pass "Q verify rc=0" || { fail "Q verify rc=${rcq}"; cat "$OUTQ"; }
+grep -q 'BRINGUP_PATCH_COMPAT=PASS' "$OUTQ" && pass "Q verify BRINGUP_PATCH_COMPAT=PASS" || fail "Q verify compat"
+WORKQ="${WORKDIR}/workQ"; mkdir -p "$WORKQ"
+OUTQ2="${WORKDIR}/q2.log"
+rcq2="$(run_in_subshell "$OUTQ2" engine_apply_local_bringup_patch "$WORKQ" \
+  "${CACHEQ}/bringup_py3_dp_after_os_upgrade.sh")"
+[[ "$rcq2" -eq 0 ]] && pass "Q apply rc=0" || { fail "Q apply rc=${rcq2}"; cat "$OUTQ2"; }
+grep -q 'BRINGUP_PATCH_COMPAT=PASS' "$OUTQ2" && pass "Q apply BRINGUP_PATCH_COMPAT=PASS" || fail "Q apply compat"
+grep -q 'PATCHED_BRINGUP_GENERATION=PASS' "$OUTQ2" && pass "Q PATCHED_BRINGUP_GENERATION=PASS" || fail "Q generation"
+grep -q 'wait_for_da_restful_8003' "${WORKQ}/bringup_py3_dp_after_os_upgrade.sh" \
+  && grep -q 'rebuild_resolv_conf' "${WORKQ}/bringup_py3_dp_after_os_upgrade.sh" \
+  && grep -q -- '--worker-password' "${WORKQ}/bringup_py3_dp_after_os_upgrade.sh" \
+  && pass "Q 3af369 vendor + project markers" \
+  || fail "Q 3af369 vendor + project markers"
+bash -n "${WORKQ}/bringup_py3_dp_after_os_upgrade.sh" \
+  && pass "Q patched bash -n" || fail "Q patched bash -n"
+cmp -s "${CACHEQ}/bringup_py3_dp_after_os_upgrade.sh" "$PRODUCTION_3AF369" \
+  && pass "Q cache upstream not mutated" \
+  || fail "Q cache upstream mutated"
 
 # English-only on production patcher + engine hunks.
 if ROOT="$ROOT" python3 - <<'PY'

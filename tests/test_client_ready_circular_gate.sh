@@ -44,8 +44,8 @@ export MM_MOCK_SAFETY_RESERVE_BYTES=$((10 * 1024 * 1024 * 1024))
 export OS_CORE_PACKAGE_BYTES=100
 export OS_CORE_PAYLOAD_BYTES=200
 export ACPS_EXPECTED_BYTES=300
-export TARGET_DP_VERSION=6.5.0
-export PHASE2_TARGET_VERSION=6.5.0
+export TARGET_DP_VERSION=6.6.0
+export PHASE2_TARGET_VERSION=6.6.0
 export ACPS_USERNAME=testuser
 export ACPS_PASSWORD=testpass
 export OS_CORE_R2_URL='http://127.0.0.1:9/os-core.tar'
@@ -63,7 +63,7 @@ rm -f "${MM_CLIENT_ROOT}/dp-offline-upgrade-"*.sh \
 
 cat >"$MM_CONFIG_FILE" <<EOF
 PREPARATION_MODE=FULL
-TARGET_DP_VERSION=6.5.0
+TARGET_DP_VERSION=6.6.0
 ACPS_USERNAME=testuser
 ACPS_PASSWORD=testpass
 OS_CORE_R2_URL=http://127.0.0.1:9/os-core.tar
@@ -184,20 +184,20 @@ acps_setup_curl_auth() { return 0; }
 acps_test_connection() { return 0; }
 acps_expected_bytes_hint() { printf '300\n'; }
 acps_acquire_all() { return 0; }
-acps_cache_dir() { mkdir -p "${MM_CACHE_ROOT}/acps/6.5.0"; printf '%s\n' "${MM_CACHE_ROOT}/acps/6.5.0"; }
+acps_cache_dir() { mkdir -p "${MM_CACHE_ROOT}/acps/6.6.0"; printf '%s\n' "${MM_CACHE_ROOT}/acps/6.6.0"; }
 engine_verify_acps_upstream_bringup() { return 0; }
 engine_stage_acps_work_from_cache() { mkdir -p "$2"; return 0; }
 engine_apply_local_bringup_patch() { return 0; }
 engine_assert_work_ready_for_bundle() { return 0; }
 engine_place_dp_phase2_final() {
-  local dest="${MM_DP_PHASE2_ROOT}/6.5.0"
+  local dest="${MM_DP_PHASE2_ROOT}/6.6.0"
   mkdir -p "$dest"
-  printf 'bundle\n' >"${dest}/dp_bundle_6.5.0-current.tar"
-  (cd "$dest" && sha256sum dp_bundle_6.5.0-current.tar >dp_bundle_6.5.0-current.tar.sha256)
+  printf 'bundle\n' >"${dest}/dp_bundle_6.6.0-current.tar"
+  (cd "$dest" && sha256sum dp_bundle_6.6.0-current.tar >dp_bundle_6.6.0-current.tar.sha256)
   cat >"${dest}/release.env" <<EOF
-TARGET_DP_VERSION=6.5.0
-PHASE2_ARTIFACT_VERSION=6.5.0
-STABLE_BUNDLE_NAME=dp_bundle_6.5.0-current.tar
+TARGET_DP_VERSION=6.6.0
+PHASE2_ARTIFACT_VERSION=6.6.0
+STABLE_BUNDLE_NAME=dp_bundle_6.6.0-current.tar
 PHASE2_BUNDLE_ENTRY_COUNT=9
 EOF
   mm_status_set PHASE2_BUNDLE_ENTRY_COUNT 9
@@ -211,7 +211,7 @@ EOF
 engine_cleanup_temps() { return 0; }
 engine_write_install_report() { return 0; }
 engine_prepare_phase2_ubuntu_prerequisites() {
-  local extras="${MM_DP_PHASE2_ROOT}/${TARGET_DP_VERSION:-6.5.0}/extras"
+  local extras="${MM_DP_PHASE2_ROOT}/${TARGET_DP_VERSION:-6.6.0}/extras"
   mkdir -p "$extras"
   cat >"${extras}/phase2-ubuntu-prerequisites.state" <<'EOF'
 PHASE2_PREREQ_REQUIRED=NO
@@ -345,7 +345,7 @@ chmod +x "${MM_CLIENT_ROOT}/stage-dp-phase2.sh" "${MM_CLIENT_ROOT}/bringup_py3_d
 # shellcheck source=/dev/null
 source "${ROOT}/scripts/lib/phase2_helper_generation.sh"
 phase2_helper_generation_write "$MM_CLIENT_ROOT" >/dev/null
-phase2_upgrade_wrapper_write "$MM_CLIENT_ROOT" "http://192.0.2.10" "6.5.0" >/dev/null
+phase2_upgrade_wrapper_write "$MM_CLIENT_ROOT" "http://192.0.2.10" "6.6.0" >/dev/null
 if mm_check_client_build_prerequisites_ready; then
   pass "PHASE2_ONLY prerequisites PASS without hop clients"
 else

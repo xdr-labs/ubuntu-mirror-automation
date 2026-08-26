@@ -8,7 +8,7 @@ See [dp-os-upgrade-preflight.md](dp-os-upgrade-preflight.md).
 
 `scripts/dp-upgrade-preflight.sh` is a **read-only** judgment tool. It reads a
 `collect-dp-upgrade-readiness.sh` result (directory or `.tar.gz`) and decides
-whether a Stellar Cyber DP host may proceed toward Ubuntu 24.04 / DP 6.5.0 work.
+whether a Stellar Cyber DP host may proceed toward Ubuntu 24.04 / DP 6.6.0 work.
 
 It does **not** upgrade the OS or DP, change packages, shells, mounts, APT
 sources, snapshots, or collector input.
@@ -98,7 +98,7 @@ is a **warning** (future requirement). Legacy `aelladeb` never substitutes for P
 | CLI / input error | Bad options, missing paths, bad enums | `2` |
 | Integrity / internal | Unreadable/invalid input structure, extract failure | `3` |
 
-No-op (already Ubuntu 24.04 and DP ≥ 6.5.0):
+No-op (already Ubuntu 24.04 and DP ≥ 6.6.0):
 
 - `overall_status=READY` (if clean)
 - `recommended_action=NONE`
@@ -110,10 +110,11 @@ OS and DP are judged **independently**. LTS hops cannot be skipped.
 
 - DP &lt; 6.2.0 → BLOCKED
 - Ubuntu 16.04 + DP ≥ 6.2.0 → Phase 1 (four hops to 24.04)
-- Ubuntu 24.04 + DP &lt; 6.5.0 → Phase 2
-- Ubuntu 24.04 + DP 6.5.0 → typically no-op
-- Ubuntu 24.04 + DP &gt; 6.5.0 → out of Phase 2 scope; **no downgrade** suggested
+- Ubuntu 24.04 + DP &lt; 6.6.0 → Phase 2 (separate workflow; this OS-only preflight does not execute it)
+- Ubuntu 24.04 + DP 6.6.0 → typically Phase 1 no-op / already-target
+- Ubuntu 24.04 + DP &gt; 6.6.0 → out of Phase 2 scope; **no downgrade** suggested
 - DP 6.5.0 on Ubuntu 16.04 is **not** a no-op (Phase 1 still required)
+- DP 6.5.0 on Ubuntu 24.04 is **not** same-version recovery; it is a Phase 2 upgrade to 6.6.0
 
 ## Policy
 
@@ -192,7 +193,7 @@ sudo ./scripts/dp-upgrade-preflight.sh \
   --output-dir /var/tmp
 ```
 
-### No-op host (already 24.04 + DP 6.5.0)
+### Phase 1 no-op host (already 24.04; DP 6.5.0 still needs Phase 2 to 6.6.0)
 
 ```bash
 ./scripts/dp-upgrade-preflight.sh \

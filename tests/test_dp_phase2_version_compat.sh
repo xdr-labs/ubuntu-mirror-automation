@@ -45,12 +45,12 @@ os_release_field() { # override for unit test
     VERSION_CODENAME) printf 'noble' ;;
   esac
 }
-TARGET_DP_VERSION="6.5.0"
-PHASE2_ARTIFACT_VERSION="6.5.0"
+TARGET_DP_VERSION="6.6.0"
+PHASE2_ARTIFACT_VERSION="6.6.0"
 # simulate require_noble field reads
 _vid="$(os_release_field VERSION_ID)"
 _ver="$(os_release_field VERSION)"
-assert_eq "$TARGET_DP_VERSION" "6.5.0" "target unchanged after os VERSION read"
+assert_eq "$TARGET_DP_VERSION" "6.6.0" "target unchanged after os VERSION read"
 [[ "$_ver" != "$TARGET_DP_VERSION" ]] && pass "OS VERSION distinct from target" || fail "OS VERSION collided"
 
 echo "[test] compatibility matrix via evaluate_version_compatibility"
@@ -93,38 +93,43 @@ capture_compat() {
   return "$rc"
 }
 
-if out="$(run_compat 6.1.0 6.5.0)"; then
+if out="$(run_compat 6.1.0 6.6.0)"; then
   fail "6.1.0 should STOP"
 else
   echo "$out" | grep -q 'FAIL_UNSUPPORTED' && pass "6.1.0 unsupported STOP" || fail "6.1.0 message"
 fi
-if out="$(run_compat 6.1.9 6.5.0)"; then
+if out="$(run_compat 6.1.9 6.6.0)"; then
   fail "6.1.9 should STOP"
 else
   echo "$out" | grep -q 'FAIL_UNSUPPORTED' && pass "6.1.9 unsupported STOP" || fail "6.1.9 message"
 fi
-for v in 6.2.0 6.3.0 6.4.0; do
-  if out="$(run_compat "$v" 6.5.0)"; then
+for v in 6.2.0 6.3.0 6.4.0 6.5.0; do
+  if out="$(run_compat "$v" 6.6.0)"; then
     echo "$out" | grep -q 'PASS_UPGRADE' && pass "${v} upgrade PASS" || fail "${v} missing PASS_UPGRADE"
   else
     fail "${v} should allow upgrade"
   fi
 done
+# Generic helper still treats source==explicit-target as same-version (not production).
 out="$(capture_compat 6.5.0 6.5.0 0 '' || true)"
-echo "$out" | grep -q 'ALREADY_AT_TARGET' && pass "same version ALREADY_AT_TARGET" || fail "ALREADY_AT_TARGET"
+echo "$out" | grep -q 'ALREADY_AT_TARGET' && pass "generic helper 6.5.0==6.5.0 ALREADY_AT_TARGET" || fail "generic 6.5 ALREADY_AT_TARGET"
 out="$(capture_compat 6.5.0 6.5.0 0 COMPLETED_NOBLE || true)"
 echo "$out" | grep -q 'SAME_VERSION_RECOVERY_REQUIRED' && pass "recovery required without ack" || fail "recovery required"
 if out="$(capture_compat 6.5.0 6.5.0 1 COMPLETED_NOBLE)"; then
-  echo "$out" | grep -q 'SAME_VERSION_RECOVERY_REQUIRED' && pass "recovery allowed with ack" || fail "recovery allow"
+  echo "$out" | grep -q 'SAME_VERSION_RECOVERY_REQUIRED' && pass "generic 6.5.0 recovery allowed with ack" || fail "generic 6.5 recovery allow"
 else
-  fail "recovery with ack should not die: $out"
+  fail "generic 6.5 recovery with ack should not die: $out"
 fi
-out="$(capture_compat 6.6.0 6.5.0 || true)"
-echo "$out" | grep -q 'FAIL_DOWNGRADE' && pass "downgrade STOP" || fail "downgrade"
+out="$(capture_compat 6.6.0 6.6.0 0 '' || true)"
+echo "$out" | grep -q 'ALREADY_AT_TARGET' && pass "6.6.0 same version ALREADY_AT_TARGET" || fail "6.6.0 ALREADY_AT_TARGET"
+out="$(capture_compat 6.6.0 6.6.0 0 COMPLETED_NOBLE || true)"
+echo "$out" | grep -q 'SAME_VERSION_RECOVERY_REQUIRED' && pass "6.6.0 recovery required without ack" || fail "6.6.0 recovery required"
+out="$(capture_compat 6.7.0 6.6.0 || true)"
+echo "$out" | grep -q 'FAIL_DOWNGRADE' && pass "6.7.0 downgrade STOP" || fail "6.7.0 downgrade"
 
 SOURCE_DP_VERSION_CHECK="FAIL"
 SOURCE_DP_VERSION=""
-TARGET_DP_VERSION="6.5.0"
+TARGET_DP_VERSION="6.6.0"
 SAME_VERSION_RECOVERY=0
 set +e
 out="$(evaluate_version_compatibility 2>&1)"

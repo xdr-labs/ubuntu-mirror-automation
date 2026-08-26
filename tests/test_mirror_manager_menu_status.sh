@@ -30,7 +30,7 @@ export MM_STATUS_FILE="${MM_CONFIG_DIR}/dp-upgrade-mirror.status"
 export MM_LOG_DIR="${TMP}/logs"
 export MM_STATE_ROOT="${TMP}/runs"
 export MM_VERIFY_HTTP_BASE="http://127.0.0.1:9"
-export TARGET_DP_VERSION=6.5.0
+export TARGET_DP_VERSION=6.6.0
 export OS_CORE_R2_URL="https://example.test/ubuntu-os-core.tar"
 mkdir -p "$MM_CONFIG_DIR" "$MM_LOG_DIR" "$MM_SELECTIVE_ROOT" "$MM_CLIENT_ROOT" "$MM_CACHE_ROOT"
 
@@ -66,7 +66,7 @@ seed_client_files() {
 }
 
 seed_artifacts() {
-  local ver=6.5.0
+  local ver=6.6.0
   local dp="${MM_DP_PHASE2_ROOT}/${ver}"
   local bundle="${dp}/dp_bundle_${ver}-current.tar"
   mkdir -p "${MM_SELECTIVE_ROOT}/ubuntu" "${MM_SELECTIVE_ROOT}/shared/offline" "$dp"
@@ -175,7 +175,7 @@ mm_status_set HTTP_CONFIGURATION_READY PASS
 mm_status_set UPGRADE_READINESS PASS
 mm_record_readiness_validated
 # mutate bundle
-printf 'CHANGED\n' >>"${MM_DP_PHASE2_ROOT}/6.5.0/dp_bundle_6.5.0-current.tar"
+printf 'CHANGED\n' >>"${MM_DP_PHASE2_ROOT}/6.6.0/dp_bundle_6.6.0-current.tar"
 labels_from_collect
 [[ "$DOWN_L" == "Download and Prepare Upgrade Files" ]] || fail "C7 download still completed"
 [[ "$READY_L" == "Verify Upgrade Readiness" ]] || fail "C7 ready still completed"

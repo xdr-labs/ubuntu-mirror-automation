@@ -17,7 +17,7 @@ hops on a Stellar Cyber DP host up to **Ubuntu 24.04 (noble)**.
 
 | In scope | Out of scope |
 |----------|--------------|
-| Ubuntu 16.04→18.04→20.04→22.04→24.04 | DP 6.5.0 Py3 bringup |
+| Ubuntu 16.04→18.04→20.04→22.04→24.04 | DP 6.6.0 Py3 bringup |
 | Resume after reboot | DP ≥ 6.6.0 upgrade |
 | direct / cache / mirror package sources | UI upgrade |
 | Data preservation under `/opt/aelladata` | Phase 2 execution |

@@ -30,8 +30,8 @@ export MM_STATUS_FILE="${MM_CONFIG_DIR}/status"
 export MM_DP_PHASE2_ROOT="${MM_MIRROR_ROOT}/dp-phase2"
 export MM_SELECTIVE_ROOT="${MM_MIRROR_ROOT}/selective"
 export MM_CLIENT_ROOT="${MM_MIRROR_ROOT}/client"
-export TARGET_DP_VERSION=6.5.0
-export PHASE2_TARGET_VERSION=6.5.0
+export TARGET_DP_VERSION=6.6.0
+export PHASE2_TARGET_VERSION=6.6.0
 mkdir -p "$MM_CACHE_ROOT" "$MM_DP_PHASE2_ROOT" "$MM_LOG_DIR" "$MM_STATE_ROOT" \
   "$MM_CONFIG_DIR" "$MM_SELECTIVE_ROOT" "$MM_CLIENT_ROOT"
 : >"$MM_STATUS_FILE"
@@ -42,7 +42,7 @@ source "$COMMON"
 source "$DP2"
 # shellcheck source=../scripts/lib/mirror_install_engine.sh
 source "$ENGINE"
-dp2_set_version 6.5.0
+dp2_set_version 6.6.0
 
 [[ -f "$PATCHED_BRINGUP" ]] || fail "current patched bringup missing"
 grep -q -- '--worker-password' "$PATCHED_BRINGUP" \
@@ -72,7 +72,7 @@ EOF
 chmod +x "$OLD_VENDOR"
 
 set +e
-old_err="$("$OLD_VENDOR" --version 6.5.0 --skip-download \
+old_err="$("$OLD_VENDOR" --version 6.6.0 --skip-download \
   --worker-ips "10.20.7.11,10.20.7.12" --worker-password 'Test123!' 2>&1)"
 old_rc=$?
 set -e
@@ -89,38 +89,38 @@ make_work_tree() {
   printf 'common\n' >"${work}/aelladeb_py3_common.tar.gz"
   sha1sum "${work}/aelladeb_py3_common.tar.gz" | awk '{print $1}' \
     >"${work}/aelladeb_py3_common.tar.gz.sha1"
-  printf 'uvp\n' >"${work}/aella-uvp-2404_6.5.0ubuntu1_amd64.deb"
-  sha1sum "${work}/aella-uvp-2404_6.5.0ubuntu1_amd64.deb" | awk '{print $1}' \
-    >"${work}/aella-uvp-2404_6.5.0ubuntu1_amd64.deb.sha1"
+  printf 'uvp\n' >"${work}/aella-uvp-2404_6.6.0ubuntu1_amd64.deb"
+  sha1sum "${work}/aella-uvp-2404_6.6.0ubuntu1_amd64.deb" | awk '{print $1}' \
+    >"${work}/aella-uvp-2404_6.6.0ubuntu1_amd64.deb.sha1"
   cp -f "$bringup_src" "${work}/bringup_py3_dp_after_os_upgrade.sh"
   sha1sum "${work}/bringup_py3_dp_after_os_upgrade.sh" | awk '{print $1}' \
     >"${work}/bringup_py3_dp_after_os_upgrade.sh.sha1"
-  seq 1 156 >"${work}/images-6.5.0.list"
-  printf 'images-body\n' >"${work}/images-6.5.0.tar"
-  sha256sum "${work}/images-6.5.0.tar" | awk '{print $1}' \
-    >"${work}/images-6.5.0.tar.sha256"
+  seq 1 156 >"${work}/images-6.6.0.list"
+  printf 'images-body\n' >"${work}/images-6.6.0.tar"
+  sha256sum "${work}/images-6.6.0.tar" | awk '{print $1}' \
+    >"${work}/images-6.6.0.tar.sha256"
 }
 
 publish_bundle_from_work() {
   local work="$1" patched_sha="${2:-}"
-  local dest="${MM_DP_PHASE2_ROOT}/6.5.0"
-  local stable="dp_bundle_6.5.0-current.tar"
+  local dest="${MM_DP_PHASE2_ROOT}/6.6.0"
+  local stable="dp_bundle_6.6.0-current.tar"
   rm -rf "$dest"
   mkdir -p "$dest"
   tar -cf "${dest}/${stable}" -C "$work" \
     aelladeb_py3_common.tar.gz \
     aelladeb_py3_common.tar.gz.sha1 \
-    aella-uvp-2404_6.5.0ubuntu1_amd64.deb \
-    aella-uvp-2404_6.5.0ubuntu1_amd64.deb.sha1 \
+    aella-uvp-2404_6.6.0ubuntu1_amd64.deb \
+    aella-uvp-2404_6.6.0ubuntu1_amd64.deb.sha1 \
     bringup_py3_dp_after_os_upgrade.sh \
     bringup_py3_dp_after_os_upgrade.sh.sha1 \
-    images-6.5.0.list \
-    images-6.5.0.tar \
-    images-6.5.0.tar.sha256
+    images-6.6.0.list \
+    images-6.6.0.tar \
+    images-6.6.0.tar.sha256
   (cd "$dest" && sha256sum "$stable" >"${stable}.sha256")
   cat >"${dest}/release.env" <<EOF
-TARGET_DP_VERSION=6.5.0
-PHASE2_ARTIFACT_VERSION=6.5.0
+TARGET_DP_VERSION=6.6.0
+PHASE2_ARTIFACT_VERSION=6.6.0
 STABLE_BUNDLE_NAME=${stable}
 PHASE2_BUNDLE_ENTRY_COUNT=9
 EOF
@@ -134,7 +134,7 @@ make_work_tree "$OLD_WORK" "$OLD_VENDOR"
 OLD_SHA="$(sha1sum "${OLD_WORK}/bringup_py3_dp_after_os_upgrade.sh" | awk '{print $1}')"
 publish_bundle_from_work "$OLD_WORK" "$OLD_SHA"
 
-engine_assess_phase2_final 6.5.0
+engine_assess_phase2_final 6.6.0
 [[ "$PHASE2_EXISTING_BUNDLE" == "INVALID" ]] \
   || fail "old patched SHA bundle reusable got=${PHASE2_EXISTING_BUNDLE}"
 [[ "${PHASE2_EXISTING_INVALID_REASON}" == "patch_generation_missing" ]] \
@@ -144,10 +144,10 @@ pass "reuse assessment rejects old-vendor Phase 2 bundle"
 publish_bundle_from_work "$OLD_WORK" ""
 printf 'BRINGUP_PATCH_GENERATION=%s\n' \
   "$(python3 "${ROOT}/scripts/lib/patch_dp_phase2_bringup.py" --print-generation | awk -F= '$1=="BRINGUP_PATCH_GENERATION"{print $2; exit}')" \
-  >>"${MM_DP_PHASE2_ROOT}/6.5.0/release.env"
+  >>"${MM_DP_PHASE2_ROOT}/6.6.0/release.env"
 printf 'BRINGUP_UPSTREAM_SHA1=70de02dd62409110dadb7553991d1ffb0a79f396\n' \
-  >>"${MM_DP_PHASE2_ROOT}/6.5.0/release.env"
-engine_assess_phase2_final 6.5.0
+  >>"${MM_DP_PHASE2_ROOT}/6.6.0/release.env"
+engine_assess_phase2_final 6.6.0
 [[ "$PHASE2_EXISTING_BUNDLE" == "INVALID" ]] \
   || fail "bundle missing BRINGUP_PATCHED_SHA1 still VALID"
 [[ "${PHASE2_EXISTING_INVALID_REASON}" == "patched_bringup_sha_missing" ]] \
@@ -166,9 +166,9 @@ export MM_KEEP_PHASE2_SOURCES=1
 BRINGUP_UPSTREAM_SHA1="$(sha1sum "${NEW_WORK}.upstream/bringup_py3_dp_after_os_upgrade.sh" | awk '{print $1}')"
 BRINGUP_PATCH_GENERATION="$(python3 "${ROOT}/scripts/lib/patch_dp_phase2_bringup.py" --print-generation | awk -F= '$1=="BRINGUP_PATCH_GENERATION"{print $2; exit}')"
 BRINGUP_PATCHED_SHA1="$CURRENT_SHA"
-engine_place_dp_phase2_final "$NEW_WORK" 6.5.0 >/dev/null
-NEW_ENV="${MM_DP_PHASE2_ROOT}/6.5.0/release.env"
-NEW_BUNDLE="${MM_DP_PHASE2_ROOT}/6.5.0/dp_bundle_6.5.0-current.tar"
+engine_place_dp_phase2_final "$NEW_WORK" 6.6.0 >/dev/null
+NEW_ENV="${MM_DP_PHASE2_ROOT}/6.6.0/release.env"
+NEW_BUNDLE="${MM_DP_PHASE2_ROOT}/6.6.0/dp_bundle_6.6.0-current.tar"
 grep -q "^BRINGUP_PATCHED_SHA1=${CURRENT_SHA}$" "$NEW_ENV" \
   || fail "regenerated release.env missing current BRINGUP_PATCHED_SHA1"
 EXTRACT="${TMP}/extract"
@@ -178,7 +178,7 @@ grep -q -- '--worker-password' "${EXTRACT}/bringup_py3_dp_after_os_upgrade.sh" \
   || fail "regenerated bundle vendor lacks --worker-password"
 cmp -s "$PATCHED_BRINGUP" "${EXTRACT}/bringup_py3_dp_after_os_upgrade.sh" \
   || fail "regenerated bundle bringup is not the current patched file"
-engine_assess_phase2_final 6.5.0
+engine_assess_phase2_final 6.6.0
 [[ "$PHASE2_EXISTING_BUNDLE" == "VALID" ]] \
   || fail "rebuilt current bundle not VALID got=${PHASE2_EXISTING_BUNDLE}"
 pass "regenerated bundle contains current patched bringup"

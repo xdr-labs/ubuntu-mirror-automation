@@ -88,7 +88,7 @@ assert_grep 'IMAGE_IMPORT_HEARTBEAT_SECONDS' "$BRINGUP" "heartbeat env honored"
 
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR" "$HELPERS"' EXIT
-TAR="${WORKDIR}/images-6.5.0.tar"
+TAR="${WORKDIR}/images-6.6.0.tar"
 # Large-enough sparse-ish file so fd position math has a size; content unused by mock.
 dd if=/dev/zero of="$TAR" bs=1M count=4 status=none
 LOGF="${WORKDIR}/import.log"
@@ -127,7 +127,7 @@ assert_grep 'IMAGE_IMPORT_START namespace=k8s.io' "$A_OUT" "A START"
 assert_grep 'IMAGE_IMPORT_COMPLETE namespace=k8s.io' "$A_OUT" "A COMPLETE"
 assert_grep 'process_alive=YES' "$A_OUT" "A process_alive=YES"
 assert_grep 'disk_free=' "$A_OUT" "A disk_free present"
-assert_grep 'file=images-6.5.0.tar' "$A_OUT" "A tar basename present"
+assert_grep 'file=images-6.6.0.tar' "$A_OUT" "A tar basename present"
 
 # --- B: failure propagates rc=17 ---
 B_OUT="${WORKDIR}/b.out"
@@ -221,7 +221,7 @@ assert_grep '^HB1=1$' "$HB_OUT" "positive heartbeat kept"
 
 # Gzip path recognized (*.gz) — use PATH executables so wait(1) sees a real
 # pipeline job (shell-function mocks can hide producer-failure masking).
-GZ_TAR="${WORKDIR}/images-6.5.0.tar.gz"
+GZ_TAR="${WORKDIR}/images-6.6.0.tar.gz"
 : >"$GZ_TAR"
 MOCK_BIN="${WORKDIR}/mockbin"
 mkdir -p "$MOCK_BIN"

@@ -39,7 +39,7 @@ do
   install -m 0755 "${ROOT}/client/lib/${hf}" "${MM_CLIENT_ROOT}/lib/${hf}"
 done
 phase2_helper_generation_write "$MM_CLIENT_ROOT" >/dev/null
-phase2_upgrade_wrapper_write "$MM_CLIENT_ROOT" "http://192.0.2.10" "6.5.0" >/dev/null
+phase2_upgrade_wrapper_write "$MM_CLIENT_ROOT" "http://192.0.2.10" "6.6.0" >/dev/null
 export SCRIPT_DIR="${ROOT}/scripts"
 mkdir -p "$MM_LOG_DIR" "$MM_CONFIG_DIR" "$MM_CLIENT_ROOT"
 : >"$MM_STATUS_FILE"
@@ -129,7 +129,7 @@ grep -qE 'Current DP Version|Starting DP Version"|Target DP Version|"DP Version"
 footer="$(mm_config_footer_text)"
 grep -Fxq 'Starting DP Version: 6.2.0 / 6.3.0 / 6.4.0 / 6.5.0' <<<"$footer" \
   || fail "exact footer starting line missing"
-grep -Fxq 'Phase 2 Target:      6.5.0 (fixed)' <<<"$footer" \
+grep -Fxq 'Phase 2 Target:      6.6.0 (fixed)' <<<"$footer" \
   || fail "exact footer phase2 target line missing"
 grep -Fxq 'DP OS version: 16.04' <<<"$footer" \
   || fail "exact footer DP OS line missing"
@@ -169,12 +169,12 @@ pass "Configuration menu height fits exact footer"
 
 # Fixed target constant
 mm_force_phase2_target
-[[ "$TARGET_DP_VERSION" == "6.5.0" ]] || fail "forced target not 6.5.0"
-[[ "$PHASE2_TARGET_VERSION" == "6.5.0" ]] || fail "PHASE2_TARGET_VERSION not 6.5.0"
+[[ "$TARGET_DP_VERSION" == "6.6.0" ]] || fail "forced target not 6.6.0"
+[[ "$PHASE2_TARGET_VERSION" == "6.6.0" ]] || fail "PHASE2_TARGET_VERSION not 6.6.0"
 TARGET_DP_VERSION=9.9.9
 mm_force_phase2_target
-[[ "$TARGET_DP_VERSION" == "6.5.0" ]] || fail "production override not forced back to 6.5.0"
-pass "Phase 2 target fixed at 6.5.0"
+[[ "$TARGET_DP_VERSION" == "6.6.0" ]] || fail "production override not forced back to 6.6.0"
+pass "Phase 2 target fixed at 6.6.0"
 
 # --- FULL mode command generation ---
 PREPARATION_MODE=FULL
@@ -183,7 +183,7 @@ gui_build_client_commands "http://192.0.2.10" "single" "" >"$OUT"
 
 grep -q 'Supported Starting DP Versions: 6.2.0 / 6.3.0 / 6.4.0 / 6.5.0' "$OUT" \
   || fail "missing supported starting versions"
-grep -q 'Phase 2 Target: 6.5.0' "$OUT" || fail "missing phase2 target header"
+grep -q 'Phase 2 Target: 6.6.0' "$OUT" || fail "missing phase2 target header"
 grep -q 'OS Upgrade: Ubuntu 16.04 → Ubuntu 24.04' "$OUT" || fail "missing OS upgrade header"
 grep -q 'Commands saved to:' "$OUT" || fail "missing Commands saved to"
 grep -q 'DP_OS_HOP_COMMAND_VERSION=WRAPPER_V1' "$OUT" || fail "missing WRAPPER_V1"
@@ -203,9 +203,9 @@ grep -qE 'STEP 4 — UBUNTU 20.04 TO 22.04|Step 4 — Ubuntu 20.04 to 22.04' "$O
   || fail "missing hop 20→22"
 grep -qE 'STEP 5 — UBUNTU 22.04 TO 24.04|Step 5 — Ubuntu 22.04 to 24.04' "$OUT" \
   || fail "missing hop 22→24"
-grep -qE 'STEP 6 — STAGE DP 6.5.0|Step 6 — Stage DP 6.5.0 files' "$OUT" \
+grep -qE 'STEP 6 — STAGE DP 6.6.0|Step 6 — Stage DP 6.6.0 files' "$OUT" \
   || fail "missing stage"
-grep -qE 'STEP 7 — RUN DP 6.5.0 BRINGUP|Step 7 — Run DP 6.5.0 bringup' "$OUT" \
+grep -qE 'STEP 7 — RUN DP 6.6.0 BRINGUP|Step 7 — Run DP 6.6.0 bringup' "$OUT" \
   || fail "missing bringup"
 grep -qE 'STEP 8 — RESUME|Step 8 — Resume' "$OUT" || fail "missing resume"
 grep -qE 'STEP 9 — VERIFY|Step 9 — Verify' "$OUT" || fail "missing health"
@@ -267,9 +267,9 @@ grep -q 'DP Phase 2 Upgrade Commands' "$P2_OUT" || fail "phase2 title missing"
 grep -q 'Required OS: Ubuntu 24.04' "$P2_OUT" || fail "required OS missing"
 grep -q 'Ubuntu 16.04 to 18.04\|UBUNTU 16.04 TO 18.04' "$P2_OUT" && fail "PHASE2_ONLY still has OS hops" || true
 grep -q 'dp-offline-upgrade-xenial-to-bionic' "$P2_OUT" && fail "PHASE2_ONLY hop script present" || true
-grep -qE 'STEP 2 — STAGE DP 6.5.0|Step 2 — Stage DP 6.5.0 files' "$P2_OUT" \
+grep -qE 'STEP 2 — STAGE DP 6.6.0|Step 2 — Stage DP 6.6.0 files' "$P2_OUT" \
   || fail "phase2 stage step missing"
-grep -qE 'STEP 3 — RUN DP 6.5.0 BRINGUP|Step 3 — Run DP 6.5.0 bringup' "$P2_OUT" \
+grep -qE 'STEP 3 — RUN DP 6.6.0 BRINGUP|Step 3 — Run DP 6.6.0 bringup' "$P2_OUT" \
   || fail "phase2 bringup missing"
 grep -q 'upgrade-phase2.sh' "$P2_OUT" || fail "phase2 wrapper missing from PHASE2_ONLY commands"
 grep -Fq -- '--same-version-recovery' "$P2_OUT" && fail "same-version-recovery leaked into PHASE2_ONLY Menu 7" || true
@@ -320,9 +320,9 @@ mm_http_probe_ok() {
   [[ "$url" == *"/client/upgrade-phase2.sh" ]] && return 1
   return 0
 }
-mm_phase2_paths() { MM_WF_PHASE2_STABLE="dp_bundle_6.5.0-current.tar"; }
-TARGET_DP_VERSION=6.5.0
-PHASE2_TARGET_VERSION=6.5.0
+mm_phase2_paths() { MM_WF_PHASE2_STABLE="dp_bundle_6.6.0-current.tar"; }
+TARGET_DP_VERSION=6.6.0
+PHASE2_TARGET_VERSION=6.6.0
 PREPARATION_MODE=FULL
 if mm_http_required_urls_ok; then
   fail "HTTP readiness passed without upgrade-phase2.sh probe"
@@ -374,7 +374,7 @@ EOF
   stub_args="$(printf '%s\n' "$line" | sed -E 's|^sudo bash [^ ]+bringup_py3_dp_after_os_upgrade\.sh[[:space:]]*||')"
   STUB_ARGV_FILE="$stub_argv" eval "\"$stub\" $stub_args"
   mapfile -t ARGV <"$stub_argv"
-  [[ "${ARGV[0]}" == "--version" && "${ARGV[1]}" == "6.5.0" ]] || fail "bringup version wrong: ${ARGV[*]}"
+  [[ "${ARGV[0]}" == "--version" && "${ARGV[1]}" == "6.6.0" ]] || fail "bringup version wrong: ${ARGV[*]}"
   [[ "${ARGV[2]}" == "--skip-download" ]] || fail "skip-download missing: ${ARGV[*]}"
   if [[ -n "$expect_ips" ]]; then
     [[ "${ARGV[3]}" == "--worker-ips" ]] || fail "argv --worker-ips missing: ${ARGV[*]}"
@@ -461,7 +461,7 @@ EOF
 chmod 600 "$MM_CONFIG_FILE"
 mm_load_gui_config
 [[ "$PREPARATION_MODE" == "PHASE2_ONLY" ]] || fail "PHASE2_ONLY not loaded"
-[[ "$TARGET_DP_VERSION" == "6.5.0" ]] || fail "legacy TARGET not forced to 6.5.0"
+[[ "$TARGET_DP_VERSION" == "6.6.0" ]] || fail "legacy TARGET not forced to 6.6.0"
 [[ -z "${CURRENT_DP_VERSION:-}" ]] || fail "CURRENT not unset"
 mm_config_ready || fail "config_ready should pass without source version"
 pass "config save/load ignores legacy versions; mode required"
@@ -588,7 +588,7 @@ grep -q 'dp-client-command-runner.sh' "$MM_CLIENT_ROOT/dp-launch-xenial-to-bioni
 gen_hop="$(gui_client_hop_command_line "http://192.0.2.10" "dp-offline-upgrade-xenial-to-bionic.sh")"
 grep -Fq "$gen_hop" "$(mm_client_commands_file)" \
   || fail "saved file hop command differs from gui_client_hop_command_line"
-gen_stage="$(gui_phase2_stage_command_line "http://192.0.2.10" "6.5.0")"
+gen_stage="$(gui_phase2_stage_command_line "http://192.0.2.10" "6.6.0")"
 grep -Fq "$gen_stage" "$(mm_client_commands_file)" \
   || fail "saved file stage block differs from gui_phase2_stage_command_line"
 # Menu 7 production viewer must disable dialog mouse handling.
@@ -603,14 +603,14 @@ grep -q 'less -S\|less ' <<<"$(grep -A30 '^mm_menu7_textbox()' "$INSTALLER")" \
   && fail "Menu 7 textbox invokes less" || true
 pass "menu7 shows full instructions directly; no secondary viewer"
 
-# Artifact: only 6.5.0 versioned names in ACPS/phase2 helpers
+# Artifact: only 6.6.0 versioned names as the production target
 grep -E 'images-6\.[234]\.0|aella-uvp-2404_6\.[234]\.0' \
   "$ROOT/scripts/lib/dp-phase2-common.sh" "$ENGINE" 2>/dev/null \
-  && fail "non-6.5.0 versioned ACPS artifacts referenced" || true
-grep -Eq 'images-\$\{|images-6\.5\.0|images-.*VERSION' "$ROOT/scripts/lib/dp-phase2-common.sh" \
+  && fail "non-target versioned ACPS artifacts referenced" || true
+grep -Eq 'images-\$\{|images-6\.6\.0|images-.*VERSION' "$ROOT/scripts/lib/dp-phase2-common.sh" \
   || fail "versioned images template missing from dp2 common"
-grep -q 'PHASE2_TARGET_VERSION="6.5.0"' "$COMMON" || fail "fixed PHASE2_TARGET_VERSION missing"
-pass "Phase 2 artifacts are 6.5.0-only"
+grep -q 'PHASE2_TARGET_VERSION_FIXED="6.6.0"' "$COMMON" || fail "fixed PHASE2_TARGET_VERSION_FIXED missing"
+pass "Phase 2 artifacts are 6.6.0-target"
 
 # Engine: PHASE2_ONLY skips R2
 grep -q 'PHASE2_ONLY_R2_DOWNLOAD_COUNT=0' "$ENGINE" || fail "PHASE2_ONLY R2 skip marker missing"

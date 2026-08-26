@@ -2,7 +2,7 @@
 # Shared helpers for DP Phase 2 offline bundle sync/verify/stage.
 # shellcheck shell=bash
 
-DP_PHASE2_VERSION_DEFAULT="6.5.0"
+DP_PHASE2_VERSION_DEFAULT="6.6.0"
 DP_PHASE2_FILE_COUNT=9
 DP_PHASE2_REQUIRED_FILES=()
 
@@ -157,6 +157,37 @@ dp2_expected_file_set() {
   printf '%s\n' "${DP_PHASE2_REQUIRED_FILES[@]}" | sort
 }
 
+# Fail closed when a directory mixes target-version artifacts (e.g. target
+# 6.6.0 with images-6.5.0.tar or aella-uvp-*6.5.0*). Silent fallback is
+# forbidden: versionless bringup_py3_dp_after_os_upgrade.sh must never be
+# paired with a different UVP/images generation than DP_PHASE2_VERSION.
+dp2_reject_mixed_generation() {
+  local dir="$1"
+  local ver="${DP_PHASE2_VERSION}"
+  local f
+  [[ -n "$ver" ]] || dp2_die "MIXED_GENERATION=FAIL reason=target_version_unset"
+  [[ -d "$dir" ]] || dp2_die "MIXED_GENERATION=FAIL reason=dir_missing dir=${dir}"
+  while IFS= read -r f; do
+    [[ -z "$f" ]] && continue
+    case "$f" in
+      aella-uvp-*)
+        if [[ "$f" != "aella-uvp-2404_${ver}ubuntu1_amd64.deb" \
+           && "$f" != "aella-uvp-2404_${ver}ubuntu1_amd64.deb.sha1" ]]; then
+          dp2_die "MIXED_GENERATION=FAIL file=${f} target=${ver}"
+        fi
+        ;;
+      images-*)
+        if [[ "$f" != "images-${ver}.list" \
+           && "$f" != "images-${ver}.tar" \
+           && "$f" != "images-${ver}.tar.sha256" ]]; then
+          dp2_die "MIXED_GENERATION=FAIL file=${f} target=${ver}"
+        fi
+        ;;
+    esac
+  done < <(find "$dir" -maxdepth 1 -type f -printf '%f\n' 2>/dev/null)
+  dp2_ok "MIXED_GENERATION=PASS target=${ver}"
+}
+
 dp2_assert_exact_files_dir() {
   local dir="$1"
   local f
@@ -176,6 +207,7 @@ dp2_assert_exact_files_dir() {
     fi
   done < <(find "$dir" -maxdepth 1 -type f -printf '%f\n' 2>/dev/null | sort)
   [[ "$missing_flag" -eq 0 && "$extra_flag" -eq 0 ]] || dp2_die "FILE_SET=FAIL dir=${dir}"
+  dp2_reject_mixed_generation "$dir" || return 1
   local count
   count="$(find "$dir" -maxdepth 1 -type f | wc -l | tr -d ' ')"
   [[ "$count" -eq "$DP_PHASE2_FILE_COUNT" ]] || dp2_die "FILE_COUNT=FAIL got=${count} want=${DP_PHASE2_FILE_COUNT}"

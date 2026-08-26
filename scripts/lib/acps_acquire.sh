@@ -134,7 +134,7 @@ acps_is_verified_cache() {
 }
 
 acps_disk_preflight_state_file() {
-  local ver="${1:-${DP_PHASE2_VERSION:-${TARGET_DP_VERSION:-6.5.0}}}"
+  local ver="${1:-${DP_PHASE2_VERSION:-${TARGET_DP_VERSION:-6.6.0}}}"
   if [[ -n "${MM_STATE_DIR:-}" ]]; then
     printf '%s/acps-disk-preflight.env\n' "$MM_STATE_DIR"
   else
@@ -168,7 +168,7 @@ acps_collect_disk_preflight_state() {
   # called inside command substitution by acps_expected_bytes_hint(), so stdout
   # must contain only the aggregate expected byte count.
   local base="$1"
-  local ver="${2:-${DP_PHASE2_VERSION:-${TARGET_DP_VERSION:-6.5.0}}}"
+  local ver="${2:-${DP_PHASE2_VERSION:-${TARGET_DP_VERSION:-6.6.0}}}"
   local cache state tmp name expected local_bytes credited
   local total=0 completed=0 partial=0 reusable remaining
 
@@ -232,7 +232,7 @@ acps_collect_disk_preflight_state() {
 
 acps_expected_bytes_hint() {
   local base="$1"
-  local ver="${DP_PHASE2_VERSION:-${TARGET_DP_VERSION:-6.5.0}}"
+  local ver="${DP_PHASE2_VERSION:-${TARGET_DP_VERSION:-6.6.0}}"
   acps_collect_disk_preflight_state "$base" "$ver"
 }
 
@@ -293,7 +293,7 @@ mm_calc_disk_requirements() {
   [[ "$payload_bytes" =~ ^[0-9]+$ ]] || payload_bytes=0
   [[ "$acps_bytes" =~ ^[0-9]+$ ]] || acps_bytes=0
   metadata_oh=$((512 * 1024 * 1024))
-  ver="${TARGET_DP_VERSION:-${DP_PHASE2_VERSION:-6.5.0}}"
+  ver="${TARGET_DP_VERSION:-${DP_PHASE2_VERSION:-6.6.0}}"
 
   ACPS_COMPLETED_CACHE_BYTES=0
   ACPS_PARTIAL_BYTES=0

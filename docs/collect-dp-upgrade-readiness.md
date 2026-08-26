@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`scripts/collect-dp-upgrade-readiness.sh` gathers **read-only evidence** from a Stellar Cyber DP host before Ubuntu LTS hops and DP 6.5.0 Py3 bringup.
+`scripts/collect-dp-upgrade-readiness.sh` gathers **read-only evidence** from a Stellar Cyber DP host before Ubuntu LTS hops and DP 6.6.0 Py3 bringup.
 
 It does **not**:
 
@@ -151,7 +151,7 @@ With network probes enabled, add roughly `hosts × timeout` (default timeout 10s
 
 After analysis of this archive, run [`scripts/dp-upgrade-preflight.sh`](../scripts/dp-upgrade-preflight.sh) (see [`docs/dp-upgrade-preflight.md`](dp-upgrade-preflight.md)) to turn evidence into READY/BLOCKED decisions and remediation guidance.
 
-This collector **does not perform** OS hops or DP 6.5.0 Py3 bringup.
+This collector **does not perform** OS hops or DP 6.6.0 Py3 bringup.
 
 ## Phase separation
 

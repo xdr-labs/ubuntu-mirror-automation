@@ -56,6 +56,7 @@ TEST_LIST=(
   test_dp_phase2_client_stage.sh
   test_dp_phase2_release_env_publish.sh
   test_dp_phase2_version_compat.sh
+  test_phase2_target_660.sh
   test_dp_phase2_ownership.sh
   test_dp_phase2_cache_resume.sh
   test_acps_resume_disk_preflight.sh

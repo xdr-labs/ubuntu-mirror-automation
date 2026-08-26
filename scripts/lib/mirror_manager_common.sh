@@ -51,9 +51,11 @@ MM_STATE_DIR="${MM_STATE_DIR:-}"
 MM_DRY_RUN="${MM_DRY_RUN:-0}"
 MM_FILES_CHANGED="${MM_FILES_CHANGED:-NO}"
 
-# Fixed Phase 2 target — not user-editable in production.
-# Tests may set MM_ALLOW_TARGET_OVERRIDE=1 to exercise non-6.5.0 paths.
-PHASE2_TARGET_VERSION="6.5.0"
+# Immutable production Phase 2 target. Saved workflow/config/environment
+# must not restore a previous target (e.g. 6.5.0). Tests may set
+# MM_ALLOW_TARGET_OVERRIDE=1 to exercise non-production versions.
+PHASE2_TARGET_VERSION_FIXED="6.6.0"
+PHASE2_TARGET_VERSION="${PHASE2_TARGET_VERSION_FIXED}"
 TARGET_DP_VERSION="${PHASE2_TARGET_VERSION}"
 
 # FULL = Ubuntu 16.04→24.04 OS hops + Phase 2
@@ -83,6 +85,7 @@ mm_validate_worker_ssh_password() {
 }
 
 mm_force_phase2_target() {
+  PHASE2_TARGET_VERSION="${PHASE2_TARGET_VERSION_FIXED:-6.6.0}"
   if [[ "${MM_ALLOW_TARGET_OVERRIDE:-0}" == "1" ]]; then
     TARGET_DP_VERSION="${TARGET_DP_VERSION:-${PHASE2_TARGET_VERSION}}"
   else
@@ -116,7 +119,7 @@ mm_is_phase2_only() {
 mm_config_footer_text() {
   cat <<'EOF'
 Starting DP Version: 6.2.0 / 6.3.0 / 6.4.0 / 6.5.0
-Phase 2 Target:      6.5.0 (fixed)
+Phase 2 Target:      6.6.0 (fixed)
 DP OS version: 16.04
 
 If the DP is already running Ubuntu 24.04, select Phase 2 Only.
@@ -1530,7 +1533,7 @@ mm_calc_disk_requirements() {
   # Existing final (if still present) already reduces df available.
   DISK_PREFLIGHT_REPLACEMENT_OVERHEAD_BYTES=0
   existing_final_bytes=0
-  ver="${TARGET_DP_VERSION:-${DP_PHASE2_VERSION:-6.5.0}}"
+  ver="${TARGET_DP_VERSION:-${DP_PHASE2_VERSION:-6.6.0}}"
   existing_bundle="${MM_DP_PHASE2_ROOT:-${MM_MIRROR_ROOT:-/var/spool/apt-mirror}/dp-phase2}/${ver}/dp_bundle_${ver}-current.tar"
   if [[ -f "$existing_bundle" ]]; then
     existing_final_bytes="$(mm_file_bytes "$existing_bundle")"

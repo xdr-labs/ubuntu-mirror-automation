@@ -67,7 +67,7 @@ EOF
 set -euo pipefail
 cd /home/aella
 MIRROR='${mirror}'
-VER='6.5.0'
+VER='6.6.0'
 SCRIPT='stage-dp-phase2.sh'
 GEN='phase2-helper-generation.manifest'
 H='0000000000000000000000000000000000000000000000000000000000000000'

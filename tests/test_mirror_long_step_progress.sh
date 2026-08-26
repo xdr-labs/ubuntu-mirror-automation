@@ -83,25 +83,25 @@ export MM_LOG_FILE="${TMP}/long-step.log"
 export MM_DRY_RUN=0
 export MM_KEEP_PHASE2_SOURCES=1
 export MM_LONG_STEP_HEARTBEAT_SEC=1
-export TARGET_DP_VERSION=6.5.0
+export TARGET_DP_VERSION=6.6.0
 mkdir -p "$MM_CACHE_ROOT" "$MM_SELECTIVE_ROOT" "$MM_DP_PHASE2_ROOT" "$MM_STATE_DIR" "$MM_CONFIG_DIR"
 : >"$MM_LOG_FILE"
 : >"$MM_STATUS_FILE"
 : >"${MM_STATE_DIR}/state.env"
 
-dp2_set_version 6.5.0
-CACHE="$(acps_cache_dir 6.5.0)"
+dp2_set_version 6.6.0
+CACHE="$(acps_cache_dir 6.6.0)"
 mkdir -p "$CACHE"
 
 # ~8MiB images tar so SHA256/tar take more than 2s with heartbeat interval=1.
-dd if=/dev/urandom of="${CACHE}/images-6.5.0.tar" bs=1M count=8 status=none
-sha256sum "${CACHE}/images-6.5.0.tar" | awk '{print $1}' >"${CACHE}/images-6.5.0.tar.sha256"
+dd if=/dev/urandom of="${CACHE}/images-6.6.0.tar" bs=1M count=8 status=none
+sha256sum "${CACHE}/images-6.6.0.tar" | awk '{print $1}' >"${CACHE}/images-6.6.0.tar.sha256"
 printf 'common\n' >"${CACHE}/aelladeb_py3_common.tar.gz"
 sha1sum "${CACHE}/aelladeb_py3_common.tar.gz" | awk '{print $1}' >"${CACHE}/aelladeb_py3_common.tar.gz.sha1"
-printf 'uvp\n' >"${CACHE}/aella-uvp-2404_6.5.0ubuntu1_amd64.deb"
-sha1sum "${CACHE}/aella-uvp-2404_6.5.0ubuntu1_amd64.deb" | awk '{print $1}' \
-  >"${CACHE}/aella-uvp-2404_6.5.0ubuntu1_amd64.deb.sha1"
-seq 1 156 >"${CACHE}/images-6.5.0.list"
+printf 'uvp\n' >"${CACHE}/aella-uvp-2404_6.6.0ubuntu1_amd64.deb"
+sha1sum "${CACHE}/aella-uvp-2404_6.6.0ubuntu1_amd64.deb" | awk '{print $1}' \
+  >"${CACHE}/aella-uvp-2404_6.6.0ubuntu1_amd64.deb.sha1"
+seq 1 156 >"${CACHE}/images-6.6.0.list"
 printf 'SYNTHETIC_UPSTREAM\n' >"${CACHE}/bringup_py3_dp_after_os_upgrade.sh"
 sha1sum "${CACHE}/bringup_py3_dp_after_os_upgrade.sh" | awk '{print $1}' \
   >"${CACHE}/bringup_py3_dp_after_os_upgrade.sh.sha1"
@@ -129,13 +129,13 @@ export SHA256_CALL_LOG="${TMP}/sha256.calls"
 : >"$SHA256_CALL_LOG"
 
 # Seed existing final for failure-preserve checks later.
-EXIST_DIR="${MM_DP_PHASE2_ROOT}/6.5.0"
+EXIST_DIR="${MM_DP_PHASE2_ROOT}/6.6.0"
 mkdir -p "$EXIST_DIR"
-printf 'OLD_FINAL_BUNDLE\n' >"${EXIST_DIR}/dp_bundle_6.5.0-current.tar"
-printf 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef  dp_bundle_6.5.0-current.tar\n' \
-  >"${EXIST_DIR}/dp_bundle_6.5.0-current.tar.sha256"
-printf 'TARGET_DP_VERSION=6.5.0\n' >"${EXIST_DIR}/release.env"
-OLD_FP="$(/usr/bin/sha256sum "${EXIST_DIR}/dp_bundle_6.5.0-current.tar" | awk '{print $1}')"
+printf 'OLD_FINAL_BUNDLE\n' >"${EXIST_DIR}/dp_bundle_6.6.0-current.tar"
+printf 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef  dp_bundle_6.6.0-current.tar\n' \
+  >"${EXIST_DIR}/dp_bundle_6.6.0-current.tar.sha256"
+printf 'TARGET_DP_VERSION=6.6.0\n' >"${EXIST_DIR}/release.env"
+OLD_FP="$(/usr/bin/sha256sum "${EXIST_DIR}/dp_bundle_6.6.0-current.tar" | awk '{print $1}')"
 
 VERIFY_LOG="${TMP}/acps-verify.log"
 : >"$VERIFY_LOG"
@@ -148,23 +148,23 @@ set -e
 [[ "$ACPS_V_RC" -eq 0 ]] || fail "mm_acps_verify_payload_checksums rc=${ACPS_V_RC}"
 acps_write_verified_marker "$CACHE" || fail "acps_write_verified_marker"
 
-ACPS_START="$(count_exact 'ACPS_CHECKSUM_VERIFY_START.*images-6\.5\.0\.tar.*algorithm=SHA256' "$VERIFY_LOG")"
-ACPS_HB="$(count_exact 'ACPS_CHECKSUM_VERIFY_HEARTBEAT.*images-6\.5\.0\.tar.*algorithm=SHA256' "$VERIFY_LOG")"
-ACPS_DONE="$(count_exact 'ACPS_CHECKSUM_VERIFY_COMPLETE.*images-6\.5\.0\.tar.*algorithm=SHA256.*result=PASS' "$VERIFY_LOG")"
+ACPS_START="$(count_exact 'ACPS_CHECKSUM_VERIFY_START.*images-6\.6\.0\.tar.*algorithm=SHA256' "$VERIFY_LOG")"
+ACPS_HB="$(count_exact 'ACPS_CHECKSUM_VERIFY_HEARTBEAT.*images-6\.6\.0\.tar.*algorithm=SHA256' "$VERIFY_LOG")"
+ACPS_DONE="$(count_exact 'ACPS_CHECKSUM_VERIFY_COMPLETE.*images-6\.6\.0\.tar.*algorithm=SHA256.*result=PASS' "$VERIFY_LOG")"
 [[ "$ACPS_START" -eq 1 ]] || fail "ACPS SHA256 START count=${ACPS_START}"
 [[ "$ACPS_HB" -ge 2 ]] || fail "ACPS SHA256 HEARTBEAT count=${ACPS_HB}"
 [[ "$ACPS_DONE" -eq 1 ]] || fail "ACPS SHA256 COMPLETE count=${ACPS_DONE}"
 grep -q 'algorithm=SHA1' "$VERIFY_LOG" || fail "SHA1 labeled events missing"
-if grep -E 'images-6\.5\.0\.tar.*algorithm=SHA1|algorithm=SHA1.*images-6\.5\.0\.tar' "$VERIFY_LOG"; then
+if grep -E 'images-6\.6\.0\.tar.*algorithm=SHA1|algorithm=SHA1.*images-6\.6\.0\.tar' "$VERIFY_LOG"; then
   fail "images tar incorrectly labeled SHA1"
 fi
 pass "ACPS checksum START/HEARTBEAT/COMPLETE + algorithm labels"
 
 # Count source images full reads so far (verify path only; ignore sidecar hashes).
-SOURCE_READS_AFTER_ACPS="$(grep -cE '(^|[[:space:]/])images-6\.5\.0\.tar($|[[:space:]])' "$SHA256_CALL_LOG" || true)"
+SOURCE_READS_AFTER_ACPS="$(grep -cE '(^|[[:space:]/])images-6\.6\.0\.tar($|[[:space:]])' "$SHA256_CALL_LOG" || true)"
 [[ "$SOURCE_READS_AFTER_ACPS" -eq 1 ]] || fail "expected 1 source images sha256 after ACPS verify got=${SOURCE_READS_AFTER_ACPS}"
 
-WORK="${MM_CACHE_ROOT}/acps-work/6.5.0/long-run"
+WORK="${MM_CACHE_ROOT}/acps-work/6.6.0/long-run"
 engine_stage_acps_work_from_cache "$CACHE" "$WORK"
 cp -f "$PATCHED_BRINGUP" "${WORK}/bringup_py3_dp_after_os_upgrade.sh"
 sha1sum "${WORK}/bringup_py3_dp_after_os_upgrade.sh" | awk '{print $1}' \
@@ -174,10 +174,10 @@ BRINGUP_PATCHED_SHA1="$(sha1sum "${WORK}/bringup_py3_dp_after_os_upgrade.sh" | a
 READY_LOG="${TMP}/work-ready.log"
 MM_LOG_FILE=""
 : >"$READY_LOG"
-engine_assert_work_ready_for_bundle "$CACHE" "$WORK" 6.5.0 >"$READY_LOG" 2>&1 || fail "work ready failed"
+engine_assert_work_ready_for_bundle "$CACHE" "$WORK" 6.6.0 >"$READY_LOG" 2>&1 || fail "work ready failed"
 grep -q 'ACPS_WORK_IMAGES_HARDLINK_TRUSTED=YES' "$READY_LOG" || fail "hardlink trust missing"
 # Wrapper logs argv; hardlink path should not appear as a new sha256 target after trust.
-REDUNDANT_WORK="$(grep 'images-6.5.0.tar' "$SHA256_CALL_LOG" | grep -c 'acps-work' || true)"
+REDUNDANT_WORK="$(grep 'images-6.6.0.tar' "$SHA256_CALL_LOG" | grep -c 'acps-work' || true)"
 [[ "$REDUNDANT_WORK" -eq 0 ]] || fail "redundant work images sha256 reads=${REDUNDANT_WORK}"
 pass "hardlink trust skips redundant work images SHA256"
 
@@ -207,7 +207,7 @@ chmod +x "${SHA_WRAP}/tar"
 
 set +e
 # mm_die/dp2_die call exit — isolate in a subshell.
-( engine_place_dp_phase2_final "$WORK" 6.5.0 ) >"$PLACE_LOG" 2>&1
+( engine_place_dp_phase2_final "$WORK" 6.6.0 ) >"$PLACE_LOG" 2>&1
 PLACE_RC=$?
 set -e
 [[ "$PLACE_RC" -eq 0 ]] || { tail -n 80 "$PLACE_LOG"; fail "engine_place_dp_phase2_final rc=${PLACE_RC}"; }
@@ -248,15 +248,15 @@ ADJ="$(adjacent_dup_count "$PLACE_LOG")"
 pass "PROGRESS_ADJACENT_DUPLICATES=0"
 
 # Full-read counts: source images once; bundle at most twice (create + final verify).
-# Sidecar sha256sum calls contain images-6.5.0.tar.sha256 and must not count.
-SOURCE_TOTAL="$(grep -cE '(^|[[:space:]/])images-6\.5\.0\.tar($|[[:space:]])' "$SHA256_CALL_LOG" || true)"
+# Sidecar sha256sum calls contain images-6.6.0.tar.sha256 and must not count.
+SOURCE_TOTAL="$(grep -cE '(^|[[:space:]/])images-6\.6\.0\.tar($|[[:space:]])' "$SHA256_CALL_LOG" || true)"
 [[ "$SOURCE_TOTAL" -eq 1 ]] || fail "SOURCE_IMAGES_SHA256_FULL_READ_COUNT=${SOURCE_TOTAL} want=1"
-BUNDLE_READS="$(grep -c 'dp_bundle_6.5.0-current.tar' "$SHA256_CALL_LOG" || true)"
+BUNDLE_READS="$(grep -c 'dp_bundle_6.6.0-current.tar' "$SHA256_CALL_LOG" || true)"
 [[ "$BUNDLE_READS" -le 2 ]] || fail "BUNDLE_SHA256_FULL_READ_COUNT=${BUNDLE_READS} want<=2"
 [[ "$BUNDLE_READS" -ge 2 ]] || fail "BUNDLE_SHA256_FULL_READ_COUNT=${BUNDLE_READS} want>=2"
 pass "full-read counts source=1 bundle=${BUNDLE_READS}"
 
-FINAL_BUNDLE="${EXIST_DIR}/dp_bundle_6.5.0-current.tar"
+FINAL_BUNDLE="${EXIST_DIR}/dp_bundle_6.6.0-current.tar"
 [[ -f "$FINAL_BUNDLE" ]] || fail "final bundle missing"
 ENTRY_COUNT="$(/usr/bin/tar -tf "$FINAL_BUNDLE" | wc -l | tr -d ' ')"
 [[ "$ENTRY_COUNT" -eq 9 ]] || fail "bundle entry count=${ENTRY_COUNT}"
@@ -271,9 +271,9 @@ mkdir -p "$BAD_CACHE"
 [[ -d "$CACHE" ]] || fail "ACPS cache missing before mismatch test"
 cp -a "$CACHE/." "$BAD_CACHE/" || fail "cp bad-cache failed"
 # Break only the copy (not the hardlinked cache/work tree).
-cp -f "${BAD_CACHE}/images-6.5.0.tar" "${BAD_CACHE}/images-6.5.0.tar.broken"
-mv -f "${BAD_CACHE}/images-6.5.0.tar.broken" "${BAD_CACHE}/images-6.5.0.tar"
-echo '00' >>"${BAD_CACHE}/images-6.5.0.tar"
+cp -f "${BAD_CACHE}/images-6.6.0.tar" "${BAD_CACHE}/images-6.6.0.tar.broken"
+mv -f "${BAD_CACHE}/images-6.6.0.tar.broken" "${BAD_CACHE}/images-6.6.0.tar"
+echo '00' >>"${BAD_CACHE}/images-6.6.0.tar"
 FAIL_LOG="${TMP}/fail-sha.log"
 MM_LOG_FILE=""
 : >"$FAIL_LOG"
@@ -286,18 +286,18 @@ grep -qE 'ACPS_CHECKSUM_VERIFY_FAIL|SHA256_VERIFY=FAIL' "$FAIL_LOG" || {
   tail -n 40 "$FAIL_LOG"
   fail "FAIL event missing"
 }
-if grep 'ACPS_CHECKSUM_VERIFY_COMPLETE.*images-6\.5\.0\.tar.*result=PASS' "$FAIL_LOG"; then
+if grep 'ACPS_CHECKSUM_VERIFY_COMPLETE.*images-6\.6\.0\.tar.*result=PASS' "$FAIL_LOG"; then
   fail "false PASS on images SHA256 mismatch"
 fi
-grep -qE 'ACPS_CHECKSUM_VERIFY_FAIL.*images-6\.5\.0\.tar|SHA256_VERIFY=FAIL.*images-6\.5\.0\.tar' "$FAIL_LOG" \
+grep -qE 'ACPS_CHECKSUM_VERIFY_FAIL.*images-6\.6\.0\.tar|SHA256_VERIFY=FAIL.*images-6\.6\.0\.tar' "$FAIL_LOG" \
   || fail "images SHA256 FAIL event missing"
 pass "source SHA256 mismatch preserves non-zero rc"
 
 # --- Failure: preserve existing final on place failure ---
 # Restore a known final, then break work file set.
-printf 'PRESERVE_ME\n' >"${EXIST_DIR}/dp_bundle_6.5.0-current.tar"
-printf 'aaaa' >"${EXIST_DIR}/dp_bundle_6.5.0-current.tar.sha256"
-PRES_FP="$(/usr/bin/sha256sum "${EXIST_DIR}/dp_bundle_6.5.0-current.tar" | awk '{print $1}')"
+printf 'PRESERVE_ME\n' >"${EXIST_DIR}/dp_bundle_6.6.0-current.tar"
+printf 'aaaa' >"${EXIST_DIR}/dp_bundle_6.6.0-current.tar.sha256"
+PRES_FP="$(/usr/bin/sha256sum "${EXIST_DIR}/dp_bundle_6.6.0-current.tar" | awk '{print $1}')"
 BAD_WORK="${WORK}.broken"
 rm -rf "$BAD_WORK"
 mkdir -p "$BAD_WORK"
@@ -305,16 +305,16 @@ for f in "${DP_PHASE2_REQUIRED_FILES[@]}"; do
   [[ -e "${WORK}/${f}" ]] || continue
   ln "${WORK}/${f}" "${BAD_WORK}/${f}" 2>/dev/null || cp -f "${WORK}/${f}" "${BAD_WORK}/${f}"
 done
-rm -f "${BAD_WORK}/images-6.5.0.list"
+rm -f "${BAD_WORK}/images-6.6.0.list"
 set +e
-( engine_place_dp_phase2_final "$BAD_WORK" 6.5.0 >/dev/null 2>&1 )
+( engine_place_dp_phase2_final "$BAD_WORK" 6.6.0 >/dev/null 2>&1 )
 BAD_PLACE_RC=$?
 set -e
 [[ "$BAD_PLACE_RC" -ne 0 ]] || fail "broken place should fail"
-[[ -f "${EXIST_DIR}/dp_bundle_6.5.0-current.tar" ]] || fail "final missing after fail"
-AFTER_FP="$(/usr/bin/sha256sum "${EXIST_DIR}/dp_bundle_6.5.0-current.tar" | awk '{print $1}')"
+[[ -f "${EXIST_DIR}/dp_bundle_6.6.0-current.tar" ]] || fail "final missing after fail"
+AFTER_FP="$(/usr/bin/sha256sum "${EXIST_DIR}/dp_bundle_6.6.0-current.tar" | awk '{print $1}')"
 [[ "$AFTER_FP" == "$PRES_FP" ]] || fail "existing final changed on failure"
-find "$MM_DP_PHASE2_ROOT" -maxdepth 1 -name '6.5.0.new.*' | grep -q . \
+find "$MM_DP_PHASE2_ROOT" -maxdepth 1 -name '6.6.0.new.*' | grep -q . \
   && fail "orphan .new remains" || true
 pass "existing final preserved on failure"
 

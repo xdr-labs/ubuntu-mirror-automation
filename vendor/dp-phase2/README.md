@@ -22,7 +22,11 @@ by hand. If required anchors are missing, Download and Prepare fails closed
 
 ## B. Current provenance
 
-- **Target DP version:** 6.5.0
+- **Target DP version:** 6.6.0
+- **ACPS bringup is versionless** (`bringup_py3_dp_after_os_upgrade.sh`).
+  Exact generation is recorded via `BRINGUP_UPSTREAM_SHA1` / sidecar checksum.
+- **Current validated upstream SHA1 (dark-site 6.6.0):**
+  `3af369660c3e0dfb0b7421ab455dee1ced365b1d`
 - **Reference / last-known unmodified upstream SHA1:**
   `70de02dd62409110dadb7553991d1ffb0a79f396`
   (recorded in `bringup_py3_dp_after_os_upgrade.sh.upstream.sha1`).

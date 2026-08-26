@@ -7168,7 +7168,7 @@ Required next actions (exact order):
    powered-off snapshot exists (NOT auto-run by Phase 1):
 
    # manual Phase 2 - never auto-started here
-   bringup_py3_dp_after_os_upgrade.sh --version 6.5.0 --skip-download
+   bringup_py3_dp_after_os_upgrade.sh --version 6.6.0 --skip-download
 
 Do NOT run Phase 2 bringup before the powered-off snapshot.
 Do NOT treat product runtime as validated yet.

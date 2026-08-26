@@ -43,8 +43,8 @@ source "$ROOT/scripts/lib/local_client_signing.sh"
 source "$ROOT/scripts/lib/http_publication_permissions.sh"
 
 PREPARATION_MODE=FULL
-PHASE2_TARGET_VERSION=6.5.0
-TARGET_DP_VERSION=6.5.0
+PHASE2_TARGET_VERSION=6.6.0
+TARGET_DP_VERSION=6.6.0
 MIRROR_SERVER_IP=192.0.2.10
 MIRROR_HTTP_URL=http://192.0.2.10
 ACPS_USERNAME=fixture

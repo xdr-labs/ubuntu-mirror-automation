@@ -8,10 +8,10 @@ Build a DP Ubuntu upgrade HTTP mirror server in one fixed workflow:
 2. Configure Preparation Mode + ACPS credentials in the GUI
 3. Download Ubuntu OS Core from Cloudflare R2 (FULL mode) or skip R2 (PHASE2_ONLY)
 4. Verify OS Core checksums (FULL mode)
-5. Download DP Phase 2 artifacts from ACPS (always 6.5.0)
+5. Download DP Phase 2 artifacts from ACPS (always 6.6.0)
 6. Verify ACPS checksums (bringup SHA1 vs the current ACPS `.sha1` sidecar)
 7. Apply the local patched bringup
-8. Materialize one Phase 1 OS mirror set (FULL) and one Phase 2 6.5.0 bundle
+8. Materialize one Phase 1 OS mirror set (FULL) and one Phase 2 6.6.0 bundle
 9. Enable HTTP distribution (real nginx enable + smoke tests)
 10. Serve clients over HTTP only
 
@@ -94,15 +94,15 @@ Exact Configuration footer:
 
 ```
 Starting DP Version: 6.2.0 / 6.3.0 / 6.4.0 / 6.5.0
-Phase 2 Target:      6.5.0 (fixed)
+Phase 2 Target:      6.6.0 (fixed)
 DP OS version: 16.04
 
 If the DP is already running Ubuntu 24.04, select Phase 2 Only.
 ```
 
-Phase 2 Target is the fixed constant `PHASE2_TARGET_VERSION=6.5.0`.
+Phase 2 Target is the fixed constant `PHASE2_TARGET_VERSION=6.6.0`.
 It is not user-editable. Starting DP Version is auto-detected on the DP.
-Mirror Server stores one Phase 2 bundle under `/dp-phase2/6.5.0/` only.
+Mirror Server stores one Phase 2 bundle under `/dp-phase2/6.6.0/` only.
 
 Read-only:
 
@@ -116,11 +116,11 @@ Decision matrix:
 
 | Starting DP | Starting OS | Action | Final State |
 | --- | --- | --- | --- |
-| 6.2 / 6.3 / 6.4 | 16.04 | Phase 1 + Phase 2 | DP 6.5.0 / Ubuntu 24.04 |
-| 6.2 / 6.3 / 6.4 | 24.04 | Phase 2 Only | DP 6.5.0 / Ubuntu 24.04 |
-| 6.5.0 | 16.04 | Phase 1 + recovery | DP 6.5.0 / Ubuntu 24.04 |
-| 6.5.0 | 24.04 healthy | No action | DP 6.5.0 / Ubuntu 24.04 |
-| 6.5.0 | 24.04 recovery state | Gated recovery | DP 6.5.0 / Ubuntu 24.04 |
+| 6.2 / 6.3 / 6.4 | 16.04 | Phase 1 + Phase 2 | DP 6.6.0 / Ubuntu 24.04 |
+| 6.2 / 6.3 / 6.4 / 6.5 | 24.04 | Phase 2 Only | DP 6.6.0 / Ubuntu 24.04 |
+| 6.5.0 | 16.04 | Phase 1 + Phase 2 | DP 6.6.0 / Ubuntu 24.04 |
+| 6.6.0 | 24.04 healthy | No action | DP 6.6.0 / Ubuntu 24.04 |
+| 6.6.0 | 24.04 recovery state | Gated same-version recovery | DP 6.6.0 / Ubuntu 24.04 |
 
 ## Download and Prepare
 
@@ -188,7 +188,7 @@ Menu 7 asks topology only (Single / Cluster). It never asks for Starting or Targ
 3. OS hops 16.04 → 18.04 → 20.04 → 22.04 → 24.04
    (Xenial→Bionic client sets aella/root login shells to `/bin/bash` after
    confirmation and re-verifies with `getent`; no manual `chsh`/`usermod`)
-4. Stage DP 6.5.0 (`--target-version 6.5.0 --same-version-recovery`; source auto-detected)
+4. Stage DP 6.6.0 (`--target-version 6.6.0 --same-version-recovery`; source auto-detected)
 5. Bringup (`--worker-ips` optional)
 6. `aella_cli` → `resume`
 7. `aella_cli` → `show status`
@@ -197,7 +197,7 @@ Menu 7 asks topology only (Single / Cluster). It never asks for Starting or Targ
 
 1. Hypervisor snapshot
 2. Verify Ubuntu 24.04 prerequisites
-3. Stage DP 6.5.0 (source auto-detected)
+3. Stage DP 6.6.0 (source auto-detected)
 4. Bringup
 5. Resume when required
 6. `show status`
@@ -232,12 +232,12 @@ checksum sidecars (`CLIENT_FILES_READY` rejects an empty directory).
 The mirror server stores:
 
 - one Ubuntu selective OS data set
-- one DP 6.5.0 Phase 2 bundle
+- one DP 6.6.0 Phase 2 bundle
 - no source-version-specific bundles
 - no historical releases
 - no current/previous generations
 
-A valid existing DP 6.5.0 bundle is reused.
+A valid existing DP 6.6.0 bundle is reused.
 
 It is not downloaded, rebuilt, replaced, or retained as an old generation
 during normal operation.
@@ -261,7 +261,7 @@ and it must preserve at least 10 GiB of safety space.
 
 120GB, 150GB, and 200GB are not required by this workflow.
 
-Approximate artifact sizes (DP 6.5.0):
+Approximate artifact sizes (DP 6.6.0):
 
 | Artifact | Size (approx.) |
 | --- | --- |
@@ -354,6 +354,11 @@ INTERMEDIATE_OS_RECOVERY_SUPPORTED=NO
 Create a full DP VM hypervisor snapshot before upgrade. Intermediate Ubuntu
 versions are not recovery points. This project does not create or validate
 snapshots and does not provide rollback commands.
+
+The ACPS bringup file `bringup_py3_dp_after_os_upgrade.sh` is versionless.
+Download and Prepare records its exact generation as `BRINGUP_UPSTREAM_SHA1`
+together with `BRINGUP_PATCH_GENERATION` and `BRINGUP_PATCHED_SHA1` in
+`release.env`. UVP and images must match the same `TARGET_DP_VERSION`.
 
 ## Production note
 

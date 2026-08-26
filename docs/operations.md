@@ -197,27 +197,27 @@ for Phase 2 source-version capture, staging progress, and bringup lifecycle.
 **Support contract**
 
 - Supported starting DP version: **6.2.0 or above** (auto-detected on the DP)
-- DP Version / Phase 2 artifact version: **6.5.0** (bundle filenames remain versioned)
-- Ubuntu OS is upgraded from 16.04 to 24.04; DP software remains 6.5.0
-- Phase 2 bringup restores the DP 6.5.0 runtime after the OS upgrade
-- Versions above 6.5.0 must not be downgraded
-- A healthy host already on 6.5.0 on Ubuntu 24.04 normally needs no staging
-- After Phase 1 OS-only upgrade (`COMPLETED_NOBLE`, product validation `NOT_RUN_PHASE1`), same-version staging is allowed only with explicit `--same-version-recovery` after a powered-off snapshot
+- DP Version / Phase 2 artifact version: **6.6.0** (bundle filenames remain versioned)
+- Ubuntu OS is upgraded from 16.04 to 24.04; Phase 2 then installs DP 6.6.0
+- Phase 2 bringup restores/upgrades the DP runtime to 6.6.0 after the OS upgrade
+- Versions above 6.6.0 must not be downgraded
+- A healthy host already on 6.6.0 on Ubuntu 24.04 normally needs no staging
+- After Phase 1 OS-only upgrade (`COMPLETED_NOBLE`, product validation `NOT_RUN_PHASE1`), same-version staging (source already 6.6.0) is allowed only with explicit `--same-version-recovery` after a powered-off snapshot
 
 **Client helpers (internal mirror `/client/`)**
 
 ```bash
 # Canonical (Menu 7 default): same-version recovery after COMPLETED_NOBLE
 sudo bash stage-dp-phase2.sh \
-  --target-version 6.5.0 \
+  --target-version 6.6.0 \
   --same-version-recovery \
   --mirror-url http://<internal-mirror>
 
 # Read-only source version diagnosis (no download / mutation)
 sudo bash stage-dp-phase2.sh --diagnose-source-version
 
-# Compatibility wrapper (target fixed to 6.5.0; source auto-detected)
-sudo bash stage-dp-phase2-6.5.0.sh \
+# Compatibility wrapper (target fixed to 6.6.0; source auto-detected)
+sudo bash stage-dp-phase2-6.6.0.sh \
   --same-version-recovery \
   --mirror-url http://<internal-mirror>
 ```
@@ -238,11 +238,11 @@ include it. Prefer `--diagnose-source-version` before supplying an override.
 ```bash
 # Default: detached worker + foreground read-only monitor (survives SSH disconnect)
 sudo bash /home/aella/bringup_py3_dp_after_os_upgrade.sh \
-  --version 6.5.0 --skip-download
+  --version 6.6.0 --skip-download
 
 # Return after handoff only
 sudo bash /home/aella/bringup_py3_dp_after_os_upgrade.sh \
-  --version 6.5.0 --skip-download --detach
+  --version 6.6.0 --skip-download --detach
 
 # Read-only
 sudo bash /home/aella/bringup_py3_dp_after_os_upgrade.sh --status
@@ -276,9 +276,9 @@ cd /home/aella/ubuntu-mirror-automation && {
 }
 ```
 
-Generic sync entrypoint: `sudo bash scripts/download-dp-phase2.sh --version 6.5.0 sync`
+Generic sync entrypoint: `sudo bash scripts/download-dp-phase2.sh --version 6.6.0 sync`
 
-Compatibility: `sudo bash scripts/download-dp-phase2-6.5.0.sh sync`
+Compatibility: `sudo bash scripts/download-dp-phase2-6.6.0.sh sync`
 
 ### Xenial → Bionic hop client (`UPGRADE_MODE=OS_ONLY_PHASE1`)
 

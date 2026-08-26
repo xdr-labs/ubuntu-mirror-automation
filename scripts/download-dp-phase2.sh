@@ -41,7 +41,7 @@ _load_acps_credentials_from_gui_config() {
 }
 _load_acps_credentials_from_gui_config
 
-DP_PHASE2_VERSION="${DP_PHASE2_VERSION:-6.5.0}"
+DP_PHASE2_VERSION="${DP_PHASE2_VERSION:-${DP_PHASE2_VERSION_DEFAULT}}"
 DP_PHASE2_ROOT="${DP_PHASE2_ROOT:-/var/spool/apt-mirror/dp-phase2}"
 DP_PHASE2_MIN_FREE_GIB="${DP_PHASE2_MIN_FREE_GIB:-70}"
 DP_PHASE2_KEEP_PREVIOUS="${DP_PHASE2_KEEP_PREVIOUS:-true}"
