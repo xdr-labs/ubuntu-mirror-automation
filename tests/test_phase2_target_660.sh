@@ -213,6 +213,39 @@ file_sha="$(sha1sum "$DESTJ" | awk '{print $1}')"
   && pass "J validate SHA matches generate SHA (${file_sha})" \
   || fail "J SHA mismatch val=${val_sha} gen=${gen_sha} file=${file_sha}"
 
+echo "======== TEST K — source/generated Phase 2 version drift ========"
+# Committed production generated clients must track the jammy→noble template.
+# Do not scan vendor bringup, historical fixtures, or retired 6.5.0 shims.
+PHASE2_BRINGUP_CMD_RE='bringup_py3_dp_after_os_upgrade\.sh --version [0-9]+\.[0-9]+\.[0-9]+'
+TEMPLATE="${ROOT}/client/dp-offline-upgrade-jammy-to-noble.sh.in"
+GEN_CLIENT="${ROOT}/client/dp-offline-upgrade-jammy-to-noble.sh"
+GEN_ART_TOP="${ROOT}/artifacts/client/dp-offline-upgrade-jammy-to-noble.sh"
+GEN_ART_HOP="${ROOT}/artifacts/client/jammy-to-noble/dp-offline-upgrade-jammy-to-noble.sh"
+tmpl_cmds="$(grep -oE "$PHASE2_BRINGUP_CMD_RE" "$TEMPLATE" | sort -u)"
+[[ "$tmpl_cmds" == "bringup_py3_dp_after_os_upgrade.sh --version 6.6.0" ]] \
+  && pass "K template Phase 2 command is --version 6.6.0" \
+  || fail "K template Phase 2 command drifted: ${tmpl_cmds}"
+for gen in "$GEN_CLIENT" "$GEN_ART_TOP" "$GEN_ART_HOP"; do
+  [[ -f "$gen" ]] || { fail "K missing generated artifact ${gen}"; continue; }
+  gen_cmds="$(grep -oE "$PHASE2_BRINGUP_CMD_RE" "$gen" | sort -u)"
+  [[ "$gen_cmds" == "$tmpl_cmds" ]] \
+    && pass "K $(realpath --relative-to="$ROOT" "$gen") matches template" \
+    || fail "K drift $(realpath --relative-to="$ROOT" "$gen"): ${gen_cmds}"
+done
+stale="$(
+  git -C "$ROOT" grep -n -- 'bringup_py3_dp_after_os_upgrade.sh --version 6.5.0' -- \
+    artifacts/client \
+    'client/dp-offline-upgrade-*.sh' \
+    'client/dp-offline-upgrade-*.sh.in' \
+    || true
+)"
+if [[ -n "$stale" ]]; then
+  fail "K production generated/template still instructs --version 6.5.0"
+  printf '%s\n' "$stale"
+else
+  pass "K no production generated --version 6.5.0 guidance"
+fi
+
 if [[ "$FAIL" -ne 0 ]]; then
   echo "test_phase2_target_660: FAIL"
   exit 1

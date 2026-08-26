@@ -36,8 +36,8 @@
   ],
   "repository_key_fingerprint": "D1FF722556ED95F5E779BAE66B1BA1673A997CA5",
   "key_sha256": "d1ef6724347f11355a0fbc8a1dec9cf69e8e8647c5ccd06fbc2f952bcb177d60",
-  "manifest_key_fingerprint": "C786FE9887290E2CF759271DFDD38BE958EABD4A",
-  "manifest_key_sha256": "d398cbadb5d87b1d01978ce1499feb7436c0c81859314f96298b0adddc3ec079",
+  "manifest_key_fingerprint": "DFE30975DDE1F6370CE10BF50C2838EDB2185B87",
+  "manifest_key_sha256": "8dc52386fd20fe1f37490a7ee3b84e172d15f2fb602ae68fe87a553149f9e63c",
   "keyring_install_path": "/etc/apt/trusted.gpg.d/stellar-offline-xenial-to-bionic.gpg",
   "meta_release_url": "http://221.139.249.111/client/xenial-to-bionic/meta-release-lts",
   "meta_release_sha256": "12cd1ba580ba66dc22da2f09f8ad0296e27a756285180a175c2aed7930275f22",
@@ -49,9 +49,23 @@
   "plan_checksum": "8eb3d478e2d40e7a19510239fcbf6e2e6824b2587e6e7172d60ef01e8920b157",
   "discovery_checksum": "d08f76a4e87bbaabc82b2aea3f552d26b9ece53be83735a74dffdfd70a816b56",
   "confirm_phrase": "UPGRADE-XENIAL-TO-BIONIC",
-  "generated_at": "2026-07-26T17:41:49Z",
+  "client_provenance_schema_version": "1",
+  "client_build_input_sha256": "14c69f03faff8ab16ba6499c9df652f26e6a5a7edad1c28dcfba509631da2756",
+  "client_source_revision": "680f4ecfdf6f46ae9893fdc7fb0c6c1930740b57",
+  "client_source_tree_state": "dirty",
+  "client_command_block_version": "SUBSHELL_V2",
+  "client_mirror_base_url": "http://221.139.249.111",
+  "client_signing_fingerprint": "DFE30975DDE1F6370CE10BF50C2838EDB2185B87",
+  "client_runtime_manifest_sha256": "ae60dbd35c90e2284543ca2df5fd156f9e318a6ba604ea231954651e81dfd76f",
+  "client_builders_sha256": "6dd73d8d55208c6746c0b3aff03bbb5cfdbdb58f5de5322a2eca40d0af51f2d2",
+  "client_templates_sha256": "14cd1b93ee24a44c0e89147e2bc8fbf0a1abeb2f745d6bf646eface3acf6c536",
+  "client_shared_helpers_sha256": "f50499a5c7357da0105ed953c49070f50779b9634fb3ecc446971e49b310419d",
+  "client_runner_sha256": "2a07eabd3cb5bc8af946f81f8a8e517eba7c0056d213a34ad41c13e086eb2563",
+  "generated_at": "2026-08-26T15:17:18Z",
   "announcements": {
     "ReleaseAnnouncement": "241b78bd208aa0add38b581a0cb66290d1fa6b994b80ada3c5fa6b3a4e1f8aaf",
     "ReleaseAnnouncement.html": "debdbee59e3371ae70f83fb14cf507d9ffdeeccc86a939ff3ba0c947f20865c2"
-  }
+  },
+  "script": "dp-offline-upgrade-xenial-to-bionic.sh",
+  "script_sha256": "bfd8ded057ce56508812fc43ae3ecea7f92611cf519612cedab4150fdbadd7d2"
 }

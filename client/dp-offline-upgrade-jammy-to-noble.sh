@@ -12,7 +12,7 @@ SCRIPT_VERSION="1.0.0-jammy-to-noble"
 SCRIPT_PATH="$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || printf '%s' "$0")"
 
 # --- build-time pins (do not edit by hand; re-run build-client) ---
-PIN_MIRROR_BASE='http://127.0.0.1/ubuntu-offline'
+PIN_MIRROR_BASE='http://221.139.249.111'
 PIN_HOP='jammy-to-noble'
 PIN_SOURCE_CODENAME='jammy'
 PIN_TARGET_CODENAME='noble'
@@ -23,17 +23,17 @@ PIN_SOURCE_SUITES='jammy jammy-updates jammy-security jammy-backports'
 PIN_TARGET_SUITES='noble noble-updates noble-security noble-backports'
 PIN_KEY_FINGERPRINT='D1FF722556ED95F5E779BAE66B1BA1673A997CA5'
 PIN_KEY_SHA256='d1ef6724347f11355a0fbc8a1dec9cf69e8e8647c5ccd06fbc2f952bcb177d60'
-PIN_MANIFEST_KEY_FINGERPRINT='D1FF722556ED95F5E779BAE66B1BA1673A997CA5'
-PIN_MANIFEST_KEY_SHA256='d1ef6724347f11355a0fbc8a1dec9cf69e8e8647c5ccd06fbc2f952bcb177d60'
-PIN_META_SHA256='562c28e33a28e634e0d6771e977baf91145dd40b568e72f77594c9f6b5675038'
+PIN_MANIFEST_KEY_FINGERPRINT='DFE30975DDE1F6370CE10BF50C2838EDB2185B87'
+PIN_MANIFEST_KEY_SHA256='8dc52386fd20fe1f37490a7ee3b84e172d15f2fb602ae68fe87a553149f9e63c'
+PIN_META_SHA256='923f6b897e2f06f7101dbbe213bab2b3194a652bb706d616e217b1b8b655dae2'
 PIN_UPGRADER_TAR_SHA256='447f54cbdfb9f57d32ddb02fcf0a0abb0184059cc0f680e806d23379878fe396'
 PIN_UPGRADER_GPG_SHA256='7af99394662fe6d9fbe4ba7f6efd4818f5594e82e553aaaf659144a80ff53bfe'
 PIN_PLAN_CHECKSUM='8eb3d478e2d40e7a19510239fcbf6e2e6824b2587e6e7172d60ef01e8920b157'
 PIN_DISCOVERY_CHECKSUM='d08f76a4e87bbaabc82b2aea3f552d26b9ece53be83735a74dffdfd70a816b56'
-PIN_MANIFEST_SHA256='05374bfa299dc8dd393db304a4759f1357f86562aba2b9e89f53f2d2718ba781'
-PIN_SAMPLE_DEB_URL='http://127.0.0.1/ubuntu-offline/hops/jammy-to-noble/ubuntu/pool/main/a/accountsservice/accountsservice_23.13.9-2ubuntu6_amd64.deb'
+PIN_MANIFEST_SHA256='2d7f6d767eb2e555cf2a916e0d246622130485d56e505bc60b90cc1641b03878'
+PIN_SAMPLE_DEB_URL='http://221.139.249.111/hops/jammy-to-noble/ubuntu/pool/main/a/accountsservice/accountsservice_23.13.9-2ubuntu6_amd64.deb'
 PIN_CONFIRM_PHRASE='UPGRADE-JAMMY-TO-NOBLE'
-PIN_GENERATED_AT='2026-08-05T10:47:32Z'
+PIN_GENERATED_AT='2026-08-26T15:17:20Z'
 PIN_PROFILE_NAME='offline-upgrade-selective'
 
 PIN_KEY_B64='mQENBGpePjYBCAC4/mSayiOdnynQyEygHF0MQZazmNTgWm6REY3nOTTGeZz9KrVrGuncglQk56wg
@@ -48,100 +48,105 @@ Opl8pV/7CACWaGuDSadgL6t7uqt5u8b4bEgaeHz4wEviNVhsW3YnTqtotrnfGa3L6A/8WF5FxxF1
 3cnpz7BZkABBGwKEGjBJkT6aGBEpKIzhd46l/JpgiPprNe6ur/yWtuI09rZQltLYjVeF6KEIyrGT
 g+eqprQ76v9fON2+lPZIasvHHeoWNGJPHyauGbaXL3PiLlui4P53KK9NlD8N0MBoLvRVpon57o9s
 O5E9A7DBvIOfNelSaOgjs2Gn9iFPb90h4X60UwhVVqBO3kYa'
-PIN_MANIFEST_KEY_B64='mQENBGpePjYBCAC4/mSayiOdnynQyEygHF0MQZazmNTgWm6REY3nOTTGeZz9KrVrGuncglQk56wg
-yg2KR+YqC6qRK9SMW3ZUrXuVLWEDVRr1GJVIYOL/U3QBUYdMwNiSvA846COpMOob14zM1ye2GNN6
-joFfhOrnFBKHZpx5jOS8cIxcnLUQzgTQKhHyZPVk0mrjb2AwG+k989I8nGMuZzxu0JFpSWP0pPhL
-XhUjEPPpWtUMqz3E/CKujQhtI8v7rrI3NNgzeUWlyaa4I4wUdX4rM6/VhqOCdD7w9cyA3S2jll/z
-qWhZdtJW3btyNVy82XEDFkuPQFma8GNhGYclgciZ7rieetZM7ahPABEBAAG0MFVidW50dSBTZWxl
-Y3RpdmUgTWlycm9yIDxzZWxlY3RpdmUtbWlycm9yQGxvY2FsPokBUgQTAQoAPBYhBNH/ciVW7ZX1
-53m65msboWc6mXylBQJqXj42AxsvBAULCQgHAgIiAgYVCgkICwIEFgIDAQIeBwIXgAAKCRBrG6Fn
-Opl8pV/7CACWaGuDSadgL6t7uqt5u8b4bEgaeHz4wEviNVhsW3YnTqtotrnfGa3L6A/8WF5FxxF1
-4EeRrilLvIhBss9dNJc4/aqkG1c648bjw4M0W8zf8aT+f8P4qDh/ERxoKA7cR4v5lC6sLLuUwSmK
-3cnpz7BZkABBGwKEGjBJkT6aGBEpKIzhd46l/JpgiPprNe6ur/yWtuI09rZQltLYjVeF6KEIyrGT
-g+eqprQ76v9fON2+lPZIasvHHeoWNGJPHyauGbaXL3PiLlui4P53KK9NlD8N0MBoLvRVpon57o9s
-O5E9A7DBvIOfNelSaOgjs2Gn9iFPb90h4X60UwhVVqBO3kYa'
+PIN_MANIFEST_KEY_B64='mQENBGp1v28BCACnk9Esb5jQpg1dGOvxzCwIgromt/cAgOIGJxapQlXap/oQanppMZ1EyiRDo2Vz
+LUqbk8gsy+HDRqFfQmEfAtJC0aZ5nP5buxblUwJAiCUGcHNpZUP1C3aSbRkgR9UV4dIgqQEqMdsf
+9mqQFEatIa5lH9ebcWVjLBPUmEZkQ2pgLKegx7S+0Z1qiaIGbBCqjTNTkHFum58GlXt4gk5H2SP9
+N9eCEe7XrYdbP8qByrH4IJ5m0s5oKLAy5J9ceiHAFPY1DKYaRcT2Ou7Q6XFZ+ylJfj2lHPKNnvOj
+ovV2mCs4FAEA9ZayFGpcjh0hdpUrbGG2OBuvORoSo5x1m4GzELsXABEBAAG0SVVidW50dSBNaXJy
+b3IgTG9jYWwgQ2xpZW50IE1hbmlmZXN0IDxsb2NhbC1jbGllbnQtbWFuaWZlc3RAdWJ1bnR1LW1p
+cnJvcj6JAVIEEwEKADwWIQTf4wl13eH2NwzhC/UMKDjtshhbhwUCanW/bwMbLwQFCwkIBwICIgIG
+FQoJCAsCBBYCAwECHgcCF4AACgkQDCg47bIYW4erZwgAkqTC5H0R1247PLZ49fjd91qZQv9qL6Yd
+Kg0JxFwQ8YGiDAYLMu+bcp5QyVeTrKg7pSn43gfTuIqSLwr0br377uafRQTKORSw4UADLiL2dlNN
+eNhdD4Oi9APWqJ9/MHzDlAuKr9iFHCPSwt3rxhMKuyuVEtd2/7driw926Fr1W7VpBrmDWh9GpLIW
+GCfLDZVBnUtVxb1x2g16jAbBlLww1ufZ3qVbBDLHsCdqWgJmsmfm3Q/4ZU1P5N1nAmY13i0a0cxa
+hH8u/cJqAX60RguWSe/lxdLtpQ/hxEUQ9tLB1qo3plKgPNupNcGvNsMzRsKVyhJkt6TSrFRCzOKD
+NQ8WaQ=='
 PIN_META_B64='RGlzdDogamFtbXkKTmFtZTogSmFtbXkgRm9zc2EKVmVyc2lvbjogMjIuMDQuNiBMVFMKRGF0ZTog
 VGh1LCAyMyBBcHJpbCAyMDIwIDIwOjA0OjAwIFVUQwpTdXBwb3J0ZWQ6IDEKRGVzY3JpcHRpb246
-IFRoaXMgaXMgdGhlIDIyLjA0LjYgTFRTIHJlbGVhc2UKUmVsZWFzZS1GaWxlOiBodHRwOi8vMTI3
-LjAuMC4xL3VidW50dS1vZmZsaW5lL2hvcHMvamFtbXktdG8tbm9ibGUvdWJ1bnR1L2Rpc3RzL2ph
-bW15L1JlbGVhc2UKUmVsZWFzZU5vdGVzOiBodHRwOi8vMTI3LjAuMC4xL3VidW50dS1vZmZsaW5l
-L2NsaWVudC9qYW1teS10by1ub2JsZS9SZWxlYXNlQW5ub3VuY2VtZW50ClVwZ3JhZGVUb29sOiBo
-dHRwOi8vMTI3LjAuMC4xL3VidW50dS1vZmZsaW5lL29mZmxpbmUvcmVsZWFzZS11cGdyYWRlcnMv
-bm9ibGUvbm9ibGUudGFyLmd6ClVwZ3JhZGVUb29sU2lnbmF0dXJlOiBodHRwOi8vMTI3LjAuMC4x
-L3VidW50dS1vZmZsaW5lL29mZmxpbmUvcmVsZWFzZS11cGdyYWRlcnMvbm9ibGUvbm9ibGUudGFy
-Lmd6LmdwZwoKRGlzdDogbm9ibGUKTmFtZTogTm9ibGUgSmVsbHlmaXNoClZlcnNpb246IDI0LjA0
-LjUgTFRTCkRhdGU6IFRodSwgMjEgQXByaWwgMjAyMiAyMjowNDowMCBVVEMKU3VwcG9ydGVkOiAx
-CkRlc2NyaXB0aW9uOiBUaGlzIGlzIHRoZSAyNC4wNC41IExUUyByZWxlYXNlClJlbGVhc2UtRmls
-ZTogaHR0cDovLzEyNy4wLjAuMS91YnVudHUtb2ZmbGluZS9ob3BzL2phbW15LXRvLW5vYmxlL3Vi
-dW50dS9kaXN0cy9ub2JsZS9SZWxlYXNlClJlbGVhc2VOb3RlczogaHR0cDovLzEyNy4wLjAuMS91
-YnVudHUtb2ZmbGluZS9jbGllbnQvamFtbXktdG8tbm9ibGUvUmVsZWFzZUFubm91bmNlbWVudApS
-ZWxlYXNlTm90ZXNIdG1sOiBodHRwOi8vMTI3LjAuMC4xL3VidW50dS1vZmZsaW5lL2NsaWVudC9q
-YW1teS10by1ub2JsZS9SZWxlYXNlQW5ub3VuY2VtZW50Lmh0bWwKVXBncmFkZVRvb2w6IGh0dHA6
-Ly8xMjcuMC4wLjEvdWJ1bnR1LW9mZmxpbmUvb2ZmbGluZS9yZWxlYXNlLXVwZ3JhZGVycy9ub2Js
-ZS9ub2JsZS50YXIuZ3oKVXBncmFkZVRvb2xTaWduYXR1cmU6IGh0dHA6Ly8xMjcuMC4wLjEvdWJ1
-bnR1LW9mZmxpbmUvb2ZmbGluZS9yZWxlYXNlLXVwZ3JhZGVycy9ub2JsZS9ub2JsZS50YXIuZ3ou
-Z3BnCg=='
+IFRoaXMgaXMgdGhlIDIyLjA0LjYgTFRTIHJlbGVhc2UKUmVsZWFzZS1GaWxlOiBodHRwOi8vMjIx
+LjEzOS4yNDkuMTExL2hvcHMvamFtbXktdG8tbm9ibGUvdWJ1bnR1L2Rpc3RzL2phbW15L1JlbGVh
+c2UKUmVsZWFzZU5vdGVzOiBodHRwOi8vMjIxLjEzOS4yNDkuMTExL2NsaWVudC9qYW1teS10by1u
+b2JsZS9SZWxlYXNlQW5ub3VuY2VtZW50ClVwZ3JhZGVUb29sOiBodHRwOi8vMjIxLjEzOS4yNDku
+MTExL29mZmxpbmUvcmVsZWFzZS11cGdyYWRlcnMvbm9ibGUvbm9ibGUudGFyLmd6ClVwZ3JhZGVU
+b29sU2lnbmF0dXJlOiBodHRwOi8vMjIxLjEzOS4yNDkuMTExL29mZmxpbmUvcmVsZWFzZS11cGdy
+YWRlcnMvbm9ibGUvbm9ibGUudGFyLmd6LmdwZwoKRGlzdDogbm9ibGUKTmFtZTogTm9ibGUgSmVs
+bHlmaXNoClZlcnNpb246IDI0LjA0LjUgTFRTCkRhdGU6IFRodSwgMjEgQXByaWwgMjAyMiAyMjow
+NDowMCBVVEMKU3VwcG9ydGVkOiAxCkRlc2NyaXB0aW9uOiBUaGlzIGlzIHRoZSAyNC4wNC41IExU
+UyByZWxlYXNlClJlbGVhc2UtRmlsZTogaHR0cDovLzIyMS4xMzkuMjQ5LjExMS9ob3BzL2phbW15
+LXRvLW5vYmxlL3VidW50dS9kaXN0cy9ub2JsZS9SZWxlYXNlClJlbGVhc2VOb3RlczogaHR0cDov
+LzIyMS4xMzkuMjQ5LjExMS9jbGllbnQvamFtbXktdG8tbm9ibGUvUmVsZWFzZUFubm91bmNlbWVu
+dApSZWxlYXNlTm90ZXNIdG1sOiBodHRwOi8vMjIxLjEzOS4yNDkuMTExL2NsaWVudC9qYW1teS10
+by1ub2JsZS9SZWxlYXNlQW5ub3VuY2VtZW50Lmh0bWwKVXBncmFkZVRvb2w6IGh0dHA6Ly8yMjEu
+MTM5LjI0OS4xMTEvb2ZmbGluZS9yZWxlYXNlLXVwZ3JhZGVycy9ub2JsZS9ub2JsZS50YXIuZ3oK
+VXBncmFkZVRvb2xTaWduYXR1cmU6IGh0dHA6Ly8yMjEuMTM5LjI0OS4xMTEvb2ZmbGluZS9yZWxl
+YXNlLXVwZ3JhZGVycy9ub2JsZS9ub2JsZS50YXIuZ3ouZ3BnCg=='
 PIN_MANIFEST_B64='ewogICJzY2hlbWFfdmVyc2lvbiI6IDEsCiAgInByb2ZpbGUiOiAib2ZmbGluZS11cGdyYWRlLXNl
 bGVjdGl2ZSIsCiAgImhvcCI6ICJqYW1teS10by1ub2JsZSIsCiAgInNvdXJjZV9jb2RlbmFtZSI6
 ICJqYW1teSIsCiAgInRhcmdldF9jb2RlbmFtZSI6ICJub2JsZSIsCiAgInNvdXJjZV92ZXJzaW9u
 IjogIjIyLjA0IiwKICAidGFyZ2V0X3ZlcnNpb24iOiAiMjQuMDQiLAogICJtaXJyb3JfYmFzZSI6
-ICJodHRwOi8vMTI3LjAuMC4xL3VidW50dS1vZmZsaW5lIiwKICAicmVwb3NpdG9yeV9iYXNlIjog
-Imh0dHA6Ly8xMjcuMC4wLjEvdWJ1bnR1LW9mZmxpbmUvaG9wcy9qYW1teS10by1ub2JsZS91YnVu
-dHUiLAogICJzdWl0ZXMiOiBbCiAgICAiamFtbXkiLAogICAgImphbW15LXVwZGF0ZXMiLAogICAg
-ImphbW15LXNlY3VyaXR5IiwKICAgICJqYW1teS1iYWNrcG9ydHMiLAogICAgIm5vYmxlIiwKICAg
-ICJub2JsZS11cGRhdGVzIiwKICAgICJub2JsZS1zZWN1cml0eSIsCiAgICAibm9ibGUtYmFja3Bv
-cnRzIgogIF0sCiAgInNvdXJjZV9zdWl0ZXMiOiBbCiAgICAiamFtbXkiLAogICAgImphbW15LXVw
-ZGF0ZXMiLAogICAgImphbW15LXNlY3VyaXR5IiwKICAgICJqYW1teS1iYWNrcG9ydHMiCiAgXSwK
-ICAidGFyZ2V0X3N1aXRlcyI6IFsKICAgICJub2JsZSIsCiAgICAibm9ibGUtdXBkYXRlcyIsCiAg
-ICAibm9ibGUtc2VjdXJpdHkiLAogICAgIm5vYmxlLWJhY2twb3J0cyIKICBdLAogICJjb21wb25l
-bnRzIjogWwogICAgIm1haW4iLAogICAgInVuaXZlcnNlIgogIF0sCiAgInJlcG9zaXRvcnlfa2V5
-X2ZpbmdlcnByaW50IjogIkQxRkY3MjI1NTZFRDk1RjVFNzc5QkFFNjZCMUJBMTY3M0E5OTdDQTUi
-LAogICJrZXlfc2hhMjU2IjogImQxZWY2NzI0MzQ3ZjExMzU1YTBmYmM4YTFkZWM5Y2Y2OWU4ZTg2
-NDdjNWNjZDA2ZmJjMmY5NTJiY2IxNzdkNjAiLAogICJtYW5pZmVzdF9rZXlfZmluZ2VycHJpbnQi
-OiAiRDFGRjcyMjU1NkVEOTVGNUU3NzlCQUU2NkIxQkExNjczQTk5N0NBNSIsCiAgIm1hbmlmZXN0
-X2tleV9zaGEyNTYiOiAiZDFlZjY3MjQzNDdmMTEzNTVhMGZiYzhhMWRlYzljZjY5ZThlODY0N2M1
-Y2NkMDZmYmMyZjk1MmJjYjE3N2Q2MCIsCiAgImtleXJpbmdfaW5zdGFsbF9wYXRoIjogIi9ldGMv
-YXB0L3RydXN0ZWQuZ3BnLmQvc3RlbGxhci1vZmZsaW5lLWphbW15LXRvLW5vYmxlLmdwZyIsCiAg
-Im1ldGFfcmVsZWFzZV91cmwiOiAiaHR0cDovLzEyNy4wLjAuMS91YnVudHUtb2ZmbGluZS9jbGll
-bnQvamFtbXktdG8tbm9ibGUvbWV0YS1yZWxlYXNlLWx0cyIsCiAgIm1ldGFfcmVsZWFzZV9zaGEy
-NTYiOiAiNTYyYzI4ZTMzYTI4ZTYzNGUwZDY3NzFlOTc3YmFmOTExNDVkZDQwYjU2OGU3MmY3NzU5
-NGM5ZjZiNTY3NTAzOCIsCiAgInVwZ3JhZGVyX3Rhcl91cmwiOiAiaHR0cDovLzEyNy4wLjAuMS91
-YnVudHUtb2ZmbGluZS9vZmZsaW5lL3JlbGVhc2UtdXBncmFkZXJzL25vYmxlL25vYmxlLnRhci5n
-eiIsCiAgInVwZ3JhZGVyX3Rhcl9zaGEyNTYiOiAiNDQ3ZjU0Y2JkZmI5ZjU3ZDMyZGRiMDJmY2Yw
-YTBhYmIwMTg0MDU5Y2MwZjY4MGU4MDZkMjMzNzk4NzhmZTM5NiIsCiAgInVwZ3JhZGVyX2dwZ191
-cmwiOiAiaHR0cDovLzEyNy4wLjAuMS91YnVudHUtb2ZmbGluZS9vZmZsaW5lL3JlbGVhc2UtdXBn
-cmFkZXJzL25vYmxlL25vYmxlLnRhci5nei5ncGciLAogICJ1cGdyYWRlcl9ncGdfc2hhMjU2Ijog
-IjdhZjk5Mzk0NjYyZmU2ZDlmYmU0YmE3ZjZlZmQ0ODE4ZjU1OTRlODJlNTUzYWFhZjY1OTE0NGE4
-MGZmNTNiZmUiLAogICJzYW1wbGVfZGViX3VybCI6ICJodHRwOi8vMTI3LjAuMC4xL3VidW50dS1v
-ZmZsaW5lL2hvcHMvamFtbXktdG8tbm9ibGUvdWJ1bnR1L3Bvb2wvbWFpbi9hL2FjY291bnRzc2Vy
-dmljZS9hY2NvdW50c3NlcnZpY2VfMjMuMTMuOS0ydWJ1bnR1Nl9hbWQ2NC5kZWIiLAogICJwbGFu
-X2NoZWNrc3VtIjogIjhlYjNkNDc4ZTJkNDBlN2ExOTUxMDIzOWZjYmY2ZTJlNjgyNGIyNTg3ZTZl
-NzE3MmQ2MGVmMDFlODkyMGIxNTciLAogICJkaXNjb3ZlcnlfY2hlY2tzdW0iOiAiZDA4Zjc2YTRl
-ODdiYmFhYmM4MmIyYWVhM2Y1NTJkMjZiOWVjZTUzYmU4MzczNWE3NGRmZmRmZDcwYTgxNmI1NiIs
-CiAgImNvbmZpcm1fcGhyYXNlIjogIlVQR1JBREUtSkFNTVktVE8tTk9CTEUiLAogICJjbGllbnRf
-cHJvdmVuYW5jZV9zY2hlbWFfdmVyc2lvbiI6ICIxIiwKICAiY2xpZW50X2J1aWxkX2lucHV0X3No
-YTI1NiI6ICIwMjc1NGZlZDVlMjBkN2JjODkxZDVkNjMyZTgyN2MyMzU3MzMyMDIzZTA1MDdlN2Fj
-MjNjYWJkYWE1NzU1ODA3IiwKICAiY2xpZW50X3NvdXJjZV9yZXZpc2lvbiI6ICI5YzFhZTI3ZWUx
-ZGNlN2ViNjU3ODJlMjdhNmUzN2U4NDU0ODU5NThkIiwKICAiY2xpZW50X3NvdXJjZV90cmVlX3N0
-YXRlIjogImRpcnR5IiwKICAiY2xpZW50X2NvbW1hbmRfYmxvY2tfdmVyc2lvbiI6ICJTVUJTSEVM
-TF9WMiIsCiAgImNsaWVudF9taXJyb3JfYmFzZV91cmwiOiAiaHR0cDovLzEyNy4wLjAuMS91YnVu
-dHUtb2ZmbGluZSIsCiAgImNsaWVudF9zaWduaW5nX2ZpbmdlcnByaW50IjogIkQxRkY3MjI1NTZF
-RDk1RjVFNzc5QkFFNjZCMUJBMTY3M0E5OTdDQTUiLAogICJjbGllbnRfcnVudGltZV9tYW5pZmVz
-dF9zaGEyNTYiOiAiNDE4NGQ3NTY3NDBlYTcyNDAxOTY1MjZiMzcyMjcyZDE1ZjljYWYyYzVhNmY4
-M2UzMDRhYzI2Zjc3ZjlmNjllNSIsCiAgImNsaWVudF9idWlsZGVyc19zaGEyNTYiOiAiYTY5Nzk0
-NjA2M2FiNjc2OTMwMzUxZTZkYmM4MTg1YTc3YjU0YjU3MWI0MTZhYTIwOTQ2NmEwMTg4OGIyYjU2
-OCIsCiAgImNsaWVudF90ZW1wbGF0ZXNfc2hhMjU2IjogImFlMmU0ZDQwZDEzZGU2MzZkYjZiNWI1
-NTY0NDk0ZDNjNmZkZTg4YTA2MWYyMzBjZTVhZDU3N2MyMGJkYzk0OWEiLAogICJjbGllbnRfc2hh
-cmVkX2hlbHBlcnNfc2hhMjU2IjogImNjMDY3MmQyYjRlOTU3OWQwYzBmNjljZmE5N2U2NmU5MjAx
-YTg0MTRjYjNkZjVlNmU0M2ZhNDc1MDgxODM2YjkiLAogICJjbGllbnRfcnVubmVyX3NoYTI1NiI6
-ICIyYTA3ZWFiZDNjYjViYzhhZjk0NmY4MWY4YThlNTE3ZWJhN2MwMDU2ZDIxM2EzNGFkNDFjMTNl
-MDg2ZWIyNTYzIiwKICAiZ2VuZXJhdGVkX2F0IjogIjIwMjYtMDgtMDVUMTA6NDc6MzJaIiwKICAi
-YW5ub3VuY2VtZW50cyI6IHsKICAgICJSZWxlYXNlQW5ub3VuY2VtZW50IjogImQxZTgyZDJlNzcw
-NjYzYjYzYWM5OWIzOWUzYWE0MzZkZmI3MzExMzljNjcxNjNkYjQ0MzkyYjkzMjg0ZWZkNjMiLAog
-ICAgIlJlbGVhc2VBbm5vdW5jZW1lbnQuaHRtbCI6ICJlNzFkMTRkZjA5M2NlNWU0NTdmN2MzYmE4
-OWM1YTAyNjRiMDIwMmIxY2E3MmY0MjAzYTM1YjJlYWQ2NDk4OGIzIgogIH0KfQo='
-PIN_MANIFEST_SIG_B64='LS0tLS1CRUdJTiBQR1AgU0lHTkFUVVJFLS0tLS0KVU5TSUdORURfVEVTVAotLS0tLUVORCBQR1Ag
-U0lHTkFUVVJFLS0tLS0K'
+ICJodHRwOi8vMjIxLjEzOS4yNDkuMTExIiwKICAicmVwb3NpdG9yeV9iYXNlIjogImh0dHA6Ly8y
+MjEuMTM5LjI0OS4xMTEvaG9wcy9qYW1teS10by1ub2JsZS91YnVudHUiLAogICJzdWl0ZXMiOiBb
+CiAgICAiamFtbXkiLAogICAgImphbW15LXVwZGF0ZXMiLAogICAgImphbW15LXNlY3VyaXR5IiwK
+ICAgICJqYW1teS1iYWNrcG9ydHMiLAogICAgIm5vYmxlIiwKICAgICJub2JsZS11cGRhdGVzIiwK
+ICAgICJub2JsZS1zZWN1cml0eSIsCiAgICAibm9ibGUtYmFja3BvcnRzIgogIF0sCiAgInNvdXJj
+ZV9zdWl0ZXMiOiBbCiAgICAiamFtbXkiLAogICAgImphbW15LXVwZGF0ZXMiLAogICAgImphbW15
+LXNlY3VyaXR5IiwKICAgICJqYW1teS1iYWNrcG9ydHMiCiAgXSwKICAidGFyZ2V0X3N1aXRlcyI6
+IFsKICAgICJub2JsZSIsCiAgICAibm9ibGUtdXBkYXRlcyIsCiAgICAibm9ibGUtc2VjdXJpdHki
+LAogICAgIm5vYmxlLWJhY2twb3J0cyIKICBdLAogICJjb21wb25lbnRzIjogWwogICAgIm1haW4i
+LAogICAgInVuaXZlcnNlIgogIF0sCiAgInJlcG9zaXRvcnlfa2V5X2ZpbmdlcnByaW50IjogIkQx
+RkY3MjI1NTZFRDk1RjVFNzc5QkFFNjZCMUJBMTY3M0E5OTdDQTUiLAogICJrZXlfc2hhMjU2Ijog
+ImQxZWY2NzI0MzQ3ZjExMzU1YTBmYmM4YTFkZWM5Y2Y2OWU4ZTg2NDdjNWNjZDA2ZmJjMmY5NTJi
+Y2IxNzdkNjAiLAogICJtYW5pZmVzdF9rZXlfZmluZ2VycHJpbnQiOiAiREZFMzA5NzVEREUxRjYz
+NzBDRTEwQkY1MEMyODM4RURCMjE4NUI4NyIsCiAgIm1hbmlmZXN0X2tleV9zaGEyNTYiOiAiOGRj
+NTIzODZmZDIwZmUxZjM3NDkwYTdlZTNiODRlMTcyZDE1ZjJmYjYwMmFlNjhmZTg3YTU1MzE0OWY5
+ZTYzYyIsCiAgImtleXJpbmdfaW5zdGFsbF9wYXRoIjogIi9ldGMvYXB0L3RydXN0ZWQuZ3BnLmQv
+c3RlbGxhci1vZmZsaW5lLWphbW15LXRvLW5vYmxlLmdwZyIsCiAgIm1ldGFfcmVsZWFzZV91cmwi
+OiAiaHR0cDovLzIyMS4xMzkuMjQ5LjExMS9jbGllbnQvamFtbXktdG8tbm9ibGUvbWV0YS1yZWxl
+YXNlLWx0cyIsCiAgIm1ldGFfcmVsZWFzZV9zaGEyNTYiOiAiOTIzZjZiODk3ZTJmMDZmNzEwMWRi
+YmUyMTNiYWIyYjMxOTRhNjUyYmI3MDZkNjE2ZTIxN2IxYjhiNjU1ZGFlMiIsCiAgInVwZ3JhZGVy
+X3Rhcl91cmwiOiAiaHR0cDovLzIyMS4xMzkuMjQ5LjExMS9vZmZsaW5lL3JlbGVhc2UtdXBncmFk
+ZXJzL25vYmxlL25vYmxlLnRhci5neiIsCiAgInVwZ3JhZGVyX3Rhcl9zaGEyNTYiOiAiNDQ3ZjU0
+Y2JkZmI5ZjU3ZDMyZGRiMDJmY2YwYTBhYmIwMTg0MDU5Y2MwZjY4MGU4MDZkMjMzNzk4NzhmZTM5
+NiIsCiAgInVwZ3JhZGVyX2dwZ191cmwiOiAiaHR0cDovLzIyMS4xMzkuMjQ5LjExMS9vZmZsaW5l
+L3JlbGVhc2UtdXBncmFkZXJzL25vYmxlL25vYmxlLnRhci5nei5ncGciLAogICJ1cGdyYWRlcl9n
+cGdfc2hhMjU2IjogIjdhZjk5Mzk0NjYyZmU2ZDlmYmU0YmE3ZjZlZmQ0ODE4ZjU1OTRlODJlNTUz
+YWFhZjY1OTE0NGE4MGZmNTNiZmUiLAogICJzYW1wbGVfZGViX3VybCI6ICJodHRwOi8vMjIxLjEz
+OS4yNDkuMTExL2hvcHMvamFtbXktdG8tbm9ibGUvdWJ1bnR1L3Bvb2wvbWFpbi9hL2FjY291bnRz
+c2VydmljZS9hY2NvdW50c3NlcnZpY2VfMjMuMTMuOS0ydWJ1bnR1Nl9hbWQ2NC5kZWIiLAogICJw
+bGFuX2NoZWNrc3VtIjogIjhlYjNkNDc4ZTJkNDBlN2ExOTUxMDIzOWZjYmY2ZTJlNjgyNGIyNTg3
+ZTZlNzE3MmQ2MGVmMDFlODkyMGIxNTciLAogICJkaXNjb3ZlcnlfY2hlY2tzdW0iOiAiZDA4Zjc2
+YTRlODdiYmFhYmM4MmIyYWVhM2Y1NTJkMjZiOWVjZTUzYmU4MzczNWE3NGRmZmRmZDcwYTgxNmI1
+NiIsCiAgImNvbmZpcm1fcGhyYXNlIjogIlVQR1JBREUtSkFNTVktVE8tTk9CTEUiLAogICJjbGll
+bnRfcHJvdmVuYW5jZV9zY2hlbWFfdmVyc2lvbiI6ICIxIiwKICAiY2xpZW50X2J1aWxkX2lucHV0
+X3NoYTI1NiI6ICIxNGM2OWYwM2ZhZmY4YWIxNmJhNjQ5OWM5ZGY2NTJmMjZlNmE1YTdlZGFkMWMy
+OGRjZmJhNTA5NjMxZGEyNzU2IiwKICAiY2xpZW50X3NvdXJjZV9yZXZpc2lvbiI6ICI2ODBmNGVj
+ZmRmNmY0NmFlOTg5M2ZkYzdmYjBjNmMxOTMwNzQwYjU3IiwKICAiY2xpZW50X3NvdXJjZV90cmVl
+X3N0YXRlIjogImRpcnR5IiwKICAiY2xpZW50X2NvbW1hbmRfYmxvY2tfdmVyc2lvbiI6ICJTVUJT
+SEVMTF9WMiIsCiAgImNsaWVudF9taXJyb3JfYmFzZV91cmwiOiAiaHR0cDovLzIyMS4xMzkuMjQ5
+LjExMSIsCiAgImNsaWVudF9zaWduaW5nX2ZpbmdlcnByaW50IjogIkRGRTMwOTc1RERFMUY2Mzcw
+Q0UxMEJGNTBDMjgzOEVEQjIxODVCODciLAogICJjbGllbnRfcnVudGltZV9tYW5pZmVzdF9zaGEy
+NTYiOiAiYWU2MGRiZDM1YzkwZTIyODQ1NDNjYTJkZjVmZDE1NmY5ZTMxOGE2YmE2MDRlYTIzMTk1
+NDY1MWU4MWRmZDc2ZiIsCiAgImNsaWVudF9idWlsZGVyc19zaGEyNTYiOiAiNmRkNzNkOGQ1NTIw
+OGM2NzQ2YzBiM2FmZjAzYmJiNWNmZGJkYjU4ZjVkZTUzMjJhMmVjYTQwZDBhZjUxZjJkMiIsCiAg
+ImNsaWVudF90ZW1wbGF0ZXNfc2hhMjU2IjogIjE0Y2QxYjkzZWUyNGE0NGMwZTg5MTQ3ZTJiYzhm
+YmYwYTFhYmViMmY3NDVkNmJmNjQ2ZWZhY2UzYWNmNmM1MzYiLAogICJjbGllbnRfc2hhcmVkX2hl
+bHBlcnNfc2hhMjU2IjogImY1MDQ5OWE1YzczNTdkYTAxMDVlZDk1M2M0OTA3MGY1MDc3OWI5NjM0
+ZmIzZWNjNDQ2OTcxZTQ5YjMxMDQxOWQiLAogICJjbGllbnRfcnVubmVyX3NoYTI1NiI6ICIyYTA3
+ZWFiZDNjYjViYzhhZjk0NmY4MWY4YThlNTE3ZWJhN2MwMDU2ZDIxM2EzNGFkNDFjMTNlMDg2ZWIy
+NTYzIiwKICAiZ2VuZXJhdGVkX2F0IjogIjIwMjYtMDgtMjZUMTU6MTc6MjBaIiwKICAiYW5ub3Vu
+Y2VtZW50cyI6IHsKICAgICJSZWxlYXNlQW5ub3VuY2VtZW50IjogImQxZTgyZDJlNzcwNjYzYjYz
+YWM5OWIzOWUzYWE0MzZkZmI3MzExMzljNjcxNjNkYjQ0MzkyYjkzMjg0ZWZkNjMiLAogICAgIlJl
+bGVhc2VBbm5vdW5jZW1lbnQuaHRtbCI6ICJlNzFkMTRkZjA5M2NlNWU0NTdmN2MzYmE4OWM1YTAy
+NjRiMDIwMmIxY2E3MmY0MjAzYTM1YjJlYWQ2NDk4OGIzIgogIH0KfQo='
+PIN_MANIFEST_SIG_B64='LS0tLS1CRUdJTiBQR1AgU0lHTkFUVVJFLS0tLS0KCmlRRXpCQUFCQ2dBZEZpRUUzK01KZGQzaDlq
+Y000UXYxRENnNDdiSVlXNGNGQW1xUEE0QUFDZ2tRRENnNDdiSVkKVzRlWlNnZ0FoSTBVZjNHYjA0
+UGVGSmUyZmRqOVRuelJkdDJnMEordDh3WEJxWVVIdDZUODVxZmR5dWRwZ1ZzUAp3YXlEd3lFczZu
+REE0VEZFOGU2byt3TjdYOFFnV1NZYXBKd3diOGorVFdFWU1idk5nNlk4M0RiaG0zNENoMUhmCi9i
+eWRHZ1RjZDB0NFFKdjRBRHBhSDhKLy9IazUybVE1Q3dVRjBXelVhZndGN0ppNHAySnlzcURHamw2
+cmZyd00Kc05pRWViZTZtalBxTS9NbENzYTBrdXk1UDVJWWlJWXV5ODYzb2sreGhyZnBVYVh2Vllo
+QTNpUW11bmFkMUJRSgpoNGszdEl4M1M4MUhRMlJSV2V6NklCWWMxcHRBMWpHSDBJWlFUTzlERXlJ
+MWgwSFhMSGlKOVAxOSsrbDE2Y202CnZNdmNGQlU1T3lEYnZkdU8wSTc2VWFvVmZWR3dCQT09Cj12
+UlRCCi0tLS0tRU5EIFBHUCBTSUdOQVRVUkUtLS0tLQo='
 PIN_ANNOUNCEMENT_B64='PSBXZWxjb21lIHRvIFVidW50dSAyNC4wNCBMVFMgJ05vYmxlIE51bWJhdCcgPQoKVGhlIFVidW50
 dSB0ZWFtIGlzIHByb3VkIHRvIGFubm91bmNlIFVidW50dSAyNC4wNCBMVFMgJ05vYmxlIE51bWJh
 dCcuCgpUbyBzZWUgd2hhdCdzIG5ldyBpbiB0aGlzIHJlbGVhc2UsIHZpc2l0OgogIGh0dHBzOi8v
@@ -1119,6 +1124,7 @@ is_critical_os_hold_package() {
 }
 
 # Shared durable atomic write helpers for offline OS-upgrade clients.
+# shellcheck shell=bash
 # Injected at build time via the DURABLE_WRITE_HELPER template token.
 # Prefer targeted file+directory fsync over unbounded global `sync`.
 # Bash 4.3+/4.4 safe; requires python3 (standard on Bionic+ upgrade hosts).
@@ -1329,6 +1335,945 @@ durable_atomic_write_string() {
 atomic_write_file() {
   local dest="$1"
   durable_atomic_write "atomic_write_file" "$dest" || return 1
+}
+
+
+#!/usr/bin/env bash
+# Shared source DP product version capture / parse / recovery.
+# Xenial Bash 4.3 compatible. Never source source-product.env as shell code.
+# shellcheck shell=bash
+# Schema version 1 — allowlisted KEY=VALUE only.
+
+SOURCE_PRODUCT_ENV_SCHEMA_VERSION_CURRENT=1
+SOURCE_PRODUCT_ENV_DEFAULT_PATH="${SOURCE_PRODUCT_ENV_DEFAULT_PATH:-/opt/aelladata/os-upgrade/offline/source-product.env}"
+SOURCE_PRODUCT_STATE_ROOT_DEFAULT="${SOURCE_PRODUCT_STATE_ROOT_DEFAULT:-/opt/aelladata/os-upgrade/offline}"
+SOURCE_PRODUCT_PHASE1_LOG_DEFAULT="${SOURCE_PRODUCT_PHASE1_LOG_DEFAULT:-/var/log/aella/offline_os_upgrade.log}"
+SOURCE_PRODUCT_RELEASE_IMAGE_DEFAULT="${SOURCE_PRODUCT_RELEASE_IMAGE_DEFAULT:-/opt/aelladata/release-image.yml}"
+SOURCE_PRODUCT_EVIDENCE_ROOT_DEFAULT="${SOURCE_PRODUCT_EVIDENCE_ROOT_DEFAULT:-/opt/aelladata/os-upgrade/offline/evidence/source-product-resolution}"
+SOURCE_PRODUCT_MIN_AUTHORITATIVE_RELEASE_KEYS=2
+SOURCE_PRODUCT_OS_STATE_FILE="${SOURCE_PRODUCT_OS_STATE_FILE:-}"
+SOURCE_PRODUCT_BRINGUP_RESULT_ENV="${SOURCE_PRODUCT_BRINGUP_RESULT_ENV:-}"
+
+# Diagnostics populated by spv_resolve_source_dp_version / diagnose helpers.
+SPV_SOURCE_PRODUCT_ENV_PATH=""
+SPV_SOURCE_PRODUCT_ENV_STATUS=""
+SPV_SOURCE_VERSION_CAPTURE_STATUS=""
+SPV_PHASE1_LOG_EVIDENCE_PATH=""
+SPV_PHASE1_LOG_EVIDENCE_STATUS=""
+SPV_PHASE1_LOG_EVIDENCE_RECORD_COUNT=0
+SPV_PHASE1_LOG_EVIDENCE_COMPLETE_PASS_COUNT=0
+SPV_PHASE1_LOG_EVIDENCE_UNIQUE_VERSION_COUNT=0
+SPV_PHASE1_LOG_EVIDENCE_UNDETERMINED_COUNT=0
+SPV_RELEASE_IMAGE_PATH=""
+SPV_RELEASE_IMAGE_STATUS=""
+SPV_RELEASE_IMAGE_AUTHORITATIVE_RECORD_COUNT=0
+SPV_RELEASE_IMAGE_UNIQUE_VERSION_COUNT=0
+SPV_OPERATOR_SOURCE_VERSION_STATUS=""
+SPV_SOURCE_DP_VERSION=""
+SPV_SOURCE_DP_VERSION_RAW=""
+SPV_SOURCE_DP_VERSION_ORIGIN=""
+SPV_SOURCE_DP_VERSION_CHECK=""
+SPV_SOURCE_DP_VERSION_RESOLUTION=""
+SPV_SOURCE_DP_VERSION_FAILURE_REASON=""
+SPV_SOURCE_DP_VERSION_REMEDIATION=""
+SPV_SOURCE_DP_VERSION_RECOVERY=""
+SPV_DIAG_SUMMARY=""
+
+spv_utc_now() {
+  date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u +%Y%m%dT%H%M%SZ
+}
+
+spv_is_strict_product_version() {
+  local v="${1-}"
+  [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+}
+
+spv_normalize_dp_version() {
+  local raw="${1-}"
+  local base
+  if [[ -z "$raw" || "$raw" == "null" || "$raw" == "unknown" || "$raw" == "UNKNOWN" \
+      || "$raw" == "UNDETERMINED" || "$raw" == "undetermined" ]]; then
+    return 1
+  fi
+  raw="$(printf '%s' "$raw" | sed -E 's/^[^0-9]*//')"
+  if [[ "$raw" =~ ^([0-9]+\.[0-9]+\.[0-9]+)(-[A-Za-z0-9.-]+)?$ ]]; then
+    base="${BASH_REMATCH[1]}"
+  elif [[ "$raw" =~ ^([0-9]+\.[0-9]+)$ ]]; then
+    base="${BASH_REMATCH[1]}.0"
+  else
+    return 1
+  fi
+  printf '%s' "$base"
+  return 0
+}
+
+spv_value_has_shell_metachar() {
+  local v="${1-}"
+  case "$v" in
+    *['`$\\;*|&<>(){}[]'!]*|*\"*|*"'"*|*$'\n'*|*$'\r'*) return 0 ;;
+  esac
+  return 1
+}
+
+spv_is_authoritative_release_image_key() {
+  case "${1-}" in
+    aella-cm-master|aella-cm-bg|aella-cm-user|aella-cm-worker|stellar-conf|stellar-controller)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+spv_is_fake_version_source() {
+  case "${1-}" in
+    FAKE|fake|TEST|test|DP_OFFLINE_FAKE_DP_VERSION)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+spv_allowlisted_env_key() {
+  case "${1-}" in
+    SOURCE_PRODUCT_ENV_SCHEMA_VERSION) return 0 ;;
+    SOURCE_DP_VERSION_RAW) return 0 ;;
+    SOURCE_DP_VERSION) return 0 ;;
+    SOURCE_DP_VERSION_ORIGIN) return 0 ;;
+    SOURCE_DP_VERSION_CHECK) return 0 ;;
+    SOURCE_DP_VERSION_CAPTURED_AT) return 0 ;;
+    SOURCE_DP_VERSION_CAPTURED_OS) return 0 ;;
+    SOURCE_DP_VERSION_CAPTURED_CODENAME) return 0 ;;
+    SOURCE_DP_VERSION_CAPTURE_RUN_ID) return 0 ;;
+    MIN_SUPPORTED_SOURCE_DP_VERSION) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Parse allowlisted KEY=VALUE file into prefixed globals: SPV_PARSED_<KEY>
+# Rejects duplicates, unknown keys, metacharacters. Does not eval/source.
+spv_parse_source_product_env_file() {
+  local path="${1-}"
+  local line key val seen_keys="" dup=0
+  SPV_PARSE_STATUS=""
+  SPV_PARSED_SOURCE_PRODUCT_ENV_SCHEMA_VERSION=""
+  SPV_PARSED_SOURCE_DP_VERSION_RAW=""
+  SPV_PARSED_SOURCE_DP_VERSION=""
+  SPV_PARSED_SOURCE_DP_VERSION_ORIGIN=""
+  SPV_PARSED_SOURCE_DP_VERSION_CHECK=""
+  SPV_PARSED_SOURCE_DP_VERSION_CAPTURED_AT=""
+  SPV_PARSED_SOURCE_DP_VERSION_CAPTURED_OS=""
+  SPV_PARSED_SOURCE_DP_VERSION_CAPTURED_CODENAME=""
+  SPV_PARSED_SOURCE_DP_VERSION_CAPTURE_RUN_ID=""
+  SPV_PARSED_MIN_SUPPORTED_SOURCE_DP_VERSION=""
+
+  if [[ -z "$path" || ! -e "$path" ]]; then
+    SPV_PARSE_STATUS="MISSING"
+    return 1
+  fi
+  if [[ ! -r "$path" ]]; then
+    SPV_PARSE_STATUS="UNREADABLE"
+    return 1
+  fi
+  if [[ ! -f "$path" ]]; then
+    SPV_PARSE_STATUS="INVALID_SCHEMA"
+    return 1
+  fi
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+    if [[ ! "$line" =~ ^([A-Za-z0-9_]+)=(.*)$ ]]; then
+      SPV_PARSE_STATUS="INVALID_SCHEMA"
+      return 1
+    fi
+    key="${BASH_REMATCH[1]}"
+    val="${BASH_REMATCH[2]}"
+    val="${val%\"}"
+    val="${val#\"}"
+    if ! spv_allowlisted_env_key "$key"; then
+      SPV_PARSE_STATUS="INVALID_SCHEMA"
+      return 1
+    fi
+    case " ${seen_keys} " in
+      *" ${key} "*)
+        dup=1
+        break
+        ;;
+    esac
+    seen_keys="${seen_keys} ${key}"
+    if spv_value_has_shell_metachar "$val"; then
+      SPV_PARSE_STATUS="INVALID_SCHEMA"
+      return 1
+    fi
+    case "$key" in
+      SOURCE_PRODUCT_ENV_SCHEMA_VERSION) SPV_PARSED_SOURCE_PRODUCT_ENV_SCHEMA_VERSION="$val" ;;
+      SOURCE_DP_VERSION_RAW) SPV_PARSED_SOURCE_DP_VERSION_RAW="$val" ;;
+      SOURCE_DP_VERSION) SPV_PARSED_SOURCE_DP_VERSION="$val" ;;
+      SOURCE_DP_VERSION_ORIGIN) SPV_PARSED_SOURCE_DP_VERSION_ORIGIN="$val" ;;
+      SOURCE_DP_VERSION_CHECK) SPV_PARSED_SOURCE_DP_VERSION_CHECK="$val" ;;
+      SOURCE_DP_VERSION_CAPTURED_AT) SPV_PARSED_SOURCE_DP_VERSION_CAPTURED_AT="$val" ;;
+      SOURCE_DP_VERSION_CAPTURED_OS) SPV_PARSED_SOURCE_DP_VERSION_CAPTURED_OS="$val" ;;
+      SOURCE_DP_VERSION_CAPTURED_CODENAME) SPV_PARSED_SOURCE_DP_VERSION_CAPTURED_CODENAME="$val" ;;
+      SOURCE_DP_VERSION_CAPTURE_RUN_ID) SPV_PARSED_SOURCE_DP_VERSION_CAPTURE_RUN_ID="$val" ;;
+      MIN_SUPPORTED_SOURCE_DP_VERSION) SPV_PARSED_MIN_SUPPORTED_SOURCE_DP_VERSION="$val" ;;
+    esac
+  done <"$path"
+
+  if [[ "$dup" -eq 1 ]]; then
+    SPV_PARSE_STATUS="DUPLICATE_KEY"
+    return 1
+  fi
+  SPV_PARSE_STATUS="OK"
+  return 0
+}
+
+spv_validate_parsed_pass_record() {
+  local schema norm check
+  schema="${SPV_PARSED_SOURCE_PRODUCT_ENV_SCHEMA_VERSION:-}"
+  # Legacy jammy writers omit schema version; treat as acceptable if PASS + version ok.
+  if [[ -n "$schema" && "$schema" != "1" ]]; then
+    SPV_PARSE_STATUS="INVALID_SCHEMA"
+    return 1
+  fi
+  check="${SPV_PARSED_SOURCE_DP_VERSION_CHECK:-}"
+  if [[ "$check" == "FAIL_UNKNOWN" || "$check" == "FAIL_UNSUPPORTED" || "$check" == "FAIL" ]]; then
+    SPV_PARSE_STATUS="RECORDED_FAILURE"
+    return 1
+  fi
+  if [[ "$check" != "PASS" ]]; then
+    SPV_PARSE_STATUS="INVALID_SCHEMA"
+    return 1
+  fi
+  norm="${SPV_PARSED_SOURCE_DP_VERSION:-}"
+  if [[ -z "$norm" ]]; then
+    norm="$(spv_normalize_dp_version "${SPV_PARSED_SOURCE_DP_VERSION_RAW:-}")" || {
+      SPV_PARSE_STATUS="INVALID_VERSION"
+      return 1
+    }
+  else
+    norm="$(spv_normalize_dp_version "$norm")" || {
+      SPV_PARSE_STATUS="INVALID_VERSION"
+      return 1
+    }
+  fi
+  if ! spv_is_strict_product_version "$norm"; then
+    SPV_PARSE_STATUS="INVALID_VERSION"
+    return 1
+  fi
+  if [[ "$norm" == "UNKNOWN" || "$norm" == "UNDETERMINED" ]]; then
+    SPV_PARSE_STATUS="INVALID_VERSION"
+    return 1
+  fi
+  SPV_PARSED_SOURCE_DP_VERSION="$norm"
+  return 0
+}
+
+# Atomic root-only write. Prefer durable_atomic_write when available (python3);
+# otherwise Bash temp+rename with path-targeted sync only (never bare global sync).
+# Stdin is buffered once so a durable-write failure can still fall back safely.
+spv_atomic_write_file() {
+  local dest="$1"
+  local mode="${2:-0600}"
+  local parent tmp content_file
+  parent="$(dirname "$dest")"
+  mkdir -p "$parent" || return 1
+  chmod 0700 "$parent" 2>/dev/null || true
+
+  content_file="$(mktemp "${TMPDIR:-/tmp}/spv-content.XXXXXX")"
+  cat >"$content_file" || { rm -f "$content_file"; return 1; }
+
+  if declare -F durable_atomic_write >/dev/null 2>&1; then
+    if cat "$content_file" | durable_atomic_write "source_product_env" "$dest" "$mode"; then
+      rm -f "$content_file"
+      if [[ "$(id -u)" -eq 0 ]]; then
+        chown root:root "$dest" 2>/dev/null || true
+        chmod "$mode" "$dest" 2>/dev/null || true
+        chmod 0700 "$parent" 2>/dev/null || true
+      fi
+      return 0
+    fi
+    # Fall through to Bash path if durable write fails (e.g. missing python3).
+  fi
+
+  tmp="${parent}/.$(basename "$dest").tmp.$$.${RANDOM:-0}"
+  cat "$content_file" >"$tmp" || { rm -f "$content_file" "$tmp"; return 1; }
+  rm -f "$content_file"
+  chmod "$mode" "$tmp" || { rm -f "$tmp"; return 1; }
+  if [[ "$(id -u)" -eq 0 ]]; then
+    chown root:root "$tmp" 2>/dev/null || true
+  fi
+  # Path-targeted fsync only — never bare `sync`.
+  if command -v sync >/dev/null 2>&1; then
+    sync "$tmp" 2>/dev/null || true
+  fi
+  mv -f "$tmp" "$dest" || { rm -f "$tmp"; return 1; }
+  if command -v sync >/dev/null 2>&1; then
+    sync "$parent" 2>/dev/null || true
+  fi
+  if [[ "$(id -u)" -eq 0 ]]; then
+    chown root:root "$dest" 2>/dev/null || true
+    chmod "$mode" "$dest" 2>/dev/null || true
+    chmod 0700 "$parent" 2>/dev/null || true
+  fi
+  return 0
+}
+
+spv_build_env_content() {
+  local raw="$1" norm="$2" origin="$3" check="$4"
+  local captured_at="$5" captured_os="$6" captured_codename="$7" run_id="$8"
+  cat <<EOF
+SOURCE_PRODUCT_ENV_SCHEMA_VERSION=${SOURCE_PRODUCT_ENV_SCHEMA_VERSION_CURRENT}
+SOURCE_DP_VERSION_RAW=${raw}
+SOURCE_DP_VERSION=${norm}
+SOURCE_DP_VERSION_ORIGIN=${origin}
+SOURCE_DP_VERSION_CHECK=${check}
+SOURCE_DP_VERSION_CAPTURED_AT=${captured_at}
+SOURCE_DP_VERSION_CAPTURED_OS=${captured_os}
+SOURCE_DP_VERSION_CAPTURED_CODENAME=${captured_codename}
+SOURCE_DP_VERSION_CAPTURE_RUN_ID=${run_id}
+EOF
+}
+
+# Persist PASS capture. Never persists UNKNOWN/UNDETERMINED/empty.
+# Never overwrites prior PASS with a different version (fail closed).
+# Same version is idempotently reused.
+spv_persist_source_product_env() {
+  local dest="${1:-${SOURCE_PRODUCT_ENV_DEFAULT_PATH}}"
+  local raw="${2-}"
+  local origin="${3-}"
+  local captured_os="${4-}"
+  local captured_codename="${5-}"
+  local run_id="${6-}"
+  local norm check captured_at existing_norm
+
+  SPV_SOURCE_PRODUCT_ENV_PATH="$dest"
+  SPV_SOURCE_VERSION_CAPTURE_STATUS=""
+
+  if spv_is_fake_version_source "$origin"; then
+    SPV_SOURCE_VERSION_CAPTURE_STATUS="REJECTED_FAKE_SOURCE"
+    return 1
+  fi
+  norm="$(spv_normalize_dp_version "$raw")" || {
+    SPV_SOURCE_VERSION_CAPTURE_STATUS="REJECTED_INVALID_VERSION"
+    return 1
+  }
+  if ! spv_is_strict_product_version "$norm"; then
+    SPV_SOURCE_VERSION_CAPTURE_STATUS="REJECTED_INVALID_VERSION"
+    return 1
+  fi
+  if spv_value_has_shell_metachar "$norm" || spv_value_has_shell_metachar "$origin"; then
+    SPV_SOURCE_VERSION_CAPTURE_STATUS="REJECTED_INVALID_VERSION"
+    return 1
+  fi
+  check="PASS"
+  captured_at="$(spv_utc_now)"
+  [[ -n "$run_id" ]] || run_id="capture-${captured_at}"
+  [[ -n "$origin" ]] || origin="undetermined"
+
+  if [[ -f "$dest" ]]; then
+    if spv_parse_source_product_env_file "$dest" && spv_validate_parsed_pass_record; then
+      existing_norm="${SPV_PARSED_SOURCE_DP_VERSION}"
+      if [[ "$existing_norm" == "$norm" ]]; then
+        SPV_SOURCE_VERSION_CAPTURE_STATUS="REUSED"
+        SPV_SOURCE_PRODUCT_ENV_STATUS="PASS"
+        SPV_SOURCE_DP_VERSION="$existing_norm"
+        SPV_SOURCE_DP_VERSION_RAW="${SPV_PARSED_SOURCE_DP_VERSION_RAW:-$existing_norm}"
+        SPV_SOURCE_DP_VERSION_ORIGIN="${SPV_PARSED_SOURCE_DP_VERSION_ORIGIN:-$origin}"
+        SPV_SOURCE_DP_VERSION_CHECK="PASS"
+        return 0
+      fi
+      SPV_SOURCE_VERSION_CAPTURE_STATUS="VERSION_CONFLICT"
+      SPV_SOURCE_PRODUCT_ENV_STATUS="VERSION_CONFLICT"
+      return 1
+    fi
+    # Existing file is not a valid PASS — may replace with new PASS.
+  fi
+
+  # Write via temp then validate before rename is handled inside atomic write of full content.
+  local content
+  content="$(spv_build_env_content "$raw" "$norm" "$origin" "$check" \
+    "$captured_at" "$captured_os" "$captured_codename" "$run_id")"
+  if ! printf '%s\n' "$content" | spv_atomic_write_file "$dest" 0600; then
+    SPV_SOURCE_VERSION_CAPTURE_STATUS="WRITE_FAILED"
+    return 1
+  fi
+  if ! spv_parse_source_product_env_file "$dest" || ! spv_validate_parsed_pass_record; then
+    rm -f "$dest"
+    SPV_SOURCE_VERSION_CAPTURE_STATUS="WRITE_FAILED"
+    return 1
+  fi
+  SPV_SOURCE_VERSION_CAPTURE_STATUS="WRITTEN"
+  SPV_SOURCE_PRODUCT_ENV_STATUS="PASS"
+  SPV_SOURCE_DP_VERSION="$norm"
+  SPV_SOURCE_DP_VERSION_RAW="$raw"
+  SPV_SOURCE_DP_VERSION_ORIGIN="$origin"
+  SPV_SOURCE_DP_VERSION_CHECK="PASS"
+  return 0
+}
+
+# Read existing PASS env. Sets SPV_SOURCE_* on success.
+spv_read_source_product_env() {
+  local dest="${1:-${SOURCE_PRODUCT_ENV_DEFAULT_PATH}}"
+  SPV_SOURCE_PRODUCT_ENV_PATH="$dest"
+  SPV_SOURCE_PRODUCT_ENV_STATUS=""
+  if [[ ! -e "$dest" ]]; then
+    SPV_SOURCE_PRODUCT_ENV_STATUS="MISSING"
+    return 1
+  fi
+  if ! spv_parse_source_product_env_file "$dest"; then
+    case "${SPV_PARSE_STATUS}" in
+      UNREADABLE) SPV_SOURCE_PRODUCT_ENV_STATUS="UNREADABLE" ;;
+      DUPLICATE_KEY) SPV_SOURCE_PRODUCT_ENV_STATUS="DUPLICATE_KEY" ;;
+      RECORDED_FAILURE) SPV_SOURCE_PRODUCT_ENV_STATUS="RECORDED_FAILURE" ;;
+      INVALID_VERSION) SPV_SOURCE_PRODUCT_ENV_STATUS="INVALID_VERSION" ;;
+      *) SPV_SOURCE_PRODUCT_ENV_STATUS="INVALID_SCHEMA" ;;
+    esac
+    return 1
+  fi
+  if ! spv_validate_parsed_pass_record; then
+    case "${SPV_PARSE_STATUS}" in
+      RECORDED_FAILURE) SPV_SOURCE_PRODUCT_ENV_STATUS="RECORDED_FAILURE" ;;
+      INVALID_VERSION) SPV_SOURCE_PRODUCT_ENV_STATUS="INVALID_VERSION" ;;
+      *) SPV_SOURCE_PRODUCT_ENV_STATUS="INVALID_SCHEMA" ;;
+    esac
+    return 1
+  fi
+  SPV_SOURCE_PRODUCT_ENV_STATUS="PASS"
+  SPV_SOURCE_DP_VERSION="${SPV_PARSED_SOURCE_DP_VERSION}"
+  SPV_SOURCE_DP_VERSION_RAW="${SPV_PARSED_SOURCE_DP_VERSION_RAW:-$SPV_SOURCE_DP_VERSION}"
+  SPV_SOURCE_DP_VERSION_ORIGIN="${SPV_PARSED_SOURCE_DP_VERSION_ORIGIN:-source-product.env}"
+  SPV_SOURCE_DP_VERSION_CHECK="PASS"
+  return 0
+}
+
+# Scan Phase 1 structured logs for complete PASS evidence records.
+# A complete record requires nearby DP_VERSION + SOURCE + DETECT_STATUS=ok + CONSISTENCY=PASS.
+# Later UNDETERMINED does not erase earlier complete PASS evidence.
+spv_scan_phase1_log_evidence() {
+  local logf="${1:-${SOURCE_PRODUCT_PHASE1_LOG_DEFAULT}}"
+  local production_mode="${2:-1}"
+  local line ver src status cons
+  local -a pass_versions=()
+  local record_count=0 complete_pass=0 undetermined=0
+  local cur_ver="" cur_src="" cur_status="" cur_cons=""
+  local uniq="" v
+
+  SPV_PHASE1_LOG_EVIDENCE_PATH="$logf"
+  SPV_PHASE1_LOG_EVIDENCE_STATUS=""
+  SPV_PHASE1_LOG_EVIDENCE_RECORD_COUNT=0
+  SPV_PHASE1_LOG_EVIDENCE_COMPLETE_PASS_COUNT=0
+  SPV_PHASE1_LOG_EVIDENCE_UNIQUE_VERSION_COUNT=0
+  SPV_PHASE1_LOG_EVIDENCE_UNDETERMINED_COUNT=0
+  SPV_PHASE1_SELECTED_VERSION=""
+  SPV_PHASE1_SELECTED_SOURCE=""
+
+  if [[ ! -e "$logf" ]]; then
+    SPV_PHASE1_LOG_EVIDENCE_STATUS="MISSING"
+    return 1
+  fi
+  if [[ ! -r "$logf" ]]; then
+    SPV_PHASE1_LOG_EVIDENCE_STATUS="UNREADABLE"
+    return 1
+  fi
+
+  _spv_flush_partial() {
+    # Incomplete window — does not vote.
+    cur_ver=""
+    cur_src=""
+    cur_status=""
+    cur_cons=""
+  }
+
+  _spv_try_complete() {
+    if [[ -n "$cur_ver" && -n "$cur_src" && -n "$cur_status" && -n "$cur_cons" ]]; then
+      record_count=$((record_count + 1))
+      if [[ "$cur_ver" == "UNDETERMINED" || "$cur_status" == "undetermined" ]]; then
+        undetermined=$((undetermined + 1))
+        _spv_flush_partial
+        return 0
+      fi
+      if [[ "$cur_status" == "ok" && "$cur_cons" == "PASS" ]]; then
+        if spv_is_fake_version_source "$cur_src"; then
+          if [[ "$production_mode" == "1" ]]; then
+            _spv_flush_partial
+            return 0
+          fi
+        fi
+        if spv_is_strict_product_version "$cur_ver" || spv_normalize_dp_version "$cur_ver" >/dev/null 2>&1; then
+          ver="$(spv_normalize_dp_version "$cur_ver")" || { _spv_flush_partial; return 0; }
+          if spv_is_strict_product_version "$ver"; then
+            complete_pass=$((complete_pass + 1))
+            pass_versions+=("${ver}|${cur_src}")
+          fi
+        fi
+      fi
+      _spv_flush_partial
+    fi
+  }
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" =~ DP_VERSION=([^[:space:]]+) ]]; then
+      # Starting a new version field closes any incomplete prior window without voting.
+      if [[ -n "$cur_ver" || -n "$cur_src" || -n "$cur_status" || -n "$cur_cons" ]]; then
+        # If previous had all four, try_complete; else discard incomplete.
+        if [[ -n "$cur_ver" && -n "$cur_src" && -n "$cur_status" && -n "$cur_cons" ]]; then
+          _spv_try_complete
+        else
+          if [[ "$cur_ver" == "UNDETERMINED" || "$cur_status" == "undetermined" ]]; then
+            undetermined=$((undetermined + 1))
+          fi
+          _spv_flush_partial
+        fi
+      fi
+      cur_ver="${BASH_REMATCH[1]}"
+      continue
+    fi
+    if [[ "$line" =~ DP_VERSION_SOURCE=([^[:space:]]+) ]]; then
+      cur_src="${BASH_REMATCH[1]}"
+      continue
+    fi
+    if [[ "$line" =~ DP_VERSION_DETECT_STATUS=([^[:space:]]+) ]]; then
+      cur_status="${BASH_REMATCH[1]}"
+      continue
+    fi
+    if [[ "$line" =~ DP_VERSION_CONSISTENCY=([^[:space:]]+) ]]; then
+      cur_cons="${BASH_REMATCH[1]}"
+      _spv_try_complete
+      continue
+    fi
+  done <"$logf"
+  # Trailing incomplete undetermined observation still counts.
+  if [[ -n "$cur_ver" || -n "$cur_status" ]]; then
+    if [[ "$cur_ver" == "UNDETERMINED" || "$cur_status" == "undetermined" ]]; then
+      if [[ -z "$cur_cons" ]]; then
+        undetermined=$((undetermined + 1))
+      else
+        _spv_try_complete
+      fi
+    fi
+  fi
+  _spv_flush_partial
+
+  SPV_PHASE1_LOG_EVIDENCE_RECORD_COUNT="$record_count"
+  SPV_PHASE1_LOG_EVIDENCE_COMPLETE_PASS_COUNT="$complete_pass"
+  SPV_PHASE1_LOG_EVIDENCE_UNDETERMINED_COUNT="$undetermined"
+
+  if [[ "$complete_pass" -eq 0 ]]; then
+    # Distinguish fake-only vs none
+    if [[ "$record_count" -gt 0 ]]; then
+      SPV_PHASE1_LOG_EVIDENCE_STATUS="NO_COMPLETE_RECORD"
+    else
+      SPV_PHASE1_LOG_EVIDENCE_STATUS="NO_COMPLETE_RECORD"
+    fi
+    return 1
+  fi
+
+  uniq=""
+  for v in "${pass_versions[@]}"; do
+    ver="${v%%|*}"
+    case " ${uniq} " in
+      *" ${ver} "*) ;;
+      *) uniq="${uniq} ${ver}" ;;
+    esac
+  done
+  uniq="${uniq# }"
+  SPV_PHASE1_LOG_EVIDENCE_UNIQUE_VERSION_COUNT="$(printf '%s' "$uniq" | tr ' ' '\n' | awk 'NF' | wc -l | tr -d ' ')"
+
+  if [[ "${SPV_PHASE1_LOG_EVIDENCE_UNIQUE_VERSION_COUNT}" -gt 1 ]]; then
+    SPV_PHASE1_LOG_EVIDENCE_STATUS="MULTIPLE_VERSIONS"
+    return 1
+  fi
+  if [[ "${SPV_PHASE1_LOG_EVIDENCE_UNIQUE_VERSION_COUNT}" -eq 0 ]]; then
+    SPV_PHASE1_LOG_EVIDENCE_STATUS="FAKE_SOURCE_ONLY"
+    return 1
+  fi
+
+  SPV_PHASE1_SELECTED_VERSION="$(printf '%s' "$uniq" | tr ' ' '\n' | awk 'NF{print; exit}')"
+  for v in "${pass_versions[@]}"; do
+    ver="${v%%|*}"
+    src="${v#*|}"
+    if [[ "$ver" == "$SPV_PHASE1_SELECTED_VERSION" ]]; then
+      SPV_PHASE1_SELECTED_SOURCE="$src"
+      break
+    fi
+  done
+  SPV_PHASE1_LOG_EVIDENCE_STATUS="PASS"
+  return 0
+}
+
+spv_detect_from_release_image() {
+  local image="${1:-${SOURCE_PRODUCT_RELEASE_IMAGE_DEFAULT}}"
+  local line re key ver tmp uniq_n count malformed=0
+  SPV_RELEASE_IMAGE_PATH="$image"
+  SPV_RELEASE_IMAGE_STATUS=""
+  SPV_RELEASE_IMAGE_AUTHORITATIVE_RECORD_COUNT=0
+  SPV_RELEASE_IMAGE_UNIQUE_VERSION_COUNT=0
+  SPV_RELEASE_SELECTED_VERSION=""
+
+  if [[ ! -e "$image" ]]; then
+    SPV_RELEASE_IMAGE_STATUS="MISSING"
+    return 1
+  fi
+  if [[ ! -r "$image" ]]; then
+    SPV_RELEASE_IMAGE_STATUS="UNREADABLE"
+    return 1
+  fi
+
+  re='^[[:space:]]*([A-Za-z0-9_.-]+):[[:space:]]*(.+)$'
+  tmp="$(mktemp "${TMPDIR:-/tmp}/spv-ri.XXXXXX")"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+    if [[ "$line" =~ $re ]]; then
+      key="${BASH_REMATCH[1]}"
+      ver="${BASH_REMATCH[2]}"
+      ver="$(printf '%s' "$ver" | sed -E 's/[[:space:]]+$//')"
+      if spv_is_authoritative_release_image_key "$key"; then
+        if [[ "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$ ]]; then
+          if n="$(spv_normalize_dp_version "$ver")"; then
+            printf '%s\n' "$n" >>"$tmp"
+          else
+            malformed=1
+          fi
+        else
+          malformed=1
+        fi
+      fi
+    fi
+  done <"$image"
+
+  if [[ "$malformed" -eq 1 ]]; then
+    rm -f "$tmp"
+    SPV_RELEASE_IMAGE_STATUS="MALFORMED_AUTHORITATIVE_ENTRY"
+    return 1
+  fi
+  count="$(wc -l <"$tmp" | tr -d ' ')"
+  SPV_RELEASE_IMAGE_AUTHORITATIVE_RECORD_COUNT="$count"
+  if [[ "$count" -eq 0 ]]; then
+    rm -f "$tmp"
+    SPV_RELEASE_IMAGE_STATUS="NO_AUTHORITATIVE_KEYS"
+    return 1
+  fi
+  if [[ "$count" -lt "${SOURCE_PRODUCT_MIN_AUTHORITATIVE_RELEASE_KEYS}" ]]; then
+    rm -f "$tmp"
+    SPV_RELEASE_IMAGE_STATUS="INSUFFICIENT_AUTHORITATIVE_RECORDS"
+    return 1
+  fi
+  sort -u "$tmp" -o "$tmp"
+  uniq_n="$(wc -l <"$tmp" | tr -d ' ')"
+  SPV_RELEASE_IMAGE_UNIQUE_VERSION_COUNT="$uniq_n"
+  if [[ "$uniq_n" -ne 1 ]]; then
+    rm -f "$tmp"
+    SPV_RELEASE_IMAGE_STATUS="VERSION_CONFLICT"
+    return 1
+  fi
+  ver="$(tr -d '[:space:]' <"$tmp")"
+  rm -f "$tmp"
+  SPV_RELEASE_SELECTED_VERSION="$ver"
+  SPV_RELEASE_IMAGE_STATUS="PASS"
+  return 0
+}
+
+spv_os_upgrade_state() {
+  local state="" f
+  if [[ -n "${SOURCE_PRODUCT_OS_STATE_FILE}" && -f "${SOURCE_PRODUCT_OS_STATE_FILE}" ]]; then
+    tr -d '\r\n' <"${SOURCE_PRODUCT_OS_STATE_FILE}" || true
+    return 0
+  fi
+  for f in \
+    /opt/aelladata/os-upgrade/offline/state \
+    /opt/aelladata/os-upgrade/state \
+    /var/lib/dp-os-upgrade/state \
+    /opt/aelladata/os-upgrade/CURRENT_STATE
+  do
+    if [[ -f "$f" ]]; then
+      state="$(tr -d '\r\n' <"$f" || true)"
+      break
+    fi
+  done
+  printf '%s' "$state"
+}
+
+spv_bringup_completed_marker() {
+  local life="${SOURCE_PRODUCT_BRINGUP_RESULT_ENV:-/opt/aelladata/os-upgrade/offline/phase2-bringup/result.env}"
+  if [[ -f "$life" ]] && grep -qE '^BRINGUP_RESULT=PASS$' "$life" 2>/dev/null; then
+    return 0
+  fi
+  if [[ -f /opt/aelladata/os-upgrade/offline/BRINGUP_EXECUTED ]]; then
+    return 0
+  fi
+  return 1
+}
+
+spv_write_resolution_evidence() {
+  local run_id="${1-}"
+  local root="${SOURCE_PRODUCT_EVIDENCE_ROOT_DEFAULT}"
+  local dir
+  [[ -n "$run_id" ]] || return 0
+  dir="${root}/${run_id}"
+  mkdir -p "$dir" 2>/dev/null || return 0
+  chmod 0700 "$dir" 2>/dev/null || true
+  {
+    echo "SOURCE_PRODUCT_ENV_PATH=${SPV_SOURCE_PRODUCT_ENV_PATH}"
+    echo "SOURCE_PRODUCT_ENV_STATUS=${SPV_SOURCE_PRODUCT_ENV_STATUS}"
+    echo "SOURCE_VERSION_CAPTURE_STATUS=${SPV_SOURCE_VERSION_CAPTURE_STATUS}"
+    echo "PHASE1_LOG_EVIDENCE_PATH=${SPV_PHASE1_LOG_EVIDENCE_PATH}"
+    echo "PHASE1_LOG_EVIDENCE_STATUS=${SPV_PHASE1_LOG_EVIDENCE_STATUS}"
+    echo "PHASE1_LOG_EVIDENCE_RECORD_COUNT=${SPV_PHASE1_LOG_EVIDENCE_RECORD_COUNT}"
+    echo "PHASE1_LOG_EVIDENCE_COMPLETE_PASS_COUNT=${SPV_PHASE1_LOG_EVIDENCE_COMPLETE_PASS_COUNT}"
+    echo "PHASE1_LOG_EVIDENCE_UNIQUE_VERSION_COUNT=${SPV_PHASE1_LOG_EVIDENCE_UNIQUE_VERSION_COUNT}"
+    echo "PHASE1_LOG_EVIDENCE_UNDETERMINED_COUNT=${SPV_PHASE1_LOG_EVIDENCE_UNDETERMINED_COUNT}"
+    echo "RELEASE_IMAGE_PATH=${SPV_RELEASE_IMAGE_PATH}"
+    echo "RELEASE_IMAGE_STATUS=${SPV_RELEASE_IMAGE_STATUS}"
+    echo "RELEASE_IMAGE_AUTHORITATIVE_RECORD_COUNT=${SPV_RELEASE_IMAGE_AUTHORITATIVE_RECORD_COUNT}"
+    echo "RELEASE_IMAGE_UNIQUE_VERSION_COUNT=${SPV_RELEASE_IMAGE_UNIQUE_VERSION_COUNT}"
+    echo "OPERATOR_SOURCE_VERSION_STATUS=${SPV_OPERATOR_SOURCE_VERSION_STATUS}"
+    echo "SOURCE_DP_VERSION=${SPV_SOURCE_DP_VERSION}"
+    echo "SOURCE_DP_VERSION_ORIGIN=${SPV_SOURCE_DP_VERSION_ORIGIN}"
+    echo "SOURCE_DP_VERSION_RESOLUTION=${SPV_SOURCE_DP_VERSION_RESOLUTION}"
+    echo "SOURCE_DP_VERSION_FAILURE_REASON=${SPV_SOURCE_DP_VERSION_FAILURE_REASON}"
+    echo "SOURCE_DP_VERSION_RECOVERY=${SPV_SOURCE_DP_VERSION_RECOVERY}"
+  } | spv_atomic_write_file "${dir}/summary.env" 0600 || true
+}
+
+spv_emit_diagnostics() {
+  cat <<EOF
+SOURCE_PRODUCT_ENV_PATH=${SPV_SOURCE_PRODUCT_ENV_PATH}
+SOURCE_PRODUCT_ENV_STATUS=${SPV_SOURCE_PRODUCT_ENV_STATUS}
+SOURCE_VERSION_CAPTURE_STATUS=${SPV_SOURCE_VERSION_CAPTURE_STATUS}
+PHASE1_LOG_EVIDENCE_PATH=${SPV_PHASE1_LOG_EVIDENCE_PATH}
+PHASE1_LOG_EVIDENCE_STATUS=${SPV_PHASE1_LOG_EVIDENCE_STATUS}
+PHASE1_LOG_EVIDENCE_RECORD_COUNT=${SPV_PHASE1_LOG_EVIDENCE_RECORD_COUNT}
+PHASE1_LOG_EVIDENCE_COMPLETE_PASS_COUNT=${SPV_PHASE1_LOG_EVIDENCE_COMPLETE_PASS_COUNT}
+PHASE1_LOG_EVIDENCE_UNIQUE_VERSION_COUNT=${SPV_PHASE1_LOG_EVIDENCE_UNIQUE_VERSION_COUNT}
+PHASE1_LOG_EVIDENCE_UNDETERMINED_COUNT=${SPV_PHASE1_LOG_EVIDENCE_UNDETERMINED_COUNT}
+RELEASE_IMAGE_PATH=${SPV_RELEASE_IMAGE_PATH}
+RELEASE_IMAGE_STATUS=${SPV_RELEASE_IMAGE_STATUS}
+RELEASE_IMAGE_AUTHORITATIVE_RECORD_COUNT=${SPV_RELEASE_IMAGE_AUTHORITATIVE_RECORD_COUNT}
+RELEASE_IMAGE_UNIQUE_VERSION_COUNT=${SPV_RELEASE_IMAGE_UNIQUE_VERSION_COUNT}
+OPERATOR_SOURCE_VERSION_STATUS=${SPV_OPERATOR_SOURCE_VERSION_STATUS}
+SOURCE_DP_VERSION=${SPV_SOURCE_DP_VERSION}
+SOURCE_DP_VERSION_RAW=${SPV_SOURCE_DP_VERSION_RAW}
+SOURCE_DP_VERSION_ORIGIN=${SPV_SOURCE_DP_VERSION_ORIGIN}
+SOURCE_DP_VERSION_CHECK=${SPV_SOURCE_DP_VERSION_CHECK}
+SOURCE_DP_VERSION_RESOLUTION=${SPV_SOURCE_DP_VERSION_RESOLUTION}
+SOURCE_DP_VERSION_FAILURE_REASON=${SPV_SOURCE_DP_VERSION_FAILURE_REASON}
+SOURCE_DP_VERSION_REMEDIATION=${SPV_SOURCE_DP_VERSION_REMEDIATION}
+SOURCE_DP_VERSION_RECOVERY=${SPV_SOURCE_DP_VERSION_RECOVERY}
+EOF
+}
+
+spv_set_failure() {
+  local reason="$1"
+  local remediation="${2:-Review the listed evidence sources or provide --source-dp-version only after independently verifying the original DP version.}"
+  SPV_SOURCE_DP_VERSION_RESOLUTION="FAIL"
+  SPV_SOURCE_DP_VERSION_FAILURE_REASON="$reason"
+  SPV_SOURCE_DP_VERSION_REMEDIATION="$remediation"
+  SPV_SOURCE_DP_VERSION_CHECK="FAIL"
+}
+
+# Full resolution with optional write-back recovery.
+# Args:
+#   $1 dest env path
+#   $2 phase1 log path
+#   $3 release-image path
+#   $4 operator override (may be empty)
+#   $5 allow_write (1=may persist recovery, 0=diagnose read-only)
+#   $6 run_id
+#   $7 production_mode (1=reject fake sources)
+spv_resolve_source_dp_version() {
+  local dest="${1:-${SOURCE_PRODUCT_ENV_DEFAULT_PATH}}"
+  local logf="${2:-${SOURCE_PRODUCT_PHASE1_LOG_DEFAULT}}"
+  local image="${3:-${SOURCE_PRODUCT_RELEASE_IMAGE_DEFAULT}}"
+  local operator="${4-}"
+  local allow_write="${5:-1}"
+  local run_id="${6:-}"
+  local production_mode="${7:-1}"
+  local state op_norm
+
+  SPV_SOURCE_PRODUCT_ENV_PATH="$dest"
+  SPV_SOURCE_PRODUCT_ENV_STATUS=""
+  SPV_SOURCE_VERSION_CAPTURE_STATUS=""
+  SPV_PHASE1_LOG_EVIDENCE_PATH="$logf"
+  SPV_PHASE1_LOG_EVIDENCE_STATUS=""
+  SPV_RELEASE_IMAGE_PATH="$image"
+  SPV_RELEASE_IMAGE_STATUS=""
+  SPV_OPERATOR_SOURCE_VERSION_STATUS="NOT_PROVIDED"
+  SPV_SOURCE_DP_VERSION=""
+  SPV_SOURCE_DP_VERSION_RAW=""
+  SPV_SOURCE_DP_VERSION_ORIGIN=""
+  SPV_SOURCE_DP_VERSION_CHECK=""
+  SPV_SOURCE_DP_VERSION_RESOLUTION=""
+  SPV_SOURCE_DP_VERSION_FAILURE_REASON=""
+  SPV_SOURCE_DP_VERSION_REMEDIATION=""
+  SPV_SOURCE_DP_VERSION_RECOVERY=""
+
+  # 1) valid source-product.env
+  if spv_read_source_product_env "$dest"; then
+    SPV_SOURCE_DP_VERSION_RESOLUTION="PASS"
+    SPV_SOURCE_DP_VERSION_RECOVERY="NOT_REQUIRED"
+    if [[ -n "$operator" ]]; then
+      op_norm="$(spv_normalize_dp_version "$operator")" || {
+        SPV_OPERATOR_SOURCE_VERSION_STATUS="INVALID"
+        spv_set_failure "OPERATOR_OVERRIDE_INVALID"
+        return 1
+      }
+      SPV_OPERATOR_SOURCE_VERSION_STATUS="PROVIDED"
+      if [[ "$op_norm" != "$SPV_SOURCE_DP_VERSION" ]]; then
+        SPV_OPERATOR_SOURCE_VERSION_STATUS="CONFLICT"
+        spv_set_failure "OPERATOR_OVERRIDE_CONFLICT" \
+          "Operator --source-dp-version conflicts with authoritative source-product.env; do not override."
+        return 1
+      fi
+    fi
+    spv_write_resolution_evidence "$run_id"
+    return 0
+  fi
+
+  # 2) immutable capture already covered by read failure statuses above
+
+  # 3) Phase 1 log recovery (COMPLETED_NOBLE + bringup not completed)
+  state="$(spv_os_upgrade_state)"
+  if [[ "$state" == "COMPLETED_NOBLE" ]] && ! spv_bringup_completed_marker; then
+    if spv_scan_phase1_log_evidence "$logf" "$production_mode"; then
+      if [[ "$allow_write" == "1" ]]; then
+        if spv_persist_source_product_env "$dest" \
+            "$SPV_PHASE1_SELECTED_VERSION" "phase1-log-recovery" \
+            "24.04" "noble" "${run_id:-phase1-recovery}"; then
+          SPV_SOURCE_DP_VERSION_ORIGIN="phase1-log-recovery"
+          SPV_SOURCE_DP_VERSION_RECOVERY="PASS"
+          SPV_SOURCE_DP_VERSION_RESOLUTION="PASS"
+          SPV_SOURCE_DP_VERSION_CHECK="PASS"
+          if [[ -n "$operator" ]]; then
+            op_norm="$(spv_normalize_dp_version "$operator")" || {
+              SPV_OPERATOR_SOURCE_VERSION_STATUS="INVALID"
+              spv_set_failure "OPERATOR_OVERRIDE_INVALID"
+              return 1
+            }
+            SPV_OPERATOR_SOURCE_VERSION_STATUS="PROVIDED"
+            if [[ "$op_norm" != "$SPV_SOURCE_DP_VERSION" ]]; then
+              SPV_OPERATOR_SOURCE_VERSION_STATUS="CONFLICT"
+              spv_set_failure "OPERATOR_OVERRIDE_CONFLICT"
+              return 1
+            fi
+          fi
+          spv_write_resolution_evidence "$run_id"
+          return 0
+        fi
+      else
+        # diagnose / read-only: report would-be recovery without writing
+        SPV_SOURCE_DP_VERSION="$SPV_PHASE1_SELECTED_VERSION"
+        SPV_SOURCE_DP_VERSION_RAW="$SPV_PHASE1_SELECTED_VERSION"
+        SPV_SOURCE_DP_VERSION_ORIGIN="phase1-log-recovery"
+        SPV_SOURCE_DP_VERSION_CHECK="PASS"
+        SPV_SOURCE_DP_VERSION_RESOLUTION="PASS"
+        SPV_SOURCE_DP_VERSION_RECOVERY="WOULD_WRITE"
+        SPV_SOURCE_VERSION_CAPTURE_STATUS="READ_ONLY_SKIPPED"
+        spv_write_resolution_evidence "$run_id"
+        return 0
+      fi
+    else
+      case "${SPV_PHASE1_LOG_EVIDENCE_STATUS}" in
+        MULTIPLE_VERSIONS)
+          spv_set_failure "PHASE1_EVIDENCE_MULTIPLE_VERSIONS"
+          spv_write_resolution_evidence "$run_id"
+          return 1
+          ;;
+      esac
+    fi
+  else
+    if [[ -e "$logf" ]]; then
+      spv_scan_phase1_log_evidence "$logf" "$production_mode" || true
+    else
+      SPV_PHASE1_LOG_EVIDENCE_STATUS="MISSING"
+    fi
+  fi
+
+  # 4) release-image.yml
+  if spv_detect_from_release_image "$image"; then
+    if [[ "$allow_write" == "1" ]]; then
+      spv_persist_source_product_env "$dest" \
+        "$SPV_RELEASE_SELECTED_VERSION" "release-image.yml" \
+        "" "" "${run_id:-release-image}" || true
+    fi
+    SPV_SOURCE_DP_VERSION="$SPV_RELEASE_SELECTED_VERSION"
+    SPV_SOURCE_DP_VERSION_RAW="$SPV_RELEASE_SELECTED_VERSION"
+    SPV_SOURCE_DP_VERSION_ORIGIN="release-image.yml"
+    SPV_SOURCE_DP_VERSION_CHECK="PASS"
+    SPV_SOURCE_DP_VERSION_RESOLUTION="PASS"
+    SPV_SOURCE_DP_VERSION_RECOVERY="${SPV_SOURCE_DP_VERSION_RECOVERY:-NOT_REQUIRED}"
+    if [[ -n "$operator" ]]; then
+      op_norm="$(spv_normalize_dp_version "$operator")" || {
+        SPV_OPERATOR_SOURCE_VERSION_STATUS="INVALID"
+        spv_set_failure "OPERATOR_OVERRIDE_INVALID"
+        return 1
+      }
+      SPV_OPERATOR_SOURCE_VERSION_STATUS="PROVIDED"
+      if [[ "$op_norm" != "$SPV_SOURCE_DP_VERSION" ]]; then
+        SPV_OPERATOR_SOURCE_VERSION_STATUS="CONFLICT"
+        spv_set_failure "OPERATOR_OVERRIDE_CONFLICT"
+        return 1
+      fi
+    fi
+    spv_write_resolution_evidence "$run_id"
+    return 0
+  fi
+
+  # 5) operator override
+  if [[ -n "$operator" ]]; then
+    op_norm="$(spv_normalize_dp_version "$operator")" || {
+      SPV_OPERATOR_SOURCE_VERSION_STATUS="INVALID"
+      spv_set_failure "OPERATOR_OVERRIDE_INVALID"
+      spv_write_resolution_evidence "$run_id"
+      return 1
+    }
+    if ! spv_is_strict_product_version "$op_norm"; then
+      SPV_OPERATOR_SOURCE_VERSION_STATUS="INVALID"
+      spv_set_failure "OPERATOR_OVERRIDE_INVALID"
+      spv_write_resolution_evidence "$run_id"
+      return 1
+    fi
+    SPV_OPERATOR_SOURCE_VERSION_STATUS="PROVIDED"
+    if [[ "$allow_write" == "1" ]]; then
+      spv_persist_source_product_env "$dest" "$op_norm" "operator-argument" \
+        "" "" "${run_id:-operator}" || true
+    fi
+    SPV_SOURCE_DP_VERSION="$op_norm"
+    SPV_SOURCE_DP_VERSION_RAW="$operator"
+    SPV_SOURCE_DP_VERSION_ORIGIN="operator-argument"
+    SPV_SOURCE_DP_VERSION_CHECK="PASS"
+    SPV_SOURCE_DP_VERSION_RESOLUTION="PASS"
+    SPV_SOURCE_DP_VERSION_RECOVERY="OPERATOR"
+    spv_write_resolution_evidence "$run_id"
+    return 0
+  fi
+
+  # 6) fail closed with detailed reason
+  SPV_OPERATOR_SOURCE_VERSION_STATUS="NOT_PROVIDED"
+  local reason="NO_VALID_AUTHORITATIVE_SOURCE"
+  case "${SPV_SOURCE_PRODUCT_ENV_STATUS}" in
+    UNREADABLE) reason="SOURCE_PRODUCT_ENV_UNREADABLE" ;;
+    DUPLICATE_KEY) reason="SOURCE_PRODUCT_ENV_DUPLICATE_KEY" ;;
+    INVALID_SCHEMA) reason="SOURCE_PRODUCT_ENV_INVALID_SCHEMA" ;;
+    INVALID_VERSION) reason="SOURCE_PRODUCT_ENV_INVALID_VERSION" ;;
+    RECORDED_FAILURE) reason="SOURCE_PRODUCT_ENV_RECORDED_FAILURE" ;;
+    VERSION_CONFLICT) reason="SOURCE_PRODUCT_ENV_VERSION_CONFLICT" ;;
+  esac
+  case "${SPV_PHASE1_LOG_EVIDENCE_STATUS}" in
+    MULTIPLE_VERSIONS) reason="PHASE1_EVIDENCE_MULTIPLE_VERSIONS" ;;
+    UNREADABLE) reason="PHASE1_EVIDENCE_UNREADABLE" ;;
+    FAKE_SOURCE_ONLY) reason="PHASE1_EVIDENCE_FAKE_SOURCE_ONLY" ;;
+  esac
+  case "${SPV_RELEASE_IMAGE_STATUS}" in
+    MALFORMED_AUTHORITATIVE_ENTRY) reason="RELEASE_IMAGE_MALFORMED_AUTHORITATIVE_ENTRY" ;;
+    VERSION_CONFLICT) reason="RELEASE_IMAGE_VERSION_CONFLICT" ;;
+    INSUFFICIENT_AUTHORITATIVE_RECORDS) reason="RELEASE_IMAGE_INSUFFICIENT_AUTHORITATIVE_RECORDS" ;;
+    NO_AUTHORITATIVE_KEYS) reason="RELEASE_IMAGE_NO_AUTHORITATIVE_KEYS" ;;
+  esac
+  spv_set_failure "$reason"
+  spv_write_resolution_evidence "$run_id"
+  return 1
 }
 
 
@@ -4032,42 +4977,30 @@ detect_dp_install_state() {
 }
 
 persist_source_product_env() {
-  # Persist source DP product version for Phase 2 (do not overwrite an existing PASS record).
-  local dest raw norm origin check captured
+  # Compatibility wrapper — authoritative logic lives in shared source-product helper.
+  local dest raw origin os_id code run_id
   dest="$(hostpath ${STATE_ROOT}/source-product.env)"
-  mkdir -p "$(dirname "$dest")"
-  if [[ -f "$dest" ]] && grep -qE '^SOURCE_DP_VERSION_CHECK=PASS$' "$dest" 2>/dev/null; then
-    log INFO "SOURCE_PRODUCT_ENV=REUSED path=${STATE_ROOT}/source-product.env"
-    return 0
-  fi
   raw="${DP_VERSION:-}"
   origin="${DP_VERSION_SOURCE:-undetermined}"
-  captured="$(utc_now)"
-  if [[ -n "$raw" ]] && version_is_mmp "$raw"; then
-    norm="$raw"
-    check="PASS"
-    if dpkg --compare-versions "$norm" lt "${MIN_DP_VERSION:-6.2.0}" 2>/dev/null; then
-      check="FAIL_UNSUPPORTED"
-    fi
-  else
-    raw=""
-    norm="UNKNOWN"
-    check="FAIL_UNKNOWN"
-    origin="${origin:-none}"
+  os_id=""
+  code=""
+  if [[ -r /etc/os-release ]]; then
+    os_id="$(grep -E '^VERSION_ID=' /etc/os-release | head -1 | cut -d= -f2- | tr -d '"')"
+    code="$(grep -E '^VERSION_CODENAME=' /etc/os-release | head -1 | cut -d= -f2- | tr -d '"')"
   fi
-  cat >"$dest" <<EOF
-SOURCE_DP_VERSION_RAW=${raw}
-SOURCE_DP_VERSION=${norm}
-SOURCE_DP_VERSION_ORIGIN=${origin}
-SOURCE_DP_VERSION_CAPTURED_AT=${captured}
-MIN_SUPPORTED_SOURCE_DP_VERSION=${MIN_DP_VERSION:-6.2.0}
-SOURCE_DP_VERSION_CHECK=${check}
-EOF
-  log INFO "SOURCE_PRODUCT_ENV=WRITTEN check=${check} version=${norm} path=${STATE_ROOT}/source-product.env"
-  # Phase 1 remains OS-only: do not hard-stop here. Phase 2 staging enforces
-  # MIN_SUPPORTED_SOURCE_DP_VERSION using this persisted evidence.
-  if [[ "$check" == "FAIL_UNSUPPORTED" ]]; then
-    log WARN "SOURCE_DP_VERSION_CHECK=FAIL_UNSUPPORTED source=${norm} min=${MIN_DP_VERSION:-6.2.0} (Phase 2 will refuse; Phase 1 OS-only continues)"
+  run_id="${RUN_ID:-$(utc_now)}"
+  if ! declare -F spv_persist_source_product_env >/dev/null 2>&1; then
+    log WARN "SOURCE_PRODUCT_ENV=HELPER_MISSING"
+    return 0
+  fi
+  if [[ "${DP_VERSION_DETECT_STATUS:-}" != "ok" || "${DP_VERSION_CONSISTENCY:-}" != "PASS" ]]; then
+    log INFO "SOURCE_PRODUCT_ENV=SKIPPED_INCOMPLETE_DETECT"
+    return 0
+  fi
+  if spv_persist_source_product_env "$dest" "$raw" "$origin" "$os_id" "$code" "$run_id"; then
+    log INFO "SOURCE_PRODUCT_ENV=${SPV_SOURCE_VERSION_CAPTURE_STATUS} version=${SPV_SOURCE_DP_VERSION}"
+  else
+    log WARN "SOURCE_PRODUCT_ENV_CAPTURE=${SPV_SOURCE_VERSION_CAPTURE_STATUS:-FAIL} (Phase 1 continues)"
   fi
 }
 
@@ -4086,7 +5019,31 @@ log_product_state_phase1() {
   dpver="${DP_VERSION:-}"
   role="${DP_TOPOLOGY:-}"
 
-  persist_source_product_env
+
+  # Authoritative source DP version capture for Phase 2 (before destructive mutation).
+  # Failures here do not abort Phase 1 OS-only; Phase 2 recovers or fails closed.
+  if [[ "${DP_VERSION_DETECT_STATUS:-}" == "ok" && "${DP_VERSION_CONSISTENCY:-}" == "PASS" \
+      && -n "${DP_VERSION:-}" && "${DP_VERSION}" != "UNDETERMINED" ]]; then
+    if declare -F spv_persist_source_product_env >/dev/null 2>&1; then
+      local _spv_dest _spv_os _spv_code _spv_run
+      _spv_dest="$(hostpath "${STATE_ROOT}/source-product.env")"
+      _spv_os=""
+      _spv_code=""
+      if [[ -r /etc/os-release ]]; then
+        _spv_os="$(grep -E '^VERSION_ID=' /etc/os-release | head -1 | cut -d= -f2- | tr -d '"')"
+        _spv_code="$(grep -E '^VERSION_CODENAME=' /etc/os-release | head -1 | cut -d= -f2- | tr -d '"')"
+      fi
+      _spv_run="${RUN_ID:-}"
+      [[ -n "$_spv_run" ]] || _spv_run="$(utc_now 2>/dev/null || date -u +%Y%m%dT%H%M%SZ)"
+      if spv_persist_source_product_env "$_spv_dest" "$DP_VERSION" \
+          "${DP_VERSION_SOURCE:-}" "$_spv_os" "$_spv_code" "$_spv_run"; then
+        log INFO "SOURCE_PRODUCT_ENV=${SPV_SOURCE_VERSION_CAPTURE_STATUS} version=${SPV_SOURCE_DP_VERSION} origin=${SPV_SOURCE_DP_VERSION_ORIGIN}"
+      else
+        log WARN "SOURCE_PRODUCT_ENV_CAPTURE=${SPV_SOURCE_VERSION_CAPTURE_STATUS:-FAIL} (Phase 1 continues)"
+      fi
+    fi
+  fi
+
 
   log INFO "DP_INSTALL_STATE=${DP_INSTALL_STATE}"
   log INFO "DP_PRODUCT_STATE_ACTION=IGNORED_BY_PHASE1_POLICY"
@@ -4986,6 +5943,7 @@ LXD_INVENTORY_MAX_ATTEMPTS="${DP_OFFLINE_LXD_INVENTORY_MAX_ATTEMPTS:-${LXD_INVEN
 LXD_INVENTORY_TIMEOUT_SECS="${LXD_COMMAND_TIMEOUT_SECS}"
 LXD_INVENTORY_BACKOFF_SECS="${DP_OFFLINE_LXD_INVENTORY_BACKOFF_SECS:-${LXD_INVENTORY_BACKOFF_SECS:-2}}"
 LXD_INVENTORY_WALL_CLOCK_SECS="${DP_OFFLINE_LXD_INVENTORY_WALL_CLOCK_SECS:-${LXD_INVENTORY_WALL_CLOCK_SECS:-300}}"
+LXD_PROGRESS_HEARTBEAT_SECS="${DP_OFFLINE_LXD_PROGRESS_HEARTBEAT_SECS:-${LXD_PROGRESS_HEARTBEAT_SECS:-30}}"
 LXD_PREFLIGHT_CLASS="${LXD_PREFLIGHT_CLASS:-}"
 LXD_OFFLINE_UPGRADE_POLICY="${LXD_OFFLINE_UPGRADE_POLICY:-}"
 LXD_INVENTORY_EVIDENCE="${LXD_INVENTORY_EVIDENCE:-}"
@@ -4996,11 +5954,12 @@ _LXD_SERVICE_INITIAL_ENABLED=0
 
 lxd_validate_inventory_timeouts() {
   local n
-  for n in LXD_WAITREADY_TIMEOUT_SECS LXD_COMMAND_TIMEOUT_SECS LXD_INVENTORY_MAX_ATTEMPTS LXD_INVENTORY_WALL_CLOCK_SECS; do
+  for n in LXD_WAITREADY_TIMEOUT_SECS LXD_COMMAND_TIMEOUT_SECS LXD_INVENTORY_MAX_ATTEMPTS LXD_INVENTORY_WALL_CLOCK_SECS LXD_PROGRESS_HEARTBEAT_SECS; do
     [[ "${!n}" =~ ^[0-9]+$ ]] || case "$n" in
       LXD_WAITREADY_TIMEOUT_SECS) printf -v "$n" '%s' 120 ;;
       LXD_COMMAND_TIMEOUT_SECS) printf -v "$n" '%s' 30 ;;
       LXD_INVENTORY_MAX_ATTEMPTS) printf -v "$n" '%s' 2 ;;
+      LXD_PROGRESS_HEARTBEAT_SECS) printf -v "$n" '%s' 30 ;;
       *) printf -v "$n" '%s' 300 ;;
     esac
   done
@@ -5013,6 +5972,8 @@ lxd_validate_inventory_timeouts() {
   if (( LXD_INVENTORY_MAX_ATTEMPTS > 3 )); then LXD_INVENTORY_MAX_ATTEMPTS=3; fi
   if (( LXD_INVENTORY_WALL_CLOCK_SECS < 60 )); then LXD_INVENTORY_WALL_CLOCK_SECS=60; fi
   if (( LXD_INVENTORY_WALL_CLOCK_SECS > 900 )); then LXD_INVENTORY_WALL_CLOCK_SECS=900; fi
+  if (( LXD_PROGRESS_HEARTBEAT_SECS < 1 )); then LXD_PROGRESS_HEARTBEAT_SECS=1; fi
+  if (( LXD_PROGRESS_HEARTBEAT_SECS > 300 )); then LXD_PROGRESS_HEARTBEAT_SECS=300; fi
   LXD_INVENTORY_TIMEOUT_SECS="$LXD_COMMAND_TIMEOUT_SECS"
 }
 
@@ -5171,6 +6132,63 @@ lxd_run_timed() {
   else
     "$@" >"$out" 2>&1
   fi
+}
+
+lxd_run_with_heartbeat() {
+  # Run a potentially long command while keeping raw stdout/stderr in evidence.
+  # Completion is polled independently from the log cadence so a short command
+  # is never delayed by a 30-second heartbeat interval.
+  # Usage: lxd_run_with_heartbeat NAME OUT ERR -- command [args...]
+  local name="$1" out="$2" err="$3"
+  shift 3
+  if [[ "${1:-}" == "--" ]]; then
+    shift
+  fi
+  if [[ "$#" -eq 0 ]]; then
+    log ERROR "${name}_END rc=2 elapsed_secs=0"
+    return 2
+  fi
+
+  local heartbeat="${LXD_PROGRESS_HEARTBEAT_SECS:-30}"
+  local start now elapsed next_heartbeat pid rc=0 errexit_was_set=0
+  case "$-" in *e*) errexit_was_set=1 ;; esac
+  if [[ ! "$heartbeat" =~ ^[0-9]+$ || "$heartbeat" -lt 1 ]]; then
+    heartbeat=30
+  fi
+
+  mkdir -p "$(dirname "$out")" "$(dirname "$err")"
+  log INFO "${name}_BEGIN"
+  "$@" >"$out" 2>"$err" &
+  pid=$!
+  start="$(date +%s)"
+  next_heartbeat="$heartbeat"
+
+  while kill -0 "$pid" 2>/dev/null; do
+    sleep 1
+    if kill -0 "$pid" 2>/dev/null; then
+      now="$(date +%s)"
+      elapsed=$((now - start))
+      if (( elapsed >= next_heartbeat )); then
+        log INFO "${name}_PROGRESS=RUNNING elapsed_secs=${elapsed}"
+        while (( next_heartbeat <= elapsed )); do
+          next_heartbeat=$((next_heartbeat + heartbeat))
+        done
+      fi
+    fi
+  done
+
+  set +e
+  wait "$pid"
+  rc=$?
+  if [[ "$errexit_was_set" -eq 1 ]]; then
+    set -e
+  else
+    set +e
+  fi
+  now="$(date +%s)"
+  elapsed=$((now - start))
+  log INFO "${name}_END rc=${rc} elapsed_secs=${elapsed}"
+  return "$rc"
 }
 
 lxd_trim() {
@@ -5898,7 +6916,7 @@ guard_lxd_target_transition() {
   # Verify target plan will not select Focal transitional lxd.
   local evid="$1"
   local sim="${evid}/target-plan-sim.txt"
-  local selected=0
+  local selected=0 rc=0
   local force_selected="${DP_OFFLINE_FAKE_LXD_TARGET_SELECTED:-}"
 
   mkdir -p "$evid"
@@ -5914,8 +6932,13 @@ guard_lxd_target_transition() {
     printf 'TEST_ROOT_DEFAULT_SELECTED=NO\n' >"$sim"
   else
     set +e
-    DEBIAN_FRONTEND=noninteractive apt-get -s -y dist-upgrade >"$sim" 2>"${evid}/target-plan-sim.err"
+    lxd_run_with_heartbeat LXD_TARGET_PLAN_SIMULATION "$sim" "${evid}/target-plan-sim.err" -- \
+      env DEBIAN_FRONTEND=noninteractive apt-get -s -y dist-upgrade
+    rc=$?
     set -e
+    if [[ "$rc" -ne 0 ]]; then
+      log WARN "LXD_TARGET_PLAN_SIMULATION_NONZERO_RC=${rc}"
+    fi
     if grep -qiE '^Inst lxd |^Inst lxd-client |^Conf lxd |^Conf lxd-client ' "$sim" 2>/dev/null; then
       selected=1
     fi
@@ -5979,8 +7002,8 @@ remove_unused_lxd_before_dro() {
   fi
 
   set +e
-  DEBIAN_FRONTEND=noninteractive apt-get -y remove $LXD_REMOVAL_TARGETS \
-    >"${evid}/removal.out" 2>"${evid}/removal.err"
+  lxd_run_with_heartbeat LXD_REMOVAL_EXEC "${evid}/removal.out" "${evid}/removal.err" -- \
+    env DEBIAN_FRONTEND=noninteractive apt-get -y remove $LXD_REMOVAL_TARGETS
   rc=$?
   set -e
   if [[ "$rc" -ne 0 ]]; then
@@ -8903,6 +9926,7 @@ install_runner_and_units() {
 # Bash 4.3 compatible. Does not inherit client shell env; loads EnvironmentFile.
 set -eo pipefail
 # Shared durable atomic write helpers for offline OS-upgrade clients.
+# shellcheck shell=bash
 # Injected at build time via the DURABLE_WRITE_HELPER template token.
 # Prefer targeted file+directory fsync over unbounded global `sync`.
 # Bash 4.3+/4.4 safe; requires python3 (standard on Bionic+ upgrade hosts).
@@ -11243,6 +12267,7 @@ RUNNER
 #!/usr/bin/env bash
 set -euo pipefail
 # Shared durable atomic write helpers for offline OS-upgrade clients.
+# shellcheck shell=bash
 # Injected at build time via the DURABLE_WRITE_HELPER template token.
 # Prefer targeted file+directory fsync over unbounded global `sync`.
 # Bash 4.3+/4.4 safe; requires python3 (standard on Bionic+ upgrade hosts).
@@ -12713,7 +13738,10 @@ state_user_message() {
     FAILED|FAILED_PRE_DRO|FAILED_BEFORE_PACKAGE_TRANSITION|FAILED_AFTER_PACKAGE_TRANSITION|FAILED_PRE_DRO_STALE|FAILED_POST_TRANSACTION)
       printf '%s' "The background upgrade reported a failure. Do not rerun the client."
       ;;
-    SUCCESS|COMPLETED_NOBLE|POST_BOOT_VERIFY)
+    POST_BOOT_VERIFY)
+      printf '%s' "Post-boot validation is in progress."
+      ;;
+    SUCCESS|COMPLETED_NOBLE)
       printf '%s' "The background upgrade completed successfully."
       ;;
     *)
@@ -12722,9 +13750,34 @@ state_user_message() {
   esac
 }
 
+# Terminal success only after postboot validation records COMPLETED_*.
+# REBOOT_PENDING / REBOOTING / POST_BOOT_VERIFY are transitional — never success.
 state_is_terminal_success() {
   case "${1:-}" in
-    REBOOT_PENDING|REBOOTING|POST_BOOT_VERIFY|COMPLETED_NOBLE|SUCCESS)
+    COMPLETED_NOBLE|SUCCESS)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+# Reboot handoff: monitor may exit cleanly (SSH disconnect expected).
+state_is_reboot_handoff() {
+  case "${1:-}" in
+    REBOOT_PENDING|REBOOTING)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+state_is_postboot_pending() {
+  case "${1:-}" in
+    POST_BOOT_VERIFY)
       return 0
       ;;
     *)
@@ -12757,6 +13810,76 @@ state_is_active_progress() {
       return 1
       ;;
   esac
+}
+
+# Invariant: no state may be both upgrade-running and terminal-success.
+assert_state_classification_disjoint() {
+  local st
+  for st in REBOOT_PENDING REBOOTING POST_BOOT_VERIFY \
+      UPGRADING_JAMMY_TO_NOBLE POST_UPGRADE_VERIFY CONFIGURING PREPARING_JAMMY \
+      COMPLETED_NOBLE SUCCESS FAILED; do
+    if state_is_upgrade_running "$st" && state_is_terminal_success "$st"; then
+      log ERROR "STATE_CLASSIFICATION_CONTRADICTION=${st}"
+      return 1
+    fi
+    if state_is_reboot_handoff "$st" && state_is_terminal_success "$st"; then
+      log ERROR "STATE_CLASSIFICATION_CONTRADICTION=${st}"
+      return 1
+    fi
+    if state_is_postboot_pending "$st" && state_is_terminal_success "$st"; then
+      log ERROR "STATE_CLASSIFICATION_CONTRADICTION=${st}"
+      return 1
+    fi
+  done
+  return 0
+}
+
+# Fail closed when reboot/postboot transition is stuck and postboot did not complete.
+# Never claim BACKGROUND_UPGRADE_RUNNING or allow the next hop to download packages.
+reject_incomplete_reboot_or_postboot() {
+  local st="${1:-}"
+  case "$st" in
+    REBOOT_PENDING|REBOOTING|POST_BOOT_VERIFY) ;;
+    *) return 0 ;;
+  esac
+
+  local postboot_active=""
+  if allow_live_systemctl; then
+    postboot_active="$(systemctl_show_prop ActiveState "$POSTBOOT_UNIT_NAME" || true)"
+  fi
+
+  # Failed postboot always fail-closes — do not let host /proc noise claim "still running".
+  if [[ "$postboot_active" == "failed" ]]; then
+    log ERROR "POSTBOOT_VALIDATION_COMPLETED=NO"
+    log ERROR "PREVIOUS_OS_HOP_POSTBOOT_INCOMPLETE=YES"
+    log ERROR "POSTBOOT_UNIT_NAME=${POSTBOOT_UNIT_NAME}"
+    log ERROR "POSTBOOT_UNIT_ACTIVE_STATE=failed"
+    log ERROR "CURRENT_STATE=${st}"
+    log ERROR "NEXT_HOP_BLOCKED=YES"
+    log ERROR "NEXT_HOP_DOWNLOAD_SKIPPED=YES"
+    log ERROR "BACKGROUND_UPGRADE_RUNNING=NO"
+    die "$EC_STATE" "postboot validation incomplete (state=${st}; ${POSTBOOT_UNIT_NAME}=failed); refusing to proceed"
+  fi
+
+  # Postboot actively running → in-progress; caller may monitor.
+  if [[ "$postboot_active" == "activating" || "$postboot_active" == "active" ]]; then
+    return 0
+  fi
+
+  # Live upgrade runner/service still present → in-progress; caller may monitor.
+  if allow_live_systemctl && live_upgrade_evidence_present; then
+    return 0
+  fi
+
+  log ERROR "POSTBOOT_VALIDATION_COMPLETED=NO"
+  log ERROR "PREVIOUS_OS_HOP_POSTBOOT_INCOMPLETE=YES"
+  log ERROR "POSTBOOT_UNIT_NAME=${POSTBOOT_UNIT_NAME}"
+  log ERROR "POSTBOOT_UNIT_ACTIVE_STATE=${postboot_active:-unknown}"
+  log ERROR "CURRENT_STATE=${st}"
+  log ERROR "NEXT_HOP_BLOCKED=YES"
+  log ERROR "NEXT_HOP_DOWNLOAD_SKIPPED=YES"
+  log ERROR "BACKGROUND_UPGRADE_RUNNING=NO"
+  die "$EC_STATE" "reboot/postboot transition incomplete (state=${st}; no live upgrade runner); refusing to proceed"
 }
 
 log_has_terminal_failure_marker() {
@@ -13131,7 +14254,18 @@ monitor_upgrade_progress() {
       log INFO "MONITOR_EXIT_REASON=TERMINAL_SUCCESS_STATE"
       log INFO "MONITOR_RESULT=TERMINAL_SUCCESS"
       log INFO "UPGRADE_SERVICE_STOP_REQUESTED=NO"
-      if [[ "$reboot_announced" -eq 0 ]] && [[ "$cur_state" == "REBOOT_PENDING" || "$cur_state" == "REBOOTING" ]]; then
+      trap - INT TERM
+      return 0
+    fi
+
+    if state_is_reboot_handoff "$cur_state"; then
+      MONITOR_EXIT_REASON="REBOOT_HANDOFF_STATE"
+      MONITOR_RESULT="REBOOT_HANDOFF"
+      log INFO "MONITOR_TERMINAL_STATE_DETECTED=${cur_state}"
+      log INFO "MONITOR_EXIT_REASON=REBOOT_HANDOFF_STATE"
+      log INFO "MONITOR_RESULT=REBOOT_HANDOFF"
+      log INFO "UPGRADE_SERVICE_STOP_REQUESTED=NO"
+      if [[ "$reboot_announced" -eq 0 ]]; then
         print_reboot_starting_banner
         reboot_announced=1
       fi
@@ -13166,7 +14300,9 @@ monitor_upgrade_progress() {
 
     # Runner disappeared and state is neither terminal nor active progress.
     if [[ "$runner_status" == "GONE" ]] && ! state_is_terminal_state "$cur_state" \
-       && ! state_is_active_progress "$cur_state"; then
+       && ! state_is_active_progress "$cur_state" \
+       && ! state_is_reboot_handoff "$cur_state" \
+       && ! state_is_postboot_pending "$cur_state"; then
       dro_pid="$(find_dro_pid_via_ps || true)"
       sleep 1
       new_pid="$(monitor_resolve_runner_pid "$runner_pid" || true)"
@@ -13223,6 +14359,8 @@ monitor_upgrade_progress() {
 refuse_duplicate_upgrade() {
   local st pid
   st="$(read_state)"
+  # Stuck reboot/postboot with no live runner must fail closed (not MONITOR_ONLY success).
+  reject_incomplete_reboot_or_postboot "$st"
   # Prefer D-Bus-free resolution when attaching monitor.
   pid="$(monitor_resolve_runner_pid "${UPGRADE_RUNNER_PID:-0}" 2>/dev/null || true)"
   if [[ -z "$pid" || "$pid" == "0" ]]; then
