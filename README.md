@@ -42,7 +42,7 @@ Copy and run:
 sudo apt-get update
 sudo apt-get install -y git
 
-git clone https://github.com/RickLee-kr/ubuntu-mirror-automation.git
+git clone https://github.com/xdr-labs/ubuntu-mirror-automation.git
 cd ubuntu-mirror-automation
 sudo ./install.sh
 ```
