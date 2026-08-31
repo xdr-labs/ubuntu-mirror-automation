@@ -600,42 +600,24 @@ Re-enter a usable IPv4 present on this host."
           continue
         fi
         MIRROR_HTTP_URL="$(mirror_base_url_from_ipv4 "${MIRROR_SERVER_IP}")"
-        mm_save_gui_config
+        mm_save_gui_config_full
         mm_record_config_validated
         mm_status_set PREPARATION_MODE "${PREPARATION_MODE}"
         mm_status_set PHASE2_TARGET_VERSION "${PHASE2_TARGET_VERSION}"
-        if mm_client_commands_stale; then
-          mm_whiptail_msg "Configuration" \
-            "Configuration saved.
-
-Preparation Mode: $(mm_preparation_mode_label)
-Mirror Server IP: ${MIRROR_SERVER_IP}
-Phase 2 Target: ${PHASE2_TARGET_VERSION} (fixed)
-
-Previously generated Client Commands are stale.
-Re-run menu 7 after Download / HTTP / Readiness.
-
-Next step:
-  Back → main menu → 2) Download and Prepare Upgrade Files
-
-Saving configuration does NOT start the download."
+        local save_msg
+        if declare -F mm_wf_operator_save_message >/dev/null 2>&1; then
+          save_msg="$(mm_wf_operator_save_message)"
         else
-          mm_whiptail_msg "Configuration" \
-            "Configuration saved.
+          save_msg="Configuration saved."
+        fi
+        mm_whiptail_msg "Configuration" \
+          "${save_msg}
 
 Preparation Mode: $(mm_preparation_mode_label)
 Mirror Server IP: ${MIRROR_SERVER_IP}
 Phase 2 Target: ${PHASE2_TARGET_VERSION} (fixed)
 
-Next step:
-  Back → main menu → 2) Download and Prepare Upgrade Files
-
-Then:
-  3) Enable HTTP Distribution
-  4) Verify Upgrade Readiness
-
 Saving configuration does NOT start the download."
-        fi
         ;;
       0|"") return 0 ;;
     esac
@@ -1628,10 +1610,11 @@ REQUIRED_ACTION=Configuration
 Set Mirror Server IP in Configuration before generating commands."
     return 0
   }
-  # Persist resolved URL for next runs (no secrets).
+  # Persist resolved URL for next runs (no secrets). Merge so a URL-only
+  # persistence cannot wipe ACPS credentials or worker settings.
   if [[ -z "${MIRROR_HTTP_URL:-}" ]]; then
     MIRROR_HTTP_URL="$mirror"
-    mm_save_gui_config >/dev/null 2>&1 || true
+    mm_merge_gui_config >/dev/null 2>&1 || true
   fi
 
   if mm_client_commands_stale; then
