@@ -38,6 +38,12 @@ SPV_SOURCE_DP_VERSION_FAILURE_REASON=""
 SPV_SOURCE_DP_VERSION_REMEDIATION=""
 SPV_SOURCE_DP_VERSION_RECOVERY=""
 SPV_DIAG_SUMMARY=""
+SPV_PHASE2_ENTRY_MODE=""
+SPV_AELLA_CLI_VERSION_DETECTION=""
+SPV_AELLA_CLI_VERSION=""
+SPV_OS_RELEASE_ID=""
+SPV_OS_RELEASE_VERSION_ID=""
+SPV_OS_RELEASE_CODENAME=""
 
 spv_utc_now() {
   date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u +%Y%m%dT%H%M%SZ
@@ -666,6 +672,124 @@ spv_bringup_completed_marker() {
   return 1
 }
 
+# Read /etc/os-release (or SOURCE_PRODUCT_OS_RELEASE_FILE override) into SPV_OS_RELEASE_*.
+spv_read_os_release() {
+  local f="${SOURCE_PRODUCT_OS_RELEASE_FILE:-/etc/os-release}"
+  local line key val
+  SPV_OS_RELEASE_ID=""
+  SPV_OS_RELEASE_VERSION_ID=""
+  SPV_OS_RELEASE_CODENAME=""
+  [[ -r "$f" ]] || return 1
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" == *=* ]] || continue
+    key="${line%%=*}"
+    val="${line#*=}"
+    val="${val%\"}"
+    val="${val#\"}"
+    case "$key" in
+      ID) SPV_OS_RELEASE_ID="$val" ;;
+      VERSION_ID) SPV_OS_RELEASE_VERSION_ID="$val" ;;
+      VERSION_CODENAME) SPV_OS_RELEASE_CODENAME="$val" ;;
+    esac
+  done <"$f"
+  [[ -n "$SPV_OS_RELEASE_ID" ]]
+}
+
+# Distinguish Native Noble (never ran Phase 1) from Post-Phase1 Noble.
+# POST_PHASE1_NOBLE: OS upgrade state is COMPLETED_NOBLE (Phase 1 finished).
+# NATIVE_NOBLE: Ubuntu 24.04/noble without Phase 1 completion evidence.
+# OTHER: not a Noble Phase2-only entry host.
+spv_detect_phase2_entry_mode() {
+  local state
+  SPV_PHASE2_ENTRY_MODE=""
+  state="$(spv_os_upgrade_state)"
+  if [[ "$state" == "COMPLETED_NOBLE" ]]; then
+    SPV_PHASE2_ENTRY_MODE="POST_PHASE1_NOBLE"
+    return 0
+  fi
+  spv_read_os_release || true
+  if [[ "${SPV_OS_RELEASE_ID}" == "ubuntu" ]] \
+    && { [[ "${SPV_OS_RELEASE_VERSION_ID}" == "24.04" ]] \
+      || [[ "${SPV_OS_RELEASE_CODENAME}" == "noble" ]]; }; then
+    SPV_PHASE2_ENTRY_MODE="NATIVE_NOBLE"
+    return 0
+  fi
+  SPV_PHASE2_ENTRY_MODE="OTHER"
+  return 0
+}
+
+# Strict live aella_cli product version — mirrors Phase1 jammy-to-noble
+# capture_aella_cli_show_version + single-version consistency rules.
+# Sets SPV_AELLA_CLI_VERSION_DETECTION and SPV_AELLA_CLI_VERSION.
+spv_detect_from_aella_cli() {
+  local outf rc text line token
+  local -a versions=()
+  local uniq="" v
+  SPV_AELLA_CLI_VERSION_DETECTION=""
+  SPV_AELLA_CLI_VERSION=""
+
+  if ! command -v aella_cli >/dev/null 2>&1; then
+    SPV_AELLA_CLI_VERSION_DETECTION="MISSING"
+    return 1
+  fi
+  if ! command -v timeout >/dev/null 2>&1; then
+    SPV_AELLA_CLI_VERSION_DETECTION="MISSING"
+    return 1
+  fi
+
+  outf="$(mktemp "${TMPDIR:-/tmp}/spv-aella-cli.XXXXXX")"
+  set +e
+  timeout 10 sh -c "printf 'show version\nquit\n' | aella_cli" >"$outf" 2>&1
+  rc=$?
+  set -e
+  text="$(cat "$outf" 2>/dev/null || true)"
+  rm -f "$outf"
+
+  if [[ "$rc" -eq 124 ]]; then
+    SPV_AELLA_CLI_VERSION_DETECTION="TIMEOUT"
+    return 1
+  fi
+  if [[ "$rc" -ne 0 ]]; then
+    SPV_AELLA_CLI_VERSION_DETECTION="NONZERO"
+    return 1
+  fi
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    # shellcheck disable=SC2086
+    for token in $line; do
+      if [[ "$token" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        versions+=("$token")
+      elif n="$(spv_normalize_dp_version "$token" 2>/dev/null)"; then
+        if spv_is_strict_product_version "$n"; then
+          versions+=("$n")
+        fi
+      fi
+    done
+  done <<<"$text"
+
+  if [[ "${#versions[@]}" -eq 0 ]]; then
+    SPV_AELLA_CLI_VERSION_DETECTION="NO_SEMVER"
+    return 1
+  fi
+
+  uniq=""
+  for v in "${versions[@]}"; do
+    case " ${uniq} " in
+      *" ${v} "*) ;;
+      *) uniq="${uniq} ${v}" ;;
+    esac
+  done
+  uniq="${uniq# }"
+  if [[ "$(printf '%s' "$uniq" | tr ' ' '\n' | awk 'NF' | wc -l | tr -d ' ')" -ne 1 ]]; then
+    SPV_AELLA_CLI_VERSION_DETECTION="INCONSISTENT"
+    return 1
+  fi
+  SPV_AELLA_CLI_VERSION="$(printf '%s' "$uniq" | tr ' ' '\n' | awk 'NF{print; exit}')"
+  SPV_AELLA_CLI_VERSION_DETECTION="PASS"
+  return 0
+}
+
 spv_write_resolution_evidence() {
   local run_id="${1-}"
   local root="${SOURCE_PRODUCT_EVIDENCE_ROOT_DEFAULT}"
@@ -675,6 +799,9 @@ spv_write_resolution_evidence() {
   mkdir -p "$dir" 2>/dev/null || return 0
   chmod 0700 "$dir" 2>/dev/null || true
   {
+    echo "PHASE2_ENTRY_MODE=${SPV_PHASE2_ENTRY_MODE}"
+    echo "AELLA_CLI_VERSION_DETECTION=${SPV_AELLA_CLI_VERSION_DETECTION}"
+    echo "AELLA_CLI_VERSION=${SPV_AELLA_CLI_VERSION}"
     echo "SOURCE_PRODUCT_ENV_PATH=${SPV_SOURCE_PRODUCT_ENV_PATH}"
     echo "SOURCE_PRODUCT_ENV_STATUS=${SPV_SOURCE_PRODUCT_ENV_STATUS}"
     echo "SOURCE_VERSION_CAPTURE_STATUS=${SPV_SOURCE_VERSION_CAPTURE_STATUS}"
@@ -699,6 +826,9 @@ spv_write_resolution_evidence() {
 
 spv_emit_diagnostics() {
   cat <<EOF
+PHASE2_ENTRY_MODE=${SPV_PHASE2_ENTRY_MODE}
+AELLA_CLI_VERSION_DETECTION=${SPV_AELLA_CLI_VERSION_DETECTION}
+AELLA_CLI_VERSION=${SPV_AELLA_CLI_VERSION}
 SOURCE_PRODUCT_ENV_PATH=${SPV_SOURCE_PRODUCT_ENV_PATH}
 SOURCE_PRODUCT_ENV_STATUS=${SPV_SOURCE_PRODUCT_ENV_STATUS}
 SOURCE_VERSION_CAPTURE_STATUS=${SPV_SOURCE_VERSION_CAPTURE_STATUS}
@@ -768,6 +898,9 @@ spv_resolve_source_dp_version() {
   SPV_SOURCE_DP_VERSION_FAILURE_REASON=""
   SPV_SOURCE_DP_VERSION_REMEDIATION=""
   SPV_SOURCE_DP_VERSION_RECOVERY=""
+  SPV_AELLA_CLI_VERSION_DETECTION=""
+  SPV_AELLA_CLI_VERSION=""
+  spv_detect_phase2_entry_mode
 
   # 1) valid source-product.env
   if spv_read_source_product_env "$dest"; then
@@ -777,6 +910,7 @@ spv_resolve_source_dp_version() {
       op_norm="$(spv_normalize_dp_version "$operator")" || {
         SPV_OPERATOR_SOURCE_VERSION_STATUS="INVALID"
         spv_set_failure "OPERATOR_OVERRIDE_INVALID"
+        spv_write_resolution_evidence "$run_id"
         return 1
       }
       SPV_OPERATOR_SOURCE_VERSION_STATUS="PROVIDED"
@@ -784,8 +918,22 @@ spv_resolve_source_dp_version() {
         SPV_OPERATOR_SOURCE_VERSION_STATUS="CONFLICT"
         spv_set_failure "OPERATOR_OVERRIDE_CONFLICT" \
           "Operator --source-dp-version conflicts with authoritative source-product.env; do not override."
+        spv_write_resolution_evidence "$run_id"
         return 1
       fi
+    fi
+    # Native Noble: if live CLI reports a different version, fail closed.
+    # Post-Phase1 must NOT consult live CLI (product may be intentionally broken).
+    if [[ "${SPV_PHASE2_ENTRY_MODE}" == "NATIVE_NOBLE" ]]; then
+      if spv_detect_from_aella_cli; then
+        if [[ "$SPV_AELLA_CLI_VERSION" != "$SPV_SOURCE_DP_VERSION" ]]; then
+          spv_set_failure "NATIVE_LIVE_CLI_CONFLICT" \
+            "Persisted source-product.env conflicts with live aella_cli; refuse silent reconciliation."
+          spv_write_resolution_evidence "$run_id"
+          return 1
+        fi
+      fi
+      # Live CLI failure (missing/timeout) does not invalidate good persisted evidence.
     fi
     spv_write_resolution_evidence "$run_id"
     return 0
@@ -793,7 +941,8 @@ spv_resolve_source_dp_version() {
 
   # 2) immutable capture already covered by read failure statuses above
 
-  # 3) Phase 1 log recovery (COMPLETED_NOBLE + bringup not completed)
+  # 3) Phase 1 log recovery (POST_PHASE1 / COMPLETED_NOBLE + bringup not completed)
+  #    Never use live aella_cli on this path.
   state="$(spv_os_upgrade_state)"
   if [[ "$state" == "COMPLETED_NOBLE" ]] && ! spv_bringup_completed_marker; then
     if spv_scan_phase1_log_evidence "$logf" "$production_mode"; then
@@ -809,12 +958,14 @@ spv_resolve_source_dp_version() {
             op_norm="$(spv_normalize_dp_version "$operator")" || {
               SPV_OPERATOR_SOURCE_VERSION_STATUS="INVALID"
               spv_set_failure "OPERATOR_OVERRIDE_INVALID"
+              spv_write_resolution_evidence "$run_id"
               return 1
             }
             SPV_OPERATOR_SOURCE_VERSION_STATUS="PROVIDED"
             if [[ "$op_norm" != "$SPV_SOURCE_DP_VERSION" ]]; then
               SPV_OPERATOR_SOURCE_VERSION_STATUS="CONFLICT"
               spv_set_failure "OPERATOR_OVERRIDE_CONFLICT"
+              spv_write_resolution_evidence "$run_id"
               return 1
             fi
           fi
@@ -850,6 +1001,59 @@ spv_resolve_source_dp_version() {
     fi
   fi
 
+  # 3b) Native Noble live aella_cli (NOT used for Post-Phase1)
+  if [[ "${SPV_PHASE2_ENTRY_MODE}" == "NATIVE_NOBLE" ]]; then
+    if spv_detect_from_aella_cli; then
+      if [[ "$allow_write" == "1" ]]; then
+        if ! spv_persist_source_product_env "$dest" \
+            "$SPV_AELLA_CLI_VERSION" "aella_cli-native-noble" \
+            "${SPV_OS_RELEASE_VERSION_ID:-24.04}" \
+            "${SPV_OS_RELEASE_CODENAME:-noble}" \
+            "${run_id:-native-noble}"; then
+          if [[ "${SPV_SOURCE_VERSION_CAPTURE_STATUS}" == "VERSION_CONFLICT" ]]; then
+            spv_set_failure "SOURCE_PRODUCT_ENV_VERSION_CONFLICT"
+            spv_write_resolution_evidence "$run_id"
+            return 1
+          fi
+        fi
+      fi
+      SPV_SOURCE_DP_VERSION="$SPV_AELLA_CLI_VERSION"
+      SPV_SOURCE_DP_VERSION_RAW="$SPV_AELLA_CLI_VERSION"
+      SPV_SOURCE_DP_VERSION_ORIGIN="aella_cli-native-noble"
+      SPV_SOURCE_DP_VERSION_CHECK="PASS"
+      SPV_SOURCE_DP_VERSION_RESOLUTION="PASS"
+      SPV_SOURCE_DP_VERSION_RECOVERY="${SPV_SOURCE_DP_VERSION_RECOVERY:-NOT_REQUIRED}"
+      if [[ -n "$operator" ]]; then
+        op_norm="$(spv_normalize_dp_version "$operator")" || {
+          SPV_OPERATOR_SOURCE_VERSION_STATUS="INVALID"
+          spv_set_failure "OPERATOR_OVERRIDE_INVALID"
+          spv_write_resolution_evidence "$run_id"
+          return 1
+        }
+        SPV_OPERATOR_SOURCE_VERSION_STATUS="PROVIDED"
+        if [[ "$op_norm" != "$SPV_SOURCE_DP_VERSION" ]]; then
+          SPV_OPERATOR_SOURCE_VERSION_STATUS="CONFLICT"
+          spv_set_failure "OPERATOR_OVERRIDE_CONFLICT"
+          spv_write_resolution_evidence "$run_id"
+          return 1
+        fi
+      fi
+      spv_write_resolution_evidence "$run_id"
+      return 0
+    fi
+    case "${SPV_AELLA_CLI_VERSION_DETECTION}" in
+      INCONSISTENT)
+        spv_set_failure "AELLA_CLI_INCONSISTENT_VERSIONS" \
+          "Live aella_cli reported multiple distinct product versions; refuse to guess."
+        spv_write_resolution_evidence "$run_id"
+        return 1
+        ;;
+    esac
+    # TIMEOUT / NONZERO / MISSING / NO_SEMVER → fall through to release-image / operator.
+  elif [[ "${SPV_PHASE2_ENTRY_MODE}" == "POST_PHASE1_NOBLE" ]]; then
+    SPV_AELLA_CLI_VERSION_DETECTION="SKIPPED_POST_PHASE1"
+  fi
+
   # 4) release-image.yml
   if spv_detect_from_release_image "$image"; then
     if [[ "$allow_write" == "1" ]]; then
@@ -867,12 +1071,14 @@ spv_resolve_source_dp_version() {
       op_norm="$(spv_normalize_dp_version "$operator")" || {
         SPV_OPERATOR_SOURCE_VERSION_STATUS="INVALID"
         spv_set_failure "OPERATOR_OVERRIDE_INVALID"
+        spv_write_resolution_evidence "$run_id"
         return 1
       }
       SPV_OPERATOR_SOURCE_VERSION_STATUS="PROVIDED"
       if [[ "$op_norm" != "$SPV_SOURCE_DP_VERSION" ]]; then
         SPV_OPERATOR_SOURCE_VERSION_STATUS="CONFLICT"
         spv_set_failure "OPERATOR_OVERRIDE_CONFLICT"
+        spv_write_resolution_evidence "$run_id"
         return 1
       fi
     fi
@@ -924,6 +1130,12 @@ spv_resolve_source_dp_version() {
     MULTIPLE_VERSIONS) reason="PHASE1_EVIDENCE_MULTIPLE_VERSIONS" ;;
     UNREADABLE) reason="PHASE1_EVIDENCE_UNREADABLE" ;;
     FAKE_SOURCE_ONLY) reason="PHASE1_EVIDENCE_FAKE_SOURCE_ONLY" ;;
+  esac
+  case "${SPV_AELLA_CLI_VERSION_DETECTION}" in
+    TIMEOUT) reason="AELLA_CLI_TIMEOUT" ;;
+    NONZERO) reason="AELLA_CLI_NONZERO" ;;
+    NO_SEMVER) reason="AELLA_CLI_NO_SEMVER" ;;
+    INCONSISTENT) reason="AELLA_CLI_INCONSISTENT_VERSIONS" ;;
   esac
   case "${SPV_RELEASE_IMAGE_STATUS}" in
     MALFORMED_AUTHORITATIVE_ENTRY) reason="RELEASE_IMAGE_MALFORMED_AUTHORITATIVE_ENTRY" ;;
