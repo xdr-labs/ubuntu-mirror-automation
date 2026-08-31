@@ -27,11 +27,30 @@ valid `PASS` record is immutable: the same normalized version is reused, while
 a different version fails closed.  Empty, malformed, fake, `UNKNOWN`, and
 `UNDETERMINED` values are never persisted as a pass.
 
-Resolution order is:
+# Resolution order depends on Phase 2 entry mode:
+
+### POST_PHASE1_NOBLE
+
+DP reached Ubuntu 24.04 through this project's Phase 1 OS upgrade
+(`COMPLETED_NOBLE`). Product runtime may be intentionally unavailable.
 
 1. valid `source-product.env`;
 2. complete Phase 1 structured records, only while the OS state is
    `COMPLETED_NOBLE` and bringup is not complete;
+3. consistent authoritative release-image keys;
+4. a validated operator override.
+
+Live `aella_cli` is **not** consulted on this path.
+
+### NATIVE_NOBLE
+
+DP was created/already running as Ubuntu 24.04. Phase 1 evidence is naturally
+absent and must not be required.
+
+1. valid `source-product.env` (if live `aella_cli` also succeeds and differs →
+   fail closed);
+2. strict live `aella_cli` product version (origin `aella_cli-native-noble`),
+   persisted atomically for retries;
 3. consistent authoritative release-image keys;
 4. a validated operator override.
 
@@ -45,9 +64,13 @@ and report a would-be recovery without creating evidence.
 The source helper accepts explicit test/deployment path overrides:
 `SOURCE_PRODUCT_ENV_DEFAULT_PATH`, `SOURCE_PRODUCT_PHASE1_LOG_DEFAULT`,
 `SOURCE_PRODUCT_RELEASE_IMAGE_DEFAULT`,
-`SOURCE_PRODUCT_EVIDENCE_ROOT_DEFAULT`, `SOURCE_PRODUCT_OS_STATE_FILE`, and
-`SOURCE_PRODUCT_BRINGUP_RESULT_ENV`.  Production defaults remain under
-`/opt/aelladata` and `/var/log/aella`.
+`SOURCE_PRODUCT_EVIDENCE_ROOT_DEFAULT`, `SOURCE_PRODUCT_OS_STATE_FILE`,
+`SOURCE_PRODUCT_BRINGUP_RESULT_ENV`, and `SOURCE_PRODUCT_OS_RELEASE_FILE`.
+Production defaults remain under `/opt/aelladata` and `/var/log/aella`.
+
+Operator wrapper `upgrade-phase2.sh` allowlists only `--source-dp-version`;
+`--target-version`, `--mirror-url`, and unknown options are rejected. Normal
+Native Noble operation does not require the override.
 
 ## Progress and staging
 
@@ -98,6 +121,10 @@ ship the lifecycle wrapper and all three Phase 2 libraries with checksums.
 Targeted regression scripts are:
 
 * `tests/test_source_product_version.sh`
+* `tests/test_native_noble_source_resolution.sh`
+* `tests/test_phase2_wrapper_source_override.sh`
+* `tests/test_config_clear_and_scoped_invalidation.sh`
+* `tests/test_bringup_lifecycle.sh`
 * `tests/test_phase2_staging_progress.sh`
 * `tests/test_bringup_lifecycle.sh`
 

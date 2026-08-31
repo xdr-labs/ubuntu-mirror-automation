@@ -112,6 +112,40 @@ VER='${ver}'
 SCRIPT='stage-dp-phase2.sh'
 GEN='phase2-helper-generation.manifest'
 H='${sha}'
+# Allowlisted operator passthrough only. Target/mirror/trust anchors are fixed.
+SOURCE_DP_VERSION_OPT=()
+while [[ \$# -gt 0 ]]; do
+  case "\$1" in
+    --source-dp-version)
+      [[ \$# -ge 2 ]] || { echo "FATAL: --source-dp-version requires a value" >&2; exit 2; }
+      case "\$2" in
+        ''|*[^0-9.]*|*.*.*.*)
+          echo "FATAL: invalid --source-dp-version (expected major.minor.patch)" >&2
+          exit 2
+          ;;
+      esac
+      [[ "\$2" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+\$ ]] || {
+        echo "FATAL: invalid --source-dp-version (expected major.minor.patch)" >&2
+        exit 2
+      }
+      SOURCE_DP_VERSION_OPT=(--source-dp-version "\$2")
+      shift 2
+      ;;
+    --target-version|--mirror-url|--same-version-recovery)
+      echo "FATAL: protected option '\$1' cannot be overridden via upgrade-phase2.sh" >&2
+      exit 2
+      ;;
+    -h|--help)
+      echo "Usage: bash upgrade-phase2.sh [--source-dp-version X.Y.Z]"
+      echo "Target ${ver} and mirror URL are fixed by Mirror Manager publication."
+      exit 0
+      ;;
+    *)
+      echo "FATAL: unknown option '\$1' (only --source-dp-version is allowed)" >&2
+      exit 2
+      ;;
+  esac
+done
 W=\$(mktemp -d)
 trap 'rm -rf "\$W"' EXIT
 cd "\$W"
@@ -121,7 +155,7 @@ for F in "\$GEN" "\$SCRIPT" bringup_py3_dp_lifecycle.sh lib/dp-{offline-source-p
 done
 printf '%s  %s\\n' "\$H" "\$GEN" | sha256sum -c -
 sha256sum -c "\$GEN"
-sudo bash "./\$SCRIPT" --target-version "\$VER" --same-version-recovery --mirror-url "\$MIRROR"
+sudo bash "./\$SCRIPT" --target-version "\$VER" --same-version-recovery --mirror-url "\$MIRROR" "\${SOURCE_DP_VERSION_OPT[@]}"
 EOF
   chmod 0644 "$dest"
   bash -n "$dest" || {
