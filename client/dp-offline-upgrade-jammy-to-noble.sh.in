@@ -162,7 +162,7 @@ LAST_SYSTEMCTL_RC=0
 
 # Critical OS packages that must be unheld after confirmation before release upgrade.
 # Exact names plus prefix families matched in is_critical_os_hold_package().
-CRITICAL_HOLD_PACKAGES="apt dpkg libc6 systemd udev init openssh-server ubuntu-minimal ubuntu-standard ubuntu-server linux-image-generic linux-image-virtual linux-generic linux-virtual ubuntu-release-upgrader-core update-manager-core grub-pc grub-efi-amd64 grub2-common"
+CRITICAL_HOLD_PACKAGES="apt dpkg libc6 systemd udev init openssh-server ubuntu-minimal ubuntu-standard ubuntu-server linux-image-generic linux-image-virtual linux-generic linux-virtual linux-aws linux-image-aws linux-headers-aws ubuntu-release-upgrader-core update-manager-core grub-pc grub-efi-amd64 grub2-common"
 
 # Core packages inspected for mixed Jammy/Noble state and cross-release candidates.
 CORE_GUARD_PACKAGES="base-files libc6 libc-bin apt apt-utils dpkg systemd systemd-sysv udev init python3 ubuntu-minimal ubuntu-standard ubuntu-server ubuntu-release-upgrader-core update-manager-core"
@@ -1812,6 +1812,7 @@ kernel_flavor() {
     *-generic) printf 'generic' ;;
     *-generic-lpae) printf 'generic-lpae' ;;
     *-lowlatency) printf 'lowlatency' ;;
+    *-aws) printf 'aws' ;;
     *) printf '%s' "${k##*-}" ;;
   esac
 }
@@ -2006,24 +2007,37 @@ check_os_baseline() {
   kflav="$(kernel_flavor)"
   log INFO "kernel=$(uname -r) flavor=${kflav}"
   case "$kflav" in
-    generic|generic-lpae) ;;
+    generic|generic-lpae)
+      # Required kernel packages presence (names only)
+      if [[ -z "$TEST_ROOT" ]]; then
+        if ! dpkg-query -W -f='${Status}\n' "linux-image-generic" 2>/dev/null | grep -q 'install ok installed'; then
+          local kr
+          kr="$(uname -r)"
+          if ! dpkg-query -W -f='${Status}\n' "linux-image-${kr}" 2>/dev/null | grep -q 'install ok installed'; then
+            log ERROR "FAIL_UNSUPPORTED_BASELINE: required kernel image package missing"
+            return 1
+          fi
+        fi
+      fi
+      ;;
+    aws)
+      if [[ -z "$TEST_ROOT" ]]; then
+        if ! dpkg-query -W -f='${Status}\n' "linux-image-aws" 2>/dev/null | grep -q 'install ok installed'; then
+          local kr
+          kr="$(uname -r)"
+          if ! dpkg-query -W -f='${Status}\n' "linux-image-${kr}" 2>/dev/null | grep -q 'install ok installed'; then
+            log ERROR "FAIL_UNSUPPORTED_BASELINE: required AWS kernel image package missing"
+            return 1
+          fi
+        fi
+      fi
+      log INFO "KERNEL_FLAVOR_AWS=SUPPORTED"
+      ;;
     *)
-      log ERROR "FAIL_UNSUPPORTED_BASELINE: kernel flavor '${kflav}' (discovery baseline expects generic)"
+      log ERROR "FAIL_UNSUPPORTED_BASELINE: kernel flavor '${kflav}' (supported: generic, aws)"
       return 1
       ;;
   esac
-  # Required kernel packages presence (names only)
-  if [[ -z "$TEST_ROOT" ]]; then
-    if ! dpkg-query -W -f='${Status}\n' "linux-image-generic" 2>/dev/null | grep -q 'install ok installed'; then
-      # accept versioned image matching running kernel
-      local kr
-      kr="$(uname -r)"
-      if ! dpkg-query -W -f='${Status}\n' "linux-image-${kr}" 2>/dev/null | grep -q 'install ok installed'; then
-        log ERROR "FAIL_UNSUPPORTED_BASELINE: required kernel image package missing"
-        return 1
-      fi
-    fi
-  fi
   # foreign architectures
   if [[ -z "$TEST_ROOT" ]] && command -v dpkg >/dev/null 2>&1; then
     local foreign
@@ -2044,6 +2058,31 @@ check_os_baseline() {
 # Backward-compatible name used by older tests/docs.
 check_baseline() {
   check_os_baseline "$@"
+}
+
+assert_aella_login_shell_bash_hard_gate() {
+  # Preflight hard gate: aella login shell must already be bash before upgrade start.
+  # change_login_shells still runs during commit to auto-fix aella_cli→bash when reached.
+  local shell="" passwd_file line
+  passwd_file="$(hostpath /etc/passwd)"
+  if [[ -n "$TEST_ROOT" ]]; then
+    line="$(grep -E '^aella:' "$passwd_file" 2>/dev/null || true)"
+    shell="$(printf '%s' "$line" | cut -d: -f7)"
+  else
+    shell="$(getent passwd aella 2>/dev/null | cut -d: -f7 || true)"
+  fi
+  case "$shell" in
+    /bin/bash|/usr/bin/bash)
+      log INFO "AELLA_BASH_HARD_GATE=PASS"
+      return 0
+      ;;
+  esac
+  log ERROR "AELLA_BASH_HARD_GATE=FAIL shell=${shell:-unknown}"
+  log ERROR "FAIL_AELLA_SHELL_NOT_BASH"
+  log ERROR "Remediation: sudo chsh -s /bin/bash aella"
+  log ERROR "Validate: getent passwd aella"
+  log ERROR "Note: /usr/bin/aella_cli must be changed to /bin/bash before OS upgrade (official requirement)"
+  die "$EC_BASELINE" "FAIL_AELLA_SHELL_NOT_BASH"
 }
 
 check_dpkg_health() {
@@ -2098,7 +2137,7 @@ is_noble_version_for_pkg() {
     systemd|systemd-sysv|udev) [[ "$ver" == 255* || "$ver" == *255* ]] && return 0 ;;
     python3) [[ "$ver" == 3.12* ]] && return 0 ;;
     ubuntu-server|ubuntu-minimal|ubuntu-standard) [[ "$ver" == 1.539* || "$ver" == 1.53* ]] && return 0 ;;
-    linux-image-*|linux-headers-*|linux-generic|linux-virtual|linux-image-generic|linux-image-virtual)
+    linux-image-*|linux-headers-*|linux-generic|linux-virtual|linux-image-generic|linux-image-virtual|linux-aws|linux-image-aws|linux-headers-aws|linux-modules-*-aws)
       [[ "$ver" == 6.8* || "$ver" == *6.8* || "$ver" == 6.11* || "$ver" == *6.11* ]] && return 0
       ;;
     ubuntu-release-upgrader-core|update-manager-core)
@@ -2674,6 +2713,7 @@ run_os_preflight() {
   [[ "$arch" == "x86_64" ]] || die "$EC_ARCH" "architecture must be amd64/x86_64 (got ${arch})"
 
   check_os_baseline || die "$EC_BASELINE" "OS baseline validation failed"
+  assert_aella_login_shell_bash_hard_gate
 
   # Product diagnostics only - never hard-fail Phase 1 on DP install/topology/version.
   if is_stellar_dp; then

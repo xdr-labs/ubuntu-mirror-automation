@@ -1,0 +1,5 @@
+profile=generic
+source=selective_mirror_export
+description=Discovery profile exported from existing selective apt-mirror tree (Packages indexes + local pool).
+selective_root_default=/var/spool/apt-mirror/selective
+generated_by=scripts/export-selective-as-discovery-profile.py

@@ -1532,9 +1532,26 @@ cmd_plan_selective_impl() {
   fi
 
   log "Building selective mirror plan from ${DISCOVERY_ROOT}"
+  local -a disc_args=()
+  if [[ -n "${DISCOVERY_ROOTS:-}" ]]; then
+    # Space-separated profile=path entries, e.g.
+    # DISCOVERY_ROOTS="generic=/path/generic aws=/path/aws"
+    local entry
+    for entry in ${DISCOVERY_ROOTS}; do
+      disc_args+=(--discovery-root "$entry")
+    done
+  elif [[ -d "${PROJECT_ROOT}/artifacts/upgrade-discovery-profiles/generic" \
+       && -d "${PROJECT_ROOT}/artifacts/upgrade-discovery-profiles/aws" ]]; then
+    disc_args+=(
+      --discovery-root "generic=${PROJECT_ROOT}/artifacts/upgrade-discovery-profiles/generic"
+      --discovery-root "aws=${PROJECT_ROOT}/artifacts/upgrade-discovery-profiles/aws"
+    )
+  else
+    disc_args+=(--discovery-root "$DISCOVERY_ROOT")
+  fi
   set +e
   python3 "$py" \
-    --discovery-root "$DISCOVERY_ROOT" \
+    "${disc_args[@]}" \
     --seed-root "$FULL_MIRROR_SEED_ROOT" \
     --pocket-index-root "$pocket_root" \
     --output-dir "${DISCOVERY_ROOT}/analysis" \

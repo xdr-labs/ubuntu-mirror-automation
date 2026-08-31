@@ -28,6 +28,7 @@ TEST_LIST=(
   test_offline_mirror.sh
   test_upgrade_profile.py
   test_selective_mirror.py
+  test_aws_selective_mirror_union.py
   test_selective_orchestration_lock.sh
   test_selective_runtime_migration.py
   test_sync_by_hash.py

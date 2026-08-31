@@ -56,6 +56,12 @@ config/client-signing/private.gpg
 **/client-signing/private.gpg
 
 artifacts/upgrade-discovery/
+# Multi-profile discovery: commit lightweight manifests only (never deb-cache/payloads)
+artifacts/upgrade-discovery-profiles/**/runtime/
+artifacts/upgrade-discovery-profiles/**/deb-cache/
+artifacts/upgrade-discovery-profiles/**/payload/
+artifacts/upgrade-discovery-profiles/**/*.deb
+aws-upgrade-discovery-*.tar.gz
 artifacts/recovery/
 artifacts/logs/
 artifacts/client/nginx-deploy/

@@ -1,0 +1,14 @@
+VALIDATION: PASS
+hop=bionic-to-focal
+from_os=18.04
+to_os=20.04
+required_packages=1053
+resolved_packages=1053
+unresolved_packages=0
+required_files=1107
+resolved_files=1107
+unresolved_files=0
+failed_requests=0
+captured_http_200=830
+captured_bytes=484774711
+failures: none

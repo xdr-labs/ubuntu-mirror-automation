@@ -74,6 +74,24 @@ except ImportError:  # pragma: no cover
         resolve_target_suite,
         allowed_target_suites,
     )
+try:
+    from discovery_profiles import (  # noqa: E402
+        aws_kernel_package_name,
+        is_allowed_host,
+        load_merged_hops,
+        normalize_discovery_url,
+        normalize_mirror_host,
+        parse_discovery_root_args,
+    )
+except ImportError:  # pragma: no cover
+    from scripts.lib.discovery_profiles import (  # type: ignore
+        aws_kernel_package_name,
+        is_allowed_host,
+        load_merged_hops,
+        normalize_discovery_url,
+        normalize_mirror_host,
+        parse_discovery_root_args,
+    )
 
 
 def eprint(*args, **kwargs):
@@ -131,21 +149,8 @@ def write_json(path, data):
 
 
 def normalize_url(url):
-    if not url:
-        return ''
-    parsed = urlparse(url.strip())
-    scheme = (parsed.scheme or 'http').lower()
-    host = (parsed.hostname or '').lower()
-    if host.startswith('www.'):
-        host = host[4:]
-    netloc = host
-    if parsed.port:
-        netloc = '%s:%d' % (host, parsed.port)
-    path = unquote(parsed.path or '')
-    # collapse duplicate slashes in path except leading
-    while '//' in path:
-        path = path.replace('//', '/')
-    return urlunparse((scheme, netloc, path, '', '', ''))
+    # Prefer discovery_profiles normalizer (EC2 regional → archive.ubuntu.com).
+    return normalize_discovery_url(url)
 
 
 def hop_series(hop):
@@ -415,27 +420,27 @@ def verify_seed_file(path, expected_sha256, expected_size, verify_checksum=False
         return False
 
 
-def load_hop(discovery_root, hop):
-    hop_dir = os.path.join(discovery_root, hop)
-    if not os.path.isdir(hop_dir):
-        raise IOError('missing hop directory: %s' % hop_dir)
-    packages = read_tsv(os.path.join(hop_dir, 'required-packages.tsv'))
-    files = read_tsv(os.path.join(hop_dir, 'required-files.tsv'))
-    urls = read_tsv(os.path.join(hop_dir, 'required-urls.tsv'))
-    unresolved_packages = read_tsv(os.path.join(hop_dir, 'unresolved-packages.tsv'))
-    unresolved_files = read_tsv(os.path.join(hop_dir, 'unresolved-files.tsv'))
-    # strip header-only empty unresolved tables
-    unresolved_packages = [r for r in unresolved_packages if any(r.values())]
-    unresolved_files = [r for r in unresolved_files if any(r.values())]
-    return {
-        'hop': hop,
-        'dir': hop_dir,
-        'packages': packages,
-        'files': files,
-        'urls': urls,
-        'unresolved_packages': unresolved_packages,
-        'unresolved_files': unresolved_files,
-    }
+def load_hop(discovery_root, hop, profile='generic'):
+    """Backward-compatible single-root hop loader (adds profile provenance)."""
+    from discovery_profiles import load_hop_from_root
+    return load_hop_from_root(discovery_root, hop, profile=profile)
+
+
+def _coerce_discovery_roots(discovery_root, discovery_roots=None):
+    """Accept legacy single path or multi-profile OrderedDict/list."""
+    if discovery_roots:
+        if isinstance(discovery_roots, dict):
+            return OrderedDict(
+                (k, os.path.abspath(v)) for k, v in discovery_roots.items()
+            )
+        return parse_discovery_root_args(list(discovery_roots))
+    if isinstance(discovery_root, dict):
+        return OrderedDict(
+            (k, os.path.abspath(v)) for k, v in discovery_root.items()
+        )
+    if not discovery_root:
+        raise ValueError('discovery_root required')
+    return OrderedDict([('generic', os.path.abspath(discovery_root))])
 
 
 def index_files_by_filename(files):
@@ -464,15 +469,15 @@ def suites_from_urls(url_rows):
 
 def build_plan(discovery_root, seed_root, profile_name='offline-upgrade-selective',
                verify_seed_checksums=False, resolve_missing_pool_paths=True,
-               pocket_index_root=''):
+               pocket_index_root='', discovery_roots=None):
     errors = []
     warnings = []
-    hops_data = []
-    for hop in HOPS:
-        try:
-            hops_data.append(load_hop(discovery_root, hop))
-        except IOError as exc:
-            errors.append(str(exc))
+    roots = _coerce_discovery_roots(discovery_root, discovery_roots=discovery_roots)
+    try:
+        hops_data = load_merged_hops(roots)
+    except (IOError, ValueError) as exc:
+        errors.append(str(exc))
+        hops_data = []
 
     if len(hops_data) != 4:
         errors.append('expected 4 hops, found %d' % len(hops_data))
@@ -490,6 +495,7 @@ def build_plan(discovery_root, seed_root, profile_name='offline-upgrade-selectiv
     unresolved_target_pockets = []
     component_conflicts = []
     pool_probe_cache = {}  # (source, filename, size) -> (rel, component, url)
+    aws_kernel_packages = []
 
     # Cross-hop join: prefer real discovery pool URLs over synthesized paths.
     url_by_sha, url_by_filename = build_discovery_url_indexes(hops_data)
@@ -645,10 +651,21 @@ def build_plan(discovery_root, seed_root, profile_name='offline-upgrade-selectiv
                 errors.append('unsupported architecture %s for %s/%s' % (arch, hop, pkg))
                 continue
 
-            host = urlparse(url).hostname or ''
-            if url and host and host not in ALLOWED_HOSTS:
+            host = normalize_mirror_host(urlparse(url).hostname or '')
+            if url and host and not is_allowed_host(host):
                 unsupported_urls.append(url)
                 continue
+
+            if aws_kernel_package_name(pkg):
+                aws_kernel_packages.append(OrderedDict([
+                    ('hop', hop),
+                    ('package', pkg),
+                    ('version', ver),
+                    ('architecture', arch),
+                    ('sha256', sha),
+                    ('profile', prow.get('profile') or ''),
+                    ('provenance', prow.get('provenance') or ''),
+                ]))
 
             suite = ''
             pocket = ''
@@ -784,6 +801,9 @@ def build_plan(discovery_root, seed_root, profile_name='offline-upgrade-selectiv
                 ('original_url', rec.get('original_url') or url),
                 ('acquisition_source', rec['acquisition_source']),
                 ('seed_local_path', rec.get('seed_local_path', '')),
+                ('profile', prow.get('profile') or ''),
+                ('provenance', prow.get('provenance') or ('profile=%s' % (
+                    prow.get('_profile') or 'generic'))),
             ]))
 
         # files / urls manifests (normalized)
@@ -804,6 +824,8 @@ def build_plan(discovery_root, seed_root, profile_name='offline-upgrade-selectiv
                 ('size_bytes', size_bytes),
                 ('sha256', (frow.get('sha256') or '').lower()),
                 ('url_class', utype),
+                ('profile', frow.get('profile') or ''),
+                ('provenance', frow.get('provenance') or ''),
             ]))
             if utype in ('release_upgrader_tarball', 'release_upgrader_gpg') or (
                 frow.get('file_type') == 'release_upgrader'
@@ -825,8 +847,8 @@ def build_plan(discovery_root, seed_root, profile_name='offline-upgrade-selectiv
                 unresolved_urls.append(OrderedDict([
                     ('hop', hop), ('url', ''), ('reason', 'empty_url')
                 ]))
-            host = urlparse(url).hostname or ''
-            if url and host and host not in ALLOWED_HOSTS and utype != 'by_hash':
+            host = normalize_mirror_host(urlparse(url).hostname or '')
+            if url and host and not is_allowed_host(host) and utype != 'by_hash':
                 # by-hash ignored for selective; other hosts unsupported
                 if utype not in ('by_hash', 'repository_metadata'):
                     unsupported_urls.append(url)
@@ -845,6 +867,8 @@ def build_plan(discovery_root, seed_root, profile_name='offline-upgrade-selectiv
                     'pool_deb', 'release_upgrader_tarball', 'release_upgrader_gpg',
                     'meta_release',
                 )),
+                ('profile', urow.get('profile') or ''),
+                ('provenance', urow.get('provenance') or ''),
             ]))
 
         hop_data['suites'] = hop_suites
@@ -906,10 +930,12 @@ def build_plan(discovery_root, seed_root, profile_name='offline-upgrade-selectiv
     # unsupported after filtering ignored
     real_unsupported = []
     for u in unsupported_urls:
-        if classify_url(u) not in ignored_classes and classify_url(u) != 'pool_deb':
-            # pool_deb on allowed hosts shouldn't be here; keep others
-            if urlparse(u).hostname not in ALLOWED_HOSTS:
-                real_unsupported.append(u)
+        utype = classify_url(u)
+        if utype in ignored_classes or utype == 'pool_deb':
+            continue
+        host = normalize_mirror_host(urlparse(u).hostname or '')
+        if not is_allowed_host(host):
+            real_unsupported.append(u)
     if real_unsupported:
         errors.append('unsupported URLs: %d' % len(real_unsupported))
     if len(seen_up_sha) < 8:
@@ -928,6 +954,7 @@ def build_plan(discovery_root, seed_root, profile_name='offline-upgrade-selectiv
             ('from_series', hop_data['from_series']),
             ('to_series', hop_data['to_series']),
             ('suites', hop_data['suites']),
+            ('profiles', hop_data.get('profiles') or []),
             ('package_rows', len(hop_data['packages'])),
             ('file_rows', len(hop_data['files'])),
             ('url_rows', len(hop_data['urls'])),
@@ -937,25 +964,31 @@ def build_plan(discovery_root, seed_root, profile_name='offline-upgrade-selectiv
             ('unresolved_files', len(hop_data['unresolved_files'])),
         ])
 
-    # discovery artifact checksum (manifest files only)
+    # discovery artifact checksum (manifest files only) across all profiles
     checksum_paths = []
-    for hop in HOPS:
-        for name in (
-            'required-packages.tsv', 'required-files.tsv', 'required-urls.tsv',
-            'export-summary.json', 'checksums.sha256',
-        ):
-            p = os.path.join(discovery_root, hop, name)
-            if os.path.isfile(p):
-                checksum_paths.append(p)
+    for profile, root in roots.items():
+        for hop in HOPS:
+            for name in (
+                'required-packages.tsv', 'required-files.tsv', 'required-urls.tsv',
+                'export-summary.json', 'checksums.sha256', 'validation.txt',
+                'evidence.json',
+            ):
+                p = os.path.join(root, hop, name)
+                if os.path.isfile(p):
+                    checksum_paths.append('%s:%s' % (profile, p))
     checksum_paths.sort()
     h = hashlib.sha256()
-    for p in checksum_paths:
+    for labeled in checksum_paths:
+        profile, p = labeled.split(':', 1)
+        h.update(profile.encode('utf-8'))
+        h.update(b'\0')
         h.update(p.encode('utf-8'))
         h.update(b'\0')
         h.update(file_sha256(p).encode('utf-8'))
         h.update(b'\0')
     discovery_checksum = h.hexdigest()
 
+    primary_root = next(iter(roots.values()))
     plan = OrderedDict([
         ('schema_version', 1),
         ('profile_name', profile_name),
@@ -963,7 +996,11 @@ def build_plan(discovery_root, seed_root, profile_name='offline-upgrade-selectiv
         ('repository_layout', 'hop_separated_source_target_suites'),
         ('metadata_generator', 'apt-ftparchive'),
         ('generated_at', iso_now()),
-        ('discovery_root', os.path.abspath(discovery_root)),
+        ('discovery_root', os.path.abspath(primary_root)),
+        ('discovery_roots', OrderedDict(
+            (k, os.path.abspath(v)) for k, v in roots.items()
+        )),
+        ('discovery_profiles', list(roots.keys())),
         ('full_mirror_seed_root', os.path.abspath(seed_root) if seed_root else ''),
         ('discovery_artifact_checksum', discovery_checksum),
         ('validation_result', validation),
@@ -990,7 +1027,9 @@ def build_plan(discovery_root, seed_root, profile_name='offline-upgrade-selectiv
             ('unsupported_urls', len(real_unsupported)),
             ('upgrader_artifacts', len(seen_up_sha)),
             ('meta_release_required', True),
+            ('aws_kernel_package_rows', len(aws_kernel_packages)),
         ])),
+        ('aws_kernel_packages_sample', aws_kernel_packages[:40]),
         ('target_pocket_provenance', count_packages_by_pocket(package_rows_out, 'bionic')),
         ('unresolved_target_pocket_rows', unresolved_target_pockets[:50]),
         ('sizes', OrderedDict([
@@ -1026,15 +1065,18 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         '--discovery-root',
-        default=os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            'artifacts', 'upgrade-discovery',
+        action='append',
+        default=None,
+        help=(
+            'Discovery root. Repeatable. Forms: PATH (profile=generic) or '
+            'profile=/path (e.g. aws=/path/to/aws-discovery). '
+            'Multiple roots are unioned with SHA256/URL/pool-path dedup.'
         ),
     )
     parser.add_argument(
         '--output-dir',
         default='',
-        help='defaults to <discovery-root>/analysis',
+        help='defaults to <first-discovery-root>/analysis',
     )
     parser.add_argument(
         '--seed-root',
@@ -1057,14 +1099,22 @@ def main(argv=None):
     )
     args = parser.parse_args(argv)
 
-    out_dir = args.output_dir or os.path.join(args.discovery_root, 'analysis')
+    default_root = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        'artifacts', 'upgrade-discovery',
+    )
+    root_args = args.discovery_root or [default_root]
+    roots = parse_discovery_root_args(root_args)
+    primary_root = next(iter(roots.values()))
+    out_dir = args.output_dir or os.path.join(primary_root, 'analysis')
     seed_root = '' if args.skip_seed_probe else args.seed_root
 
     plan, packages, files, urls = build_plan(
-        args.discovery_root, seed_root, profile_name=args.profile_name,
+        primary_root, seed_root, profile_name=args.profile_name,
         verify_seed_checksums=args.verify_seed_checksums,
         resolve_missing_pool_paths=not args.no_resolve_missing_pool_paths,
         pocket_index_root=args.pocket_index_root,
+        discovery_roots=roots,
     )
 
     plan_path = os.path.join(out_dir, 'selective-mirror-plan.json')
@@ -1076,6 +1126,7 @@ def main(argv=None):
             'hop', 'package', 'version', 'architecture', 'component', 'suite',
             'pocket', 'filename', 'relative_pool_path', 'size_bytes', 'sha256',
             'original_url', 'acquisition_source', 'seed_local_path',
+            'profile', 'provenance',
         ],
         packages,
     )
@@ -1083,7 +1134,7 @@ def main(argv=None):
         os.path.join(out_dir, 'selective-mirror-files.tsv'),
         [
             'hop', 'file_type', 'filename', 'original_url', 'size_bytes',
-            'sha256', 'url_class',
+            'sha256', 'url_class', 'profile', 'provenance',
         ],
         files,
     )
@@ -1091,15 +1142,17 @@ def main(argv=None):
         os.path.join(out_dir, 'selective-mirror-urls.tsv'),
         [
             'hop', 'original_url', 'http_status', 'size_bytes', 'sha256',
-            'url_class', 'include_in_selective',
+            'url_class', 'include_in_selective', 'profile', 'provenance',
         ],
         urls,
     )
 
     print('validation_result=%s' % plan['validation_result'])
+    print('discovery_profiles=%s' % ','.join(plan.get('discovery_profiles') or []))
     print('unique_deb_sha256=%d' % plan['counts']['unique_deb_sha256'])
     print('unique_urls=%d' % plan['counts']['unique_urls_normalized'])
     print('package_version_conflicts=%d' % plan['counts']['package_version_conflicts'])
+    print('aws_kernel_package_rows=%d' % plan['counts'].get('aws_kernel_package_rows', 0))
     print('reusable_from_seed_bytes=%d' % plan['sizes']['reusable_from_seed_bytes'])
     print('download_bytes=%d' % plan['sizes']['download_bytes'])
     print('selective_mirror_estimate_bytes=%d' % plan['sizes']['selective_mirror_estimate_bytes'])

@@ -98,6 +98,7 @@ VERSION_ID="20.04"
 VERSION_CODENAME=focal
 PRETTY_NAME="Ubuntu 22.04.5 LTS"
 EOF
+  printf 'root:x:0:0:root:/root:/bin/bash\naella:x:1000:1000:aella:/home/aella:/bin/bash\n' >"$root/etc/passwd"
 }
 
 # Realistic release-metadata (comment + timestamp) must never become DP version
@@ -594,7 +595,7 @@ make_dp_fixture "$fx2"
 mkdir -p "$fx2/etc/apt/sources.list.d" "$fx2/etc/apt/keyrings" "$fx2/etc/systemd/system" \
   "$fx2/usr/local/sbin" "$fx2/boot" "$fx2/opt/aelladata/work" "$fx2/tmp"
 printf 'deb http://archive.ubuntu.com/ubuntu jammy main\n' >"$fx2/etc/apt/sources.list"
-printf 'root:x:0:0:root:/root:/usr/bin/aella_cli\n' >"$fx2/etc/passwd"
+printf 'root:x:0:0:root:/root:/bin/bash\naella:x:1000:1000:aella:/home/aella:/bin/bash\n' >"$fx2/etc/passwd"
 printf '%s\n' "$REAL_META" >"$fx2/opt/aelladata/release-metadata.yml"
 # Uninstalled DP image: no aella.role / da_conf / containers; runtime installed=false
 cat >"$fx2/opt/aelladata/work/runtime_config.json" <<'EOF'
@@ -628,6 +629,21 @@ if grep -q 'Type the confirmation phrase' "$fx2/out.txt"; then
 else
   pass "preflight-only: no confirmation / no reboot path"
 fi
+
+# aella_cli login shell → AELLA_BASH_HARD_GATE fails closed
+rm -rf "$fx2/opt/aelladata/os-upgrade"
+printf 'root:x:0:0:root:/root:/bin/bash\naella:x:1000:1000:aella:/home/aella:/usr/bin/aella_cli\n' >"$fx2/etc/passwd"
+rc="$(run_preflight_fixture "$fx2")"
+if [[ "$rc" -ne 0 ]] \
+   && grep -q 'AELLA_BASH_HARD_GATE=FAIL' "$fx2/out.txt" \
+   && grep -q 'FAIL_AELLA_SHELL_NOT_BASH' "$fx2/out.txt" \
+   && grep -q 'chsh -s /bin/bash aella' "$fx2/out.txt"; then
+  pass "aella_cli shell: preflight hard-gated"
+else
+  fail "aella_cli shell: preflight hard-gated"
+  tail -30 "$fx2/out.txt" || true
+fi
+printf 'root:x:0:0:root:/root:/bin/bash\naella:x:1000:1000:aella:/home/aella:/bin/bash\n' >"$fx2/etc/passwd"
 
 # Empty DataProcessor()> prompt → topology SKIPPED, continue
 rm -rf "$fx2/opt/aelladata/os-upgrade"
@@ -1712,7 +1728,7 @@ aella-cm-bg: 6.2.0.1-aaaaaaaa
 aella-cm-master: 6.2.0.1-aaaaaaaa
 EOF
   rm -rf "$fake/etc/passwd"
-  printf 'root:x:0:0:root:/root:/usr/bin/aella_cli\naella:x:1000:1000:aella:/home/aella:/usr/bin/aella_cli\n' \
+  printf 'root:x:0:0:root:/root:/bin/bash\naella:x:1000:1000:aella:/home/aella:/bin/bash\n' \
     >"$fake/etc/passwd"
   printf 'deb http://archive.ubuntu.com/ubuntu jammy main\n' >"$fake/etc/apt/sources.list"
   printf 'deb http://ppa.launchpad.net/example/ppa/ubuntu focal main\n' \
@@ -2070,6 +2086,7 @@ NAME="Ubuntu"
 VERSION_ID="20.04"
 VERSION_CODENAME=focal
 EOF
+printf 'root:x:0:0:root:/root:/bin/bash\naella:x:1000:1000:aella:/home/aella:/bin/bash\n' >"$fx_fail/etc/passwd"
 printf 'FAILED\n' >"$fx_fail/opt/aelladata/os-upgrade/offline/state"
 set +e
 DP_OFFLINE_TEST_ROOT="$fx_fail" bash "$STUB_FAIL" --mirror-base http://127.0.0.1:9 --preflight-only >"$fx_fail/out.txt" 2>&1
@@ -2132,6 +2149,7 @@ NAME="Ubuntu"
 VERSION_ID="20.04"
 VERSION_CODENAME=focal
 EOF
+printf 'root:x:0:0:root:/root:/bin/bash\naella:x:1000:1000:aella:/home/aella:/bin/bash\n' >"$fx_mix/etc/passwd"
 : >"$fx_mix/opt/aelladata/os-upgrade/offline/force-partial-transition"
 set +e
 DP_OFFLINE_TEST_ROOT="$fx_mix" bash "$STUB_FAIL" --mirror-base http://127.0.0.1:9 --preflight-only >"$fx_mix/out.txt" 2>&1
@@ -4873,6 +4891,7 @@ VERSION_ID="20.04"
 VERSION_CODENAME=focal
 UBUNTU_CODENAME=focal
 EOF
+  printf 'root:x:0:0:root:/root:/bin/bash\naella:x:1000:1000:aella:/home/aella:/bin/bash\n' >"$root/etc/passwd"
   printf 'false\n' >"$root/opt/aelladata/os-upgrade/offline/critical-holds/release_upgrade_package_transition_started"
   printf 'false\n' >"$root/opt/aelladata/os-upgrade/offline/critical-holds/release_upgrade_started"
   : >"$root/var/log/aella/offline_os_upgrade.log"
@@ -5163,6 +5182,7 @@ NAME="Ubuntu"
 VERSION_ID="20.04"
 VERSION_CODENAME=focal
 EOF
+printf 'root:x:0:0:root:/root:/bin/bash\naella:x:1000:1000:aella:/home/aella:/bin/bash\n' >"$hop_k/etc/passwd"
   printf 'COMPLETED_FOCAL\n' >"$hop_k/opt/aelladata/os-upgrade/offline/state"
   set +e
   DP_OFFLINE_TEST_ROOT="$hop_k" bash "$B2F_STUB" --mirror-base http://127.0.0.1:9 --preflight-only >"$hop_k/out.txt" 2>&1
@@ -7426,7 +7446,7 @@ mkdir -p "$hop_ops/etc/apt/sources.list.d" "$hop_ops/etc/apt/keyrings" \
   "$hop_ops/opt/aelladata/work" "$hop_ops/tmp" "$hop_ops/etc/passwd.d" \
   "$hop_ops/etc/update-manager/release-upgrades.d"
 printf 'deb http://127.0.0.1:9/ubuntu focal main universe\n' >"$hop_ops/etc/apt/sources.list"
-printf 'root:x:0:0:root:/root:/bin/bash\n' >"$hop_ops/etc/passwd"
+printf 'root:x:0:0:root:/root:/bin/bash\naella:x:1000:1000:aella:/home/aella:/bin/bash\n' >"$hop_ops/etc/passwd"
 printf '%s\n' "$REAL_META" >"$hop_ops/opt/aelladata/release-metadata.yml"
 printf 'image: synthetic\n' >"$hop_ops/opt/aelladata/release-image.yml"
 cat >"$hop_ops/opt/aelladata/work/runtime_config.json" <<'EOF'
@@ -7817,7 +7837,7 @@ mkdir -p "$hop_tr/etc/apt/sources.list.d" "$hop_tr/etc/apt/keyrings" \
   "$hop_tr/opt/aelladata/work" "$hop_tr/tmp" \
   "$hop_tr/etc/update-manager/release-upgrades.d"
 printf 'deb http://127.0.0.1:9/ubuntu focal main universe\n' >"$hop_tr/etc/apt/sources.list"
-printf 'root:x:0:0:root:/root:/bin/bash\n' >"$hop_tr/etc/passwd"
+printf 'root:x:0:0:root:/root:/bin/bash\naella:x:1000:1000:aella:/home/aella:/bin/bash\n' >"$hop_tr/etc/passwd"
 printf '%s\n' "$REAL_META" >"$hop_tr/opt/aelladata/release-metadata.yml"
 printf 'image: synthetic\n' >"$hop_tr/opt/aelladata/release-image.yml"
 cat >"$hop_tr/opt/aelladata/work/runtime_config.json" <<'EOF'
@@ -8152,7 +8172,7 @@ mkdir -p "$hop_e6/etc/apt/sources.list.d" "$hop_e6/etc/apt/keyrings" \
   "$hop_e6/opt/aelladata/work" "$hop_e6/tmp" "$hop_e6/etc/passwd.d" \
   "$hop_e6/etc/update-manager/release-upgrades.d"
 printf 'deb http://127.0.0.1:9/ubuntu focal main universe\n' >"$hop_e6/etc/apt/sources.list"
-printf 'root:x:0:0:root:/root:/bin/bash\n' >"$hop_e6/etc/passwd"
+printf 'root:x:0:0:root:/root:/bin/bash\naella:x:1000:1000:aella:/home/aella:/bin/bash\n' >"$hop_e6/etc/passwd"
 printf '%s\n' "$REAL_META" >"$hop_e6/opt/aelladata/release-metadata.yml"
 printf 'image: synthetic\n' >"$hop_e6/opt/aelladata/release-image.yml"
 cat >"$hop_e6/opt/aelladata/work/runtime_config.json" <<'EOF'

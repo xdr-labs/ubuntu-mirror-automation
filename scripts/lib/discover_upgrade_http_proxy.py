@@ -290,6 +290,75 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
         clen = content_length_of(resp_headers)
         try:
+            # HTTP 304 / HEAD: discovery needs a stored body for mutable metadata
+            # (esp. InRelease). On 304 with no prior capture, re-fetch once with
+            # an unconditional GET and capture that body, while still answering
+            # the client.
+            if status == 304 and method == 'GET':
+                stored_path, _meta, _key = object_paths(RECORDER.cache_dir, original)
+                if not os.path.isfile(stored_path):
+                    # Close the 304 response and retry upstream unconditionally.
+                    try:
+                        resp.read()
+                    except Exception:
+                        pass
+                    try:
+                        resp.close()
+                    except Exception:
+                        pass
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                    # Rebuild request without conditional validators (already
+                    # stripped in _open_final) — force a fresh GET.
+                    result = self._open_final('GET', url, b'')
+                    final_url, status, resp_headers, resp, conn, redirects2 = result
+                    for _src, dst, st in redirects2:
+                        RECORDER.log_redirect(_src, dst, st)
+                    clen = content_length_of(resp_headers)
+                    if status == 200:
+                        sha, local_path, size = self._stream_and_capture(
+                            resp, status, resp_headers, clen, method,
+                            storage_url=original,
+                            meta={
+                                'original_url': original,
+                                'final_url': final_url,
+                                'redirect_chain': redirect_chain,
+                                'http_status': status,
+                                'content_length': clen,
+                                'recovered_from_http_304': True,
+                            })
+                        RECORDER.log_request(
+                            method, original, final_url, status, size,
+                            sha256=sha, local_path=local_path,
+                            redirect_chain=redirect_chain if len(redirect_chain) > 1 else None,
+                            content_length=clen if clen is not None else size)
+                        return
+                    # Fall through: relay non-200 / still-304 without capture.
+                else:
+                    # Prior body exists — treat as success using stored object.
+                    try:
+                        size = os.path.getsize(stored_path)
+                    except OSError:
+                        size = 0
+                    self._send_headers_only(200, resp_headers, size)
+                    try:
+                        with open(stored_path, 'rb') as fh:
+                            while True:
+                                chunk = fh.read(65536)
+                                if not chunk:
+                                    break
+                                self.wfile.write(chunk)
+                    except Exception:
+                        pass
+                    RECORDER.log_request(
+                        method, original, final_url, 200, size,
+                        local_path=stored_path,
+                        redirect_chain=redirect_chain if len(redirect_chain) > 1 else None,
+                        content_length=size)
+                    return
+
             if method == 'HEAD' or status == 304:
                 self._send_headers_only(status, resp_headers, clen)
                 RECORDER.log_request(
@@ -460,8 +529,18 @@ class ProxyHandler(BaseHTTPRequestHandler):
             if parsed.query:
                 path += '?' + parsed.query
             headers = {k: v for k, v in self.headers.items()
-                       if k.lower() not in ('proxy-connection', 'host')}
+                       if k.lower() not in (
+                           'proxy-connection', 'host',
+                           # Discovery must capture durable bodies. Conditional
+                           # validators cause upstream HTTP 304 with no body and
+                           # force a later repair-hop; strip them on the normal path.
+                           'if-none-match', 'if-modified-since', 'if-range',
+                       )}
             headers['Host'] = parsed.netloc
+            # Prefer a cache-busting identity encoding so mutable metadata
+            # (InRelease) is always returned with a body.
+            headers.setdefault('Cache-Control', 'no-cache')
+            headers.setdefault('Pragma', 'no-cache')
             try:
                 conn.request(
                     method, path,

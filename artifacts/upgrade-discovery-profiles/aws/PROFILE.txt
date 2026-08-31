@@ -1,0 +1,5 @@
+profile=aws
+source=aws-upgrade-discovery-20260831
+sha256=02129368f17df1b8e38f2b67a062c57c1e228cf5fa5176d2967c5b4efbabaf5d
+artifacts=aws-discovery-xenial-bionic-retry2-20260831,aws-discovery-bionic-focal-retry-20260831,aws-discovery-focal-jammy-retry-20260831,aws-discovery-jammy-noble-retry-20260831
+note=Authoritative AWS EC2 DP discovery evidence (FINAL PASS). Do not export-hop over generic.

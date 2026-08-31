@@ -2444,12 +2444,15 @@ def _load_dpkg_owned_paths(info_dir, roots, progress_cb=None):
 
 
 def collect_file_manifest(output_path, roots, host_root='', hash_max_bytes=262144,
-                          max_entries=8000, dpkg_info_dir='/var/lib/dpkg/info'):
+                          max_entries=200000, dpkg_info_dir='/var/lib/dpkg/info'):
     """Fast file inventory for discovery before/after snapshots.
 
     Avoids per-file ``dpkg-query -S`` (multi-hour on real systems).
     Returns 0 on success, 1 on failure. Never leaves a partial success unmarked:
     callers must treat nonzero as inventory failure.
+
+    ``max_entries`` defaults high enough for /opt/aelladata inventories.
+    Pass max_entries=0 for unlimited (no truncation).
     """
     try:
         # dpkg *.list entries are host-absolute (/etc/...). Keep logical roots for
@@ -2519,7 +2522,7 @@ def collect_file_manifest(output_path, roots, host_root='', hash_max_bytes=26214
             return 'unknown'
 
         def emit(out, path):
-            if seen[0] >= max_entries:
+            if max_entries > 0 and seen[0] >= max_entries:
                 return False
             try:
                 st = os.lstat(path)
@@ -2572,7 +2575,7 @@ def collect_file_manifest(output_path, roots, host_root='', hash_max_bytes=26214
             seen[0] += 1
             if seen[0] % 500 == 0:
                 log('entries=%s hashed=%s' % (seen[0], hashed[0]))
-            return seen[0] < max_entries
+            return True if max_entries <= 0 else seen[0] < max_entries
 
         with _open_text_surrogateescape(output_path, 'w') as out:
             out.write('path\ttype\tsize\towner\tgroup\tmode\tmtime\tsha256\thash_skip_reason\tfile_origin\n')
@@ -2600,9 +2603,9 @@ def collect_file_manifest(output_path, roots, host_root='', hash_max_bytes=26214
                     for name in filenames:
                         if not emit(out, os.path.join(dirpath, name)):
                             break
-                    if seen[0] >= max_entries:
+                    if max_entries > 0 and seen[0] >= max_entries:
                         break
-                if seen[0] >= max_entries:
+                if max_entries > 0 and seen[0] >= max_entries:
                     log('reached max_entries=%s; truncating further roots' % max_entries)
                     break
 
@@ -2687,7 +2690,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument('--output', required=True)
     s.add_argument('--host-root', default='')
     s.add_argument('--hash-max-bytes', default='262144')
-    s.add_argument('--max-entries', default='8000')
+    s.add_argument('--max-entries', default='200000',
+                   help='Max inventory rows (0 = unlimited). Default raised to avoid '
+                        'truncating /opt/aelladata on production DPs.')
     s.add_argument('--dpkg-info-dir', default='/var/lib/dpkg/info')
     s.add_argument('roots', nargs='*')
     s.set_defaults(func=cmd_collect_file_manifest)

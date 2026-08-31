@@ -1,0 +1,29 @@
+{
+  "hop": "xenial-to-bionic",
+  "generated_at": "2026-08-31T11:30:48Z",
+  "required_packages": 969,
+  "resolved_packages": 969,
+  "unresolved_packages": 0,
+  "required_files": 1007,
+  "resolved_files": 1007,
+  "unresolved_files": 0,
+  "required_urls": 764,
+  "failed_requests": 0,
+  "historical_non_required_failures": 0,
+  "historical_non_required_failure_reasons": {},
+  "captured_http_200": 764,
+  "captured_bytes": 488983798,
+  "packages_added": 151,
+  "packages_upgraded": 528,
+  "packages_removed": 3,
+  "downloaded_not_installed": 7,
+  "recovered_post_hop": true,
+  "checksum_source": "post_hop_download",
+  "repair_notes": {
+    "recovered_count": 4,
+    "failed_count": 0,
+    "targets": 4,
+    "exact_original_capture": false,
+    "mutable_metadata_warning": true
+  }
+}
