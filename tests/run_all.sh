@@ -63,6 +63,11 @@ TEST_LIST=(
   test_dp_phase2_process_detect.sh
   test_dp_upgrade_mirror_manager.sh
   test_gui_client_commands.sh
+  test_config_clear_and_scoped_invalidation.sh
+  test_source_product_version.sh
+  test_native_noble_source_resolution.sh
+  test_phase2_wrapper_source_override.sh
+  test_workflow_negative_contracts.sh
   test_bringup_worker_password.sh
   test_bringup_acps_sha_policy.sh
   test_patch_dp_phase2_bringup.py
@@ -208,10 +213,12 @@ run_one() {
   # Drop stale fixture env so handoff/runner matching and monitor policy stay isolated.
   if [[ "$t" == *.py ]]; then
     env -u STELLAR_OFFLINE_TEST_ROOT -u DP_OFFLINE_TEST_HANDOFF -u DETACH_AFTER_HANDOFF \
+      -u SKIP_MIRROR_HOST_VALIDATE \
       timeout --signal=TERM --kill-after=30s "$timeout_secs" python3 "$t"
     rc=$?
   else
     env -u STELLAR_OFFLINE_TEST_ROOT -u DP_OFFLINE_TEST_HANDOFF -u DETACH_AFTER_HANDOFF \
+      -u SKIP_MIRROR_HOST_VALIDATE \
       timeout --signal=TERM --kill-after=30s "$timeout_secs" bash "$t"
     rc=$?
   fi
