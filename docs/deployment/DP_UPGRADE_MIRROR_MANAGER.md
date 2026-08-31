@@ -82,13 +82,20 @@ There is no install-mode menu, no local OS Core path picker, no R2/ACPS URL edit
 
 ## Configuration
 
-GUI fields only:
+GUI fields:
 
 - Preparation Mode (`FULL` or `PHASE2_ONLY`)
-- ACPS Username
-- ACPS Password
+- Mirror Server IP
+- ACPS Username / Password
+- DL Worker IP addresses / DA Worker IP addresses
+- Worker SSH Password (aella) — required when any worker IP is set
 - Test ACPS Connection
 - Save Configuration
+
+Save is an **authoritative full save**: clearing a field and saving persists
+empty (workers/`WORKER_SSH_PASSWORD` do not resurrect from disk). Internal
+URL-only persistence uses a separate merge save so unrelated credentials are
+not wiped.
 
 Exact Configuration footer:
 
@@ -103,6 +110,25 @@ If the DP is already running Ubuntu 24.04, select Phase 2 Only.
 Phase 2 Target is the fixed constant `PHASE2_TARGET_VERSION=6.6.0`.
 It is not user-editable. Starting DP Version is auto-detected on the DP.
 Mirror Server stores one Phase 2 bundle under `/dp-phase2/6.6.0/` only.
+
+### Configuration change impact
+
+Invalidation is dependency-scoped (not “any save resets everything”):
+
+| Change | Earliest demotion | Preserved | Next action |
+| --- | --- | --- | --- |
+| No semantic change | none | everything | none |
+| Worker IPs / worker password only | commands | artifacts, client set, HTTP, readiness | Menu 7 regenerate |
+| ACPS username/password only | ACPS auth status | verified artifacts + readiness | re-test ACPS if acquisition needed |
+| Mirror Server IP / HTTP URL | PREPARED (client/HTTP/readiness) | downloaded OS/Phase2 content | rebuild/republish clients |
+| Preparation Mode FULL ↔ PHASE2_ONLY | CONFIGURED | on-disk cache files | Download and Prepare |
+
+Semantic readiness identity uses content hashes, not config file inode/mtime.
+A no-op Save after an identical rewrite does not force Download and Prepare.
+
+Single/AIO (no worker IPs) bringup commands omit `--worker-ips` and
+`--worker-password`. Cluster commands attach only the relevant DL or DA worker
+list with a safely shell-quoted password (never logged).
 
 Read-only:
 
@@ -121,6 +147,11 @@ Decision matrix:
 | 6.5.0 | 16.04 | Phase 1 + Phase 2 | DP 6.6.0 / Ubuntu 24.04 |
 | 6.6.0 | 24.04 healthy | No action | DP 6.6.0 / Ubuntu 24.04 |
 | 6.6.0 | 24.04 recovery state | Gated same-version recovery | DP 6.6.0 / Ubuntu 24.04 |
+
+Native Ubuntu 24.04 DPs (Phase 2 Only) resolve source product version from live
+`aella_cli` when Phase 1 evidence is absent. Post-Phase1 hosts keep the
+immutable evidence / fail-closed recovery model and do not trust live CLI over
+persisted Phase 1 records.
 
 ## Download and Prepare
 

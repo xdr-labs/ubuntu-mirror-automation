@@ -1236,7 +1236,7 @@ else
 fi
 
 # Credential config remains 600
-grep -A80 '^mm_save_gui_config' "${ROOT}/scripts/lib/mirror_manager_common.sh" | grep -q 'chmod 600' \
+grep -A120 '^mm_save_gui_config' "${ROOT}/scripts/lib/mirror_manager_common.sh" | grep -q 'chmod 600' \
   && pass "T CREDENTIAL_CONFIG_MODE=600" || fail "T credential chmod 600 missing"
 
 # Public dirs 755 in bootstrap
