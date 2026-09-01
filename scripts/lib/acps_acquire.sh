@@ -14,6 +14,10 @@ ACPS_CURL_CONNECT_TIMEOUT="${ACPS_CURL_CONNECT_TIMEOUT:-30}"
 ACPS_CURL_RETRIES="${ACPS_CURL_RETRIES:-5}"
 ACPS_CURL_RETRY_DELAY="${ACPS_CURL_RETRY_DELAY:-5}"
 ACPS_PROGRESS_INTERVAL_SEC="${ACPS_PROGRESS_INTERVAL_SEC:-3}"
+ACPS_CURL_AUTH_ARGS=()
+ACPS_CURL_TLS_ARGS=()
+ACPS_CURL_NETRC_FILE=""
+ACPS_INSECURE_TLS="${ACPS_INSECURE_TLS:-0}"
 
 acps_cache_dir() {
   local ver="${1:-$DP_PHASE2_VERSION}"
@@ -463,6 +467,7 @@ mm_calc_disk_requirements() {
 acps_setup_curl_auth() {
   ACPS_CURL_AUTH_ARGS=()
   ACPS_CURL_TLS_ARGS=()
+  ACPS_CURL_NETRC_FILE="${ACPS_CURL_NETRC_FILE:-}"
   if [[ -n "${DP_PHASE2_SOURCE_BASE:-}" ]]; then
     ACPS_EFFECTIVE_BASE="${DP_PHASE2_SOURCE_BASE}"
     return 0
@@ -470,20 +475,85 @@ acps_setup_curl_auth() {
   ACPS_EFFECTIVE_BASE="${ACPS_BASE_URL:-$ACPS_BASE_URL_FIXED}"
   [[ -n "${ACPS_USERNAME:-}" ]] || mm_die "ACPS_USERNAME=FAIL missing"
   [[ -n "${ACPS_PASSWORD:-}" ]] || mm_die "ACPS_PASSWORD=FAIL missing"
-  ACPS_CURL_AUTH_ARGS=(-u "${ACPS_USERNAME}:${ACPS_PASSWORD}")
-  if [[ "${ACPS_INSECURE_TLS:-1}" == "1" ]]; then
+
+  # Prefer secure TLS verification. Explicit opt-in required for -k.
+  if [[ "${ACPS_INSECURE_TLS:-0}" == "1" ]]; then
     ACPS_CURL_TLS_ARGS+=(-k)
+    mm_warn "ACPS_TLS_VERIFY=DISABLED ACPS_INSECURE_TLS_WARNING=YES"
+  else
+    mm_info "ACPS_TLS_VERIFY=ENABLED"
   fi
+
+  # Never put username:password on curl argv (visible via /proc). Use a
+  # 0600 netrc under a private run directory and clean it up afterwards.
+  acps_install_netrc_auth || mm_die "ACPS_AUTH_SETUP=FAIL"
+}
+
+acps_auth_run_dir() {
+  local d
+  if [[ -n "${ACPS_AUTH_RUN_DIR:-}" ]]; then
+    d="$ACPS_AUTH_RUN_DIR"
+  elif [[ -d /run && -w /run ]]; then
+    d="/run/ubuntu-mirror-acps.$$"
+  else
+    d="${TMPDIR:-/tmp}/ubuntu-mirror-acps.$$"
+  fi
+  mkdir -p "$d" || return 1
+  chmod 0700 "$d" || return 1
+  printf '%s\n' "$d"
+}
+
+acps_cleanup_curl_auth() {
+  local f="${ACPS_CURL_NETRC_FILE:-}"
+  local d
+  ACPS_CURL_AUTH_ARGS=()
+  if [[ -n "$f" ]]; then
+    d="$(dirname "$f")"
+    rm -f "$f" 2>/dev/null || true
+    if [[ "$d" == /run/ubuntu-mirror-acps.* || "$d" == "${TMPDIR:-/tmp}/ubuntu-mirror-acps."* ]]; then
+      rmdir "$d" 2>/dev/null || true
+    fi
+  fi
+  ACPS_CURL_NETRC_FILE=""
+}
+
+acps_install_netrc_auth() {
+  local run_dir machine host
+  acps_cleanup_curl_auth
+  run_dir="$(acps_auth_run_dir)" || return 1
+  ACPS_CURL_NETRC_FILE="${run_dir}/netrc"
+  # Extract host from URL for netrc "machine" field.
+  host="$(printf '%s' "${ACPS_EFFECTIVE_BASE}" | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##' | cut -d/ -f1 | cut -d@ -f2 | cut -d: -f1)"
+  [[ -n "$host" ]] || return 1
+  machine="$host"
+  # Restrictive umask while writing credentials.
+  (
+    umask 077
+    {
+      printf 'machine %s\n' "$machine"
+      printf 'login %s\n' "${ACPS_USERNAME}"
+      printf 'password %s\n' "${ACPS_PASSWORD}"
+    } >"${ACPS_CURL_NETRC_FILE}"
+  ) || return 1
+  chmod 0600 "${ACPS_CURL_NETRC_FILE}" || return 1
+  ACPS_CURL_AUTH_ARGS=(--netrc-file "${ACPS_CURL_NETRC_FILE}")
+  return 0
 }
 
 acps_test_connection() {
-  acps_setup_curl_auth
   # Probe an authenticated artifact, not the directory index.
   # ACPS nginx returns 403 for "/" even with valid Basic auth (no autoindex),
   # which previously caused false ACPS_CONNECTION=FAIL.
+  local owned=0
   local probe="${ACPS_CONNECTION_PROBE_FILE:-aelladeb_py3_common.tar.gz.sha1}"
-  local url="${ACPS_EFFECTIVE_BASE%/}/${probe}"
-  local code
+  local url code
+  # Standalone callers get a private auth session; callers that already ran
+  # acps_setup_curl_auth keep their session for subsequent HEAD/download work.
+  if [[ -z "${ACPS_EFFECTIVE_BASE:-}" || ( ${#ACPS_CURL_AUTH_ARGS[@]} -eq 0 && -z "${DP_PHASE2_SOURCE_BASE:-}" ) ]]; then
+    acps_setup_curl_auth
+    owned=1
+  fi
+  url="${ACPS_EFFECTIVE_BASE%/}/${probe}"
   code="$(
     curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 15 --max-time 30 \
       ${ACPS_CURL_TLS_ARGS[@]+"${ACPS_CURL_TLS_ARGS[@]}"} \
@@ -491,6 +561,7 @@ acps_test_connection() {
       -I -L "$url" 2>/dev/null || true
   )"
   code="${code:-000}"
+  [[ "$owned" -eq 1 ]] && acps_cleanup_curl_auth
   # curl may print "000" on failure; ignore non-numeric garbage
   [[ "$code" =~ ^[0-9]{3}$ ]] || code="000"
   if [[ "$code" == "000" ]]; then
@@ -646,23 +717,27 @@ acps_acquire_all() {
 
   local name
   for name in "${DP_PHASE2_REQUIRED_FILES[@]}"; do
-    acps_download_one "$name" "$cache" || {
+    if ! acps_download_one "$name" "$cache"; then
       mm_state_set ACPS_PHASE2_DOWNLOADED FAIL
+      acps_cleanup_curl_auth
       mm_die "ACPS_DOWNLOAD=FAIL file=${name}"
-    }
+    fi
   done
 
   dp2_assert_exact_files_dir "$cache"
   if ! mm_acps_verify_payload_checksums "$cache"; then
     mm_state_set ACPS_CHECKSUM FAIL
     rm -f "${cache}/.VERIFIED"
+    acps_cleanup_curl_auth
     mm_die "ACPS_CHECKSUM=FAIL"
   fi
   mm_state_set ACPS_CHECKSUM PASS
-  acps_write_verified_marker "$cache" || {
+  if ! acps_write_verified_marker "$cache"; then
     rm -f "${cache}/.VERIFIED"
+    acps_cleanup_curl_auth
     mm_die "ACPS_VERIFIED_MARKER=FAIL"
-  }
+  fi
+  acps_cleanup_curl_auth
   mm_ok "ACPS_DOWNLOAD=PASS"
   mm_state_set ACPS_PHASE2_DOWNLOADED PASS
 }

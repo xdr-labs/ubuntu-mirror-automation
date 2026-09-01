@@ -1573,8 +1573,15 @@ cmd_plan_selective() {
 cmd_materialize_selective_impl() {
   require_cmds python3
   local py hop_arg=() reuse_args=()
+  local plan_sha_at_start=""
   py="$(resolve_selective_mirror_py)" || { error "selective_mirror.py not found"; return 1; }
   [[ -f "$SELECTIVE_PLAN" ]] || { error "plan missing; run plan-selective first: $SELECTIVE_PLAN"; return 1; }
+  plan_sha_at_start="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('plan_checksum') or '')" "$SELECTIVE_PLAN" 2>/dev/null || true)"
+  [[ -n "$plan_sha_at_start" ]] || { error "plan_checksum missing in $SELECTIVE_PLAN"; return 1; }
+  mkdir -p "${SELECTIVE_MIRROR_ROOT}/state" 2>/dev/null || true
+  printf '%s\n' "$plan_sha_at_start" >"${SELECTIVE_MIRROR_ROOT}/state/plan_sha_at_materialize_start"
+  chmod 0600 "${SELECTIVE_MIRROR_ROOT}/state/plan_sha_at_materialize_start" 2>/dev/null || true
+  info "PLAN_SHA_AT_START=${plan_sha_at_start}"
   rm -f "${SELECTIVE_MIRROR_ROOT}/state/READY" 2>/dev/null || true
   local debug_args=()
   if [[ "${SELECTIVE_MIRROR_DEBUG:-${UM_DEBUG:-0}}" =~ ^(1|true|yes|on)$ ]]; then
@@ -1601,6 +1608,13 @@ cmd_materialize_selective_impl() {
     "${reuse_args[@]}" \
     "${debug_args[@]}" \
     || { error "materialize-selective FAIL (see stderr and ${SELECTIVE_MIRROR_ROOT}/state/failed-downloads.json)"; return 1; }
+  # Fail closed if the plan identity changed while materialize ran.
+  local plan_sha_now=""
+  plan_sha_now="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('plan_checksum') or '')" "$SELECTIVE_PLAN" 2>/dev/null || true)"
+  if [[ "$plan_sha_now" != "$plan_sha_at_start" ]]; then
+    error "PLAN_CHANGED_DURING_MATERIALIZE start=${plan_sha_at_start} now=${plan_sha_now}"
+    return 1
+  fi
   ok "materialize-selective complete (not published)"
   return 0
 }
@@ -1665,9 +1679,17 @@ cmd_verify_selective() {
 
 cmd_publish_selective_impl() {
   require_cmds python3
-  local py
+  local py plan_sha_now="" plan_sha_at_start=""
   py="$(resolve_selective_mirror_py)" || { error "selective_mirror.py not found"; return 1; }
   [[ -f "$SELECTIVE_PLAN" ]] || { error "plan missing; run plan-selective first"; return 1; }
+  plan_sha_now="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('plan_checksum') or '')" "$SELECTIVE_PLAN" 2>/dev/null || true)"
+  if [[ -f "${SELECTIVE_MIRROR_ROOT}/state/plan_sha_at_materialize_start" ]]; then
+    plan_sha_at_start="$(tr -d '\r\n' <"${SELECTIVE_MIRROR_ROOT}/state/plan_sha_at_materialize_start")"
+    if [[ -n "$plan_sha_at_start" && "$plan_sha_now" != "$plan_sha_at_start" ]]; then
+      error "PUBLISH_BLOCKED_STALE_PLAN start=${plan_sha_at_start} now=${plan_sha_now}"
+      return 1
+    fi
+  fi
   # Atomic publish + post-publish concrete HTTP endpoint smoke + READY
   # Preflight (inside selective_mirror.py): effective nginx root must be
   # SELECTIVE_MIRROR_ROOT/current or SELECTIVE_NGINX_EFFECTIVE_ROOT_MISMATCH.

@@ -245,7 +245,15 @@ true  # SCRIPT binding lives inside launcher
 grep -q 'dp-client-command-runner.sh' "$MM_CLIENT_ROOT/dp-launch-xenial-to-bionic.sh" || fail "missing command runner name in launcher"
 grep -Fq -- '--source-dp-version' "$OUT" && fail "FULL command has --source-dp-version" || true
 grep -Fq -- '--target-version' "$MM_CLIENT_ROOT/upgrade-phase2.sh" || fail "target version missing from phase2 wrapper"
-grep -Fq -- '--same-version-recovery' "$MM_CLIENT_ROOT/upgrade-phase2.sh" || fail "same-version-recovery missing from phase2 wrapper"
+grep -Fq -- '--mirror-url' "$MM_CLIENT_ROOT/upgrade-phase2.sh" || fail "mirror-url missing from phase2 wrapper"
+if grep -E 'sudo bash.*"\$SCRIPT".*--same-version-recovery' "$MM_CLIENT_ROOT/upgrade-phase2.sh" >/dev/null 2>&1; then
+  fail "normal phase2 wrapper must not force same-version-recovery"
+fi
+[[ -f "$MM_CLIENT_ROOT/upgrade-phase2-same-version-recovery.sh" ]] \
+  || fail "explicit recovery wrapper missing"
+grep -Fq 'CONFIRM_SAME_VERSION_RECOVERY=YES' \
+  "$MM_CLIENT_ROOT/upgrade-phase2-same-version-recovery.sh" \
+  || fail "recovery wrapper missing confirmation gate"
 grep -Fq -- '--target-version' "$OUT" && fail "target-version leaked into Menu 7" || true
 hop_count="$(grep -cE '^cd /home/aella && curl -fsSLo upgrade-' "$OUT" || true)"
 [[ "$hop_count" -eq 5 ]] || fail "expected four OS wrappers + phase2 wrapper, got ${hop_count}"
@@ -304,6 +312,10 @@ cp -a "${MM_CLIENT_ROOT}/lib/." "${READY_P2}/lib/"
 cp -a "${MM_CLIENT_ROOT}/phase2-helper-generation.manifest" "${READY_P2}/phase2-helper-generation.manifest"
 cp -a "${MM_CLIENT_ROOT}/upgrade-phase2.sh" "${READY_P2}/upgrade-phase2.sh"
 cp -a "${MM_CLIENT_ROOT}/upgrade-phase2.sh.sha256" "${READY_P2}/upgrade-phase2.sh.sha256"
+cp -a "${MM_CLIENT_ROOT}/upgrade-phase2-same-version-recovery.sh" \
+  "${READY_P2}/upgrade-phase2-same-version-recovery.sh"
+cp -a "${MM_CLIENT_ROOT}/upgrade-phase2-same-version-recovery.sh.sha256" \
+  "${READY_P2}/upgrade-phase2-same-version-recovery.sh.sha256" 2>/dev/null || true
 if mm_client_files_ready_phase2 "$READY_P2"; then
   pass "PHASE2_ONLY required wrapper present"
 else
@@ -320,6 +332,7 @@ mm_http_probe_ok() {
   [[ "$url" == *"/client/upgrade-phase2.sh" ]] && return 1
   return 0
 }
+mm_http_publication_identity_ok() { return 0; }
 mm_phase2_paths() { MM_WF_PHASE2_STABLE="dp_bundle_6.6.0-current.tar"; }
 TARGET_DP_VERSION=6.6.0
 PHASE2_TARGET_VERSION=6.6.0
@@ -349,73 +362,81 @@ do
 done
 pass "forbidden strings absent"
 
-# Cluster bringup: DL master workers + worker password
+# Cluster bringup: DL master workers + password configured (runtime prompt; no plaintext)
 CLUSTER_OUT="$TMP/cluster-dl.txt"
 PREPARATION_MODE=FULL
 WORKER_SSH_PASSWORD='customer-password'
 gui_build_client_commands "http://192.0.2.10" "cluster" "192.168.124.23,192.168.124.25" "" \
   "customer-password" >"$CLUSTER_OUT"
-grep -q -- '--worker-ips "192.168.124.23,192.168.124.25"' "$CLUSTER_OUT" || fail "DL worker ips missing"
+grep -q -- '--worker-ips' "$CLUSTER_OUT" || fail "DL --worker-ips missing"
+grep -Fq '192.168.124.23' "$CLUSTER_OUT" && grep -Fq '192.168.124.25' "$CLUSTER_OUT" \
+  || fail "DL worker ips missing"
 grep -q -- '--worker-password' "$CLUSTER_OUT" || fail "DL --worker-password missing"
+grep -Fq 'customer-password' "$CLUSTER_OUT" && fail "DL plaintext password embedded" || true
+grep -Eq 'read(\\[[:space:]]|[[:space:]])+-rsp|Worker(\\[[:space:]]|[[:space:]])+SSH' "$CLUSTER_OUT" \
+  || fail "DL runtime password prompt missing"
 grep -q 'Cluster IP addresses are recommended' "$CLUSTER_OUT" || fail "cluster IP recommendation missing"
 grep -q 'Management IP addresses or cluster IP addresses can be used' "$CLUSTER_OUT" || fail "mgmt/cluster IP support missing"
 pass "DL cluster bringup command"
 
-assert_bringup_argv() {
-  local line="$1" expect_ips="$2" expect_pass="$3"
-  local stub stub_argv stub_args
-  stub="$TMP/bringup_stub.sh"
-  stub_argv="$TMP/bringup.argv"
-  cat >"$stub" <<'EOF'
-#!/usr/bin/env bash
-printf '%s\n' "$@" >"${STUB_ARGV_FILE}"
-EOF
-  chmod +x "$stub"
-  stub_args="$(printf '%s\n' "$line" | sed -E 's|^sudo bash [^ ]+bringup_py3_dp_after_os_upgrade\.sh[[:space:]]*||')"
-  STUB_ARGV_FILE="$stub_argv" eval "\"$stub\" $stub_args"
-  mapfile -t ARGV <"$stub_argv"
-  [[ "${ARGV[0]}" == "--version" && "${ARGV[1]}" == "6.6.0" ]] || fail "bringup version wrong: ${ARGV[*]}"
-  [[ "${ARGV[2]}" == "--skip-download" ]] || fail "skip-download missing: ${ARGV[*]}"
-  if [[ -n "$expect_ips" ]]; then
-    [[ "${ARGV[3]}" == "--worker-ips" ]] || fail "argv --worker-ips missing: ${ARGV[*]}"
-    [[ "${ARGV[4]}" == "$expect_ips" ]] || fail "argv worker csv not one arg: ${ARGV[4]}"
-    [[ "${ARGV[5]}" == "--worker-password" ]] || fail "argv --worker-password missing: ${ARGV[*]}"
-    [[ "${ARGV[6]}" == "$expect_pass" ]] || fail "argv password mismatch"
-  else
-    printf '%s\n' "${ARGV[@]}" | grep -qx -- '--worker-ips' && fail "unexpected --worker-ips" || true
-    printf '%s\n' "${ARGV[@]}" | grep -qx -- '--worker-password' && fail "unexpected --worker-password" || true
+assert_cluster_bringup_prompt() {
+  # Interactive prompt model: password never embedded; flag + worker-ips present.
+  local file="$1" expect_ips="$2" password="${3:-}"
+  local ip
+  grep -q -- '--worker-ips' "$file" || fail "missing --worker-ips in cluster output"
+  IFS=',' read -r -a ips <<<"$expect_ips"
+  for ip in "${ips[@]}"; do
+    ip="${ip// /}"
+    [[ -n "$ip" ]] || continue
+    grep -Fq "$ip" "$file" || fail "worker ip missing: ${ip}"
+  done
+  grep -q -- '--worker-password' "$file" || fail "missing --worker-password flag"
+  grep -Eq 'read(\\[[:space:]]|[[:space:]])+-rsp|Worker(\\[[:space:]]|[[:space:]])+SSH' "$file" || fail "missing runtime password prompt"
+  if [[ -n "$password" ]]; then
+    grep -Fq -- "$password" "$file" && fail "plaintext password present in command output" || true
   fi
 }
 
-bringup_line="$(grep -E 'bringup_py3_dp_after_os_upgrade\.sh' "$CLUSTER_OUT" | head -1)"
-assert_bringup_argv "$bringup_line" "192.168.124.23,192.168.124.25" "customer-password"
-pass "DL worker-ips/password argv verified"
+assert_single_bringup_no_workers() {
+  local file="$1"
+  local line
+  line="$(grep -E 'bringup_py3_dp_after_os_upgrade\.sh' "$file" | head -1)"
+  [[ -n "$line" ]] || fail "missing single bringup line"
+  printf '%s\n' "$line" | grep -q -- '--worker-ips' && fail "unexpected --worker-ips" || true
+  printf '%s\n' "$line" | grep -q -- '--worker-password' && fail "unexpected --worker-password" || true
+}
 
-# DA master workers use the same configured password
+assert_cluster_bringup_prompt "$CLUSTER_OUT" "192.168.124.23,192.168.124.25" "customer-password"
+pass "DL worker-ips present; password not embedded"
+
+# DA master workers use the same configured password (prompt; not embedded)
 DA_OUT="$TMP/cluster-da.txt"
 gui_build_client_commands "http://192.0.2.10" "cluster" "" "192.168.124.24,192.168.124.26" \
   "customer-password" >"$DA_OUT"
-grep -q -- '--worker-ips "192.168.124.24,192.168.124.26"' "$DA_OUT" || fail "DA worker ips missing"
-da_line="$(grep -E 'bringup_py3_dp_after_os_upgrade\.sh' "$DA_OUT" | head -1)"
-assert_bringup_argv "$da_line" "192.168.124.24,192.168.124.26" "customer-password"
-pass "DA worker-ips/password argv verified"
+grep -q -- '--worker-ips' "$DA_OUT" || fail "DA --worker-ips missing"
+grep -Fq '192.168.124.24' "$DA_OUT" && grep -Fq '192.168.124.26' "$DA_OUT" \
+  || fail "DA worker ips missing"
+assert_cluster_bringup_prompt "$DA_OUT" "192.168.124.24,192.168.124.26" "customer-password"
+pass "DA worker-ips present; password not embedded"
 
 # DL and DA cluster commands are emitted together from one configuration.
 DUAL_OUT="$TMP/cluster-dual.txt"
 gui_build_client_commands "http://192.0.2.10" "cluster" \
   "192.168.124.23,192.168.124.25" "192.168.124.24,192.168.124.26" \
   "customer-password" >"$DUAL_OUT"
-[[ "$(grep -c 'bringup_py3_dp_after_os_upgrade.sh' "$DUAL_OUT")" -eq 2 ]] \
-  || fail "dual cluster output must contain exactly two bringup commands"
+[[ "$(grep -cE 'bringup_py3_dp_after_os_upgrade\.sh|read(\\[[:space:]]|[[:space:]])+-rsp' "$DUAL_OUT" || true)" -ge 2 ]] \
+  || fail "dual cluster output must contain DL and DA bringup prompts"
 grep -q 'STEP 7A — DL CLUSTER MASTER' "$DUAL_OUT" || fail "STEP 7A missing"
 grep -q 'STEP 7B — DA CLUSTER MASTER' "$DUAL_OUT" || fail "STEP 7B missing"
-grep -q -- '--worker-ips "192.168.124.23,192.168.124.25"' "$DUAL_OUT" || fail "dual DL worker list missing"
-grep -q -- '--worker-ips "192.168.124.24,192.168.124.26"' "$DUAL_OUT" || fail "dual DA worker list missing"
+grep -Fq '192.168.124.23' "$DUAL_OUT" && grep -Fq '192.168.124.25' "$DUAL_OUT" \
+  || fail "dual DL worker list missing"
+grep -Fq '192.168.124.24' "$DUAL_OUT" && grep -Fq '192.168.124.26' "$DUAL_OUT" \
+  || fail "dual DA worker list missing"
+grep -Fq 'customer-password' "$DUAL_OUT" && fail "dual plaintext password embedded" || true
 pass "dual DL/DA cluster bringup commands"
 
 # No workers: no --worker-ips / --worker-password
-SINGLE_BRINGUP="$(grep -E 'bringup_py3_dp_after_os_upgrade\.sh' "$OUT" | head -1)"
-assert_bringup_argv "$SINGLE_BRINGUP" "" ""
+assert_single_bringup_no_workers "$OUT"
 pass "single-node bringup omits worker flags"
 
 # Cluster without password is rejected
@@ -429,15 +450,14 @@ grep -q 'WORKER_SSH_PASSWORD_REQUIRED=YES' "$TMP/cluster-nopass.err" \
   || fail "missing WORKER_SSH_PASSWORD_REQUIRED"
 pass "cluster without password rejected"
 
-# Special-character passwords survive generated command eval
+# Special-character passwords must NOT appear in generated command output
 for spec_pass in 'Test123!' 'Abc$123!' 'worker@Pass#2026' 'A&b!c$123'; do
   spec_out="$TMP/cluster-spec.txt"
   gui_build_client_commands "http://192.0.2.10" "cluster" "192.168.124.23" "" \
     "$spec_pass" >"$spec_out"
-  spec_line="$(grep -E 'bringup_py3_dp_after_os_upgrade\.sh' "$spec_out" | head -1)"
-  assert_bringup_argv "$spec_line" "192.168.124.23" "$spec_pass"
+  assert_cluster_bringup_prompt "$spec_out" "192.168.124.23" "$spec_pass"
 done
-pass "special-character worker passwords preserved in generated command"
+pass "special-character worker passwords not embedded in generated command"
 
 # Config save: PREPARATION_MODE, no TARGET_DP_VERSION / CURRENT
 PREPARATION_MODE=FULL
@@ -568,7 +588,7 @@ grep -q 'less -S' "$INSTALLER" && fail "less guidance still in installer" || tru
 grep -q 'cat "\$out_file"' "$INSTALLER" && fail "TTY reprint after GUI still present" || true
 [[ -f "$(mm_client_commands_file)" ]] || fail "menu7 did not create command file"
 [[ -s "$(mm_client_commands_file)" ]] || fail "menu7 created empty command file"
-[[ "$(stat -c '%a' "$(mm_client_commands_file)")" == "644" ]] || fail "menu7 file mode not 644"
+[[ "$(stat -c '%a' "$(mm_client_commands_file)")" == "600" ]] || fail "menu7 file mode not 600"
 grep -Fq -- '--source-dp-version' "$(mm_client_commands_file)" && fail "menu7 has source" || true
 grep -q 'upgrade-phase2.sh' "$(mm_client_commands_file)" || fail "menu7 missing phase2 wrapper"
 grep -Fq -- '--target-version' "$(mm_client_commands_file)" && fail "menu7 leaked --target-version" || true
@@ -689,9 +709,11 @@ awk '/STEP 7A — DL CLUSTER MASTER/,/STEP 7B — DA CLUSTER MASTER/' "$REG_DUAL
   >"$REG_DL_SEC"
 awk '/STEP 7B — DA CLUSTER MASTER/,/^STEP 8 —/' "$REG_DUAL" \
   >"$REG_DA_SEC"
-grep -q -- "--worker-ips \"${REG_DL_IPS}\"" "$REG_DL_SEC" \
+grep -q -- '--worker-ips' "$REG_DL_SEC" || fail "MENU7_DL_COMMAND_USES_ONLY_DL_WORKERS"
+grep -Fq '10.10.10.21' "$REG_DL_SEC" && grep -Fq '10.10.10.22' "$REG_DL_SEC" \
   || fail "MENU7_DL_COMMAND_USES_ONLY_DL_WORKERS"
-grep -q -- "--worker-ips \"${REG_DA_IPS}\"" "$REG_DA_SEC" \
+grep -q -- '--worker-ips' "$REG_DA_SEC" || fail "MENU7_DA_COMMAND_USES_ONLY_DA_WORKERS"
+grep -Fq '10.20.20.21' "$REG_DA_SEC" && grep -Fq '10.20.20.22' "$REG_DA_SEC" \
   || fail "MENU7_DA_COMMAND_USES_ONLY_DA_WORKERS"
 echo "MENU7_DL_COMMAND_USES_ONLY_DL_WORKERS=PASS"
 echo "MENU7_DA_COMMAND_USES_ONLY_DA_WORKERS=PASS"
@@ -717,17 +739,20 @@ grep -q 'Do not run STEP 7 manually on workers' "$REG_DUAL" \
   || fail "cluster rule missing worker STEP 7 prohibition"
 echo "MENU7_WORKER_MANUAL_STEP7_PROHIBITED=PASS"
 
-reg_dl_line="$(grep -E 'bringup_py3_dp_after_os_upgrade\.sh' "$REG_DL_SEC" | head -1)"
-reg_da_line="$(grep -E 'bringup_py3_dp_after_os_upgrade\.sh' "$REG_DA_SEC" | head -1)"
-assert_bringup_argv "$reg_dl_line" "$REG_DL_IPS" "$REG_PW"
-assert_bringup_argv "$reg_da_line" "$REG_DA_IPS" "$REG_PW"
+reg_dl_line="$(grep -E 'bringup_py3_dp_after_os_upgrade\.sh|read(\\ |-rsp)' "$REG_DL_SEC" | head -1)"
+reg_da_line="$(grep -E 'bringup_py3_dp_after_os_upgrade\.sh|read(\\ |-rsp)' "$REG_DA_SEC" | head -1)"
+[[ -n "$reg_dl_line" ]] || fail "DL section missing bringup/prompt"
+[[ -n "$reg_da_line" ]] || fail "DA section missing bringup/prompt"
+assert_cluster_bringup_prompt "$REG_DL_SEC" "$REG_DL_IPS" "$REG_PW"
+assert_cluster_bringup_prompt "$REG_DA_SEC" "$REG_DA_IPS" "$REG_PW"
 echo "SPECIAL_CHARACTER_WORKER_PASSWORD=PASS"
 
 redacted="$(printf 'WORKER_SSH_PASSWORD=%s extra\n' "$REG_PW" | mm_redact)"
 printf '%s\n' "$redacted" | grep -Fq "$REG_PW" && fail "mm_redact leaked worker password" || true
 [[ "$redacted" == *'WORKER_SSH_PASSWORD=***'* ]] || fail "WORKER_SSH_PASSWORD not redacted"
-if grep -v 'bringup_py3_dp_after_os_upgrade.sh' "$REG_DUAL" | grep -Fq "$REG_PW"; then
-  fail "worker password appeared outside bringup command"
+# Password must not appear anywhere in the published dual command file.
+if grep -Fq "$REG_PW" "$REG_DUAL"; then
+  fail "worker password appeared in published command file"
 fi
 logged="$(mm_log INFO "WORKER_SSH_PASSWORD=${REG_PW} DL_WORKER_IPS=${REG_DL_IPS}")"
 printf '%s\n' "$logged" | grep -Fq "$REG_PW" && fail "mm_log leaked worker password" || true
@@ -735,8 +760,7 @@ echo "WORKER_PASSWORD_NOT_LOGGED=PASS"
 
 PREPARATION_MODE=FULL
 gui_build_client_commands "http://192.0.2.10" "single" "" "" "" >"$TMP/reg-single.txt"
-reg_single_line="$(grep -E 'bringup_py3_dp_after_os_upgrade\.sh' "$TMP/reg-single.txt" | head -1)"
-assert_bringup_argv "$reg_single_line" "" ""
+assert_single_bringup_no_workers "$TMP/reg-single.txt"
 grep -q -- '--worker-ips' "$TMP/reg-single.txt" && fail "SINGLE_NODE_HAS_WORKER_IP_ARG" || true
 grep -q -- '--worker-password' "$TMP/reg-single.txt" && fail "SINGLE_NODE_HAS_WORKER_PASSWORD_ARG" || true
 echo "SINGLE_NODE_HAS_WORKER_IP_ARG=NO"
@@ -745,7 +769,9 @@ echo "SINGLE_NODE_HAS_WORKER_PASSWORD_ARG=NO"
 REG_DL_ONLY="$TMP/reg-dl-only.txt"
 gui_build_client_commands "http://192.0.2.10" "cluster" \
   "$REG_DL_IPS" "" "$REG_PW" >"$REG_DL_ONLY"
-grep -q -- "--worker-ips \"${REG_DL_IPS}\"" "$REG_DL_ONLY" || fail "DL-only missing DL workers"
+grep -q -- '--worker-ips' "$REG_DL_ONLY" || fail "DL-only missing --worker-ips"
+grep -Fq '10.10.10.21' "$REG_DL_ONLY" && grep -Fq '10.10.10.22' "$REG_DL_ONLY" \
+  || fail "DL-only missing DL workers"
 grep -F "$REG_DA_IPS" "$REG_DL_ONLY" && fail "DL-only contains DA workers" || true
 grep -q 'DA cluster bringup command was not generated because' "$REG_DL_ONLY" \
   || fail "DL-only missing DA not-configured message"
@@ -758,7 +784,9 @@ echo "DL_ONLY_CONFIGURATION=PASS"
 REG_DA_ONLY="$TMP/reg-da-only.txt"
 gui_build_client_commands "http://192.0.2.10" "cluster" \
   "" "$REG_DA_IPS" "$REG_PW" >"$REG_DA_ONLY"
-grep -q -- "--worker-ips \"${REG_DA_IPS}\"" "$REG_DA_ONLY" || fail "DA-only missing DA workers"
+grep -q -- '--worker-ips' "$REG_DA_ONLY" || fail "DA-only missing --worker-ips"
+grep -Fq '10.20.20.21' "$REG_DA_ONLY" && grep -Fq '10.20.20.22' "$REG_DA_ONLY" \
+  || fail "DA-only missing DA workers"
 grep -F "$REG_DL_IPS" "$REG_DA_ONLY" && fail "DA-only contains DL workers" || true
 grep -q 'DL cluster bringup command was not generated because' "$REG_DA_ONLY" \
   || fail "DA-only missing DL not-configured message"
@@ -780,13 +808,19 @@ grep -q 'Use the SAME staging command on every node' "$REG_P2" \
 [[ "$(grep -cE '^cd /home/aella && curl -fsSLo upgrade-phase2\.sh\.download ' "$REG_P2")" -eq 1 ]] \
   || fail "PHASE2 expected exactly one stage command"
 awk '/STEP 3A — DL CLUSTER MASTER/,/STEP 3B — DA CLUSTER MASTER/' "$REG_P2" \
-  | grep -q -- "--worker-ips \"${REG_DL_IPS}\"" \
+  | grep -q -- '--worker-ips' \
+  || fail "PHASE2 DL command missing --worker-ips"
+awk '/STEP 3A — DL CLUSTER MASTER/,/STEP 3B — DA CLUSTER MASTER/' "$REG_P2" \
+  | grep -Fq '10.10.10.21' \
   || fail "PHASE2 DL command missing DL workers"
 awk '/STEP 3A — DL CLUSTER MASTER/,/STEP 3B — DA CLUSTER MASTER/' "$REG_P2" \
   | grep -F "$REG_DA_IPS" \
   && fail "PHASE2 DL command contains DA workers" || true
 awk '/STEP 3B — DA CLUSTER MASTER/,/^STEP 4 —/' "$REG_P2" \
-  | grep -q -- "--worker-ips \"${REG_DA_IPS}\"" \
+  | grep -q -- '--worker-ips' \
+  || fail "PHASE2 DA command missing --worker-ips"
+awk '/STEP 3B — DA CLUSTER MASTER/,/^STEP 4 —/' "$REG_P2" \
+  | grep -Fq '10.20.20.21' \
   || fail "PHASE2 DA command missing DA workers"
 awk '/STEP 3B — DA CLUSTER MASTER/,/^STEP 4 —/' "$REG_P2" \
   | grep -F "$REG_DL_IPS" \

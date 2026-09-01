@@ -187,8 +187,14 @@ grep -q 'sha256sum -c "$GEN"' "${UNIT}/upgrade-phase2.sh" \
 # The wrapper must return from sudo normally so its EXIT trap removes the mktemp tree.
 grep -Fq 'trap '\''rm -rf "$W"'\'' EXIT' "${UNIT}/upgrade-phase2.sh" \
   || fail "wrapper missing temp cleanup EXIT trap"
-grep -Fq 'sudo bash "./$SCRIPT" --target-version "$VER" --same-version-recovery --mirror-url "$MIRROR"' \
+grep -Fq 'sudo bash "./$SCRIPT" --target-version "$VER" --mirror-url "$MIRROR"' \
   "${UNIT}/upgrade-phase2.sh" || fail "wrapper missing Phase 2 stage invocation"
+if grep -E 'sudo bash.*"\$SCRIPT".*--same-version-recovery' "${UNIT}/upgrade-phase2.sh" >/dev/null 2>&1; then
+  fail "normal wrapper must not force same-version-recovery"
+fi
+[[ -f "${UNIT}/upgrade-phase2-same-version-recovery.sh" ]] || fail "recovery wrapper missing"
+grep -Fq 'CONFIRM_SAME_VERSION_RECOVERY=YES' "${UNIT}/upgrade-phase2-same-version-recovery.sh" \
+  || fail "recovery confirmation gate missing"
 if grep -q '^exec sudo bash ' "${UNIT}/upgrade-phase2.sh"; then
   fail "exec bypasses wrapper EXIT cleanup trap"
 fi

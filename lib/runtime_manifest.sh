@@ -129,55 +129,42 @@ UM_RUNTIME_CLIENT_LIB_FILES=(
 )
 
 # Relative paths under the installed runtime root that must exist after install.
-UM_RUNTIME_REQUIRED_RELATIVE_PATHS=(
-  scripts/ubuntu-offline-mirror.sh
-  scripts/install-dp-upgrade-mirror.sh
-  scripts/rebuild-publish-clients.sh
-  scripts/lib/mirror_manager_common.sh
-  scripts/lib/mirror_install_engine.sh
-  scripts/lib/mirror_workflow_state.sh
-  scripts/lib/r2_acquire.sh
-  scripts/lib/acps_acquire.sh
-  scripts/lib/dp-phase2-common.sh
-  scripts/lib/mirror_host_ip.sh
-  scripts/lib/http_publication_permissions.sh
-  scripts/lib/client_mirror_gates.sh
-  scripts/lib/local_client_signing.sh
-  scripts/lib/os_core_package.py
-  scripts/lib/client_build_repository.py
-  scripts/lib/client_build_provenance.py
-  scripts/lib/assert_client_executable_shebang.py
-  scripts/lib/atomic_dir_swap.py
-  scripts/lib/build_client_xenial_to_bionic.py
-  scripts/lib/build_client_bionic_to_focal.py
-  scripts/lib/build_client_focal_to_jammy.py
-  scripts/lib/build_client_jammy_to_noble.py
-  scripts/lib/build_client_launchers.py
-  scripts/lib/patch_dp_phase2_bringup.py
-  scripts/lib/phase2_ubuntu_prerequisites.py
-  scripts/lib/phase2_helper_generation.sh
-  scripts/lib/xenial_bionic_upgrade_analysis.py
-  scripts/lib/selective_mirror.py
-  scripts/prepare-phase2-ubuntu-prerequisites.sh
-  scripts/lib/phase2_bringup_patch/fragment_compat.sh
-  scripts/lib/phase2_bringup_patch/fragment_heartbeat.sh
-  scripts/lib/phase2_bringup_patch/fragment_resume.sh
-  scripts/lib/phase2_bringup_patch/README.md
-  client/lib/dp-offline-destructive-confirmation.sh
-  client/lib/dp-offline-release-upgrade-reconciliation.sh
-  client/lib/dp-offline-apt-preflight-sandbox.sh
-  client/lib/dp-offline-source-product-version.sh
-  client/lib/dp-phase2-operation-progress.sh
-  client/lib/dp-phase2-bringup-lifecycle.sh
-  client/lib/dp-phase2-ubuntu-prerequisites.sh
-  client/phase2-helper-generation.manifest
-  client/dp-client-command-runner.sh
-  client/dp-client-hop-launcher.sh.in
-  client/bringup_py3_dp_lifecycle.sh
-  vendor/dp-phase2/bringup_py3_dp_after_os_upgrade.sh
-  vendor/dp-phase2/bringup_py3_dp_after_os_upgrade.sh.upstream.sha1
-  templates/nginx.conf
-)
+# Derived from the authoritative install arrays so install/verify cannot diverge.
+# Build-only hop templates (*.sh.in) remain installed and required — builders need them.
+um_runtime_emit_installed_relative_paths() {
+  local f
+  for f in "${UM_RUNTIME_LIB_SHELL_FILES[@]}"; do
+    printf 'lib/%s\n' "$f"
+  done
+  for f in "${UM_RUNTIME_SCRIPT_ENTRYPOINTS[@]}"; do
+    printf 'scripts/%s\n' "$f"
+  done
+  for f in \
+    "${UM_RUNTIME_SCRIPT_LIB_SHELL[@]}" \
+    "${UM_RUNTIME_SCRIPT_LIB_PYTHON_MODULES[@]}" \
+    "${UM_RUNTIME_SCRIPT_LIB_PYTHON_EXECUTABLES[@]}"
+  do
+    printf 'scripts/lib/%s\n' "$f"
+  done
+  for f in "${UM_RUNTIME_SCRIPT_LIB_EXTRA[@]}"; do
+    printf 'scripts/lib/%s\n' "$f"
+  done
+  for f in "${UM_RUNTIME_VENDOR_FILES[@]}"; do
+    printf 'vendor/%s\n' "$f"
+  done
+  for f in "${UM_RUNTIME_TEMPLATE_FILES[@]}"; do
+    printf 'templates/%s\n' "$f"
+  done
+  for f in "${UM_RUNTIME_CLIENT_FILES[@]}"; do
+    printf 'client/%s\n' "$f"
+  done
+  for f in "${UM_RUNTIME_CLIENT_LIB_FILES[@]}"; do
+    printf 'client/lib/%s\n' "$f"
+  done
+}
+
+# shellcheck disable=SC2207
+mapfile -t UM_RUNTIME_REQUIRED_RELATIVE_PATHS < <(um_runtime_emit_installed_relative_paths)
 
 # Python modules verified via importlib against the installed scripts/lib only.
 # Exported for drift tests / accessors; verifier embeds the same names.

@@ -541,12 +541,12 @@ p2b_status_snapshot() {
 # A lifecycle PASS requires a coherent current-run terminal record. A persisted
 # state=COMPLETED file is not sufficient by itself.
 p2b_current_run_completion_coherent() {
-  [[ "${BRINGUP_STATE}" == "COMPLETED" ]] || return 1
-  [[ -n "${BRINGUP_RUN_ID}" ]] || return 1
-  [[ "${BRINGUP_TERMINAL_STATE}" == "COMPLETED" ]] || return 1
-  [[ "${BRINGUP_RESULT_ENV}" == "PASS" ]] || return 1
-  [[ "${BRINGUP_EXIT_CODE}" == "0" ]] || return 1
-  [[ "${BRINGUP_COMPLETION_SENTINEL}" == "PASS" ]] || return 1
+  [[ "${BRINGUP_STATE:-}" == "COMPLETED" ]] || return 1
+  [[ -n "${BRINGUP_RUN_ID:-}" ]] || return 1
+  [[ "${BRINGUP_TERMINAL_STATE:-}" == "COMPLETED" ]] || return 1
+  [[ "${BRINGUP_RESULT_ENV:-}" == "PASS" ]] || return 1
+  [[ "${BRINGUP_EXIT_CODE:-}" == "0" ]] || return 1
+  [[ "${BRINGUP_COMPLETION_SENTINEL:-}" == "PASS" ]] || return 1
   return 0
 }
 
@@ -669,10 +669,12 @@ p2b_worker_main() {
   # Secondary log gates must not accept a later truncated/regrown file as the
   # same stream if this marker is gone. This is not a completion sentinel.
   # Marker write is mandatory: do not start vendor bringup without it.
+  prev_e=0
+  [[ $- == *e* ]] && prev_e=1
   set +e
   p2b_write_current_run_log_marker "$logf" "$run_id"
   marker_rc=$?
-  set -e
+  [[ "$prev_e" -eq 1 ]] && set -e
   if [[ "$marker_rc" -ne 0 ]]; then
     rc=1
     p2b_fail_run "$d" "$run_id" "$$" "$target" "$started" "$logf" "$rc" "CURRENT_RUN_LOG_MARKER_WRITE"
@@ -698,10 +700,12 @@ p2b_worker_main() {
       # shellcheck source=/dev/null
       source "$prereq_lib"
       if declare -F dp2_install_phase2_ubuntu_prerequisites >/dev/null 2>&1; then
+        prev_e=0
+        [[ $- == *e* ]] && prev_e=1
         set +e
         dp2_install_phase2_ubuntu_prerequisites >>"$logf" 2>&1
         rc=$?
-        set -e
+        [[ "$prev_e" -eq 1 ]] && set -e
         if [[ "$rc" -ne 0 ]]; then
           completed="$(p2b_utc_now)"
           printf '%s\n' "$rc" | p2b_atomic_write "${d}/exit-code"
@@ -723,11 +727,13 @@ p2b_worker_main() {
     fi
   done
 
+  prev_e=0
+  [[ $- == *e* ]] && prev_e=1
   set +e
   # Keep vendor stdout discarded; stderr+log via vendor's own logging when possible.
   bash "$vendor" "$@" >>"$logf" 2>&1
   rc=$?
-  set -e
+  [[ "$prev_e" -eq 1 ]] && set -e
 
   completed="$(p2b_utc_now)"
   printf '%s\n' "$rc" | p2b_atomic_write "${d}/exit-code"
@@ -736,10 +742,12 @@ p2b_worker_main() {
   if [[ "$rc" -eq 0 ]]; then
     # Current-run log identity is a mandatory prerequisite for any secondary
     # log-based PASS decision. Invalid evidence is not "pattern absent".
+    prev_e=0
+    [[ $- == *e* ]] && prev_e=1
     set +e
     p2b_require_current_run_log_identity "$logf"
     current_log_rc=$?
-    set -e
+    [[ "$prev_e" -eq 1 ]] && set -e
     if [[ "$current_log_rc" -ne 0 ]]; then
       rc=1
       p2b_fail_run "$d" "$run_id" "$$" "$target" "$started" "$logf" "$rc" "CURRENT_RUN_LOG_IDENTITY_INVALID"
@@ -760,10 +768,12 @@ p2b_worker_main() {
         next=1
       fi
     done
+    prev_e=0
+    [[ $- == *e* ]] && prev_e=1
     set +e
     p2b_current_run_log_contains "$logf" 'APT_DEPENDENCY_CHECK=FAIL'
     apt_log_rc=$?
-    set -e
+    [[ "$prev_e" -eq 1 ]] && set -e
     case "$apt_log_rc" in
       0)
         rc=1
@@ -776,10 +786,12 @@ p2b_worker_main() {
         p2b_fail_run "$d" "$run_id" "$$" "$target" "$started" "$logf" "$rc" "CURRENT_RUN_LOG_IDENTITY_INVALID"
         ;;
     esac
+    prev_e=0
+    [[ $- == *e* ]] && prev_e=1
     set +e
     p2b_current_run_log_contains "$logf" 'WORKER_ORCHESTRATION=FAIL'
     orch_fail_rc=$?
-    set -e
+    [[ "$prev_e" -eq 1 ]] && set -e
     case "$orch_fail_rc" in
       0)
         rc=1
@@ -793,10 +805,12 @@ p2b_worker_main() {
         ;;
     esac
     if [[ -n "$want_remote" ]]; then
+      prev_e=0
+      [[ $- == *e* ]] && prev_e=1
       set +e
       p2b_current_run_log_contains "$logf" 'WORKER_ORCHESTRATION=PASS'
       orch_pass_rc=$?
-      set -e
+      [[ "$prev_e" -eq 1 ]] && set -e
       case "$orch_pass_rc" in
         0)
           ;;
@@ -812,10 +826,12 @@ p2b_worker_main() {
     fi
     # Identity may change after the last secondary check (copytruncate). AIO
     # and cluster both require a final valid current-run stream before PASS.
+    prev_e=0
+    [[ $- == *e* ]] && prev_e=1
     set +e
     p2b_require_current_run_log_identity "$logf"
     final_log_rc=$?
-    set -e
+    [[ "$prev_e" -eq 1 ]] && set -e
     if [[ "$final_log_rc" -ne 0 ]]; then
       rc=1
       p2b_fail_run "$d" "$run_id" "$$" "$target" "$started" "$logf" "$rc" "CURRENT_RUN_LOG_IDENTITY_INVALID"

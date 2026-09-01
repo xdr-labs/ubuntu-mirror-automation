@@ -145,7 +145,9 @@ mm_wf_get() {
 mm_wf_set_many() {
   # Usage: mm_wf_set_many KEY=VAL KEY=VAL ...
   # Atomic multi-key update of the workflow state file.
-  local f tmp line key val k2
+  # Holds a short exclusive flock around the read-modify-write to prevent
+  # lost updates between concurrent Mirror Manager sessions.
+  local f tmp line key val k2 lockfd
   local -A updates=()
   local -A cur=()
   mm_wf_ensure_file || return 1
@@ -160,6 +162,12 @@ mm_wf_set_many() {
     [[ -n "$key" ]] || continue
     updates["$key"]="$val"
   done
+  exec {lockfd}<"$f" || return 1
+  if ! flock -w 30 "$lockfd"; then
+    exec {lockfd}<&-
+    mm_wf_warn "WORKFLOW_STATE_LOCK=FAIL path=${f}"
+    return 1
+  fi
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ "$line" == *=* ]] || continue
     cur["${line%%=*}"]="${line#*=}"
@@ -181,6 +189,7 @@ mm_wf_set_many() {
       CLIENT_COMMAND_BLOCK_VERSION CLIENT_PROVENANCE_SCHEMA_VERSION \
       HTTP_PUBLICATION_GENERATION_ID \
       READINESS_VERIFIED_GENERATION_ID COMMAND_FILE_GENERATION_ID \
+      OPERATION_START_CONFIG_SHA256 \
       CREATED_UTC VERIFIED_UTC HTTP_REENABLE_REQUIRED
     do
       if [[ -n "${cur[$k2]+x}" ]]; then
@@ -194,6 +203,8 @@ mm_wf_set_many() {
   } >"$tmp"
   mm_wf_atomic_write_file "$f" "$tmp"
   rm -f "$tmp"
+  flock -u "$lockfd" 2>/dev/null || true
+  exec {lockfd}<&-
 }
 
 mm_wf_set() {
@@ -218,14 +229,26 @@ mm_wf_password_sha256_or_empty() {
   fi
 }
 
-# Prepare / artifact-selection inputs (mode + fixed target).
+# Prepare / artifact-selection inputs (mode + fixed target + OS Core source id).
 mm_wf_prepare_identity_sha256() {
-  local mode target
+  local mode target os_src os_expected
   mode="${PREPARATION_MODE:-FULL}"
   target="${PHASE2_TARGET_VERSION:-${TARGET_DP_VERSION:-6.6.0}}"
+  os_src="phase2-only"
+  os_expected=""
+  if [[ "$mode" != "PHASE2_ONLY" ]]; then
+    # Prefer immutable expected artifact SHA when configured; otherwise bind the
+    # R2 source URL basename (generation/path), not a mutable local checkout path.
+    os_expected="${OS_CORE_EXPECTED_SHA256:-}"
+    os_src="${OS_CORE_R2_URL:-${OS_CORE_R2_URL_CONSTANT:-}}"
+    os_src="${os_src##*/}"
+    [[ -n "$os_src" ]] || os_src="os-core-unconfigured"
+  fi
   {
     printf 'PREPARATION_MODE=%s\n' "$mode"
     printf 'PHASE2_TARGET_VERSION=%s\n' "$target"
+    printf 'OS_CORE_SOURCE_ID=%s\n' "$os_src"
+    printf 'OS_CORE_EXPECTED_SHA256=%s\n' "$os_expected"
   } | sha256sum | awk '{print $1}'
 }
 
@@ -339,7 +362,7 @@ mm_wf_classify_config_change() {
   cur_auth="$(mm_wf_auth_identity_sha256)"
 
   if [[ -z "$prev_prep$prev_pub$prev_cmd$prev_auth" ]]; then
-    local prev_full
+    local prev_full cur_full
     prev_full="$(mm_wf_get CONFIG_SHA256)"
     if [[ -z "$prev_full" ]]; then
       MM_WF_CONFIG_CHANGE_CLASS="INITIAL"
@@ -347,12 +370,19 @@ mm_wf_classify_config_change() {
       MM_WF_NEXT_REQUIRED_ACTION="Download and Prepare"
       return 0
     fi
-    # Older workflow files lack layered hashes. Populate them on the next
-    # save without demoting — CONFIG_SHA256 formatting can differ across
-    # releases (empty worker fields) without a semantic operator change.
-    MM_WF_CONFIG_CHANGE_CLASS="NONE"
-    MM_WF_STALE_REASON="migrated_layer_identities"
-    MM_WF_NEXT_REQUIRED_ACTION="NONE"
+    # Older workflow files lack layered hashes. Compare legacy CONFIG_SHA256
+    # against the current composite. Equality → safe migrate as NONE.
+    # Inequality → LEGACY_UNKNOWN (do not claim NONE; require minimum safe action).
+    cur_full="$(mm_wf_config_sha256 || true)"
+    if [[ -n "$prev_full" && -n "$cur_full" && "$prev_full" == "$cur_full" ]]; then
+      MM_WF_CONFIG_CHANGE_CLASS="NONE"
+      MM_WF_STALE_REASON="migrated_layer_identities"
+      MM_WF_NEXT_REQUIRED_ACTION="NONE"
+      return 0
+    fi
+    MM_WF_CONFIG_CHANGE_CLASS="LEGACY_UNKNOWN"
+    MM_WF_STALE_REASON="legacy_config_identity_unproven"
+    MM_WF_NEXT_REQUIRED_ACTION="Regenerate Client Commands"
     return 0
   fi
 
@@ -411,7 +441,7 @@ mm_wf_operator_save_message() {
       printf '%s\n' "Configuration saved.
 No workflow action required."
       ;;
-    COMMAND_ROUTING|COMMAND_AND_AUTH)
+    COMMAND_ROUTING|COMMAND_AND_AUTH|LEGACY_UNKNOWN)
       printf '%s\n' "Configuration saved.
 Existing prepared artifacts and HTTP readiness remain valid.
 Client commands changed.
@@ -570,19 +600,50 @@ mm_wf_invalidate_after_config_change() {
       ;;
     AUTH_CREDENTIAL)
       # Credentials are acquisition inputs, not artifact identity.
-      if declare -F mm_status_set >/dev/null 2>&1; then
-        mm_status_set ACPS_CONNECTION ""
-        mm_status_set CONFIG_CHANGE_CLASS AUTH_CREDENTIAL
-        mm_status_set NEXT_REQUIRED_ACTION NONE
-        mm_status_set STALE_REASON "${MM_WF_STALE_REASON}"
-      fi
       mm_wf_store_layer_identities || true
       mm_wf_set_many \
         "CONFIG_CHANGE_CLASS=AUTH_CREDENTIAL" \
         "STALE_REASON=${MM_WF_STALE_REASON}" \
         "NEXT_REQUIRED_ACTION=NONE" \
         || true
+      if declare -F mm_status_set >/dev/null 2>&1; then
+        mm_status_set ACPS_CONNECTION ""
+        mm_status_set CONFIG_CHANGE_CLASS AUTH_CREDENTIAL
+        mm_status_set NEXT_REQUIRED_ACTION NONE
+        mm_status_set STALE_REASON "${MM_WF_STALE_REASON}"
+      fi
       mm_wf_info "WORKFLOW_STALE class=AUTH_CREDENTIAL demote=auth_status_only"
+      return 0
+      ;;
+    LEGACY_UNKNOWN)
+      # Layered identity unproven: preserve heavy artifacts; require command regen.
+      # Do NOT force re-download when cryptographic/provenance validation can hold.
+      state="$(mm_wf_state)"
+      case "$state" in
+        COMMANDS_GENERATED)
+          mm_wf_set_many "WORKFLOW_STATE=READINESS_VERIFIED" || true
+          if declare -F mm_status_set >/dev/null 2>&1; then
+            mm_status_set WORKFLOW_STATE READINESS_VERIFIED
+          fi
+          ;;
+      esac
+      mm_wf_set_many "COMMAND_FILE_GENERATION_ID=" || true
+      if declare -F mm_client_commands_file >/dev/null 2>&1; then
+        rm -f "$(mm_client_commands_file)" 2>/dev/null || true
+      fi
+      mm_wf_store_layer_identities || true
+      mm_wf_set_many \
+        "CONFIG_CHANGE_CLASS=LEGACY_UNKNOWN" \
+        "STALE_REASON=${MM_WF_STALE_REASON}" \
+        "NEXT_REQUIRED_ACTION=${MM_WF_NEXT_REQUIRED_ACTION}" \
+        || true
+      if declare -F mm_status_set >/dev/null 2>&1; then
+        mm_status_set CLIENT_COMMANDS_MODE ""
+        mm_status_set CONFIG_CHANGE_CLASS LEGACY_UNKNOWN
+        mm_status_set NEXT_REQUIRED_ACTION "${MM_WF_NEXT_REQUIRED_ACTION}"
+        mm_status_set STALE_REASON "${MM_WF_STALE_REASON}"
+      fi
+      mm_wf_info "WORKFLOW_STALE class=LEGACY_UNKNOWN demote=commands_only preserve_artifacts=YES"
       return 0
       ;;
     PUBLICATION_ENDPOINT)
@@ -629,7 +690,8 @@ mm_wf_invalidate_after_config_change() {
       mm_wf_info "WORKFLOW_STALE class=PUBLICATION_ENDPOINT demote=PREPARED preserve_artifacts=YES"
       return 0
       ;;
-    PREPARE_INPUT|INITIAL|LEGACY_UNKNOWN|*)
+    PREPARE_INPUT|INITIAL|*)
+      # Full demotion to CONFIGURED — Download and Prepare required.
       mm_wf_mark_configured || return 0
       mm_wf_set_many \
         "CONFIG_CHANGE_CLASS=${cls}" \
@@ -648,15 +710,26 @@ mm_wf_invalidate_after_config_change() {
 }
 
 mm_wf_mark_prepared() {
-  local gen os_gen p2_gen
+  local gen os_gen p2_gen start_sha cur_sha
   gen="$(mm_wf_get WORKFLOW_GENERATION_ID)"
   [[ -n "$gen" ]] || gen="$(mm_wf_new_generation_id)"
   os_gen="${1:-$(mm_wf_new_generation_id)}"
   p2_gen="${2:-$(mm_wf_new_generation_id)}"
+  # Stale-operation CAS: refuse to publish PREPARED if config identity changed
+  # after Download and Prepare started.
+  start_sha="$(mm_wf_get OPERATION_START_CONFIG_SHA256)"
+  cur_sha="$(mm_wf_config_sha256 || true)"
+  if [[ -n "$start_sha" && -n "$cur_sha" && "$start_sha" != "$cur_sha" ]]; then
+    mm_wf_warn "STALE_DURING_OPERATION start=${start_sha} current=${cur_sha}"
+    if declare -F mm_error >/dev/null 2>&1; then
+      mm_error "STALE_DURING_OPERATION=YES reason=config_changed_during_download_prepare"
+    fi
+    return 1
+  fi
   mm_wf_set_many \
     "WORKFLOW_STATE=PREPARED" \
     "WORKFLOW_GENERATION_ID=${gen}" \
-    "CONFIG_SHA256=$(mm_wf_config_sha256 || true)" \
+    "CONFIG_SHA256=${cur_sha}" \
     "CONFIG_PREPARE_SHA256=$(mm_wf_prepare_identity_sha256)" \
     "CONFIG_PUBLICATION_SHA256=$(mm_wf_publication_identity_sha256)" \
     "CONFIG_COMMAND_SHA256=$(mm_wf_command_identity_sha256)" \
@@ -670,6 +743,7 @@ mm_wf_mark_prepared() {
     "HTTP_PUBLICATION_GENERATION_ID=" \
     "READINESS_VERIFIED_GENERATION_ID=" \
     "COMMAND_FILE_GENERATION_ID=" \
+    "OPERATION_START_CONFIG_SHA256=" \
     "VERIFIED_UTC="
   if declare -F mm_status_set >/dev/null 2>&1; then
     mm_status_set WORKFLOW_STATE PREPARED
@@ -1344,9 +1418,10 @@ mm_wf_atomic_publish_command_file() {
   fi
   sha="$(sha256sum "$tmp" | awk '{print $1}')"
   mkdir -p "$(dirname "$dest")"
-  chmod 0644 "$tmp"
+  # Command files are operator-private (may guide credential entry; never 0644).
+  chmod "${MM_PRIVATE_FILE_MODE:-0600}" "$tmp"
   mv -f "$tmp" "$dest"
-  chmod 0644 "$dest"
+  chmod "${MM_PRIVATE_FILE_MODE:-0600}" "$dest"
   mm_wf_mark_commands_generated "$ready_gen"
   printf 'COMMAND_FILE_BUILD=PASS\n'
   printf 'COMMAND_FILE_MODE=%s\n' "$mode"

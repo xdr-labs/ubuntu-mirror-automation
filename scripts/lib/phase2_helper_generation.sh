@@ -138,6 +138,8 @@ while [[ \$# -gt 0 ]]; do
     -h|--help)
       echo "Usage: bash upgrade-phase2.sh [--source-dp-version X.Y.Z]"
       echo "Target ${ver} and mirror URL are fixed by Mirror Manager publication."
+      echo "Normal upgrades do NOT enable same-version recovery."
+      echo "For authorized recovery only, use upgrade-phase2-same-version-recovery.sh"
       exit 0
       ;;
     *)
@@ -155,7 +157,9 @@ for F in "\$GEN" "\$SCRIPT" bringup_py3_dp_lifecycle.sh lib/dp-{offline-source-p
 done
 printf '%s  %s\\n' "\$H" "\$GEN" | sha256sum -c -
 sha256sum -c "\$GEN"
-sudo bash "./\$SCRIPT" --target-version "\$VER" --same-version-recovery --mirror-url "\$MIRROR" "\${SOURCE_DP_VERSION_OPT[@]}"
+# Normal path: never force --same-version-recovery. Healthy source==target
+# must yield ALREADY_AT_TARGET / same-version gate without destructive recovery.
+sudo bash "./\$SCRIPT" --target-version "\$VER" --mirror-url "\$MIRROR" "\${SOURCE_DP_VERSION_OPT[@]}"
 EOF
   chmod 0644 "$dest"
   bash -n "$dest" || {
@@ -165,5 +169,68 @@ EOF
   }
   ( cd "$root" && sha256sum upgrade-phase2.sh >upgrade-phase2.sh.sha256 ) || return 1
   chmod 0644 "${dest}.sha256"
+
+  # Explicit recovery wrapper only. Requires CONFIRM_SAME_VERSION_RECOVERY=YES.
+  local recovery="${root}/upgrade-phase2-same-version-recovery.sh"
+  cat >"$recovery" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+cd /home/aella
+MIRROR='${mirror}'
+VER='${ver}'
+SCRIPT='stage-dp-phase2.sh'
+GEN='phase2-helper-generation.manifest'
+H='${sha}'
+if [[ "\${CONFIRM_SAME_VERSION_RECOVERY:-}" != "YES" ]]; then
+  echo "FATAL: same-version recovery requires CONFIRM_SAME_VERSION_RECOVERY=YES" >&2
+  echo "Use upgrade-phase2.sh for normal upgrades (source < target)." >&2
+  exit 2
+fi
+SOURCE_DP_VERSION_OPT=()
+while [[ \$# -gt 0 ]]; do
+  case "\$1" in
+    --source-dp-version)
+      [[ \$# -ge 2 ]] || { echo "FATAL: --source-dp-version requires a value" >&2; exit 2; }
+      [[ "\$2" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+\$ ]] || {
+        echo "FATAL: invalid --source-dp-version (expected major.minor.patch)" >&2
+        exit 2
+      }
+      SOURCE_DP_VERSION_OPT=(--source-dp-version "\$2")
+      shift 2
+      ;;
+    --target-version|--mirror-url|--same-version-recovery)
+      echo "FATAL: protected option '\$1' cannot be overridden" >&2
+      exit 2
+      ;;
+    -h|--help)
+      echo "Usage: CONFIRM_SAME_VERSION_RECOVERY=YES bash upgrade-phase2-same-version-recovery.sh [--source-dp-version X.Y.Z]"
+      exit 0
+      ;;
+    *)
+      echo "FATAL: unknown option '\$1'" >&2
+      exit 2
+      ;;
+  esac
+done
+W=\$(mktemp -d)
+trap 'rm -rf "\$W"' EXIT
+cd "\$W"
+mkdir -p lib
+for F in "\$GEN" "\$SCRIPT" bringup_py3_dp_lifecycle.sh lib/dp-{offline-source-product-version,phase2-operation-progress,phase2-bringup-lifecycle,phase2-ubuntu-prerequisites}.sh; do
+  curl -fsSLo "\$F" "\$MIRROR/client/\$F" || exit 1
+done
+printf '%s  %s\\n' "\$H" "\$GEN" | sha256sum -c -
+sha256sum -c "\$GEN"
+sudo bash "./\$SCRIPT" --target-version "\$VER" --same-version-recovery --mirror-url "\$MIRROR" "\${SOURCE_DP_VERSION_OPT[@]}"
+EOF
+  chmod 0644 "$recovery"
+  bash -n "$recovery" || {
+    printf 'PHASE2_RECOVERY_WRAPPER=FAIL reason=bash_n\n' >&2
+    rm -f "$recovery"
+    return 1
+  }
+  ( cd "$root" && sha256sum upgrade-phase2-same-version-recovery.sh \
+    >upgrade-phase2-same-version-recovery.sh.sha256 ) || return 1
+  chmod 0644 "${recovery}.sha256"
   printf '%s\n' "$dest"
 }

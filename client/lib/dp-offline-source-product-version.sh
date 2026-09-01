@@ -55,6 +55,13 @@ spv_is_strict_product_version() {
 }
 
 spv_normalize_dp_version() {
+  # Normalize authoritative / live product version tokens to strict X.Y.Z.
+  # Accepts real release-image.yml forms:
+  #   6.5.0
+  #   6.5.0.7942
+  #   6.5.0.7942-9ed2e58c1
+  # Also accepts short 6.5 → 6.5.0 for recovery paths only.
+  # Operator --source-dp-version remains gated by spv_is_strict_product_version.
   local raw="${1-}"
   local base
   if [[ -z "$raw" || "$raw" == "null" || "$raw" == "unknown" || "$raw" == "UNKNOWN" \
@@ -62,7 +69,10 @@ spv_normalize_dp_version() {
     return 1
   fi
   raw="$(printf '%s' "$raw" | sed -E 's/^[^0-9]*//')"
-  if [[ "$raw" =~ ^([0-9]+\.[0-9]+\.[0-9]+)(-[A-Za-z0-9.-]+)?$ ]]; then
+  # Prefer Phase1-compatible capture of leading X.Y.Z before build/hash suffix.
+  if [[ "$raw" =~ ^([0-9]+\.[0-9]+\.[0-9]+)(\.[0-9]+)?(-[A-Za-z0-9.-]+)?$ ]]; then
+    base="${BASH_REMATCH[1]}"
+  elif [[ "$raw" =~ ^([0-9]+\.[0-9]+\.[0-9]+) ]]; then
     base="${BASH_REMATCH[1]}"
   elif [[ "$raw" =~ ^([0-9]+\.[0-9]+)$ ]]; then
     base="${BASH_REMATCH[1]}.0"
@@ -241,10 +251,17 @@ spv_validate_parsed_pass_record() {
 spv_atomic_write_file() {
   local dest="$1"
   local mode="${2:-0600}"
-  local parent tmp content_file
+  local parent tmp content_file parent_existed=0
   parent="$(dirname "$dest")"
+  if [[ -d "$parent" ]]; then
+    parent_existed=1
+  fi
   mkdir -p "$parent" || return 1
-  chmod 0700 "$parent" 2>/dev/null || true
+  # Only set restrictive mode on newly created parent directories. Do not
+  # chmod an existing shared parent such as /opt/aelladata/os-upgrade/offline.
+  if [[ "$parent_existed" -eq 0 ]]; then
+    chmod 0700 "$parent" 2>/dev/null || true
+  fi
 
   content_file="$(mktemp "${TMPDIR:-/tmp}/spv-content.XXXXXX")"
   cat >"$content_file" || { rm -f "$content_file"; return 1; }
@@ -255,7 +272,6 @@ spv_atomic_write_file() {
       if [[ "$(id -u)" -eq 0 ]]; then
         chown root:root "$dest" 2>/dev/null || true
         chmod "$mode" "$dest" 2>/dev/null || true
-        chmod 0700 "$parent" 2>/dev/null || true
       fi
       return 0
     fi
@@ -280,7 +296,6 @@ spv_atomic_write_file() {
   if [[ "$(id -u)" -eq 0 ]]; then
     chown root:root "$dest" 2>/dev/null || true
     chmod "$mode" "$dest" 2>/dev/null || true
-    chmod 0700 "$parent" 2>/dev/null || true
   fi
   return 0
 }
@@ -662,13 +677,40 @@ spv_os_upgrade_state() {
 }
 
 spv_bringup_completed_marker() {
+  # Prefer coherent current-run lifecycle completion. A stale BRINGUP_EXECUTED
+  # marker alone is NOT current PASS (attempted ≠ completed).
+  if declare -F p2b_current_run_completion_coherent >/dev/null 2>&1; then
+    if declare -F p2b_status_snapshot >/dev/null 2>&1; then
+      p2b_status_snapshot >/dev/null 2>&1 || true
+    fi
+    if p2b_current_run_completion_coherent; then
+      return 0
+    fi
+    return 1
+  fi
   local life="${SOURCE_PRODUCT_BRINGUP_RESULT_ENV:-/opt/aelladata/os-upgrade/offline/phase2-bringup/result.env}"
-  if [[ -f "$life" ]] && grep -qE '^BRINGUP_RESULT=PASS$' "$life" 2>/dev/null; then
-    return 0
+  local statef runf
+  statef="$(dirname "$life")/state"
+  runf="$(dirname "$life")/run-id"
+  if [[ -f "$life" && -f "$statef" ]]; then
+    local result state exitc sentinel run_id life_run
+    result="$(awk -F= '$1=="BRINGUP_RESULT"{print substr($0,index($0,"=")+1);exit}' "$life" 2>/dev/null || true)"
+    life_run="$(awk -F= '$1=="BRINGUP_RUN_ID"{print substr($0,index($0,"=")+1);exit}' "$life" 2>/dev/null || true)"
+    exitc="$(awk -F= '$1=="BRINGUP_EXIT_CODE"{print substr($0,index($0,"=")+1);exit}' "$life" 2>/dev/null || true)"
+    sentinel="$(awk -F= '$1=="BRINGUP_COMPLETION_SENTINEL"{print substr($0,index($0,"=")+1);exit}' "$life" 2>/dev/null || true)"
+    state="$(tr -d '[:space:]' <"$statef" 2>/dev/null || true)"
+    run_id=""
+    [[ -f "$runf" ]] && run_id="$(tr -d '[:space:]' <"$runf" 2>/dev/null || true)"
+    if [[ "$state" == "COMPLETED" \
+      && "$result" == "PASS" \
+      && "$exitc" == "0" \
+      && "$sentinel" == "PASS" \
+      && -n "$run_id" \
+      && ( -z "$life_run" || "$life_run" == "$run_id" ) ]]; then
+      return 0
+    fi
   fi
-  if [[ -f /opt/aelladata/os-upgrade/offline/BRINGUP_EXECUTED ]]; then
-    return 0
-  fi
+  # Legacy BRINGUP_EXECUTED existence is attempt evidence only — never PASS.
   return 1
 }
 
@@ -696,23 +738,88 @@ spv_read_os_release() {
 }
 
 # Distinguish Native Noble (never ran Phase 1) from Post-Phase1 Noble.
-# POST_PHASE1_NOBLE: OS upgrade state is COMPLETED_NOBLE (Phase 1 finished).
-# NATIVE_NOBLE: Ubuntu 24.04/noble without Phase 1 completion evidence.
+# POST_PHASE1_NOBLE: Phase 1 completion / immutable pre-upgrade evidence.
+# NATIVE_NOBLE: Ubuntu 24.04/noble with no Phase 1 evidence; live aella_cli OK.
+# AMBIGUOUS_NOBLE: contradictory/partial evidence — fail closed before mutation.
 # OTHER: not a Noble Phase2-only entry host.
+spv_has_phase1_origin_evidence() {
+  # True when immutable Phase 1 artifacts strongly suggest this host arrived
+  # via OS upgrade even if COMPLETED_NOBLE marker is missing.
+  local dest="${SOURCE_PRODUCT_ENV_DEFAULT_PATH}"
+  local logf="${SOURCE_PRODUCT_PHASE1_LOG_DEFAULT}"
+  local state_file="${SOURCE_PRODUCT_OS_STATE_FILE:-/opt/aelladata/os-upgrade/offline/current-state.txt}"
+  if [[ -f "$dest" ]]; then
+    if spv_parse_source_product_env_file "$dest" 2>/dev/null; then
+      case "${SPV_PARSED_SOURCE_DP_VERSION_ORIGIN:-}" in
+        phase1*|jammy*|release-upgrade*|os-upgrade*|source-product*)
+          return 0
+          ;;
+      esac
+      # Any durable source-product.env on a Noble host is Phase1-class evidence
+      # when origin is not explicitly native/aella_cli.
+      case "${SPV_PARSED_SOURCE_DP_VERSION_ORIGIN:-}" in
+        aella_cli*|operator*|native*) ;;
+        *)
+          [[ -n "${SPV_PARSED_SOURCE_DP_VERSION:-}" ]] && return 0
+          ;;
+      esac
+    fi
+  fi
+  if [[ -f "$logf" ]] && grep -Eq 'SOURCE_PRODUCT_ENV_CAPTURE=PASS|COMPLETED_NOBLE|SOURCE_DP_VERSION=' "$logf" 2>/dev/null; then
+    return 0
+  fi
+  if [[ -f "$state_file" ]]; then
+    case "$(tr -d '\r\n' <"$state_file" 2>/dev/null || true)" in
+      COMPLETED_NOBLE|POST_*|HOP_*NOBLE*|RELEASE_UPGRADE_*) return 0 ;;
+    esac
+  fi
+  return 1
+}
+
+spv_os_identity_is_coherent_noble() {
+  spv_read_os_release || return 1
+  [[ "${SPV_OS_RELEASE_ID}" == "ubuntu" ]] || return 1
+  [[ "${SPV_OS_RELEASE_VERSION_ID}" == "24.04" ]] || return 1
+  [[ "${SPV_OS_RELEASE_CODENAME}" == "noble" ]] || return 1
+  return 0
+}
+
 spv_detect_phase2_entry_mode() {
   local state
   SPV_PHASE2_ENTRY_MODE=""
   state="$(spv_os_upgrade_state)"
+  # Phase 1 completion marker is authoritative for Post-Phase1 classification.
   if [[ "$state" == "COMPLETED_NOBLE" ]]; then
     SPV_PHASE2_ENTRY_MODE="POST_PHASE1_NOBLE"
     return 0
   fi
-  spv_read_os_release || true
-  if [[ "${SPV_OS_RELEASE_ID}" == "ubuntu" ]] \
-    && { [[ "${SPV_OS_RELEASE_VERSION_ID}" == "24.04" ]] \
-      || [[ "${SPV_OS_RELEASE_CODENAME}" == "noble" ]]; }; then
+  if spv_os_identity_is_coherent_noble; then
+    if spv_has_phase1_origin_evidence; then
+      # Marker missing but Phase1 evidence remains → do not trust live CLI.
+      SPV_PHASE2_ENTRY_MODE="POST_PHASE1_NOBLE"
+      return 0
+    fi
     SPV_PHASE2_ENTRY_MODE="NATIVE_NOBLE"
     return 0
+  fi
+  # Partial noble signals without coherent ID/VERSION_ID/CODENAME.
+  spv_read_os_release || true
+  if { [[ "${SPV_OS_RELEASE_CODENAME}" == "noble" ]] \
+      || [[ "${SPV_OS_RELEASE_VERSION_ID}" == "24.04" ]]; } \
+    && [[ -n "${SPV_OS_RELEASE_ID}${SPV_OS_RELEASE_VERSION_ID}${SPV_OS_RELEASE_CODENAME}" ]]; then
+    # Some noble fields present but identity not coherent, or conflicting fields.
+    if [[ "${SPV_OS_RELEASE_ID}" != "ubuntu" ]] \
+      || [[ "${SPV_OS_RELEASE_VERSION_ID}" != "24.04" ]] \
+      || [[ "${SPV_OS_RELEASE_CODENAME}" != "noble" ]]; then
+      # Only AMBIGUOUS when at least one noble-like field is set alongside mismatch.
+      if [[ "${SPV_OS_RELEASE_CODENAME}" == "noble" && "${SPV_OS_RELEASE_VERSION_ID}" != "24.04" ]] \
+        || [[ "${SPV_OS_RELEASE_VERSION_ID}" == "24.04" && "${SPV_OS_RELEASE_CODENAME}" != "noble" ]] \
+        || [[ "${SPV_OS_RELEASE_CODENAME}" == "noble" && "${SPV_OS_RELEASE_ID}" != "ubuntu" ]] \
+        || [[ "${SPV_OS_RELEASE_VERSION_ID}" == "24.04" && "${SPV_OS_RELEASE_ID}" != "ubuntu" ]]; then
+        SPV_PHASE2_ENTRY_MODE="AMBIGUOUS_NOBLE"
+        return 0
+      fi
+    fi
   fi
   SPV_PHASE2_ENTRY_MODE="OTHER"
   return 0
@@ -738,10 +845,12 @@ spv_detect_from_aella_cli() {
   fi
 
   outf="$(mktemp "${TMPDIR:-/tmp}/spv-aella-cli.XXXXXX")"
+  local prev_e=0
+  [[ $- == *e* ]] && prev_e=1
   set +e
   timeout 10 sh -c "printf 'show version\nquit\n' | aella_cli" >"$outf" 2>&1
   rc=$?
-  set -e
+  [[ "$prev_e" -eq 1 ]] && set -e
   text="$(cat "$outf" 2>/dev/null || true)"
   rm -f "$outf"
 
@@ -756,14 +865,12 @@ spv_detect_from_aella_cli() {
 
   while IFS= read -r line || [[ -n "$line" ]]; do
     line="${line%$'\r'}"
+    # Strict product tokens only (Phase1 extract_mmp_tokens_from_text contract).
+    # Do NOT normalize loose forms such as "6.5" from unrelated banner text.
     # shellcheck disable=SC2086
     for token in $line; do
       if [[ "$token" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
         versions+=("$token")
-      elif n="$(spv_normalize_dp_version "$token" 2>/dev/null)"; then
-        if spv_is_strict_product_version "$n"; then
-          versions+=("$n")
-        fi
       fi
     done
   done <<<"$text"
@@ -863,6 +970,35 @@ spv_set_failure() {
   SPV_SOURCE_DP_VERSION_CHECK="FAIL"
 }
 
+# Fail closed when allow_write=1 persistence of authoritative evidence fails.
+# Returns 0 when persist succeeded (or REUSED). Returns 1 after setting failure.
+spv_require_persist_or_fail() {
+  local dest="$1" raw="$2" origin="$3" captured_os="$4" captured_codename="$5" run_id="$6"
+  if spv_persist_source_product_env "$dest" "$raw" "$origin" \
+      "$captured_os" "$captured_codename" "$run_id"; then
+    return 0
+  fi
+  case "${SPV_SOURCE_VERSION_CAPTURE_STATUS}" in
+    VERSION_CONFLICT)
+      spv_set_failure "SOURCE_PRODUCT_ENV_VERSION_CONFLICT" \
+        "Authoritative source-product.env already records a different version; refuse silent overwrite."
+      ;;
+    WRITE_FAILED)
+      spv_set_failure "SOURCE_PRODUCT_ENV_WRITE_FAILED" \
+        "Detected source version but could not durably persist source-product.env; fix permissions/disk and retry before mutation."
+      ;;
+    REJECTED_INVALID_VERSION|REJECTED_FAKE_SOURCE)
+      spv_set_failure "SOURCE_PRODUCT_ENV_PERSIST_REJECTED" \
+        "Source version evidence was rejected during persistence; refuse mutation."
+      ;;
+    *)
+      spv_set_failure "SOURCE_PRODUCT_ENV_PERSIST_FAILED" \
+        "Authoritative source-product.env persistence failed (${SPV_SOURCE_VERSION_CAPTURE_STATUS:-UNKNOWN}); refuse mutation."
+      ;;
+  esac
+  return 1
+}
+
 # Full resolution with optional write-back recovery.
 # Args:
 #   $1 dest env path
@@ -901,6 +1037,13 @@ spv_resolve_source_dp_version() {
   SPV_AELLA_CLI_VERSION_DETECTION=""
   SPV_AELLA_CLI_VERSION=""
   spv_detect_phase2_entry_mode
+
+  if [[ "${SPV_PHASE2_ENTRY_MODE}" == "AMBIGUOUS_NOBLE" ]]; then
+    spv_set_failure "AMBIGUOUS_NOBLE_ORIGIN" \
+      "Ubuntu 24.04/noble origin cannot be classified safely (contradictory or incomplete Phase 1 evidence). Do not mutate; restore Phase 1 state or provide verified --source-dp-version only after independent confirmation."
+    spv_write_resolution_evidence "$run_id"
+    return 1
+  fi
 
   # 1) valid source-product.env
   if spv_read_source_product_env "$dest"; then
@@ -947,31 +1090,33 @@ spv_resolve_source_dp_version() {
   if [[ "$state" == "COMPLETED_NOBLE" ]] && ! spv_bringup_completed_marker; then
     if spv_scan_phase1_log_evidence "$logf" "$production_mode"; then
       if [[ "$allow_write" == "1" ]]; then
-        if spv_persist_source_product_env "$dest" \
+        if ! spv_require_persist_or_fail "$dest" \
             "$SPV_PHASE1_SELECTED_VERSION" "phase1-log-recovery" \
             "24.04" "noble" "${run_id:-phase1-recovery}"; then
-          SPV_SOURCE_DP_VERSION_ORIGIN="phase1-log-recovery"
-          SPV_SOURCE_DP_VERSION_RECOVERY="PASS"
-          SPV_SOURCE_DP_VERSION_RESOLUTION="PASS"
-          SPV_SOURCE_DP_VERSION_CHECK="PASS"
-          if [[ -n "$operator" ]]; then
-            op_norm="$(spv_normalize_dp_version "$operator")" || {
-              SPV_OPERATOR_SOURCE_VERSION_STATUS="INVALID"
-              spv_set_failure "OPERATOR_OVERRIDE_INVALID"
-              spv_write_resolution_evidence "$run_id"
-              return 1
-            }
-            SPV_OPERATOR_SOURCE_VERSION_STATUS="PROVIDED"
-            if [[ "$op_norm" != "$SPV_SOURCE_DP_VERSION" ]]; then
-              SPV_OPERATOR_SOURCE_VERSION_STATUS="CONFLICT"
-              spv_set_failure "OPERATOR_OVERRIDE_CONFLICT"
-              spv_write_resolution_evidence "$run_id"
-              return 1
-            fi
-          fi
           spv_write_resolution_evidence "$run_id"
-          return 0
+          return 1
         fi
+        SPV_SOURCE_DP_VERSION_ORIGIN="phase1-log-recovery"
+        SPV_SOURCE_DP_VERSION_RECOVERY="PASS"
+        SPV_SOURCE_DP_VERSION_RESOLUTION="PASS"
+        SPV_SOURCE_DP_VERSION_CHECK="PASS"
+        if [[ -n "$operator" ]]; then
+          op_norm="$(spv_normalize_dp_version "$operator")" || {
+            SPV_OPERATOR_SOURCE_VERSION_STATUS="INVALID"
+            spv_set_failure "OPERATOR_OVERRIDE_INVALID"
+            spv_write_resolution_evidence "$run_id"
+            return 1
+          }
+          SPV_OPERATOR_SOURCE_VERSION_STATUS="PROVIDED"
+          if [[ "$op_norm" != "$SPV_SOURCE_DP_VERSION" ]]; then
+            SPV_OPERATOR_SOURCE_VERSION_STATUS="CONFLICT"
+            spv_set_failure "OPERATOR_OVERRIDE_CONFLICT"
+            spv_write_resolution_evidence "$run_id"
+            return 1
+          fi
+        fi
+        spv_write_resolution_evidence "$run_id"
+        return 0
       else
         # diagnose / read-only: report would-be recovery without writing
         SPV_SOURCE_DP_VERSION="$SPV_PHASE1_SELECTED_VERSION"
@@ -1005,17 +1150,17 @@ spv_resolve_source_dp_version() {
   if [[ "${SPV_PHASE2_ENTRY_MODE}" == "NATIVE_NOBLE" ]]; then
     if spv_detect_from_aella_cli; then
       if [[ "$allow_write" == "1" ]]; then
-        if ! spv_persist_source_product_env "$dest" \
+        if ! spv_require_persist_or_fail "$dest" \
             "$SPV_AELLA_CLI_VERSION" "aella_cli-native-noble" \
             "${SPV_OS_RELEASE_VERSION_ID:-24.04}" \
             "${SPV_OS_RELEASE_CODENAME:-noble}" \
             "${run_id:-native-noble}"; then
-          if [[ "${SPV_SOURCE_VERSION_CAPTURE_STATUS}" == "VERSION_CONFLICT" ]]; then
-            spv_set_failure "SOURCE_PRODUCT_ENV_VERSION_CONFLICT"
-            spv_write_resolution_evidence "$run_id"
-            return 1
-          fi
+          spv_write_resolution_evidence "$run_id"
+          return 1
         fi
+      else
+        SPV_SOURCE_VERSION_CAPTURE_STATUS="READ_ONLY_SKIPPED"
+        SPV_SOURCE_DP_VERSION_RECOVERY="WOULD_WRITE"
       fi
       SPV_SOURCE_DP_VERSION="$SPV_AELLA_CLI_VERSION"
       SPV_SOURCE_DP_VERSION_RAW="$SPV_AELLA_CLI_VERSION"
@@ -1057,9 +1202,15 @@ spv_resolve_source_dp_version() {
   # 4) release-image.yml
   if spv_detect_from_release_image "$image"; then
     if [[ "$allow_write" == "1" ]]; then
-      spv_persist_source_product_env "$dest" \
-        "$SPV_RELEASE_SELECTED_VERSION" "release-image.yml" \
-        "" "" "${run_id:-release-image}" || true
+      if ! spv_require_persist_or_fail "$dest" \
+          "$SPV_RELEASE_SELECTED_VERSION" "release-image.yml" \
+          "" "" "${run_id:-release-image}"; then
+        spv_write_resolution_evidence "$run_id"
+        return 1
+      fi
+    else
+      SPV_SOURCE_VERSION_CAPTURE_STATUS="READ_ONLY_SKIPPED"
+      SPV_SOURCE_DP_VERSION_RECOVERY="WOULD_WRITE"
     fi
     SPV_SOURCE_DP_VERSION="$SPV_RELEASE_SELECTED_VERSION"
     SPV_SOURCE_DP_VERSION_RAW="$SPV_RELEASE_SELECTED_VERSION"
@@ -1102,8 +1253,14 @@ spv_resolve_source_dp_version() {
     fi
     SPV_OPERATOR_SOURCE_VERSION_STATUS="PROVIDED"
     if [[ "$allow_write" == "1" ]]; then
-      spv_persist_source_product_env "$dest" "$op_norm" "operator-argument" \
-        "" "" "${run_id:-operator}" || true
+      if ! spv_require_persist_or_fail "$dest" "$op_norm" "operator-argument" \
+          "" "" "${run_id:-operator}"; then
+        spv_write_resolution_evidence "$run_id"
+        return 1
+      fi
+    else
+      SPV_SOURCE_VERSION_CAPTURE_STATUS="READ_ONLY_SKIPPED"
+      SPV_SOURCE_DP_VERSION_RECOVERY="WOULD_WRITE"
     fi
     SPV_SOURCE_DP_VERSION="$op_norm"
     SPV_SOURCE_DP_VERSION_RAW="$operator"

@@ -1020,9 +1020,13 @@ class SelectiveIntegrationSurfaceTests(unittest.TestCase):
         self.assertIn('install-dp-upgrade-mirror.sh', bootstrap)
         # Install engine lives in the authoritative runtime manifest (not
         # inlined into bootstrap.sh after the Mirror Manager split).
+        # Required paths are derived from install arrays via
+        # um_runtime_emit_installed_relative_paths (scripts/lib/<basename>).
         manifest = open(os.path.join(ROOT, 'lib', 'runtime_manifest.sh'), encoding='utf-8').read()
         self.assertIn('mirror_install_engine.sh', manifest)
-        self.assertIn('scripts/lib/mirror_install_engine.sh', manifest)
+        self.assertIn('um_runtime_emit_installed_relative_paths', manifest)
+        self.assertIn("printf 'scripts/lib/%s\\n'", manifest)
+        self.assertIn('UM_RUNTIME_SCRIPT_LIB_SHELL', manifest)
         # Legacy selective tooling remains available via ubuntu-offline-mirror.sh
         uom = open(os.path.join(ROOT, 'scripts', 'ubuntu-offline-mirror.sh'), encoding='utf-8').read()
         self.assertIn('plan-selective', uom)

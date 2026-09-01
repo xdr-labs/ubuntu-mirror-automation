@@ -73,6 +73,112 @@ mm_shell_quote() {
   printf '%q' "$1"
 }
 
+# Reject dangerous roots and paths that escape an approved root before rm -rf.
+# approved_root may be empty only when MM_ALLOW_ARBITRARY_TEST_ROOTS=1 (tests).
+mm_path_is_forbidden_root() {
+  local p="$1"
+  case "$p" in
+    /|/etc|/var|/var/lib|/var/log|/home|/opt|/usr|/bin|/sbin|/lib|/lib64|/boot|/root|/tmp)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+mm_assert_safe_destructive_path() {
+  local path="$1"
+  local approved_root="${2:-}"
+  local label="${3:-path}"
+  local resolved approved_resolved parent
+  [[ -n "$path" ]] || {
+    printf 'DESTRUCTIVE_PATH=FAIL label=%s reason=empty\n' "$label" >&2
+    return 1
+  }
+  # Resolve when the path (or parent) exists; otherwise normalize lexically.
+  if [[ -e "$path" ]]; then
+    resolved="$(realpath -m "$path" 2>/dev/null || readlink -f "$path" 2>/dev/null || printf '%s' "$path")"
+  else
+    parent="$(dirname "$path")"
+    if [[ -d "$parent" ]]; then
+      resolved="$(realpath -m "$parent" 2>/dev/null || printf '%s' "$parent")/$(basename "$path")"
+    else
+      resolved="$path"
+    fi
+  fi
+  # Collapse duplicate slashes / trailing slash for comparisons.
+  resolved="${resolved%/}"
+  [[ -n "$resolved" ]] || resolved="/"
+  if mm_path_is_forbidden_root "$resolved"; then
+    printf 'DESTRUCTIVE_PATH=FAIL label=%s reason=forbidden_root path=%s\n' "$label" "$resolved" >&2
+    return 1
+  fi
+  # Refuse symlink-at-path when it escapes approved_root (if provided).
+  if [[ -n "$approved_root" ]]; then
+    if [[ -e "$approved_root" ]]; then
+      approved_resolved="$(realpath -m "$approved_root" 2>/dev/null || printf '%s' "$approved_root")"
+    else
+      approved_resolved="${approved_root%/}"
+    fi
+    approved_resolved="${approved_resolved%/}"
+    if mm_path_is_forbidden_root "$approved_resolved"; then
+      printf 'DESTRUCTIVE_PATH=FAIL label=%s reason=approved_root_forbidden path=%s\n' \
+        "$label" "$approved_resolved" >&2
+      return 1
+    fi
+    case "$resolved" in
+      "$approved_resolved"|"$approved_resolved"/*) ;;
+      *)
+        printf 'DESTRUCTIVE_PATH=FAIL label=%s reason=outside_approved_root path=%s root=%s\n' \
+          "$label" "$resolved" "$approved_resolved" >&2
+        return 1
+        ;;
+    esac
+  elif [[ "${MM_ALLOW_ARBITRARY_TEST_ROOTS:-0}" != "1" ]]; then
+    printf 'DESTRUCTIVE_PATH=FAIL label=%s reason=approved_root_required path=%s\n' \
+      "$label" "$resolved" >&2
+    return 1
+  fi
+  # Minimum depth: refuse deleting shallow paths like /var/spool
+  local depth
+  depth="$(awk -F/ '{print NF-1}' <<<"$resolved")"
+  if [[ "$depth" -lt 3 ]]; then
+    printf 'DESTRUCTIVE_PATH=FAIL label=%s reason=insufficient_depth path=%s\n' \
+      "$label" "$resolved" >&2
+    return 1
+  fi
+  return 0
+}
+
+# Parse KEY=VALUE metadata; duplicate keys always fail (no first/last-wins).
+# Prints value of requested key to stdout when key is set; with no key prints nothing
+# but still validates. Returns 1 on parse/duplicate errors.
+mm_parse_env_metadata_get() {
+  local file="$1"
+  local want="${2:-}"
+  local line key value
+  local -A seen=()
+  [[ -f "$file" ]] || return 1
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    [[ "$line" == *=* ]] || return 1
+    key="${line%%=*}"
+    value="${line#*=}"
+    [[ "$key" =~ ^[A-Z0-9_]+$ ]] || return 1
+    if [[ -n "${seen[$key]:-}" ]]; then
+      printf 'METADATA_DUPLICATE_KEY=%s file=%s\n' "$key" "$file" >&2
+      return 1
+    fi
+    seen["$key"]=1
+    if [[ -n "$want" && "$key" == "$want" ]]; then
+      printf '%s\n' "$value"
+    fi
+  done <"$file"
+  if [[ -n "$want" && -z "${seen[$want]:-}" ]]; then
+    return 1
+  fi
+  return 0
+}
+
 # Empty password is allowed when no worker IPs are configured.
 # One or more worker IPs require a non-empty worker SSH password.
 mm_validate_worker_ssh_password() {
@@ -131,12 +237,19 @@ mm_run_id() { date -u +%Y%m%dT%H%M%SZ; }
 
 mm_redact() {
   sed -E \
-    -e 's/(ACPS_PASSWORD|ACPS_PASS|ACPS_TOKEN|PASSWORD|TOKEN|PASSWD)=[^[:space:]]+/\1=***/Ig' \
+    -e 's/(ACPS_PASSWORD|ACPS_PASS|ACPS_TOKEN|PASSWORD|TOKEN|PASSWD|WORKER_SSH_PASSWORD)=[^[:space:]]+/\1=***/Ig' \
+    -e 's/(--worker-password(=|[[:space:]]+))([^[:space:]]+)/\1***/g' \
     -e 's/(-u[[:space:]]+)[^[:space:]]+/\1***/g' \
     -e 's#(://[^:/@]+:)[^@/]+@#\1***@#g' \
     -e 's/Authorization:[[:space:]]*Basic[[:space:]]+[^[:space:]]+/Authorization: Basic ***/Ig' \
     -e 's/Authorization:[[:space:]]*Bearer[[:space:]]+[^[:space:]]+/Authorization: Bearer ***/Ig'
 }
+
+# Operator-facing command/report files may mention operational detail but must
+# never be world-readable when they can contain secrets or routing evidence.
+MM_PRIVATE_FILE_MODE="${MM_PRIVATE_FILE_MODE:-0600}"
+MM_PRIVATE_DIR_MODE="${MM_PRIVATE_DIR_MODE:-0700}"
+MM_PUBLIC_FILE_MODE="${MM_PUBLIC_FILE_MODE:-0644}"
 
 mm_format_bytes() {
   local b="${1:-0}"
@@ -489,14 +602,12 @@ mm_verify_sha256_pair_logged() {
   mm_bg_with_heartbeat "$event_prefix" "$fields" "$human_still" -- sha256sum "$data_file" && rc=0 || rc=$?
   if [[ "$rc" -ne 0 ]]; then
     mm_error "${event_prefix}_COMPLETE ${fields} elapsed=${MM_LONG_STEP_LAST_ELAPSED}s result=FAIL rc=${rc}"
-    mm_error "${event_prefix}_FAIL ${fields} elapsed=${MM_LONG_STEP_LAST_ELAPSED}s result=FAIL rc=${rc}"
     return "$rc"
   fi
   actual="$(printf '%s\n' "$MM_LONG_STEP_LAST_STDOUT" | awk '{print $1; exit}')"
   if [[ "${expected,,}" != "${actual,,}" ]]; then
     mm_error "SHA256_VERIFY=FAIL file=$(basename "$data_file") expected=${expected} actual=${actual}"
     mm_error "${event_prefix}_COMPLETE ${fields} elapsed=${MM_LONG_STEP_LAST_ELAPSED}s result=FAIL"
-    mm_error "${event_prefix}_FAIL ${fields} elapsed=${MM_LONG_STEP_LAST_ELAPSED}s result=FAIL"
     return 1
   fi
   mm_ok "${event_prefix}_COMPLETE ${fields} elapsed=${MM_LONG_STEP_LAST_ELAPSED}s result=PASS"
@@ -1033,7 +1144,9 @@ mm_mark_client_commands_fresh() {
   fi
 }
 
-mm_config_ready() {
+# Base operator configuration (mode + pinned target). Does NOT require ACPS
+# credentials — those are acquisition-auth inputs only.
+mm_config_base_ready() {
   mm_load_gui_config
   mm_normalize_preparation_mode
   case "${PREPARATION_MODE}" in
@@ -1042,9 +1155,21 @@ mm_config_ready() {
   esac
   mm_force_phase2_target
   [[ "${TARGET_DP_VERSION}" == "${PHASE2_TARGET_VERSION}" ]] || return 1
-  [[ -n "${ACPS_USERNAME}" ]] || return 1
-  [[ -n "${ACPS_PASSWORD}" ]] || return 1
   return 0
+}
+
+# ACPS credentials required only when a new ACPS acquisition needs them.
+mm_acquisition_auth_ready() {
+  mm_load_gui_config
+  [[ -n "${ACPS_USERNAME:-}" ]] || return 1
+  [[ -n "${ACPS_PASSWORD:-}" ]] || return 1
+  return 0
+}
+
+# Historical name: base config ready. Prefer mm_config_base_ready /
+# mm_acquisition_auth_ready for new call sites that need the distinction.
+mm_config_ready() {
+  mm_config_base_ready
 }
 
 mm_r2_url_configured() {
@@ -1091,6 +1216,8 @@ mm_status_get() {
 
 # Cheap file identity for menu completion (no full-file hash).
 # Format: path|dev:inode:size:mtime_ns_or_sec
+# NOTE: For DIRECTORIES this only reflects directory metadata, not child
+# content. Do not use directory fingerprints for OS readiness identity.
 mm_file_fingerprint() {
   local path="$1"
   local st
@@ -1141,13 +1268,45 @@ mm_phase2_paths() {
   MM_WF_PHASE2_STABLE="$stable"
 }
 
+# Lightweight selective OS identity bound to READY provenance + index witnesses.
+# Does NOT hash the multi-GB pool. Directory inode/mtime alone is insufficient:
+# mutating an existing Packages/InRelease (or READY provenance) changes this.
+mm_selective_os_identity() {
+  local ready="${MM_SELECTIVE_ROOT}/state/READY"
+  local plan="" disc="" payload="" manifest="" release_id="" indexes="" ubuntu
+  [[ -f "$ready" ]] || { printf ''; return 1; }
+  plan="$(awk -F= '$1=="selective_plan_checksum"{print substr($0,index($0,"=")+1);exit}' "$ready")"
+  [[ -n "$plan" ]] || plan="$(awk -F= '$1=="plan_checksum"{print substr($0,index($0,"=")+1);exit}' "$ready")"
+  disc="$(awk -F= '$1=="discovery_artifact_checksum"{print substr($0,index($0,"=")+1);exit}' "$ready")"
+  payload="$(awk -F= '$1=="os_core_payload_manifest_sha256"{print substr($0,index($0,"=")+1);exit}' "$ready")"
+  manifest="$(awk -F= '$1=="os_core_manifest_sha256"{print substr($0,index($0,"=")+1);exit}' "$ready")"
+  release_id="$(awk -F= '$1=="os_core_release_id"{print substr($0,index($0,"=")+1);exit}' "$ready")"
+  [[ -n "$plan" && -n "$disc" ]] || { printf ''; return 1; }
+  ubuntu="${MM_SELECTIVE_ROOT}/ubuntu"
+  if [[ -e "$ubuntu" ]]; then
+    indexes="$(
+      find -L "$ubuntu" \( -path '*/dists/*/InRelease' -o -path '*/dists/*/Packages' \
+        -o -path '*/dists/*/Packages.gz' \) -type f 2>/dev/null \
+        | LC_ALL=C sort \
+        | while IFS= read -r f; do
+            mm_file_fingerprint "$f" 2>/dev/null || true
+          done \
+        | sha256sum | awk '{print $1}'
+    )"
+  fi
+  printf 'plan=%s;disc=%s;payload=%s;manifest=%s;release=%s;indexes=%s\n' \
+    "$plan" "$disc" "${payload:-}" "${manifest:-}" "${release_id:-}" "${indexes:-}"
+}
+
 mm_artifact_fingerprint() {
   # Phase 2 identity always; OS-mirror identity only for FULL mode.
+  # OS identity is generation/provenance-bound (READY + index witnesses),
+  # never the ubuntu/ directory inode alone.
   local os_fp bundle_fp side_fp rel_fp
   mm_phase2_paths
   os_fp=""
-  if ! mm_is_phase2_only && [[ -e "${MM_SELECTIVE_ROOT}/ubuntu" ]]; then
-    os_fp="$(mm_file_fingerprint "${MM_SELECTIVE_ROOT}/ubuntu" 2>/dev/null || true)"
+  if ! mm_is_phase2_only; then
+    os_fp="$(mm_selective_os_identity 2>/dev/null || true)"
   fi
   bundle_fp="$(mm_file_fingerprint "${MM_WF_PHASE2_BUNDLE}" 2>/dev/null || true)"
   side_fp="$(mm_file_fingerprint "${MM_WF_PHASE2_SIDECAR}" 2>/dev/null || true)"
@@ -1242,20 +1401,16 @@ mm_download_completed() {
   current_fp="$(mm_artifact_fingerprint)"
   stored_fp="$(mm_status_get DOWNLOAD_ARTIFACT_FINGERPRINT)"
   if [[ -z "$stored_fp" ]]; then
-    mm_status_set DOWNLOAD_ARTIFACT_FINGERPRINT "$current_fp"
-    mm_status_set DOWNLOAD_PREPARE_RESULT PASS
-    mm_status_set DOWNLOAD_VALIDATED_AT "$(mm_ts)"
-    mm_status_set PHASE2_BUNDLE_SIZE "$(mm_file_bytes "${MM_WF_PHASE2_BUNDLE}")"
-    mm_status_set PHASE2_BUNDLE_MTIME "$(stat -c '%Y' "${MM_WF_PHASE2_BUNDLE}" 2>/dev/null || echo 0)"
-    mm_status_set PHASE2_SIDECAR_MTIME "$(stat -c '%Y' "${MM_WF_PHASE2_SIDECAR}" 2>/dev/null || echo 0)"
-    return 0
+    # Pure read: missing verified fingerprint is NOT VERIFIED. Do not mint
+    # identity during status/menu rendering.
+    return 1
   fi
   [[ "$stored_fp" == "$current_fp" ]] || return 1
   return 0
 }
 
 mm_http_probe_ok() {
-  # Fast localhost probes for menu rendering (200-only).
+  # Fast localhost probes for menu rendering (200-only reachability).
   local url="$1"
   local code
   code="$(curl -sS -o /dev/null -w '%{http_code}' \
@@ -1263,6 +1418,39 @@ mm_http_probe_ok() {
     --max-time "${MM_MENU_HTTP_MAX_TIME:-3}" \
     "$url" 2>/dev/null || echo 000)"
   [[ "$code" == "200" ]]
+}
+
+# Fetch a small text URL body (empty on failure). Used for publication identity.
+mm_http_fetch_text() {
+  local url="$1"
+  curl -sS --connect-timeout "${MM_MENU_HTTP_CONNECT_TIMEOUT:-2}" \
+    --max-time "${MM_MENU_HTTP_MAX_TIME:-3}" \
+    "$url" 2>/dev/null || true
+}
+
+# Bind HTTP readiness to the published client-set generation, not HTTP 200 alone.
+mm_http_publication_identity_ok() {
+  local base="${MM_VERIFY_HTTP_BASE:-http://127.0.0.1}"
+  local expected="" live_body="" live_gen="" live_sha="" local_sha=""
+  expected="$(mm_status_get HTTP_PUBLICATION_GENERATION_ID 2>/dev/null || true)"
+  [[ -z "$expected" ]] && expected="$(mm_wf_get HTTP_PUBLICATION_GENERATION_ID 2>/dev/null || true)"
+  [[ -z "$expected" ]] && expected="$(mm_wf_get CLIENT_SET_GENERATION_ID 2>/dev/null || true)"
+  [[ -z "$expected" ]] && expected="$(mm_status_get CLIENT_SET_GENERATION_ID 2>/dev/null || true)"
+  [[ -n "$expected" ]] || return 1
+  live_body="$(mm_http_fetch_text "${base}/client/client-set.env")"
+  [[ -n "$live_body" ]] || return 1
+  live_gen="$(printf '%s\n' "$live_body" | awk -F= '
+    $1=="CLIENT_SET_GENERATION_ID" { c++; if (c==1) v=substr($0,index($0,"=")+1) }
+    END { if (c!=1) exit 2; print v }
+  ')" || return 1
+  [[ -n "$live_gen" && "$live_gen" == "$expected" ]] || return 1
+  # Lightweight wrapper binding: HTTP sha256 sidecar must match local published file.
+  if [[ -f "${MM_CLIENT_ROOT}/upgrade-phase2.sh.sha256" ]]; then
+    local_sha="$(awk '{print $1; exit}' "${MM_CLIENT_ROOT}/upgrade-phase2.sh.sha256")"
+    live_sha="$(mm_http_fetch_text "${base}/client/upgrade-phase2.sh.sha256" | awk '{print $1; exit}')"
+    [[ -n "$local_sha" && -n "$live_sha" && "$local_sha" == "$live_sha" ]] || return 1
+  fi
+  return 0
 }
 
 mm_http_required_urls_ok() {
@@ -1276,6 +1464,7 @@ mm_http_required_urls_ok() {
   mm_http_probe_ok "${base}/client/stage-dp-phase2.sh" || return 1
   mm_http_probe_ok "${base}/client/stage-dp-phase2.sh.sha256" || return 1
   mm_http_probe_ok "${base}/client/upgrade-phase2.sh" || return 1
+  mm_http_probe_ok "${base}/client/client-set.env" || return 1
   if ! mm_is_phase2_only; then
     mm_http_probe_ok "${base}/client/dp-offline-upgrade-xenial-to-bionic.sh" || return 1
     mm_http_probe_ok "${base}/client/dp-launch-xenial-to-bionic.sh" || return 1
@@ -1288,6 +1477,7 @@ mm_http_required_urls_ok() {
     mm_http_probe_ok "${base}/client/upgrade-jammy-to-noble.sh" || return 1
     mm_http_probe_ok "${base}/offline/meta-release-lts" || return 1
   fi
+  mm_http_publication_identity_ok || return 1
   return 0
 }
 
@@ -1324,11 +1514,8 @@ mm_readiness_completed() {
   cur_art="$(mm_artifact_fingerprint)"
   stored_art="$(mm_status_get READINESS_ARTIFACT_FINGERPRINT)"
   if [[ -z "$stored_art" ]]; then
-    mm_status_set READINESS_ARTIFACT_FINGERPRINT "$cur_art"
-    mm_status_set READINESS_RESULT PASS
-    mm_status_set READINESS_VALIDATED_AT "$(mm_ts)"
-    mm_status_set READINESS_CONFIG_FINGERPRINT "$(mm_config_fingerprint)"
-    return 0
+    # Pure read: readiness without stored artifact identity is NOT VERIFIED.
+    return 1
   fi
   [[ "$stored_art" == "$cur_art" ]] || return 1
   cur_cfg="$(mm_config_fingerprint)"
@@ -1826,8 +2013,15 @@ mm_client_files_ready_phase2() {
   grep -q 'phase2-helper-generation.manifest' "${root}/upgrade-phase2.sh" || return 1
   grep -q 'stage-dp-phase2.sh' "${root}/upgrade-phase2.sh" || return 1
   grep -q -- '--target-version' "${root}/upgrade-phase2.sh" || return 1
-  grep -q -- '--same-version-recovery' "${root}/upgrade-phase2.sh" || return 1
   grep -q -- '--mirror-url' "${root}/upgrade-phase2.sh" || return 1
+  # Normal wrapper must NOT force same-version recovery on every invocation.
+  if grep -E 'sudo bash.*"\$SCRIPT".*--same-version-recovery' "${root}/upgrade-phase2.sh" \
+    >/dev/null 2>&1; then
+    return 1
+  fi
+  [[ -f "${root}/upgrade-phase2-same-version-recovery.sh" ]] || return 1
+  grep -q 'CONFIRM_SAME_VERSION_RECOVERY=YES' \
+    "${root}/upgrade-phase2-same-version-recovery.sh" || return 1
   if grep -qE 'curl[^|;]*\|[[:space:]]*(bash|sh)([[:space:]]|$)' "${root}/upgrade-phase2.sh"; then
     return 1
   fi
@@ -1884,13 +2078,14 @@ mm_client_launchers_ready() {
   local wrapper wrapper_sha wkey wmeta
   local meta="${root}/client-set.env"
   [[ -d "$root" && -f "$meta" ]] || return 1
-  mirror="$(awk -F= '$1=="CLIENT_MIRROR_BASE_URL"{print substr($0,index($0,"=")+1);exit}' "$meta")"
-  [[ -z "$mirror" ]] && mirror="$(awk -F= '$1=="MIRROR_HTTP_URL"{print substr($0,index($0,"=")+1);exit}' "$meta")"
-  fpr="$(awk -F= '$1=="CLIENT_SIGNING_FINGERPRINT"{print substr($0,index($0,"=")+1);exit}' "$meta")"
+  mm_parse_env_metadata_get "$meta" >/dev/null || return 1
+  mirror="$(mm_parse_env_metadata_get "$meta" CLIENT_MIRROR_BASE_URL 2>/dev/null || true)"
+  [[ -z "$mirror" ]] && mirror="$(mm_parse_env_metadata_get "$meta" MIRROR_HTTP_URL 2>/dev/null || true)"
+  fpr="$(mm_parse_env_metadata_get "$meta" CLIENT_SIGNING_FINGERPRINT)" || return 1
   fpr="${fpr^^}"
   fpr="${fpr// /}"
   [[ -n "$mirror" && -n "$fpr" ]] || return 1
-  awk -F= '$1=="CLIENT_LAUNCHER_SCHEMA_VERSION"{found=1} END{exit found?0:1}' "$meta" || return 1
+  mm_parse_env_metadata_get "$meta" CLIENT_LAUNCHER_SCHEMA_VERSION >/dev/null || return 1
   for hop in xenial-to-bionic bionic-to-focal focal-to-jammy jammy-to-noble; do
     launcher="dp-launch-${hop}.sh"
     [[ -f "${root}/${launcher}" && -s "${root}/${launcher}" ]] || return 1
@@ -1898,7 +2093,7 @@ mm_client_launchers_ready() {
     (cd "$root" && sha256sum -c "${launcher}.sha256" >/dev/null 2>&1) || return 1
     file_sha="$(sha256sum "${root}/${launcher}" | awk '{print $1}')"
     meta_key="CLIENT_LAUNCHER_$(printf '%s' "$hop" | tr 'a-z-' 'A-Z_')_SHA256"
-    meta_sha="$(awk -F= -v k="$meta_key" '$1==k{print substr($0,index($0,"=")+1);exit}' "$meta")"
+    meta_sha="$(mm_parse_env_metadata_get "$meta" "$meta_key")" || return 1
     [[ -n "$meta_sha" && "$meta_sha" == "$file_sha" ]] || return 1
     grep -q "HOP='${hop}'" "${root}/${launcher}" || return 1
     grep -Fq "${mirror%/}" "${root}/${launcher}" || return 1
@@ -1914,7 +2109,7 @@ mm_client_launchers_ready() {
     (cd "$root" && sha256sum -c "${wrapper}.sha256" >/dev/null 2>&1) || return 1
     wrapper_sha="$(sha256sum "${root}/${wrapper}" | awk '{print $1}')"
     wkey="CLIENT_WRAPPER_$(printf '%s' "$hop" | tr 'a-z-' 'A-Z_')_SHA256"
-    wmeta="$(awk -F= -v k="$wkey" '$1==k{print substr($0,index($0,"=")+1);exit}' "$meta")"
+    wmeta="$(mm_parse_env_metadata_get "$meta" "$wkey")" || return 1
     [[ -n "$wmeta" && "$wmeta" == "$wrapper_sha" ]] || return 1
     grep -Fq "${launcher}" "${root}/${wrapper}" || return 1
     grep -Fq "LAUNCHER_SHA256='${file_sha}'" "${root}/${wrapper}" || return 1
