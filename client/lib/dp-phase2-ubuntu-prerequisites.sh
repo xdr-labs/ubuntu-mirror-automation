@@ -56,6 +56,125 @@ dp2_prereq_compare_versions() {
   dpkg --compare-versions "$1" "$2" "$3"
 }
 
+# Validate prerequisite archive members before root extraction.
+# Allowlist: phase2-ubuntu-prerequisites.manifest.json, install-order.txt, debs/*.deb
+# Rejects absolute paths, .. traversal, symlinks, hardlinks, devices, FIFOs, sockets,
+# unexpected top-level paths, and duplicate member names.
+dp2_prereq_assert_safe_archive() {
+  local artifact="$1"
+  local py_out rc=0
+  [[ -f "$artifact" ]] || {
+    dp2_prereq_log ERROR "PHASE2_PREREQ_ARCHIVE=FAIL reason=missing"
+    return 1
+  }
+  py_out="$(python3 - "$artifact" <<'PY'
+import sys, tarfile
+
+path = sys.argv[1]
+allowed_files = {
+    "phase2-ubuntu-prerequisites.manifest.json",
+    "install-order.txt",
+}
+seen = set()
+try:
+    with tarfile.open(path, "r:gz") as tf:
+        for m in tf.getmembers():
+            name = m.name
+            if name in seen:
+                print("duplicate_member=%s" % name)
+                sys.exit(2)
+            seen.add(name)
+            cleaned = name.rstrip("/")
+            if cleaned.startswith("/") or cleaned.startswith("./") and cleaned[2:].startswith("/"):
+                print("absolute_path=%s" % name)
+                sys.exit(2)
+            parts = [p for p in cleaned.split("/") if p not in ("", ".")]
+            if any(p == ".." for p in parts):
+                print("path_traversal=%s" % name)
+                sys.exit(2)
+            if m.issym() or m.islnk():
+                print("link_member=%s" % name)
+                sys.exit(2)
+            special_types = {tarfile.BLKTYPE, tarfile.CHRTYPE, tarfile.FIFOTYPE}
+            if hasattr(tarfile, "SOCKTYPE"):
+                special_types.add(tarfile.SOCKTYPE)
+            if m.type in special_types:
+                print("special_member=%s type=%s" % (name, m.type))
+                sys.exit(2)
+            if m.isdir():
+                if cleaned != "debs":
+                    print("unexpected_dir=%s" % name)
+                    sys.exit(2)
+                continue
+            if not m.isfile():
+                print("unexpected_type=%s" % name)
+                sys.exit(2)
+            if cleaned in allowed_files:
+                continue
+            if cleaned.startswith("debs/") and cleaned.count("/") == 1 and cleaned.endswith(".deb"):
+                base = cleaned.split("/", 1)[1]
+                if not base or "/" in base or base.startswith("."):
+                    print("unsafe_deb_name=%s" % name)
+                    sys.exit(2)
+                continue
+            print("unexpected_member=%s" % name)
+            sys.exit(2)
+except tarfile.TarError as exc:
+    print("tar_error=%s" % exc)
+    sys.exit(2)
+print("ok members=%d" % len(seen))
+sys.exit(0)
+PY
+)" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    dp2_prereq_log ERROR "PHASE2_PREREQ_ARCHIVE=FAIL reason=${py_out:-unsafe}"
+    return 1
+  fi
+  dp2_prereq_log INFO "PHASE2_PREREQ_ARCHIVE=PASS ${py_out}"
+  return 0
+}
+
+dp2_prereq_safe_extract() {
+  local artifact="$1"
+  local extract="$2"
+  local py_rc=0
+  dp2_prereq_assert_safe_archive "$artifact" || return 1
+  mkdir -p "$extract" || return 1
+  python3 - "$artifact" "$extract" <<'PY' || py_rc=$?
+import sys, tarfile, os
+
+artifact, dest = sys.argv[1], sys.argv[2]
+# Re-validate and extract file members only via safe join.
+with tarfile.open(artifact, "r:gz") as tf:
+    for m in tf.getmembers():
+        if m.isdir():
+            target = os.path.join(dest, m.name)
+            os.makedirs(target, exist_ok=True)
+            continue
+        if not m.isfile():
+            raise SystemExit("unsafe_member=%s" % m.name)
+        target = os.path.join(dest, m.name)
+        parent = os.path.dirname(target)
+        os.makedirs(parent, exist_ok=True)
+        # Refuse symlink races / escapes after join
+        dest_real = os.path.realpath(dest)
+        parent_real = os.path.realpath(parent)
+        if not (parent_real == dest_real or parent_real.startswith(dest_real + os.sep)):
+            raise SystemExit("extract_escape=%s" % m.name)
+        src = tf.extractfile(m)
+        if src is None:
+            raise SystemExit("extract_missing=%s" % m.name)
+        with open(target, "wb") as out:
+            out.write(src.read())
+sys.exit(0)
+PY
+  if [[ "$py_rc" -ne 0 ]]; then
+    dp2_prereq_log ERROR "PHASE2_PREREQ_INSTALL=FAIL reason=safe_extract"
+    return 1
+  fi
+  return 0
+}
+
 # Skip only when the installed package is exactly the selected artifact
 # version. Older installed versions must be replaced. A newer or otherwise
 # different installed version is a fail-closed conflict (no silent downgrade).
@@ -564,7 +683,7 @@ dp2_install_phase2_ubuntu_prerequisites() {
   fi
 
   extract="$(mktemp -d "${TMPDIR:-/tmp}/phase2-prereq-inst.XXXXXX")"
-  if ! tar -xzf "$artifact" -C "$extract"; then
+  if ! dp2_prereq_safe_extract "$artifact" "$extract"; then
     rm -rf "$extract"
     dp2_prereq_log ERROR "PHASE2_PREREQ_INSTALL=FAIL reason=extract"
     return 1

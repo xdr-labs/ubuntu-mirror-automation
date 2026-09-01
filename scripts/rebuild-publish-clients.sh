@@ -19,6 +19,55 @@ source "${ROOT}/scripts/lib/local_client_signing.sh"
 # shellcheck source=lib/http_publication_permissions.sh
 source "${ROOT}/scripts/lib/http_publication_permissions.sh"
 
+# Local destructive-path guard (do not source full mirror_manager_common here).
+_rpc_assert_safe_destructive_path() {
+  local path="$1"
+  local approved_root="$2"
+  local label="${3:-path}"
+  local resolved approved_resolved parent depth
+  [[ -n "$path" && -n "$approved_root" ]] || {
+    echo "DESTRUCTIVE_PATH=FAIL label=${label} reason=empty" >&2
+    return 1
+  }
+  if [[ -e "$path" ]]; then
+    resolved="$(realpath -m "$path" 2>/dev/null || printf '%s' "$path")"
+  else
+    parent="$(dirname "$path")"
+    if [[ -d "$parent" ]]; then
+      resolved="$(realpath -m "$parent" 2>/dev/null || printf '%s' "$parent")/$(basename "$path")"
+    else
+      resolved="$path"
+    fi
+  fi
+  resolved="${resolved%/}"
+  [[ -n "$resolved" ]] || resolved="/"
+  case "$resolved" in
+    /|/etc|/var|/var/lib|/var/log|/home|/opt|/usr|/bin|/sbin|/lib|/lib64|/boot|/root|/tmp)
+      echo "DESTRUCTIVE_PATH=FAIL label=${label} reason=forbidden_root path=${resolved}" >&2
+      return 1
+      ;;
+  esac
+  if [[ -e "$approved_root" ]]; then
+    approved_resolved="$(realpath -m "$approved_root" 2>/dev/null || printf '%s' "$approved_root")"
+  else
+    approved_resolved="${approved_root%/}"
+  fi
+  approved_resolved="${approved_resolved%/}"
+  case "$resolved" in
+    "$approved_resolved"|"$approved_resolved"/*) ;;
+    *)
+      echo "DESTRUCTIVE_PATH=FAIL label=${label} reason=outside_approved_root path=${resolved} root=${approved_resolved}" >&2
+      return 1
+      ;;
+  esac
+  depth="$(awk -F/ '{print NF-1}' <<<"$resolved")"
+  if [[ "$depth" -lt 3 ]]; then
+    echo "DESTRUCTIVE_PATH=FAIL label=${label} reason=insufficient_depth path=${resolved}" >&2
+    return 1
+  fi
+  return 0
+}
+
 BASE_PATH="${BASE_PATH:-/var/spool/apt-mirror}"
 CLIENT_HTTP_ROOT="${CLIENT_HTTP_ROOT:-${BASE_PATH}/client}"
 SELECTIVE_ROOT="${SELECTIVE_ROOT:-${SELECTIVE_MIRROR_ROOT:-${BASE_PATH}/selective}}"
@@ -97,6 +146,11 @@ CLIENT_PROVENANCE_MODULE="${ROOT}/scripts/lib/client_build_provenance.py"
 if [[ -z "${ARTIFACT_DIR:-}" ]]; then
   ARTIFACT_DIR="${CACHE_ROOT}/client-build/${CLIENT_BUILD_GENERATION_ID}"
 fi
+# Fail closed before any key/signing/publish work if ARTIFACT_DIR is unsafe.
+_rpc_assert_safe_destructive_path "$ARTIFACT_DIR" "${CACHE_ROOT}/client-build" ARTIFACT_DIR \
+  || { echo "ARTIFACT_DIR_UNSAFE=${ARTIFACT_DIR}" >&2; exit 1; }
+_rpc_assert_safe_destructive_path "$CLIENT_HTTP_ROOT" "$(dirname "$CLIENT_HTTP_ROOT")" CLIENT_HTTP_ROOT \
+  || { echo "CLIENT_HTTP_ROOT_UNSAFE=${CLIENT_HTTP_ROOT}" >&2; exit 1; }
 
 EVIDENCE_LOG="${CLIENT_FINALIZATION_EVIDENCE_LOG:-}"
 if [[ -z "$EVIDENCE_LOG" ]]; then
@@ -246,6 +300,12 @@ fi
 hop_script_name() { printf 'dp-offline-upgrade-%s.sh\n' "$1"; }
 
 # Fresh empty generation directory for this run.
+# Guard destructive paths: ARTIFACT_DIR must remain under CACHE_ROOT/client-build.
+_approved_artifact_root="${CACHE_ROOT}/client-build"
+_rpc_assert_safe_destructive_path "$ARTIFACT_DIR" "$_approved_artifact_root" ARTIFACT_DIR \
+  || { echo "ARTIFACT_DIR_UNSAFE=${ARTIFACT_DIR}" >&2; exit 1; }
+_rpc_assert_safe_destructive_path "$CLIENT_HTTP_ROOT" "$(dirname "$CLIENT_HTTP_ROOT")" CLIENT_HTTP_ROOT \
+  || { echo "CLIENT_HTTP_ROOT_UNSAFE=${CLIENT_HTTP_ROOT}" >&2; exit 1; }
 rm -rf "$ARTIFACT_DIR"
 mkdir -p "$ARTIFACT_DIR"
 
@@ -693,6 +753,8 @@ else
 fi
 
 # Successful generation staging cleanup (keep evidence log).
+_rpc_assert_safe_destructive_path "$ARTIFACT_DIR" "${CACHE_ROOT}/client-build" ARTIFACT_DIR \
+  || { echo "ARTIFACT_DIR_UNSAFE_CLEANUP=${ARTIFACT_DIR}" >&2; exit 1; }
 rm -rf "$ARTIFACT_DIR"
 evidence_echo "CLIENT_BUILD_STAGING_CLEANED=YES"
 evidence_echo "REBUILD_PUBLISH_CLIENTS=PASS"

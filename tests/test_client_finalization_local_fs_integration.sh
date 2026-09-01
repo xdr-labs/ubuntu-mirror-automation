@@ -172,7 +172,11 @@ bash -n "${CLIENT_ROOT}/upgrade-phase2.sh" || WRAP_OK=0
 ( cd "$CLIENT_ROOT" && sha256sum -c upgrade-phase2.sh.sha256 >/dev/null ) || WRAP_OK=0
 grep -q 'phase2-helper-generation.manifest' "${CLIENT_ROOT}/upgrade-phase2.sh" || WRAP_OK=0
 grep -q -- '--target-version' "${CLIENT_ROOT}/upgrade-phase2.sh" || WRAP_OK=0
-grep -q -- '--same-version-recovery' "${CLIENT_ROOT}/upgrade-phase2.sh" || WRAP_OK=0
+grep -q -- '--mirror-url' "${CLIENT_ROOT}/upgrade-phase2.sh" || WRAP_OK=0
+if grep -E 'sudo bash.*"\$SCRIPT".*--same-version-recovery' "${CLIENT_ROOT}/upgrade-phase2.sh" >/dev/null 2>&1; then
+  WRAP_OK=0
+fi
+[[ -f "${CLIENT_ROOT}/upgrade-phase2-same-version-recovery.sh" ]] || WRAP_OK=0
 if [[ "$WRAP_OK" -eq 1 ]]; then
   pass "operator wrappers published and verified"
 else

@@ -21,6 +21,7 @@ TEST_LIST=(
   test_validate.sh
   test_validate_fixture.sh
   test_nginx.sh
+  test_nginx_publication_boundary.sh
   test_systemd.sh
   test_simplified_install.sh
   test_fresh_bootstrap.sh
@@ -28,6 +29,7 @@ TEST_LIST=(
   test_offline_mirror.sh
   test_upgrade_profile.py
   test_selective_mirror.py
+  test_selective_plan_checksum_semantic.py
   test_aws_selective_mirror_union.py
   test_selective_orchestration_lock.sh
   test_selective_runtime_migration.py
@@ -64,11 +66,26 @@ TEST_LIST=(
   test_dp_phase2_process_detect.sh
   test_dp_upgrade_mirror_manager.sh
   test_gui_client_commands.sh
+  test_secret_safety_hardening.sh
   test_config_clear_and_scoped_invalidation.sh
   test_source_product_version.sh
   test_native_noble_source_resolution.sh
   test_phase2_wrapper_source_override.sh
   test_workflow_negative_contracts.sh
+  test_workflow_pure_reads_and_legacy.sh
+  test_phase2_same_version_recovery_default.sh
+  test_selective_readiness_content_identity.sh
+  test_phase2_prerequisite_archive_safety.sh
+  test_destructive_path_guards.sh
+  test_client_set_duplicate_metadata.sh
+  test_runtime_manifest_closure.sh
+  test_os_core_prepare_provenance.sh
+  test_acps_auth_vs_artifact_readiness.sh
+  test_shell_option_preservation.sh
+  test_source_product_permissions.sh
+  test_bringup_completion_contract.sh
+  test_http_publication_identity.sh
+  test_acps_auth_tls_hardening.sh
   test_bringup_worker_password.sh
   test_bringup_acps_sha_policy.sh
   test_patch_dp_phase2_bringup.py
@@ -134,7 +151,7 @@ INTEGRATION_REQUIRED=(
 
 is_long_test() {
   case "$1" in
-    test_dp_offline_upgrade_*.sh|test_dp_os_upgrade.sh|test_dp_upgrade_preflight.sh|test_selective_mirror.py|test_offline_mirror.sh|test_dp_upgrade_mirror_manager.sh|test_client_finalization_local_fs_integration.sh|test_client_os_userspace_matrix.sh)
+    test_dp_offline_upgrade_*.sh|test_dp_os_upgrade.sh|test_dp_upgrade_preflight.sh|test_selective_mirror.py|test_offline_mirror.sh|test_dp_upgrade_mirror_manager.sh|test_client_finalization_local_fs_integration.sh|test_client_build_provenance.sh|test_client_os_userspace_matrix.sh)
       return 0
       ;;
     *)

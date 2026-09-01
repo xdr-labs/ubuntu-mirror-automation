@@ -310,14 +310,16 @@ engine_bind_reused_client_set_workflow() {
   local meta="${MM_CLIENT_ROOT}/client-set.env"
   local gen fpr input_sha source_rev runtime_sha command_ver schema_ver
   [[ -f "$meta" ]] || return 1
-  gen="$(awk -F= '$1=="CLIENT_SET_GENERATION_ID"{print substr($0,index($0,"=")+1);exit}' "$meta")"
-  fpr="$(awk -F= '$1=="CLIENT_SIGNING_FINGERPRINT"{print substr($0,index($0,"=")+1);exit}' "$meta")"
-  input_sha="$(awk -F= '$1=="CLIENT_BUILD_INPUT_SHA256"{print substr($0,index($0,"=")+1);exit}' "$meta")"
-  source_rev="$(awk -F= '$1=="CLIENT_SOURCE_REVISION"{print substr($0,index($0,"=")+1);exit}' "$meta")"
-  [[ -z "$source_rev" ]] && source_rev="$(awk -F= '$1=="CLIENT_BUILD_SOURCE_REVISION"{print substr($0,index($0,"=")+1);exit}' "$meta")"
-  runtime_sha="$(awk -F= '$1=="CLIENT_RUNTIME_MANIFEST_SHA256"{print substr($0,index($0,"=")+1);exit}' "$meta")"
-  command_ver="$(awk -F= '$1=="CLIENT_COMMAND_BLOCK_VERSION"{print substr($0,index($0,"=")+1);exit}' "$meta")"
-  schema_ver="$(awk -F= '$1=="CLIENT_PROVENANCE_SCHEMA_VERSION"{print substr($0,index($0,"=")+1);exit}' "$meta")"
+  # Reject duplicate authoritative keys (no first/last-wins ambiguity).
+  mm_parse_env_metadata_get "$meta" >/dev/null || return 1
+  gen="$(mm_parse_env_metadata_get "$meta" CLIENT_SET_GENERATION_ID)" || return 1
+  fpr="$(mm_parse_env_metadata_get "$meta" CLIENT_SIGNING_FINGERPRINT)" || return 1
+  input_sha="$(mm_parse_env_metadata_get "$meta" CLIENT_BUILD_INPUT_SHA256)" || return 1
+  source_rev="$(mm_parse_env_metadata_get "$meta" CLIENT_SOURCE_REVISION 2>/dev/null || true)"
+  [[ -z "$source_rev" ]] && source_rev="$(mm_parse_env_metadata_get "$meta" CLIENT_BUILD_SOURCE_REVISION 2>/dev/null || true)"
+  runtime_sha="$(mm_parse_env_metadata_get "$meta" CLIENT_RUNTIME_MANIFEST_SHA256 2>/dev/null || true)"
+  command_ver="$(mm_parse_env_metadata_get "$meta" CLIENT_COMMAND_BLOCK_VERSION 2>/dev/null || true)"
+  schema_ver="$(mm_parse_env_metadata_get "$meta" CLIENT_PROVENANCE_SCHEMA_VERSION 2>/dev/null || true)"
   [[ -n "$gen" && -n "$fpr" && -n "$input_sha" ]] || return 1
   mm_wf_mark_client_set_published "$gen" "$fpr" "$input_sha" "$source_rev" "$runtime_sha" "$command_ver" "$schema_ver"
   mm_info "CLIENT_SET_WORKFLOW_REBOUND=PASS CLIENT_SET_GENERATION_ID=${gen}"
@@ -2291,11 +2293,16 @@ engine_download_and_prepare() {
     mm_state_set OS_CORE_SOURCE R2
   fi
 
-  if ! mm_config_ready; then
+  if ! mm_config_base_ready; then
     mm_state_set CONFIGURATION_READY FAIL
     mm_die "CONFIGURATION_READY=FAIL"
   fi
+  if ! mm_acquisition_auth_ready; then
+    mm_state_set ACPS_AUTH_READY FAIL
+    mm_die "ACQUISITION_AUTH_READY=FAIL reason=missing_acps_credentials"
+  fi
   mm_state_set CONFIGURATION_READY PASS
+  mm_state_set ACPS_AUTH_READY PASS
   if ! mm_require_configured_mirror_server_ip; then
     mm_die "MIRROR_SERVER_IP_REQUIRED=YES"
   fi
@@ -2306,6 +2313,11 @@ engine_download_and_prepare() {
 
   engine_preflight_host
   mm_acquire_install_lock
+  # Bind long-running prepare to the config identity observed at start so a
+  # concurrent Save cannot publish PREPARED for a stale generation.
+  if declare -F mm_wf_set >/dev/null 2>&1; then
+    mm_wf_set OPERATION_START_CONFIG_SHA256 "$(mm_wf_config_sha256 || true)" || true
+  fi
   engine_assert_same_filesystem_layout
 
   # Build tooling must exist before preparation. Generated hop clients are NOT
@@ -2443,10 +2455,13 @@ engine_download_and_prepare() {
       mm_state_set ACPS_CONNECTION PASS
     else
       mm_state_set ACPS_CONNECTION FAIL
+      acps_cleanup_curl_auth
       mm_die "ACPS_CONNECTION=FAIL"
     fi
     ACPS_EXPECTED_BYTES="$(acps_expected_bytes_hint "${ACPS_EFFECTIVE_BASE:-}")"
     ACPS_EXPECTED_BYTES="${ACPS_EXPECTED_BYTES:-0}"
+    # Drop netrc before long OS/materialize work; acps_acquire_all reinstalls.
+    acps_cleanup_curl_auth
   fi
   engine_verify_disk_space
 

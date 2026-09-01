@@ -80,10 +80,22 @@ for F in "\$GEN" "\$SCRIPT"; do
 done
 printf '%s  %s\\n' "\$H" "\$GEN" | sha256sum -c -
 sha256sum -c "\$GEN"
-exec sudo bash "./\$SCRIPT" --target-version "\$VER" --same-version-recovery --mirror-url "\$MIRROR"
+exec sudo bash "./\$SCRIPT" --target-version "\$VER" --mirror-url "\$MIRROR"
 EOF
   chmod 0755 "${root}/upgrade-phase2.sh"
   (cd "$root" && sha256sum upgrade-phase2.sh >upgrade-phase2.sh.sha256)
+  cat >"${root}/upgrade-phase2-same-version-recovery.sh" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "\${CONFIRM_SAME_VERSION_RECOVERY:-}" == "YES" ]] || exit 2
+MIRROR='${mirror}'
+VER='6.6.0'
+SCRIPT='stage-dp-phase2.sh'
+exec sudo bash "./\$SCRIPT" --target-version "\$VER" --same-version-recovery --mirror-url "\$MIRROR"
+EOF
+  chmod 0755 "${root}/upgrade-phase2-same-version-recovery.sh"
+  (cd "$root" && sha256sum upgrade-phase2-same-version-recovery.sh \
+    >upgrade-phase2-same-version-recovery.sh.sha256)
 
   cp -f "${root}/dp-client-command-runner.sh.sha256" "${root}/runner-manifest"
   printf 'synthetic-asc\n' >"${root}/runner-manifest.asc"

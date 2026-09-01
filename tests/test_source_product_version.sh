@@ -124,4 +124,42 @@ spv_resolve_source_dp_version "${TMP}/readonly.env" "$SOURCE_PRODUCT_PHASE1_LOG_
 assert_eq "$SPV_SOURCE_DP_VERSION_RECOVERY" WOULD_WRITE "read-only marker"
 pass "diagnostics are read-only"
 
+# Normalize extended release tokens to strict X.Y.Z.
+assert_eq "$(spv_normalize_dp_version '6.5.0.7942')" 6.5.0 "normalize build suffix"
+assert_eq "$(spv_normalize_dp_version '6.5.0.7942-9ed2e58c1')" 6.5.0 "normalize build+hash"
+pass "normalize 6.5.0.7942 forms to 6.5.0"
+
+# Persist failure with allow_write=1 fails resolution (dest parent not a directory).
+export SOURCE_PRODUCT_OS_RELEASE_FILE="${TMP}/os-release"
+cat >"$SOURCE_PRODUCT_OS_RELEASE_FILE" <<'EOF'
+ID=ubuntu
+VERSION_ID=24.04
+VERSION_CODENAME=noble
+EOF
+printf 'COMPLETED_NOBLE\n' >"$SOURCE_PRODUCT_OS_STATE_FILE"
+rm -f "$SOURCE_PRODUCT_BRINGUP_RESULT_ENV" "$SOURCE_PRODUCT_ENV_DEFAULT_PATH"
+write_log_record 6.5.0 aella_cli >"$SOURCE_PRODUCT_PHASE1_LOG_DEFAULT"
+touch "${TMP}/blocked-parent"
+expect_fail spv_resolve_source_dp_version \
+  "${TMP}/blocked-parent/source-product.env" \
+  "$SOURCE_PRODUCT_PHASE1_LOG_DEFAULT" \
+  "${TMP}/none.yml" "" 1 persist-fail 1
+assert_eq "$SPV_SOURCE_DP_VERSION_FAILURE_REASON" SOURCE_PRODUCT_ENV_WRITE_FAILED \
+  "persist failure fail-closed"
+pass "persist failure with allow_write=1 fails resolution"
+
+# AMBIGUOUS_NOBLE fail closed (partial noble identity).
+cat >"$SOURCE_PRODUCT_OS_RELEASE_FILE" <<'EOF'
+VERSION_ID=24.04
+VERSION_CODENAME=noble
+EOF
+rm -f "$SOURCE_PRODUCT_ENV_DEFAULT_PATH" "$SOURCE_PRODUCT_OS_STATE_FILE"
+expect_fail spv_resolve_source_dp_version \
+  "${TMP}/ambiguous.env" \
+  "${TMP}/none.log" \
+  "${TMP}/none.yml" "" 0 ambiguous 1
+assert_eq "$SPV_SOURCE_DP_VERSION_FAILURE_REASON" AMBIGUOUS_NOBLE_ORIGIN \
+  "AMBIGUOUS_NOBLE fail closed"
+pass "AMBIGUOUS_NOBLE fail closed"
+
 echo "TEST_SOURCE_PRODUCT_VERSION=PASS"

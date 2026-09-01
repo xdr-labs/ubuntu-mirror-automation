@@ -261,7 +261,10 @@ done
   PATH="${TMP}/fakebin:${PATH}" bash "$phase2_block" >"${TMP}/phase2.out"
 )
 grep -q '^PHASE2_HELPER_FETCH_E2E=PASS$' "${TMP}/phase2.out"
-grep -q -- '--target-version 6.6.0 --same-version-recovery --mirror-url' "${TMP}/phase2.out"
+grep -q -- '--target-version 6.6.0 --mirror-url' "${TMP}/phase2.out" \
+  || fail "phase2 wrapper missing normal stage invocation"
+grep -q -- '--same-version-recovery' "${TMP}/phase2.out" \
+  && fail "normal wrapper must not force same-version-recovery" || true
 
 # Inner wrapper still pins the generation manifest SHA256.
 GEN_SHA="$(phase2_helper_generation_sha256 "${CLIENT_ROOT}/phase2-helper-generation.manifest")"

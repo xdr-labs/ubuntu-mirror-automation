@@ -41,6 +41,23 @@ if grep -qE 'root[[:space:]]+/var/spool/apt-mirror/mirror[[:space:]]*;' "${TMPDI
   echo "  FAIL: generated nginx still uses legacy mirror root"
   FAIL=1
 fi
+# Publication boundary: private paths denied; catch-all returns 404
+for deny_path in /staging /state /.install-cache /cache /tmp; do
+  if ! grep -Eq "location[[:space:]]+(=|\\^~)[[:space:]]+${deny_path}" \
+    "${TMPDIR_TEST}/apt-mirror.conf"; then
+    echo "  FAIL: generated nginx missing deny for ${deny_path}"
+    FAIL=1
+  fi
+done
+if ! awk '
+  /location[[:space:]]+\/[[:space:]]*\{/ { in_loc=1; next }
+  in_loc && /return[[:space:]]+404/ { found=1; exit }
+  in_loc && /\}/ { in_loc=0 }
+  END { exit found ? 0 : 1 }
+' "${TMPDIR_TEST}/apt-mirror.conf"; then
+  echo "  FAIL: generated nginx catch-all missing return 404"
+  FAIL=1
+fi
 
 # Template file exists and matches guide essentials
 grep -q 'location /ubuntu/' "${ROOT}/templates/nginx.conf" || FAIL=1
@@ -55,6 +72,22 @@ if grep -qE 'selective/current|dp-phase2/6\.[0-9]+\.[0-9]+/current' "${ROOT}/tem
 fi
 grep -q 'server_name security.ubuntu.com' "${ROOT}/templates/nginx.conf" || FAIL=1
 grep -q 'server_name old-releases.ubuntu.com' "${ROOT}/templates/nginx.conf" || FAIL=1
+for deny_path in /staging /state /.install-cache /cache /tmp; do
+  if ! grep -Eq "location[[:space:]]+(=|\\^~)[[:space:]]+${deny_path}" \
+    "${ROOT}/templates/nginx.conf"; then
+    echo "  FAIL: nginx template missing deny for ${deny_path}"
+    FAIL=1
+  fi
+done
+if ! awk '
+  /location[[:space:]]+\/[[:space:]]*\{/ { in_loc=1; next }
+  in_loc && /return[[:space:]]+404/ { found=1; exit }
+  in_loc && /\}/ { in_loc=0 }
+  END { exit found ? 0 : 1 }
+' "${ROOT}/templates/nginx.conf"; then
+  echo "  FAIL: nginx template catch-all missing return 404"
+  FAIL=1
+fi
 
 if command -v nginx >/dev/null 2>&1; then
   # Build a minimal nginx.conf that includes our server block for -t

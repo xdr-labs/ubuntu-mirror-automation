@@ -1053,9 +1053,16 @@ def build_plan(discovery_root, seed_root, profile_name='offline-upgrade-selectiv
         ]),
     ])
 
-    # plan checksum excluding generated_at volatility: hash stable body
+    # Semantic plan identity excludes volatile/local-path diagnostics:
+    # generated_at, discovery_root(s), seed_root checkout locations.
     stable = dict(plan)
-    stable.pop('generated_at', None)
+    for volatile in (
+        'generated_at',
+        'discovery_root',
+        'discovery_roots',
+        'full_mirror_seed_root',
+    ):
+        stable.pop(volatile, None)
     plan['plan_checksum'] = sha256_text(json.dumps(stable, sort_keys=True, default=str))
 
     return plan, package_rows_out, file_rows_out, url_rows_out

@@ -220,6 +220,7 @@ def compute_provenance(project_root, mirror_base_url="", signing_fingerprint="")
 
 
 def parse_env_file(path):
+    """Parse KEY=VALUE metadata. Duplicate keys are always rejected."""
     result = {}
     with open(path, "r", encoding="utf-8", errors="strict") as fh:
         for raw in fh:
@@ -229,6 +230,10 @@ def parse_env_file(path):
             if not re.match(r"^[A-Z0-9_]+=[^\r\n]*$", line):
                 raise RuntimeError("CLIENT_SET_METADATA_PARSE=FAIL")
             key, value = line.split("=", 1)
+            if key in result:
+                raise RuntimeError(
+                    "CLIENT_SET_METADATA_DUPLICATE_KEY=%s" % key
+                )
             result[key] = value
     return result
 
@@ -454,8 +459,21 @@ def verify_client_set_integrity(root, current, expected_mirror="", expected_fing
         raise RuntimeError("CLIENT_WRAPPER_PHASE2_STAGE_MISSING")
     if "--target-version" not in phase2_text or "6.6.0" not in phase2_text:
         raise RuntimeError("CLIENT_WRAPPER_PHASE2_TARGET_VERSION_MISSING")
-    if "--same-version-recovery" not in phase2_text:
-        raise RuntimeError("CLIENT_WRAPPER_PHASE2_SAME_VERSION_MISSING")
+    # Normal wrapper must not force same-version recovery on every run.
+    if re.search(
+        r'sudo bash\s+"\./\$SCRIPT".*--same-version-recovery',
+        phase2_text,
+    ):
+        raise RuntimeError("CLIENT_WRAPPER_PHASE2_FORCES_SAME_VERSION_RECOVERY")
+    recovery_wrapper = os.path.join(root, "upgrade-phase2-same-version-recovery.sh")
+    if not os.path.isfile(recovery_wrapper):
+        raise RuntimeError("CLIENT_WRAPPER_PHASE2_RECOVERY_MISSING")
+    with open(recovery_wrapper, "r", encoding="utf-8", errors="replace") as fh:
+        recovery_text = fh.read()
+    if "CONFIRM_SAME_VERSION_RECOVERY=YES" not in recovery_text:
+        raise RuntimeError("CLIENT_WRAPPER_PHASE2_RECOVERY_GATE_MISSING")
+    if "--same-version-recovery" not in recovery_text:
+        raise RuntimeError("CLIENT_WRAPPER_PHASE2_RECOVERY_FLAG_MISSING")
     if "--mirror-url" not in phase2_text:
         raise RuntimeError("CLIENT_WRAPPER_PHASE2_MIRROR_URL_FLAG_MISSING")
     if expected_mirror and expected_mirror.rstrip("/") not in phase2_text:

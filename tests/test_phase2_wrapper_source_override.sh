@@ -156,7 +156,7 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
-printf 'STAGE_ARGV='; printf '<%s>' --target-version "$VER" --same-version-recovery --mirror-url "$MIRROR" "${SOURCE_DP_VERSION_OPT[@]}"
+printf 'STAGE_ARGV='; printf '<%s>' --target-version "$VER" --mirror-url "$MIRROR" "${SOURCE_DP_VERSION_OPT[@]}"
 printf '\n'
 EOF
 chmod +x "$TEST_WRAP"

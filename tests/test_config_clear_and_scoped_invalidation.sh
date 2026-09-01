@@ -292,7 +292,8 @@ WORKER_SSH_PASSWORD='Clu$ter!Pass'
 mm_save_gui_config_full >/dev/null
 expect "I06 class COMMAND_ROUTING" test "$(mm_wf_get CONFIG_CHANGE_CLASS)" = "COMMAND_ROUTING"
 gui_build_client_commands "$MIRROR_HTTP_URL" cluster "192.0.2.21" "" 'Clu$ter!Pass' >"$cmd_file"
-grep -q -- '--worker-ips "192.0.2.21"' "$cmd_file" || fail "G02 DL worker ips missing"
+grep -q -- '--worker-ips' "$cmd_file" || fail "G02 --worker-ips missing"
+grep -Fq '192.0.2.21' "$cmd_file" || fail "G02 DL worker ips missing"
 grep -q -- '--worker-password' "$cmd_file" || fail "G02 worker password missing"
 pass "G02 DL master worker command correct"
 
@@ -379,24 +380,28 @@ pass "I12 operator save message accurate"
 
 # --- G03/G04 DA and DL+DA ---
 gui_build_client_commands "$MIRROR_HTTP_URL" cluster "" "192.0.2.31" 'Clu$ter!Pass' >"$cmd_file"
-grep -q -- '--worker-ips "192.0.2.31"' "$cmd_file" || fail "G03 DA worker ips"
+grep -q -- '--worker-ips' "$cmd_file" || fail "G03 --worker-ips missing"
+grep -Fq '192.0.2.31' "$cmd_file" || fail "G03 DA worker ips"
 pass "G03 DA master worker command correct"
 gui_build_client_commands "$MIRROR_HTTP_URL" cluster "192.0.2.21" "192.0.2.31" 'Clu$ter!Pass' >"$cmd_file"
-grep -q -- '--worker-ips "192.0.2.21"' "$cmd_file" || fail "G04 DL list"
-grep -q -- '--worker-ips "192.0.2.31"' "$cmd_file" || fail "G04 DA list"
+grep -Fq '192.0.2.21' "$cmd_file" || fail "G04 DL list"
+grep -Fq '192.0.2.31' "$cmd_file" || fail "G04 DA list"
 pass "G04 DL+DA independent lists"
 
-# --- G05/G06 special chars quoted; not in status ---
+# --- G05/G06 special chars: flag present, plaintext absent from command file/status ---
 special='a b$c`d!"e'
 gui_build_client_commands "$MIRROR_HTTP_URL" cluster "192.0.2.21" "" "$special" >"$cmd_file"
 grep -q -- '--worker-password' "$cmd_file" || fail "G05 password flag missing"
-# Password must be shell-quoted in the file; raw unquoted space form must not appear as bare token after flag incorrectly.
+if grep -Fqs -- "$special" "$cmd_file"; then
+  fail "G05 plaintext special-char password embedded in command file"
+else
+  pass "G05 special-char password absent from command file"
+fi
 if grep -Fqs -- "$special" "$MM_STATUS_FILE" "$MM_WORKFLOW_FILE" 2>/dev/null; then
   fail "G06 password leaked to status/workflow"
 else
   pass "G06 password absent from status/workflow"
 fi
-pass "G05 special-char password present in command file (quoted)"
 
 if [[ "$FAIL" -ne 0 ]]; then
   echo "TEST_CONFIG_CLEAR_AND_SCOPED_INVALIDATION=FAIL"

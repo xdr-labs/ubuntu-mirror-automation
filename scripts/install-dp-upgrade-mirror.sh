@@ -629,9 +629,16 @@ gui_download_and_prepare() {
   mm_load_gui_config
   mm_normalize_preparation_mode
   mm_force_phase2_target
-  if ! mm_config_ready; then
+  if ! mm_config_base_ready; then
     mm_whiptail_msg "Configuration required" \
-      "Set Preparation Mode, Mirror Server IP, ACPS Username, and ACPS Password first."
+      "Set Preparation Mode and Mirror Server IP first (target is fixed at ${PHASE2_TARGET_VERSION})."
+    return 0
+  fi
+  if ! mm_acquisition_auth_ready; then
+    mm_whiptail_msg "ACPS credentials required" \
+      "Set ACPS Username and ACPS Password before Download and Prepare.
+Already-prepared artifacts remain valid if credentials are later cleared;
+new ACPS downloads require credentials."
     return 0
   fi
   if ! mm_require_configured_mirror_server_ip; then
@@ -1186,6 +1193,21 @@ Run ${step} on that DP only.
 EOF
 }
 
+# Cluster bringup one-liner that prompts for the worker SSH password at runtime.
+# The Mirror Manager config still requires WORKER_SSH_PASSWORD to be set (proves
+# credentials were configured), but the published command file must never contain
+# the plaintext password. Residual risk: vendor bringup still receives the
+# password via argv once the operator types it.
+gui_cluster_bringup_command_line() {
+  local ver="$1"
+  local worker_ips="$2"
+  # Single physical line for Menu 7 copy/paste. Password is read interactively
+  # into a shell variable; it is never embedded in the saved command file.
+  # worker_ips is embedded raw so the outer mm_shell_quote escapes it once.
+  printf 'sudo bash -c %s\n' \
+    "$(mm_shell_quote "IFS= read -rsp 'Worker SSH password (aella): ' WP; printf '\\n'; exec bash /home/aella/bringup_py3_dp_after_os_upgrade.sh --version ${ver} --skip-download --worker-ips ${worker_ips} --worker-password \"\$WP\"")"
+}
+
 # STEP 7A/7B (FULL) and STEP 3A/3B (PHASE2_ONLY) master bringup section.
 gui_emit_cluster_master_bringup() {
   local step_id="$1"
@@ -1207,6 +1229,9 @@ ${worker_ips}
 
 Do NOT run this command manually on ${role} workers.
 The ${role} master starts worker bringup automatically.
+
+The command prompts for the worker SSH password at runtime.
+The password is not stored in this command file.
 
 Copy and paste the following entire line into the ${role} master terminal:
 
@@ -1255,15 +1280,19 @@ gui_build_client_commands() {
       echo "CLUSTER_WORKER_IPS_REQUIRED=YES" >&2
       return 1
     fi
+    # Password must be configured in Mirror Manager, but is never written into
+    # the published command file (runtime prompt instead).
     if ! mm_validate_worker_ssh_password "$worker_password" "${dl_worker_ips}${da_worker_ips}"; then
       echo "WORKER_SSH_PASSWORD_REQUIRED=YES" >&2
       return 1
     fi
     if [[ -n "$dl_worker_ips" ]]; then
-      dl_bringup_cmd="sudo bash /home/aella/bringup_py3_dp_after_os_upgrade.sh --version ${ver} --skip-download --worker-ips \"${dl_worker_ips}\" --worker-password $(mm_shell_quote "$worker_password")"
+      dl_bringup_cmd="$(gui_cluster_bringup_command_line "$ver" "$dl_worker_ips")"
+      dl_bringup_cmd="${dl_bringup_cmd%$'\n'}"
     fi
     if [[ -n "$da_worker_ips" ]]; then
-      da_bringup_cmd="sudo bash /home/aella/bringup_py3_dp_after_os_upgrade.sh --version ${ver} --skip-download --worker-ips \"${da_worker_ips}\" --worker-password $(mm_shell_quote "$worker_password")"
+      da_bringup_cmd="$(gui_cluster_bringup_command_line "$ver" "$da_worker_ips")"
+      da_bringup_cmd="${da_bringup_cmd%$'\n'}"
     fi
   else
     bringup_cmd="sudo bash /home/aella/bringup_py3_dp_after_os_upgrade.sh --version ${ver} --skip-download"

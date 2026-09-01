@@ -324,19 +324,27 @@ r2_download_package() {
   fi
   mv -f "$sha_part" "$sha_final"
 
-  # Optional signature sidecar (best-effort)
+  # Optional signature sidecar download is best-effort and NOT part of the
+  # authoritative R2 trust model. Production trust for R2 OS Core packages is:
+  #   HTTPS transport + mandatory SHA256 sidecar verification
+  # (see engine_verify_os_core_package / os_core_package.py). If an .asc is
+  # present later, verification may be attempted only when a pinned trust root
+  # exists; absence of .asc does not fail acquisition.
   local asc_url="${sha_url}.asc"
   local asc_final="${sha_final}.asc"
+  mm_info "R2_TRUST_MODEL=HTTPS_SHA256 signature_sidecar=optional_unverified_unless_pinned_key"
   if curl -fsSL --connect-timeout 10 \
     -H "Cache-Control: no-cache" -H "Pragma: no-cache" \
     -o "${asc_final}.part" "$asc_url" 2>/dev/null; then
     if r2_reject_html_body "${asc_final}.part" 2>/dev/null; then
       mv -f "${asc_final}.part" "$asc_final"
+      mm_info "R2_SIGNATURE_SIDECAR=DOWNLOADED note=not_authoritative_without_pinned_key"
     else
       rm -f "${asc_final}.part"
     fi
   else
     rm -f "${asc_final}.part"
+    mm_info "R2_SIGNATURE_SIDECAR=ABSENT"
   fi
 
   OS_CORE_PACKAGE="$final"
