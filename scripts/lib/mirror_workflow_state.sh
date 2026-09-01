@@ -99,6 +99,13 @@ mm_wf_ensure_file() {
 WORKFLOW_STATE=UNCONFIGURED
 WORKFLOW_GENERATION_ID=
 CONFIG_SHA256=
+CONFIG_PREPARE_SHA256=
+CONFIG_PUBLICATION_SHA256=
+CONFIG_COMMAND_SHA256=
+CONFIG_AUTH_SHA256=
+CONFIG_CHANGE_CLASS=
+STALE_REASON=
+NEXT_REQUIRED_ACTION=
 PREPARATION_MODE=
 MIRROR_SERVER_IP=
 MIRROR_HTTP_URL=
@@ -163,7 +170,10 @@ mm_wf_set_many() {
   tmp="$(mktemp "$(dirname "$f")/.wfset.XXXXXX")"
   {
     for k2 in \
-      WORKFLOW_STATE WORKFLOW_GENERATION_ID CONFIG_SHA256 PREPARATION_MODE \
+      WORKFLOW_STATE WORKFLOW_GENERATION_ID CONFIG_SHA256 \
+      CONFIG_PREPARE_SHA256 CONFIG_PUBLICATION_SHA256 CONFIG_COMMAND_SHA256 \
+      CONFIG_AUTH_SHA256 CONFIG_CHANGE_CLASS STALE_REASON NEXT_REQUIRED_ACTION \
+      PREPARATION_MODE \
       MIRROR_SERVER_IP MIRROR_HTTP_URL PHASE2_TARGET_VERSION \
       OS_CORE_GENERATION_ID PHASE2_GENERATION_ID CLIENT_SET_GENERATION_ID \
       CLIENT_SIGNING_FINGERPRINT CLIENT_BUILD_INPUT_SHA256 \
@@ -192,13 +202,80 @@ mm_wf_set() {
 }
 
 # ---------------------------------------------------------------------------
-# Config identity
+# Config identity (layered semantic hashes — never inode/mtime)
 # ---------------------------------------------------------------------------
+# Passwords contribute only via SHA256; never stored in workflow state.
+mm_wf_hash_text() {
+  printf '%s' "$1" | sha256sum | awk '{print $1}'
+}
+
+mm_wf_password_sha256_or_empty() {
+  local pw="${1-}"
+  if [[ -n "$pw" ]]; then
+    mm_wf_hash_text "$pw"
+  else
+    printf ''
+  fi
+}
+
+# Prepare / artifact-selection inputs (mode + fixed target).
+mm_wf_prepare_identity_sha256() {
+  local mode target
+  mode="${PREPARATION_MODE:-FULL}"
+  target="${PHASE2_TARGET_VERSION:-${TARGET_DP_VERSION:-6.6.0}}"
+  {
+    printf 'PREPARATION_MODE=%s\n' "$mode"
+    printf 'PHASE2_TARGET_VERSION=%s\n' "$target"
+  } | sha256sum | awk '{print $1}'
+}
+
+# Mirror endpoint identity (client pin / publication).
+mm_wf_publication_identity_sha256() {
+  {
+    printf 'MIRROR_SERVER_IP=%s\n' "${MIRROR_SERVER_IP:-}"
+    printf 'MIRROR_HTTP_URL=%s\n' "${MIRROR_HTTP_URL:-}"
+  } | sha256sum | awk '{print $1}'
+}
+
+# Cluster bringup command routing inputs.
+mm_wf_command_identity_sha256() {
+  {
+    printf 'DL_WORKER_IPS=%s\n' "${DL_WORKER_IPS:-}"
+    printf 'DA_WORKER_IPS=%s\n' "${DA_WORKER_IPS:-}"
+    printf 'WORKER_SSH_PASSWORD_SHA256=%s\n' \
+      "$(mm_wf_password_sha256_or_empty "${WORKER_SSH_PASSWORD:-}")"
+  } | sha256sum | awk '{print $1}'
+}
+
+# ACPS acquisition credentials (auth-test / fetch only).
+mm_wf_auth_identity_sha256() {
+  {
+    printf 'ACPS_USERNAME=%s\n' "${ACPS_USERNAME:-}"
+    printf 'ACPS_PASSWORD_SHA256=%s\n' \
+      "$(mm_wf_password_sha256_or_empty "${ACPS_PASSWORD:-}")"
+  } | sha256sum | awk '{print $1}'
+}
+
+# Readiness depends on prepare + publication, not workers/auth.
+mm_wf_readiness_identity_sha256() {
+  {
+    printf 'PREPARE=%s\n' "$(mm_wf_prepare_identity_sha256)"
+    printf 'PUBLICATION=%s\n' "$(mm_wf_publication_identity_sha256)"
+  } | sha256sum | awk '{print $1}'
+}
+
+# Full composite (legacy CONFIG_SHA256 consumers + diagnostics).
 mm_wf_config_sha256() {
   local f="${MM_CONFIG_FILE:-/etc/ubuntu-mirror/dp-upgrade-mirror.conf}"
   if [[ ! -f "$f" ]]; then
-    printf ''
-    return 1
+    # Compute from current memory when file missing (tests / first save).
+    {
+      printf 'PREPARE=%s\n' "$(mm_wf_prepare_identity_sha256)"
+      printf 'PUBLICATION=%s\n' "$(mm_wf_publication_identity_sha256)"
+      printf 'COMMAND=%s\n' "$(mm_wf_command_identity_sha256)"
+      printf 'AUTH=%s\n' "$(mm_wf_auth_identity_sha256)"
+    } | sha256sum | awk '{print $1}'
+    return 0
   fi
   # Content digest of operator-relevant keys only (stable across rewrite order).
   # shellcheck disable=SC1090
@@ -211,22 +288,157 @@ mm_wf_config_sha256() {
     printf 'MIRROR_SERVER_IP=%s\n' "${MIRROR_SERVER_IP:-}"
     printf 'MIRROR_HTTP_URL=%s\n' "${MIRROR_HTTP_URL:-}"
     printf 'ACPS_USERNAME=%s\n' "${ACPS_USERNAME:-}"
-    # Password contributes to identity without logging it.
-    if [[ -n "${ACPS_PASSWORD:-}" ]]; then
-      printf 'ACPS_PASSWORD_SHA256=%s\n' \
-        "$(printf '%s' "${ACPS_PASSWORD}" | sha256sum | awk '{print $1}')"
-    else
-      printf 'ACPS_PASSWORD_SHA256=\n'
-    fi
-    # Include cluster command-routing inputs only when set so existing AIO
-    # configs keep their identity hash.
-    if [[ -n "${WORKER_SSH_PASSWORD:-}" ]]; then
-      printf 'WORKER_SSH_PASSWORD_SHA256=%s\n' \
-        "$(printf '%s' "${WORKER_SSH_PASSWORD}" | sha256sum | awk '{print $1}')"
-    fi
-    [[ -n "${DL_WORKER_IPS:-}" ]] && printf 'DL_WORKER_IPS=%s\n' "${DL_WORKER_IPS}"
-    [[ -n "${DA_WORKER_IPS:-}" ]] && printf 'DA_WORKER_IPS=%s\n' "${DA_WORKER_IPS}"
+    printf 'ACPS_PASSWORD_SHA256=%s\n' \
+      "$(mm_wf_password_sha256_or_empty "${ACPS_PASSWORD:-}")"
+    printf 'WORKER_SSH_PASSWORD_SHA256=%s\n' \
+      "$(mm_wf_password_sha256_or_empty "${WORKER_SSH_PASSWORD:-}")"
+    printf 'DL_WORKER_IPS=%s\n' "${DL_WORKER_IPS:-}"
+    printf 'DA_WORKER_IPS=%s\n' "${DA_WORKER_IPS:-}"
   ) | sha256sum | awk '{print $1}'
+}
+
+mm_wf_store_layer_identities() {
+  # Refresh stored layered hashes from current memory/config without demoting.
+  local prep pub cmd auth full
+  prep="$(mm_wf_prepare_identity_sha256)"
+  pub="$(mm_wf_publication_identity_sha256)"
+  cmd="$(mm_wf_command_identity_sha256)"
+  auth="$(mm_wf_auth_identity_sha256)"
+  full="$(mm_wf_config_sha256 || true)"
+  mm_wf_set_many \
+    "CONFIG_SHA256=${full}" \
+    "CONFIG_PREPARE_SHA256=${prep}" \
+    "CONFIG_PUBLICATION_SHA256=${pub}" \
+    "CONFIG_COMMAND_SHA256=${cmd}" \
+    "CONFIG_AUTH_SHA256=${auth}" \
+    "PREPARATION_MODE=${PREPARATION_MODE:-FULL}" \
+    "MIRROR_SERVER_IP=${MIRROR_SERVER_IP:-}" \
+    "MIRROR_HTTP_URL=${MIRROR_HTTP_URL:-}"
+}
+
+# Classify delta between stored layered hashes and current memory.
+# Sets: MM_WF_CONFIG_CHANGE_CLASS MM_WF_STALE_REASON MM_WF_NEXT_REQUIRED_ACTION
+mm_wf_classify_config_change() {
+  local prev_prep prev_pub prev_cmd prev_auth
+  local cur_prep cur_pub cur_cmd cur_auth
+  local prep_chg=0 pub_chg=0 cmd_chg=0 auth_chg=0
+  MM_WF_CONFIG_CHANGE_CLASS="NONE"
+  MM_WF_STALE_REASON=""
+  MM_WF_NEXT_REQUIRED_ACTION="NONE"
+  export MM_WF_CONFIG_CHANGE_CLASS MM_WF_STALE_REASON MM_WF_NEXT_REQUIRED_ACTION
+
+  prev_prep="$(mm_wf_get CONFIG_PREPARE_SHA256)"
+  prev_pub="$(mm_wf_get CONFIG_PUBLICATION_SHA256)"
+  prev_cmd="$(mm_wf_get CONFIG_COMMAND_SHA256)"
+  prev_auth="$(mm_wf_get CONFIG_AUTH_SHA256)"
+  # Migration: older workflow files lack layered hashes — derive from legacy
+  # CONFIG_SHA256 comparison only when all layer fields are empty.
+  cur_prep="$(mm_wf_prepare_identity_sha256)"
+  cur_pub="$(mm_wf_publication_identity_sha256)"
+  cur_cmd="$(mm_wf_command_identity_sha256)"
+  cur_auth="$(mm_wf_auth_identity_sha256)"
+
+  if [[ -z "$prev_prep$prev_pub$prev_cmd$prev_auth" ]]; then
+    local prev_full
+    prev_full="$(mm_wf_get CONFIG_SHA256)"
+    if [[ -z "$prev_full" ]]; then
+      MM_WF_CONFIG_CHANGE_CLASS="INITIAL"
+      MM_WF_STALE_REASON="first_configuration"
+      MM_WF_NEXT_REQUIRED_ACTION="Download and Prepare"
+      return 0
+    fi
+    # Older workflow files lack layered hashes. Populate them on the next
+    # save without demoting — CONFIG_SHA256 formatting can differ across
+    # releases (empty worker fields) without a semantic operator change.
+    MM_WF_CONFIG_CHANGE_CLASS="NONE"
+    MM_WF_STALE_REASON="migrated_layer_identities"
+    MM_WF_NEXT_REQUIRED_ACTION="NONE"
+    return 0
+  fi
+
+  [[ -n "$prev_prep" && "$prev_prep" != "$cur_prep" ]] && prep_chg=1
+  [[ -n "$prev_pub" && "$prev_pub" != "$cur_pub" ]] && pub_chg=1
+  [[ -n "$prev_cmd" && "$prev_cmd" != "$cur_cmd" ]] && cmd_chg=1
+  [[ -n "$prev_auth" && "$prev_auth" != "$cur_auth" ]] && auth_chg=1
+  # Empty stored with non-empty current also counts as change (first populate).
+  [[ -z "$prev_prep" && -n "$cur_prep" ]] && prep_chg=1
+  [[ -z "$prev_pub" && -n "$cur_pub" ]] && pub_chg=1
+  [[ -z "$prev_cmd" && -n "$cur_cmd" ]] && cmd_chg=1
+  [[ -z "$prev_auth" && -n "$cur_auth" ]] && auth_chg=1
+
+  if [[ "$prep_chg" -eq 0 && "$pub_chg" -eq 0 && "$cmd_chg" -eq 0 && "$auth_chg" -eq 0 ]]; then
+    MM_WF_CONFIG_CHANGE_CLASS="NONE"
+    MM_WF_NEXT_REQUIRED_ACTION="NONE"
+    return 0
+  fi
+  if [[ "$prep_chg" -eq 1 ]]; then
+    MM_WF_CONFIG_CHANGE_CLASS="PREPARE_INPUT"
+    MM_WF_STALE_REASON="preparation_mode_or_target_changed"
+    MM_WF_NEXT_REQUIRED_ACTION="Download and Prepare"
+    return 0
+  fi
+  if [[ "$pub_chg" -eq 1 ]]; then
+    MM_WF_CONFIG_CHANGE_CLASS="PUBLICATION_ENDPOINT"
+    MM_WF_STALE_REASON="mirror_endpoint_changed"
+    MM_WF_NEXT_REQUIRED_ACTION="Rebuild Client Publication"
+    return 0
+  fi
+  if [[ "$cmd_chg" -eq 1 && "$auth_chg" -eq 0 ]]; then
+    MM_WF_CONFIG_CHANGE_CLASS="COMMAND_ROUTING"
+    MM_WF_STALE_REASON="worker_routing_changed"
+    MM_WF_NEXT_REQUIRED_ACTION="Regenerate Client Commands"
+    return 0
+  fi
+  if [[ "$auth_chg" -eq 1 && "$cmd_chg" -eq 0 ]]; then
+    MM_WF_CONFIG_CHANGE_CLASS="AUTH_CREDENTIAL"
+    MM_WF_STALE_REASON="acps_credentials_changed"
+    MM_WF_NEXT_REQUIRED_ACTION="NONE"
+    return 0
+  fi
+  # Combined auth + command without prepare/publication.
+  MM_WF_CONFIG_CHANGE_CLASS="COMMAND_AND_AUTH"
+  MM_WF_STALE_REASON="worker_routing_and_acps_credentials_changed"
+  MM_WF_NEXT_REQUIRED_ACTION="Regenerate Client Commands"
+  return 0
+}
+
+mm_wf_operator_save_message() {
+  # Human-readable post-Save guidance derived from CONFIG_CHANGE_CLASS.
+  local cls="${1:-$(mm_wf_get CONFIG_CHANGE_CLASS)}"
+  local next="${2:-$(mm_wf_get NEXT_REQUIRED_ACTION)}"
+  case "$cls" in
+    NONE|"")
+      printf '%s\n' "Configuration saved.
+No workflow action required."
+      ;;
+    COMMAND_ROUTING|COMMAND_AND_AUTH)
+      printf '%s\n' "Configuration saved.
+Existing prepared artifacts and HTTP readiness remain valid.
+Client commands changed.
+Reopen/regenerate Client Upgrade Commands (Menu 7)."
+      ;;
+    AUTH_CREDENTIAL)
+      printf '%s\n' "Configuration saved.
+Verified Phase 2 / OS artifacts were preserved.
+ACPS connection status should be re-tested before the next network acquisition.
+No Download and Prepare is required solely because credentials changed."
+      ;;
+    PUBLICATION_ENDPOINT)
+      printf '%s\n' "Configuration saved.
+Existing downloaded artifacts were preserved.
+Client publication/readiness must be refreshed against the new mirror endpoint.
+Next required action: ${next}"
+      ;;
+    PREPARE_INPUT|INITIAL|LEGACY_UNKNOWN)
+      printf '%s\n' "Configuration saved.
+Prepared workflow selection or artifact inputs changed.
+Next required action: Download and Prepare."
+      ;;
+    *)
+      printf '%s\n' "Configuration saved.
+Next required action: ${next:-Review workflow status}."
+      ;;
+  esac
 }
 
 mm_wf_state() {
@@ -239,10 +451,14 @@ mm_wf_state() {
 # Phase transitions + invalidation
 # ---------------------------------------------------------------------------
 mm_wf_mark_configured() {
-  local gen sha mode ip url
+  local gen sha mode ip url prep pub cmd auth
   mm_wf_ensure_file
   gen="$(mm_wf_new_generation_id)"
   sha="$(mm_wf_config_sha256 || true)"
+  prep="$(mm_wf_prepare_identity_sha256)"
+  pub="$(mm_wf_publication_identity_sha256)"
+  cmd="$(mm_wf_command_identity_sha256)"
+  auth="$(mm_wf_auth_identity_sha256)"
   mode="${PREPARATION_MODE:-FULL}"
   ip="${MIRROR_SERVER_IP:-}"
   url="${MIRROR_HTTP_URL:-}"
@@ -250,6 +466,13 @@ mm_wf_mark_configured() {
     "WORKFLOW_STATE=CONFIGURED" \
     "WORKFLOW_GENERATION_ID=${gen}" \
     "CONFIG_SHA256=${sha}" \
+    "CONFIG_PREPARE_SHA256=${prep}" \
+    "CONFIG_PUBLICATION_SHA256=${pub}" \
+    "CONFIG_COMMAND_SHA256=${cmd}" \
+    "CONFIG_AUTH_SHA256=${auth}" \
+    "CONFIG_CHANGE_CLASS=PREPARE_INPUT" \
+    "STALE_REASON=configured" \
+    "NEXT_REQUIRED_ACTION=Download and Prepare" \
     "PREPARATION_MODE=${mode}" \
     "MIRROR_SERVER_IP=${ip}" \
     "MIRROR_HTTP_URL=${url}" \
@@ -273,6 +496,8 @@ mm_wf_mark_configured() {
     mm_status_set WORKFLOW_STATE CONFIGURED
     mm_status_set WORKFLOW_GENERATION_ID "$gen"
     mm_status_set CONFIG_SHA256 "$sha"
+    mm_status_set CONFIG_CHANGE_CLASS PREPARE_INPUT
+    mm_status_set NEXT_REQUIRED_ACTION "Download and Prepare"
     mm_status_set UPGRADE_READINESS FAIL
     mm_status_set READINESS_RESULT ""
     mm_status_set CLIENT_COMMANDS_MODE ""
@@ -280,37 +505,146 @@ mm_wf_mark_configured() {
   mm_wf_info "WORKFLOW_STATE=CONFIGURED WORKFLOW_GENERATION_ID=${gen} CONFIG_SHA256=${sha}"
 }
 
-# Config change invalidates everything after CONFIGURED.
+# Demote only as far as the changed dependency requires.
 mm_wf_invalidate_after_config_change() {
-  local prev_sha new_sha prev_ip prev_mode prev_fpr
+  local cls state os_gen p2_gen client_gen fpr cmd_file
   if ! mm_wf_ensure_file; then
     mm_wf_warn "WORKFLOW_STATE_UPDATE=SKIPPED reason=unreadable_or_unwritable"
     return 0
   fi
-  prev_sha="$(mm_wf_get CONFIG_SHA256)"
-  prev_ip="$(mm_wf_get MIRROR_SERVER_IP)"
-  prev_mode="$(mm_wf_get PREPARATION_MODE)"
-  prev_fpr="$(mm_wf_get CLIENT_SIGNING_FINGERPRINT)"
-  new_sha="$(mm_wf_config_sha256 || true)"
-  if [[ -n "$prev_sha" && "$prev_sha" == "$new_sha" ]]; then
-    # Still refresh IP/mode mirrors; no demotion if identity unchanged.
-    mm_wf_set_many \
-      "PREPARATION_MODE=${PREPARATION_MODE:-FULL}" \
-      "MIRROR_SERVER_IP=${MIRROR_SERVER_IP:-}" \
-      "MIRROR_HTTP_URL=${MIRROR_HTTP_URL:-}" \
-      || return 0
-    return 0
-  fi
-  mm_wf_mark_configured || return 0
-  if [[ -n "$prev_mode" && "$prev_mode" != "${PREPARATION_MODE:-}" ]]; then
-    mm_wf_info "WORKFLOW_STALE reason=preparation_mode_changed old=${prev_mode} new=${PREPARATION_MODE:-}"
-  fi
-  if [[ -n "$prev_ip" && "$prev_ip" != "${MIRROR_SERVER_IP:-}" ]]; then
-    mm_wf_info "WORKFLOW_STALE reason=mirror_server_ip_changed"
-  fi
-  if [[ -n "$prev_fpr" ]]; then
-    mm_wf_info "WORKFLOW_STALE reason=config_identity_changed clearing_client_http_readiness_commands"
-  fi
+
+  mm_wf_classify_config_change
+  cls="${MM_WF_CONFIG_CHANGE_CLASS}"
+
+  case "$cls" in
+    NONE)
+      mm_wf_store_layer_identities || true
+      mm_wf_set_many \
+        "CONFIG_CHANGE_CLASS=NONE" \
+        "STALE_REASON=" \
+        "NEXT_REQUIRED_ACTION=NONE" \
+        || true
+      if declare -F mm_status_set >/dev/null 2>&1; then
+        mm_status_set CONFIG_CHANGE_CLASS NONE
+        mm_status_set NEXT_REQUIRED_ACTION NONE
+        mm_status_set STALE_REASON ""
+      fi
+      mm_wf_info "WORKFLOW_CONFIG_UNCHANGED class=NONE"
+      return 0
+      ;;
+    COMMAND_ROUTING|COMMAND_AND_AUTH)
+      # Preserve prepared artifacts, client set, HTTP, readiness.
+      # Invalidate generated operator commands only.
+      state="$(mm_wf_state)"
+      case "$state" in
+        COMMANDS_GENERATED)
+          mm_wf_set_many "WORKFLOW_STATE=READINESS_VERIFIED" || true
+          if declare -F mm_status_set >/dev/null 2>&1; then
+            mm_status_set WORKFLOW_STATE READINESS_VERIFIED
+          fi
+          ;;
+      esac
+      mm_wf_set_many "COMMAND_FILE_GENERATION_ID=" || true
+      cmd_file=""
+      if declare -F mm_client_commands_file >/dev/null 2>&1; then
+        cmd_file="$(mm_client_commands_file)"
+        rm -f "$cmd_file" 2>/dev/null || true
+      fi
+      if declare -F mm_status_set >/dev/null 2>&1; then
+        mm_status_set CLIENT_COMMANDS_MODE ""
+        mm_status_set CONFIG_CHANGE_CLASS "$cls"
+        mm_status_set NEXT_REQUIRED_ACTION "${MM_WF_NEXT_REQUIRED_ACTION}"
+        mm_status_set STALE_REASON "${MM_WF_STALE_REASON}"
+        if [[ "$cls" == "COMMAND_AND_AUTH" || "$cls" == "AUTH_CREDENTIAL" ]]; then
+          mm_status_set ACPS_CONNECTION ""
+        fi
+      fi
+      mm_wf_store_layer_identities || true
+      mm_wf_set_many \
+        "CONFIG_CHANGE_CLASS=${cls}" \
+        "STALE_REASON=${MM_WF_STALE_REASON}" \
+        "NEXT_REQUIRED_ACTION=${MM_WF_NEXT_REQUIRED_ACTION}" \
+        || true
+      mm_wf_info "WORKFLOW_STALE class=${cls} demote=commands_only"
+      return 0
+      ;;
+    AUTH_CREDENTIAL)
+      # Credentials are acquisition inputs, not artifact identity.
+      if declare -F mm_status_set >/dev/null 2>&1; then
+        mm_status_set ACPS_CONNECTION ""
+        mm_status_set CONFIG_CHANGE_CLASS AUTH_CREDENTIAL
+        mm_status_set NEXT_REQUIRED_ACTION NONE
+        mm_status_set STALE_REASON "${MM_WF_STALE_REASON}"
+      fi
+      mm_wf_store_layer_identities || true
+      mm_wf_set_many \
+        "CONFIG_CHANGE_CLASS=AUTH_CREDENTIAL" \
+        "STALE_REASON=${MM_WF_STALE_REASON}" \
+        "NEXT_REQUIRED_ACTION=NONE" \
+        || true
+      mm_wf_info "WORKFLOW_STALE class=AUTH_CREDENTIAL demote=auth_status_only"
+      return 0
+      ;;
+    PUBLICATION_ENDPOINT)
+      # Preserve heavy artifact generations; invalidate endpoint-pinned client
+      # publication, HTTP, readiness, and commands.
+      os_gen="$(mm_wf_get OS_CORE_GENERATION_ID)"
+      p2_gen="$(mm_wf_get PHASE2_GENERATION_ID)"
+      mm_wf_set_many \
+        "WORKFLOW_STATE=PREPARED" \
+        "OS_CORE_GENERATION_ID=${os_gen}" \
+        "PHASE2_GENERATION_ID=${p2_gen}" \
+        "CLIENT_SET_GENERATION_ID=" \
+        "CLIENT_SIGNING_FINGERPRINT=" \
+        "CLIENT_BUILD_INPUT_SHA256=" \
+        "CLIENT_SOURCE_REVISION=" \
+        "CLIENT_RUNTIME_MANIFEST_SHA256=" \
+        "CLIENT_COMMAND_BLOCK_VERSION=" \
+        "CLIENT_PROVENANCE_SCHEMA_VERSION=" \
+        "HTTP_PUBLICATION_GENERATION_ID=" \
+        "READINESS_VERIFIED_GENERATION_ID=" \
+        "COMMAND_FILE_GENERATION_ID=" \
+        "VERIFIED_UTC=" \
+        "HTTP_REENABLE_REQUIRED=YES" \
+        "CONFIG_CHANGE_CLASS=PUBLICATION_ENDPOINT" \
+        "STALE_REASON=${MM_WF_STALE_REASON}" \
+        "NEXT_REQUIRED_ACTION=${MM_WF_NEXT_REQUIRED_ACTION}" \
+        || true
+      if declare -F mm_status_set >/dev/null 2>&1; then
+        mm_status_set WORKFLOW_STATE PREPARED
+        mm_status_set UPGRADE_READINESS FAIL
+        mm_status_set READINESS_RESULT ""
+        mm_status_set READINESS_CONFIG_FINGERPRINT ""
+        mm_status_set HTTP_DISTRIBUTION ""
+        mm_status_set HTTP_CONFIGURATION_READY ""
+        mm_status_set CLIENT_COMMANDS_MODE ""
+        mm_status_set CONFIG_CHANGE_CLASS PUBLICATION_ENDPOINT
+        mm_status_set NEXT_REQUIRED_ACTION "${MM_WF_NEXT_REQUIRED_ACTION}"
+        mm_status_set STALE_REASON "${MM_WF_STALE_REASON}"
+      fi
+      if declare -F mm_client_commands_file >/dev/null 2>&1; then
+        rm -f "$(mm_client_commands_file)" 2>/dev/null || true
+      fi
+      mm_wf_store_layer_identities || true
+      mm_wf_info "WORKFLOW_STALE class=PUBLICATION_ENDPOINT demote=PREPARED preserve_artifacts=YES"
+      return 0
+      ;;
+    PREPARE_INPUT|INITIAL|LEGACY_UNKNOWN|*)
+      mm_wf_mark_configured || return 0
+      mm_wf_set_many \
+        "CONFIG_CHANGE_CLASS=${cls}" \
+        "STALE_REASON=${MM_WF_STALE_REASON}" \
+        "NEXT_REQUIRED_ACTION=${MM_WF_NEXT_REQUIRED_ACTION}" \
+        || true
+      if declare -F mm_status_set >/dev/null 2>&1; then
+        mm_status_set CONFIG_CHANGE_CLASS "$cls"
+        mm_status_set NEXT_REQUIRED_ACTION "${MM_WF_NEXT_REQUIRED_ACTION}"
+        mm_status_set STALE_REASON "${MM_WF_STALE_REASON}"
+      fi
+      mm_wf_info "WORKFLOW_STALE class=${cls} demote=CONFIGURED"
+      return 0
+      ;;
+  esac
 }
 
 mm_wf_mark_prepared() {
@@ -323,6 +657,10 @@ mm_wf_mark_prepared() {
     "WORKFLOW_STATE=PREPARED" \
     "WORKFLOW_GENERATION_ID=${gen}" \
     "CONFIG_SHA256=$(mm_wf_config_sha256 || true)" \
+    "CONFIG_PREPARE_SHA256=$(mm_wf_prepare_identity_sha256)" \
+    "CONFIG_PUBLICATION_SHA256=$(mm_wf_publication_identity_sha256)" \
+    "CONFIG_COMMAND_SHA256=$(mm_wf_command_identity_sha256)" \
+    "CONFIG_AUTH_SHA256=$(mm_wf_auth_identity_sha256)" \
     "PREPARATION_MODE=${PREPARATION_MODE:-FULL}" \
     "MIRROR_SERVER_IP=${MIRROR_SERVER_IP:-}" \
     "MIRROR_HTTP_URL=${MIRROR_HTTP_URL:-}" \
@@ -444,12 +782,17 @@ mm_wf_mark_commands_generated() {
   mm_wf_set_many \
     "WORKFLOW_STATE=COMMANDS_GENERATED" \
     "COMMAND_FILE_GENERATION_ID=${cmd_gen}" \
+    "CONFIG_COMMAND_SHA256=$(mm_wf_command_identity_sha256)" \
+    "CONFIG_CHANGE_CLASS=NONE" \
+    "NEXT_REQUIRED_ACTION=NONE" \
     "DP_COMMAND_BLOCK_VERSION=SUBSHELL_V2"
   if declare -F mm_status_set >/dev/null 2>&1; then
     mm_status_set WORKFLOW_STATE COMMANDS_GENERATED
     mm_status_set COMMAND_FILE_GENERATION_ID "$cmd_gen"
     mm_status_set CLIENT_COMMANDS_MODE "${PREPARATION_MODE:-FULL}"
     mm_status_set CLIENT_COMMANDS_GENERATED_AT "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    mm_status_set CONFIG_CHANGE_CLASS NONE
+    mm_status_set NEXT_REQUIRED_ACTION NONE
   fi
   mm_wf_info "WORKFLOW_STATE=COMMANDS_GENERATED COMMAND_FILE_GENERATION_ID=${cmd_gen} DP_COMMAND_BLOCK_VERSION=SUBSHELL_V2"
 }
@@ -472,10 +815,31 @@ mm_wf_invalidate_after_client_republish() {
 # Consistency checks (generation binding)
 # ---------------------------------------------------------------------------
 mm_wf_config_matches_current() {
-  local stored current
-  stored="$(mm_wf_get CONFIG_SHA256)"
-  current="$(mm_wf_config_sha256 || true)"
-  [[ -n "$stored" && -n "$current" && "$stored" == "$current" ]]
+  # Backward-compatible name: readiness-relevant identity (prepare+publication).
+  mm_wf_readiness_identity_matches
+}
+
+mm_wf_readiness_identity_matches() {
+  local stored_prep stored_pub cur_prep cur_pub stored_full cur_full
+  stored_prep="$(mm_wf_get CONFIG_PREPARE_SHA256)"
+  stored_pub="$(mm_wf_get CONFIG_PUBLICATION_SHA256)"
+  cur_prep="$(mm_wf_prepare_identity_sha256)"
+  cur_pub="$(mm_wf_publication_identity_sha256)"
+  if [[ -n "$stored_prep" && -n "$stored_pub" ]]; then
+    [[ "$stored_prep" == "$cur_prep" && "$stored_pub" == "$cur_pub" ]]
+    return $?
+  fi
+  # Legacy workflow files: fall back to full CONFIG_SHA256.
+  stored_full="$(mm_wf_get CONFIG_SHA256)"
+  cur_full="$(mm_wf_config_sha256 || true)"
+  [[ -n "$stored_full" && -n "$cur_full" && "$stored_full" == "$cur_full" ]]
+}
+
+mm_wf_command_identity_matches() {
+  local stored cur
+  stored="$(mm_wf_get CONFIG_COMMAND_SHA256)"
+  cur="$(mm_wf_command_identity_sha256)"
+  [[ -n "$stored" && -n "$cur" && "$stored" == "$cur" ]]
 }
 
 mm_wf_readiness_generation_current() {
@@ -522,7 +886,7 @@ mm_wf_commands_preflight() {
     return 1
   fi
 
-  if ! mm_wf_config_matches_current; then
+  if ! mm_wf_readiness_identity_matches; then
     MM_WF_BLOCK_REASON="STALE_CONFIG_SHA256"
     MM_WF_REQUIRED_ACTION="Verify Upgrade Readiness"
     return 1

@@ -1,0 +1,18 @@
+{
+  "hop": "xenial-to-bionic",
+  "generated_at": "2026-08-31T13:31:41Z",
+  "profile": "generic",
+  "source": "selective_mirror_export",
+  "required_packages": 813,
+  "resolved_packages": 813,
+  "unresolved_packages": 0,
+  "required_files": 829,
+  "resolved_files": 829,
+  "unresolved_files": 0,
+  "required_urls": 829,
+  "failed_requests": 0,
+  "captured_http_200": 829,
+  "captured_bytes": 561661476,
+  "recovered_post_hop": true,
+  "checksum_source": "selective_mirror_packages_index"
+}

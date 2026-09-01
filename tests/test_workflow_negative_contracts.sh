@@ -20,13 +20,24 @@ export MM_WORKFLOW_FILE="$MM_CONFIG_DIR/workflow.state"
 export MM_LOG_DIR="$TMP/logs"
 export MM_CLIENT_ROOT="$TMP/mirror/client"
 export SKIP_MIRROR_HOST_VALIDATE=1
-mkdir -p "$MM_CONFIG_DIR" "$MM_LOG_DIR" "$MM_CLIENT_ROOT"
+mkdir -p "$MM_CONFIG_DIR" "$MM_LOG_DIR" "$MM_CLIENT_ROOT/lib"
 : >"$MM_STATUS_FILE"
 python3 "$ROOT/scripts/lib/build_client_launchers.py" \
   --project-root "$ROOT" \
   --output-dir "$MM_CLIENT_ROOT" \
   --mirror-base-url "http://192.0.2.10" \
   --signing-fingerprint "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" >/dev/null
+# shellcheck source=/dev/null
+source "$ROOT/scripts/lib/phase2_helper_generation.sh"
+install -m 0755 "$ROOT/client/stage-dp-phase2.sh" "$MM_CLIENT_ROOT/stage-dp-phase2.sh"
+install -m 0755 "$ROOT/client/bringup_py3_dp_lifecycle.sh" "$MM_CLIENT_ROOT/bringup_py3_dp_lifecycle.sh"
+for hf in dp-offline-source-product-version.sh dp-phase2-operation-progress.sh \
+  dp-phase2-bringup-lifecycle.sh dp-phase2-ubuntu-prerequisites.sh
+do
+  install -m 0755 "$ROOT/client/lib/${hf}" "$MM_CLIENT_ROOT/lib/${hf}"
+done
+phase2_helper_generation_write "$MM_CLIENT_ROOT" >/dev/null
+phase2_upgrade_wrapper_write "$MM_CLIENT_ROOT" "http://192.0.2.10" "6.6.0" >/dev/null
 
 # Load production command generators without running the program entrypoint.
 LIB="$TMP/installer-lib.sh"
@@ -85,7 +96,8 @@ LIVE_SHA="$(sha256sum "$LIVE" | awk '{print $1}')"
 
 # B. FULL with no hop assignments fails and cannot replace live.
 ZERO_HOPS="$TMP/full-zero-hops.txt"
-grep -vE '^cd /home/aella && curl -fsSLo dp-launch-' "$VALID" >"$ZERO_HOPS"
+grep -vE '^cd /home/aella && curl -fsSLo upgrade-(xenial-to-bionic|bionic-to-focal|focal-to-jammy|jammy-to-noble)\.sh' \
+  "$VALID" >"$ZERO_HOPS"
 set +e
 B_OUT="$(mm_wf_atomic_publish_command_file "$ZERO_HOPS" "$LIVE" FULL client-gen-1 2>&1)"
 B_RC=$?
@@ -102,7 +114,7 @@ gui_build_client_commands "$MIRROR_HTTP_URL" single "" >"$P2"
 expect "C PHASE2_ONLY with zero hops validates" \
   mm_wf_validate_command_file_content "$P2" PHASE2_ONLY
 P2_HOP_COUNT="$(grep -cE \
-  '^cd /home/aella && curl -fsSLo dp-launch-' \
+  '^cd /home/aella && curl -fsSLo upgrade-(xenial-to-bionic|bionic-to-focal|focal-to-jammy|jammy-to-noble)\.sh' \
   "$P2" || true)"
 expect "C PHASE2_ONLY has zero OS hops" test "$P2_HOP_COUNT" = 0
 

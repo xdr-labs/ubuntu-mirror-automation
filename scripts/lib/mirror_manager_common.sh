@@ -652,17 +652,33 @@ mm_load_gui_config() {
   ACPS_BASE_URL="${ACPS_BASE_URL_FIXED}"
 }
 
+# Persist GUI config.
+# Usage: mm_save_gui_config [full|merge]
+#   full  (default) — every in-memory GUI field is authoritative, including
+#         explicit empty (clears DL/DA workers, worker password, etc.).
+#   merge — empty in-memory fields fall back to disk so partial/internal
+#         updates (e.g. URL-only) cannot wipe unrelated credentials.
 mm_save_gui_config() {
+  local save_mode="${1:-full}"
   local prev_mode="" cmd_file
-  local mem_user="${ACPS_USERNAME:-}"
-  local mem_pass="${ACPS_PASSWORD:-}"
-  local mem_worker_pass="${WORKER_SSH_PASSWORD:-}"
-  local mem_dl_worker_ips="${DL_WORKER_IPS:-}"
-  local mem_da_worker_ips="${DA_WORKER_IPS:-}"
-  local mem_mirror="${MIRROR_HTTP_URL:-}"
-  local mem_ip="${MIRROR_SERVER_IP:-}"
-  local mem_mode="${PREPARATION_MODE:-}"
+  local mem_user="${ACPS_USERNAME-}"
+  local mem_pass="${ACPS_PASSWORD-}"
+  local mem_worker_pass="${WORKER_SSH_PASSWORD-}"
+  local mem_dl_worker_ips="${DL_WORKER_IPS-}"
+  local mem_da_worker_ips="${DA_WORKER_IPS-}"
+  local mem_mirror="${MIRROR_HTTP_URL-}"
+  local mem_ip="${MIRROR_SERVER_IP-}"
+  local mem_mode="${PREPARATION_MODE-}"
   local disk_user="" disk_pass="" disk_worker_pass="" disk_dl_worker_ips="" disk_da_worker_ips="" disk_mirror="" disk_ip=""
+  local disk_mode=""
+
+  case "$save_mode" in
+    full|merge) ;;
+    *)
+      mm_error "CONFIGURATION_SAVE=FAIL reason=invalid_save_mode mode=${save_mode}"
+      return 1
+      ;;
+  esac
 
   if [[ -f "${MM_CONFIG_FILE}" ]]; then
     prev_mode="$(awk -F= '/^PREPARATION_MODE=/{print substr($0,index($0,"=")+1); exit}' "${MM_CONFIG_FILE}" 2>/dev/null || true)"
@@ -680,18 +696,32 @@ mm_save_gui_config() {
       printf 'disk_da_worker_ips=%s\n' "$(printf '%q' "${DA_WORKER_IPS:-}")"
       printf 'disk_mirror=%s\n' "$(printf '%q' "${MIRROR_HTTP_URL:-}")"
       printf 'disk_ip=%s\n' "$(printf '%q' "${MIRROR_SERVER_IP:-}")"
+      printf 'disk_mode=%s\n' "$(printf '%q' "${PREPARATION_MODE:-}")"
     )"
   fi
 
-  # Prefer in-memory values; fall back to disk so URL-only saves cannot wipe ACPS.
-  ACPS_USERNAME="${mem_user:-$disk_user}"
-  ACPS_PASSWORD="${mem_pass:-$disk_pass}"
-  WORKER_SSH_PASSWORD="${mem_worker_pass:-$disk_worker_pass}"
-  DL_WORKER_IPS="${mem_dl_worker_ips:-$disk_dl_worker_ips}"
-  DA_WORKER_IPS="${mem_da_worker_ips:-$disk_da_worker_ips}"
-  MIRROR_HTTP_URL="${mem_mirror:-$disk_mirror}"
-  MIRROR_SERVER_IP="${mem_ip:-$disk_ip}"
-  PREPARATION_MODE="${mem_mode:-${prev_mode:-FULL}}"
+  if [[ "$save_mode" == "merge" ]]; then
+    # Partial/internal persistence: preserve unrelated disk values when memory
+    # left a field empty/unset.
+    ACPS_USERNAME="${mem_user:-$disk_user}"
+    ACPS_PASSWORD="${mem_pass:-$disk_pass}"
+    WORKER_SSH_PASSWORD="${mem_worker_pass:-$disk_worker_pass}"
+    DL_WORKER_IPS="${mem_dl_worker_ips:-$disk_dl_worker_ips}"
+    DA_WORKER_IPS="${mem_da_worker_ips:-$disk_da_worker_ips}"
+    MIRROR_HTTP_URL="${mem_mirror:-$disk_mirror}"
+    MIRROR_SERVER_IP="${mem_ip:-$disk_ip}"
+    PREPARATION_MODE="${mem_mode:-${disk_mode:-${prev_mode:-FULL}}}"
+  else
+    # Authoritative full GUI save: explicit empty clears the setting.
+    ACPS_USERNAME="${mem_user}"
+    ACPS_PASSWORD="${mem_pass}"
+    WORKER_SSH_PASSWORD="${mem_worker_pass}"
+    DL_WORKER_IPS="${mem_dl_worker_ips}"
+    DA_WORKER_IPS="${mem_da_worker_ips}"
+    MIRROR_HTTP_URL="${mem_mirror}"
+    MIRROR_SERVER_IP="${mem_ip}"
+    PREPARATION_MODE="${mem_mode:-${prev_mode:-FULL}}"
+  fi
 
   # Keep MIRROR_SERVER_IP and MIRROR_HTTP_URL consistent.
   if [[ -n "${MIRROR_SERVER_IP}" ]]; then
@@ -715,11 +745,11 @@ mm_save_gui_config() {
     printf 'PREPARATION_MODE=%s\n' "$(printf '%q' "${PREPARATION_MODE}")"
     printf 'ACPS_USERNAME=%s\n' "$(printf '%q' "${ACPS_USERNAME}")"
     printf 'ACPS_PASSWORD=%s\n' "$(printf '%q' "${ACPS_PASSWORD}")"
-    printf 'WORKER_SSH_PASSWORD=%s\n' "$(printf '%q' "${WORKER_SSH_PASSWORD:-}")"
-    printf 'DL_WORKER_IPS=%s\n' "$(printf '%q' "${DL_WORKER_IPS:-}")"
-    printf 'DA_WORKER_IPS=%s\n' "$(printf '%q' "${DA_WORKER_IPS:-}")"
-    printf 'MIRROR_SERVER_IP=%s\n' "$(printf '%q' "${MIRROR_SERVER_IP:-}")"
-    printf 'MIRROR_HTTP_URL=%s\n' "$(printf '%q' "${MIRROR_HTTP_URL:-}")"
+    printf 'WORKER_SSH_PASSWORD=%s\n' "$(printf '%q' "${WORKER_SSH_PASSWORD}")"
+    printf 'DL_WORKER_IPS=%s\n' "$(printf '%q' "${DL_WORKER_IPS}")"
+    printf 'DA_WORKER_IPS=%s\n' "$(printf '%q' "${DA_WORKER_IPS}")"
+    printf 'MIRROR_SERVER_IP=%s\n' "$(printf '%q' "${MIRROR_SERVER_IP}")"
+    printf 'MIRROR_HTTP_URL=%s\n' "$(printf '%q' "${MIRROR_HTTP_URL}")"
   } >"$tmp"
   umask "$old_umask"
   chmod 600 "$tmp"
@@ -737,13 +767,23 @@ mm_save_gui_config() {
     fi
     mm_status_set CLIENT_COMMANDS_MODE ""
   fi
-  # Generation-bound invalidation: any config identity change demotes workflow.
+  # Single authoritative invalidation decision for this persistence.
   if declare -F mm_wf_invalidate_after_config_change >/dev/null 2>&1; then
     mm_wf_invalidate_after_config_change
   elif declare -F mm_wf_mark_configured >/dev/null 2>&1; then
     mm_wf_mark_configured
   fi
-  mm_ok "CONFIGURATION_SAVED=PASS path=${MM_CONFIG_FILE} mode=${PREPARATION_MODE}"
+  mm_ok "CONFIGURATION_SAVED=PASS path=${MM_CONFIG_FILE} mode=${PREPARATION_MODE} save=${save_mode}"
+}
+
+# Authoritative full GUI Save (explicit empty clears).
+mm_save_gui_config_full() {
+  mm_save_gui_config full
+}
+
+# Partial/internal merge save (empty memory does not wipe disk).
+mm_merge_gui_config() {
+  mm_save_gui_config merge
 }
 
 # Public HTTP base clients use (no trailing slash). Never logs credentials.
@@ -925,7 +965,7 @@ mm_client_commands_file() {
 }
 
 mm_client_commands_stale() {
-  local f mode_saved ready cmd_gen ver
+  local f mode_saved ready cmd_gen ver stored_cmd cur_cmd
   f="$(mm_client_commands_file)"
   [[ -f "$f" && -s "$f" ]] || return 0
   # Legacy / non-SUBSHELL_V2 command files are always stale.
@@ -963,7 +1003,19 @@ mm_client_commands_stale() {
     ver="$(mm_wf_get DP_COMMAND_BLOCK_VERSION)"
     [[ -n "$ready" && -n "$cmd_gen" && "$ready" == "$cmd_gen" ]] || return 0
     [[ "$ver" == "SUBSHELL_V2" ]] || return 0
-    mm_wf_config_matches_current || return 0
+    # Readiness-relevant identity must still match.
+    if declare -F mm_wf_readiness_identity_matches >/dev/null 2>&1; then
+      mm_wf_readiness_identity_matches || return 0
+    else
+      mm_wf_config_matches_current || return 0
+    fi
+    # Worker-routing / command identity changes stale Menu 7 without
+    # requiring Download and Prepare.
+    if declare -F mm_wf_command_identity_sha256 >/dev/null 2>&1; then
+      stored_cmd="$(mm_wf_get CONFIG_COMMAND_SHA256)"
+      cur_cmd="$(mm_wf_command_identity_sha256 || true)"
+      [[ -n "$stored_cmd" && -n "$cur_cmd" && "$stored_cmd" == "$cur_cmd" ]] || return 0
+    fi
   fi
   return 1
 }
@@ -1052,7 +1104,22 @@ mm_file_fingerprint() {
   printf '%s|%s\n' "$path" "$st"
 }
 
+# Semantic configuration identity for readiness/staleness (NOT inode/mtime).
+# Physical mm_file_fingerprint remains available for artifact identity checks.
 mm_config_fingerprint() {
+  if declare -F mm_wf_readiness_identity_sha256 >/dev/null 2>&1; then
+    mm_wf_readiness_identity_sha256 2>/dev/null || printf ''
+  elif declare -F mm_wf_config_sha256 >/dev/null 2>&1; then
+    # Legacy fallback: content digest, still not inode/mtime.
+    mm_wf_config_sha256 2>/dev/null || printf ''
+  else
+    printf ''
+  fi
+}
+
+# Physical config file identity (inode/mtime). Do not use for semantic
+# readiness decisions — atomic rewrite of identical content must not stale.
+mm_config_file_fingerprint() {
   local path="${MM_CONFIG_FILE}"
   mm_file_fingerprint "$path" 2>/dev/null || printf ''
 }
@@ -1314,11 +1381,30 @@ mm_workflow_progress_text() {
 }
 
 mm_record_config_validated() {
+  # Marks configuration as operator-validated. Does NOT independently reset
+  # the workflow — mm_save_gui_config already performed the single scoped
+  # invalidation decision. Calling mm_wf_mark_configured here would defeat
+  # no-op / worker-only preservation.
   mm_status_set CONFIGURATION_READY PASS
   mm_status_set CONFIG_FINGERPRINT "$(mm_config_fingerprint)"
   mm_status_set CONFIG_VALIDATED_AT "$(mm_ts)"
-  if declare -F mm_wf_mark_configured >/dev/null 2>&1; then
-    mm_wf_mark_configured
+  if declare -F mm_status_set >/dev/null 2>&1 && declare -F mm_wf_get >/dev/null 2>&1; then
+    local change_class next_action
+    change_class="$(mm_wf_get CONFIG_CHANGE_CLASS 2>/dev/null || true)"
+    next_action="$(mm_wf_get NEXT_REQUIRED_ACTION 2>/dev/null || true)"
+    [[ -n "$change_class" ]] && mm_status_set CONFIG_CHANGE_CLASS "$change_class"
+    [[ -n "$next_action" ]] && mm_status_set NEXT_REQUIRED_ACTION "$next_action"
+  fi
+  # First-time / missing workflow: ensure CONFIGURED exists without demoting
+  # an already-advanced workflow.
+  if declare -F mm_wf_state >/dev/null 2>&1 && declare -F mm_wf_mark_configured >/dev/null 2>&1; then
+    local st
+    st="$(mm_wf_state 2>/dev/null || true)"
+    case "$st" in
+      ""|UNCONFIGURED)
+        mm_wf_mark_configured
+        ;;
+    esac
   fi
 }
 

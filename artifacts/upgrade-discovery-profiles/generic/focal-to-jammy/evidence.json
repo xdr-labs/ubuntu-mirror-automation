@@ -1,0 +1,18 @@
+{
+  "hop": "focal-to-jammy",
+  "generated_at": "2026-08-31T13:31:42Z",
+  "profile": "generic",
+  "source": "selective_mirror_export",
+  "required_packages": 909,
+  "resolved_packages": 909,
+  "unresolved_packages": 0,
+  "required_files": 925,
+  "resolved_files": 925,
+  "unresolved_files": 0,
+  "required_urls": 925,
+  "failed_requests": 0,
+  "captured_http_200": 925,
+  "captured_bytes": 912491260,
+  "recovered_post_hop": true,
+  "checksum_source": "selective_mirror_packages_index"
+}

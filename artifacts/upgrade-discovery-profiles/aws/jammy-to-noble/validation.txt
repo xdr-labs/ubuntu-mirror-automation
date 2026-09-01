@@ -1,0 +1,14 @@
+VALIDATION: PASS
+hop=jammy-to-noble
+from_os=22.04
+to_os=24.04
+required_packages=1133
+resolved_packages=1133
+unresolved_packages=0
+required_files=1189
+resolved_files=1189
+unresolved_files=0
+failed_requests=0
+captured_http_200=893
+captured_bytes=847015107
+failures: none

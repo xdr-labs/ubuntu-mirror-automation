@@ -1,0 +1,18 @@
+{
+  "hop": "jammy-to-noble",
+  "generated_at": "2026-08-31T13:31:42Z",
+  "profile": "generic",
+  "source": "selective_mirror_export",
+  "required_packages": 904,
+  "resolved_packages": 904,
+  "unresolved_packages": 0,
+  "required_files": 920,
+  "resolved_files": 920,
+  "unresolved_files": 0,
+  "required_urls": 920,
+  "failed_requests": 0,
+  "captured_http_200": 920,
+  "captured_bytes": 1397132766,
+  "recovered_post_hop": true,
+  "checksum_source": "selective_mirror_packages_index"
+}

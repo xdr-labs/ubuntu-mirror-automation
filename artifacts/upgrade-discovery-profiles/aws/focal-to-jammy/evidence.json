@@ -1,0 +1,29 @@
+{
+  "hop": "focal-to-jammy",
+  "generated_at": "2026-08-31T12:34:04Z",
+  "required_packages": 1099,
+  "resolved_packages": 1099,
+  "unresolved_packages": 0,
+  "required_files": 1153,
+  "resolved_files": 1153,
+  "unresolved_files": 0,
+  "required_urls": 876,
+  "failed_requests": 0,
+  "historical_non_required_failures": 0,
+  "historical_non_required_failure_reasons": {},
+  "captured_http_200": 876,
+  "captured_bytes": 615429680,
+  "packages_added": 121,
+  "packages_upgraded": 689,
+  "packages_removed": 50,
+  "downloaded_not_installed": 25,
+  "recovered_post_hop": true,
+  "checksum_source": "post_hop_download",
+  "repair_notes": {
+    "recovered_count": 4,
+    "failed_count": 0,
+    "targets": 4,
+    "exact_original_capture": false,
+    "mutable_metadata_warning": true
+  }
+}
