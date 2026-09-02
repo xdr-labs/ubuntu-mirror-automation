@@ -44,7 +44,18 @@ Required fields include `release_id`, `created_at_utc`,
 ## Outer checksum / signature
 
 Outer `.sha256` covers the tar blob. If `.asc` exists, verification is mandatory
-with the configured public key.
+with the configured public key (`OS_CORE_PUBLIC_KEY` / `--public-key`).
+
+**R2 GPG hardening status (deferred):** production acquisition trust today is
+HTTPS transport + mandatory outer SHA256 sidecar verification
+(`scripts/lib/r2_acquire.sh`, `engine_verify_os_core_package`). Optional
+`*.tar.sha256.asc` download is best-effort and is **not** authoritative unless a
+pinned publisher trust root exists in-tree. Per-mirror
+`config/client-signing` / `/etc/ubuntu-mirror/client-signing` keys are **not** an
+R2 publisher trust anchor (they sign local client manifests). Enabling mandatory
+R2 signature verification requires an external prerequisite: a published R2
+`.asc` plus a repository-pinned publisher fingerprint/public key (do not invent
+or import keys from public keyservers).
 
 ## Path safety
 
@@ -88,4 +99,10 @@ Checksum sidecar:
 
 ```
 https://xdrsolutions.uk/ubuntu-os-core/ubuntu-os-core-xenial-to-noble.tar.sha256
+```
+
+Optional signature sidecar (currently not published / not a trust root):
+
+```
+https://xdrsolutions.uk/ubuntu-os-core/ubuntu-os-core-xenial-to-noble.tar.sha256.asc
 ```

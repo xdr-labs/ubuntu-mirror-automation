@@ -214,9 +214,27 @@ dp2_assert_exact_files_dir() {
   dp2_ok "FILE_SET=PASS count=${count}"
 }
 
+dp2_assert_tar_regular_files_only() {
+  local bundle="$1"
+  # Defense-in-depth before root extraction: tar -tf name checks alone accept
+  # symlinks/hardlinks/devices with expected top-level names.
+  if ! tar -tvf "$bundle" | awk '
+    {
+      t = substr($1, 1, 1)
+      if (t != "-") {
+        bad = 1
+      }
+    }
+    END { exit bad ? 1 : 0 }
+  '; then
+    dp2_die "TAR_MEMBER_TYPE=FAIL bundle=$(basename "$bundle") (regular files only)"
+  fi
+}
+
 dp2_assert_safe_tar_list() {
   local bundle="$1"
   local list tmp
+  dp2_assert_tar_regular_files_only "$bundle"
   tmp="$(mktemp)"
   tar -tf "$bundle" >"$tmp" || {
     rm -f "$tmp"

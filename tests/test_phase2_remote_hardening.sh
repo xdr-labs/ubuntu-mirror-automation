@@ -13,6 +13,8 @@ F1_SHA="f1a73c1d4502e2efcf55197865d2ade345d9c82f"
 PASS=0
 FAIL=0
 TMP="$(mktemp -d)"
+export PHASE2_BRINGUP_DIR="${TMP}/lifecycle"
+mkdir -p "$PHASE2_BRINGUP_DIR"
 trap 'rm -rf "$TMP"' EXIT
 pass() { echo "PASS: $*"; PASS=$((PASS + 1)); }
 fail() { echo "FAIL: $*"; FAIL=$((FAIL + 1)); }
@@ -205,11 +207,12 @@ WRAP_EQ_RC=0
   source "$WRAPPER"
   parse_args --version 6.6.0 --worker-password=--dashpass --detach
   [[ "$ATTACH_MONITOR" -eq 0 ]]
-  [[ "${PASSTHRU[2]}" == --worker-password ]]
-  [[ "${PASSTHRU[3]}" == --dashpass ]]
+  [[ "${PASSTHRU[2]}" == --worker-password-file ]]
+  [[ -f "${PASSTHRU[3]}" ]]
+  [[ "$(<"${PASSTHRU[3]}")" == --dashpass ]]
 ) || WRAP_EQ_RC=$?
 set -e
-[[ "$WRAP_EQ_RC" -eq 0 ]] && pass "lifecycle equals-form password preserves detach" \
+[[ "$WRAP_EQ_RC" -eq 0 ]] && pass "lifecycle equals-form password preserves detach via password file" \
   || fail "lifecycle equals-form rc=$WRAP_EQ_RC"
 
 bash -n "$COMPAT" && bash -n "$WRAPPER" && bash -n "$0" \

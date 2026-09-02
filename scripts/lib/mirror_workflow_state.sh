@@ -63,6 +63,12 @@ mm_wf_file() {
   fi
 }
 
+# Stable lock inode for workflow mutations. Must NOT be replaced by state updates
+# (flock is inode-based; locking the state file itself races with atomic rename).
+mm_wf_lock_file() {
+  printf '%s.lock\n' "$(mm_wf_file)"
+}
+
 mm_wf_new_generation_id() {
   printf '%s-%s\n' "$(date -u +%Y%m%dT%H%M%SZ)" "${RANDOM}$$"
 }
@@ -145,13 +151,14 @@ mm_wf_get() {
 mm_wf_set_many() {
   # Usage: mm_wf_set_many KEY=VAL KEY=VAL ...
   # Atomic multi-key update of the workflow state file.
-  # Holds a short exclusive flock around the read-modify-write to prevent
-  # lost updates between concurrent Mirror Manager sessions.
-  local f tmp line key val k2 lockfd
+  # Exclusive flock is held on a dedicated stable lock file (not the state
+  # inode). Atomic rename of workflow.state must not replace the lock inode.
+  local f lockf tmp line key val k2 lockfd old_umask
   local -A updates=()
   local -A cur=()
   mm_wf_ensure_file || return 1
   f="$(mm_wf_file)"
+  lockf="$(mm_wf_lock_file)"
   [[ -r "$f" && -w "$f" ]] || {
     mm_wf_warn "WORKFLOW_STATE_NOT_WRITABLE path=${f}"
     return 1
@@ -162,11 +169,35 @@ mm_wf_set_many() {
     [[ -n "$key" ]] || continue
     updates["$key"]="$val"
   done
-  exec {lockfd}<"$f" || return 1
-  if ! flock -w 30 "$lockfd"; then
-    exec {lockfd}<&-
-    mm_wf_warn "WORKFLOW_STATE_LOCK=FAIL path=${f}"
+  mkdir -p "$(dirname "$lockf")" 2>/dev/null || {
+    mm_wf_warn "WORKFLOW_STATE_LOCK=FAIL path=${lockf} reason=mkdir"
     return 1
+  }
+  old_umask="$(umask)"
+  umask 077
+  # Create-or-open without truncating; keep mode private (not world-writable).
+  if ! : >>"$lockf"; then
+    umask "$old_umask"
+    mm_wf_warn "WORKFLOW_STATE_LOCK=FAIL path=${lockf} reason=create"
+    return 1
+  fi
+  umask "$old_umask"
+  chmod 600 "$lockf" 2>/dev/null || true
+  exec {lockfd}>"$lockf" || {
+    mm_wf_warn "WORKFLOW_STATE_LOCK=FAIL path=${lockf} reason=open"
+    return 1
+  }
+  if ! flock -w 30 "$lockfd"; then
+    exec {lockfd}>&-
+    mm_wf_warn "WORKFLOW_STATE_LOCK=FAIL path=${lockf}"
+    return 1
+  fi
+  # Optional test gate: hold lock while ${gate}.hold exists (deterministic races).
+  if [[ -n "${MM_WF_TEST_LOCK_HOLD_GATE:-}" ]]; then
+    : >"${MM_WF_TEST_LOCK_HOLD_GATE}.held"
+    while [[ -f "${MM_WF_TEST_LOCK_HOLD_GATE}.hold" ]]; do
+      sleep 0.01
+    done
   fi
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ "$line" == *=* ]] || continue
@@ -204,7 +235,7 @@ mm_wf_set_many() {
   mm_wf_atomic_write_file "$f" "$tmp"
   rm -f "$tmp"
   flock -u "$lockfd" 2>/dev/null || true
-  exec {lockfd}<&-
+  exec {lockfd}>&-
 }
 
 mm_wf_set() {

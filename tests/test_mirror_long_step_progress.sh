@@ -80,6 +80,7 @@ export MM_STATE_DIR="${TMP}/state"
 export MM_CONFIG_DIR="${TMP}/config"
 export MM_STATUS_FILE="${TMP}/config/status"
 export MM_LOG_FILE="${TMP}/long-step.log"
+export DP_PHASE2_LOG_FILE="${TMP}/dp-phase2-sync.log"
 export MM_DRY_RUN=0
 export MM_KEEP_PHASE2_SOURCES=1
 export MM_LONG_STEP_HEARTBEAT_SEC=1

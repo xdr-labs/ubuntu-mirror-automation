@@ -230,7 +230,7 @@ PY
     return 1
   fi
 
-  UM_SELECTIVE_EFFECTIVE_NGINX_ROOT="${SELECTIVE_NGINX_ROOT:-${root}/current}"
+  UM_SELECTIVE_EFFECTIVE_NGINX_ROOT="${SELECTIVE_NGINX_ROOT:-${root}}"
   if [[ "${UM_SELECTIVE_READY:-0}" == "1" ]]; then
     return 0
   fi

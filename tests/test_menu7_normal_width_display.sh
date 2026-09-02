@@ -78,6 +78,10 @@ chmod +x "${CLIENT_ROOT}/stage-dp-phase2.sh" "${CLIENT_ROOT}/bringup_py3_dp_life
 # shellcheck source=/dev/null
 source "${ROOT}/scripts/lib/phase2_helper_generation.sh"
 phase2_helper_generation_write "$CLIENT_ROOT" >/dev/null
+# shellcheck source=lib/phase2_bundle_trust_fixture.sh
+source "${ROOT}/tests/lib/phase2_bundle_trust_fixture.sh"
+phase2_trust_fixture_export_dp_phase2_root "$TMP" >/dev/null
+phase2_trust_fixture_write_bundle_sidecar "$MM_DP_PHASE2_ROOT" "6.6.0" >/dev/null
 phase2_upgrade_wrapper_write "$CLIENT_ROOT" "$MIRROR" "6.6.0" >/dev/null
 P2_SHA="$(sha256sum "${CLIENT_ROOT}/upgrade-phase2.sh" | awk '{print $1}')"
 bash -n "${CLIENT_ROOT}/upgrade-phase2.sh"

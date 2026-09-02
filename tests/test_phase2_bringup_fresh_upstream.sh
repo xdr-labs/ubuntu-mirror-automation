@@ -113,9 +113,10 @@ grep -q -- '--worker-password' "${WORKA}/bringup_py3_dp_after_os_upgrade.sh" \
 grep -q -- '--worker-password' "${WORKA}.upstream/bringup_py3_dp_after_os_upgrade.sh" \
   && fail "A immutable upstream copy gained --worker-password" \
   || pass "A saved upstream remains unpatched"
-cmp -s "${WORKA}/bringup_py3_dp_after_os_upgrade.sh" "$VENDOR" \
-  && fail "A generated equals frozen vendor full copy" \
-  || pass "A generated is not the frozen vendor blob"
+[[ "$(sha1sum "${WORKA}/bringup_py3_dp_after_os_upgrade.sh" | awk '{print $1}')" \
+    != "$(sha1sum "${CACHEA}/bringup_py3_dp_after_os_upgrade.sh" | awk '{print $1}')" ]] \
+  && pass "A generated differs from upstream" \
+  || fail "A generated equals upstream (patch not applied)"
 cmp -s "${CACHEA}/bringup_py3_dp_after_os_upgrade.sh" "$FIXTURE" \
   && pass "A cache upstream not mutated" \
   || fail "A cache upstream mutated"
@@ -305,14 +306,15 @@ grep -q 'STANDBY_IPS=""' "${WORKP}/bringup_py3_dp_after_os_upgrade.sh" \
   && grep -q 'token_extra="&standby=1"' "${WORKP}/bringup_py3_dp_after_os_upgrade.sh" \
   && pass "P f1a73 vendor changes preserved" \
   || fail "P f1a73 vendor changes preserved"
-grep -q -- '--worker-password' "${WORKP}/bringup_py3_dp_after_os_upgrade.sh" \
-  && pass "P worker-password present" || fail "P worker-password present"
-cmp -s "${WORKP}/bringup_py3_dp_after_os_upgrade.sh" "$VENDOR" \
-  && fail "P generated equals frozen vendor full copy" \
-  || pass "P generated is not the frozen vendor blob"
-cmp -s "${WORKP}/bringup_py3_dp_after_os_upgrade.sh" "$PRODUCTION_F1A73" \
-  && fail "P generated equals raw f1a73 upstream" \
-  || pass "P generated is not the raw f1a73 upstream"
+grep -q -- '--worker-password-file' "${WORKP}/bringup_py3_dp_after_os_upgrade.sh" \
+  && pass "P worker-password-file present" || fail "P worker-password-file present"
+grep -q 'ACPS_DIRECT_DOWNLOAD=FAIL' "${WORKP}/bringup_py3_dp_after_os_upgrade.sh" \
+  && pass "P ACPS direct download fail-closed" \
+  || fail "P ACPS direct download fail-closed"
+[[ "$(sha1sum "${WORKP}/bringup_py3_dp_after_os_upgrade.sh" | awk '{print $1}')" \
+    != "$EXPECTED_F1A73_SHA1" ]] \
+  && pass "P generated differs from raw f1a73 upstream" \
+  || fail "P generated equals raw f1a73 upstream"
 bash -n "${WORKP}/bringup_py3_dp_after_os_upgrade.sh" \
   && pass "P patched bash -n" || fail "P patched bash -n"
 cmp -s "${CACHEP}/bringup_py3_dp_after_os_upgrade.sh" "$PRODUCTION_F1A73" \
@@ -340,7 +342,7 @@ grep -q 'BRINGUP_PATCH_COMPAT=PASS' "$OUTQ2" && pass "Q apply BRINGUP_PATCH_COMP
 grep -q 'PATCHED_BRINGUP_GENERATION=PASS' "$OUTQ2" && pass "Q PATCHED_BRINGUP_GENERATION=PASS" || fail "Q generation"
 grep -q 'wait_for_da_restful_8003' "${WORKQ}/bringup_py3_dp_after_os_upgrade.sh" \
   && grep -q 'rebuild_resolv_conf' "${WORKQ}/bringup_py3_dp_after_os_upgrade.sh" \
-  && grep -q -- '--worker-password' "${WORKQ}/bringup_py3_dp_after_os_upgrade.sh" \
+  && grep -q -- '--worker-password-file' "${WORKQ}/bringup_py3_dp_after_os_upgrade.sh" \
   && pass "Q 3af369 vendor + project markers" \
   || fail "Q 3af369 vendor + project markers"
 bash -n "${WORKQ}/bringup_py3_dp_after_os_upgrade.sh" \

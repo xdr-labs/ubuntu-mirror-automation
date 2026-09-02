@@ -120,6 +120,7 @@ MIN_ROOT_GIB=20
 
 TARGET_DP_VERSION=""
 PHASE2_ARTIFACT_VERSION=""
+EXPECTED_BUNDLE_SHA256=""
 SOURCE_DP_VERSION=""
 SOURCE_DP_VERSION_RAW=""
 SOURCE_DP_VERSION_ORIGIN=""
@@ -174,6 +175,7 @@ Does NOT execute bringup_py3_dp_after_os_upgrade.sh.
 Required:
   --target-version VER     Phase 2 artifact / bundle target version
   --mirror-url URL         Internal mirror base (e.g. http://192.0.2.10)
+  --expected-bundle-sha256 HEX  Pre-trusted dp_bundle SHA256 from bootstrap chain
 
 Options:
   --source-dp-version VER  Explicit source DP product version (operator override)
@@ -309,6 +311,11 @@ parse_args() {
       --mirror-url)
         MIRROR_URL="${2:-}"
         [[ -n "$MIRROR_URL" ]] || die "--mirror-url requires a value"
+        shift 2
+        ;;
+      --expected-bundle-sha256)
+        EXPECTED_BUNDLE_SHA256="${2:-}"
+        [[ -n "$EXPECTED_BUNDLE_SHA256" ]] || die "--expected-bundle-sha256 requires a value"
         shift 2
         ;;
       --same-version-recovery)
@@ -562,11 +569,31 @@ verify_sha256_pair() {
   [[ "${expected,,}" == "${actual,,}" ]] || die "sha256 mismatch for $(basename "$data")"
 }
 
+assert_tar_regular_files_only() {
+  local bundle="$1"
+  if ! tar -tvf "$bundle" | awk '
+    {
+      t = substr($1, 1, 1)
+      if (t != "-") {
+        bad = 1
+      }
+    }
+    END { exit bad ? 1 : 0 }
+  '; then
+    die "bundle tar member type validation failed (regular files only)"
+  fi
+}
+
 assert_safe_tar_list() {
   local bundle="$1"
   PHASE2_STAGE_PHASE="VALIDATE_TAR_CONTENTS"
   log "PHASE2_STAGE_PHASE=${PHASE2_STAGE_PHASE}"
   local tmp lines
+  if ! dp2_run_with_heartbeat phase2_tar_member_type_validation "$bundle" -- \
+      assert_tar_regular_files_only "$bundle"
+  then
+    die "bundle tar member type validation failed (regular files only)"
+  fi
   tmp="$(mktemp)"
   if ! dp2_run_with_heartbeat phase2_tar_list_validation "$bundle" -- \
       bash -c "tar -tf \"$bundle\" >\"$tmp\""
@@ -828,9 +855,13 @@ ensure_verified_bundle() {
   local cache_part="${CACHE_DIR}/bundle.tar.part"
   local cache_sha="${CACHE_DIR}/bundle.tar.sha256"
   local verified_marker="${CACHE_DIR}/VERIFIED"
-  local bytes_total="UNKNOWN" mode
+  local bytes_total="UNKNOWN" mode expected sidecar_hash
   bundle_url="${MIRROR_URL}/dp-phase2/${TARGET_DP_VERSION}/dp_bundle_${TARGET_DP_VERSION}-current.tar"
   sha_url="${bundle_url}.sha256"
+
+  [[ -n "$EXPECTED_BUNDLE_SHA256" ]] || die "PRETRUSTED_BUNDLE_HASH=MISSING"
+  [[ "$EXPECTED_BUNDLE_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] || die "PRETRUSTED_BUNDLE_HASH=INVALID"
+  expected="${EXPECTED_BUNDLE_SHA256,,}"
 
   PHASE2_STAGE_PHASE="DOWNLOAD_BUNDLE"
   log "PHASE2_STAGE_PHASE=${PHASE2_STAGE_PHASE}"
@@ -842,9 +873,16 @@ ensure_verified_bundle() {
     die "bundle checksum download failed"
   fi
   mv -f "${cache_sha}.tmp" "$cache_sha"
-  local expected
-  expected="$(read_hash "$cache_sha")"
-  [[ "$expected" =~ ^[0-9a-fA-F]{64}$ ]] || die "bad remote bundle sha256"
+  sidecar_hash="$(read_hash "$cache_sha")"
+  if [[ "$sidecar_hash" =~ ^[0-9a-fA-F]{64}$ ]]; then
+    if [[ "${sidecar_hash,,}" == "$expected" ]]; then
+      log "SIDECAR_CROSSCHECK=PASS"
+    else
+      log "SIDECAR_CROSSCHECK=FAIL sidecar=${sidecar_hash} pretrusted=${expected}"
+    fi
+  else
+    log "SIDECAR_CROSSCHECK=SKIP sidecar_format_invalid"
+  fi
 
   # Best-effort Content-Length for progress (do not invent if unavailable)
   bytes_total="$(curl -fsSI --connect-timeout 10 --max-time 15 "$bundle_url" 2>/dev/null \
@@ -1497,7 +1535,7 @@ verify_installed_bringup_vendor_compat() {
     log "BRINGUP_VENDOR_COMPAT=FAIL reason=vendor_missing_worker_password"
     return 1
   fi
-  if ! grep -q 'WORKER_IPS requires --worker-password\|--worker-ips requires --worker-password\|--worker-ips/--standby requires --worker-password' "$vendor"; then
+  if ! grep -q 'WORKER_IPS requires --worker-password\|--worker-ips requires --worker-password\|--worker-ips/--standby requires --worker-password-file' "$vendor"; then
     log "BRINGUP_VENDOR_COMPAT=FAIL reason=vendor_missing_worker_password_validation"
     return 1
   fi

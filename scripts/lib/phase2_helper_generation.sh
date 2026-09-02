@@ -50,6 +50,27 @@ phase2_helper_generation_sha256() {
   sha256sum "$man" | awk '{print $1}'
 }
 
+phase2_published_bundle_sha256() {
+  local ver="${1:?version required}"
+  local root="${MM_DP_PHASE2_ROOT:-}"
+  local sidecar candidate
+  [[ "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+  [[ -n "$root" ]] || return 1
+  for sidecar in \
+    "${root}/${ver}/dp_bundle_${ver}-current.tar.sha256" \
+    "${root}/${ver}/current/dp_bundle_${ver}-current.tar.sha256"
+  do
+    [[ -f "$sidecar" ]] || continue
+    if declare -F dp2_read_hash_field >/dev/null 2>&1; then
+      dp2_read_hash_field "$sidecar"
+    else
+      awk 'NF {print $1; exit}' "$sidecar"
+    fi
+    return 0
+  done
+  return 1
+}
+
 phase2_helper_generation_verify() {
   local root="${1:?client root required}"
   local man="${root}/${PHASE2_HELPER_GENERATION_MANIFEST_NAME}"
@@ -83,6 +104,7 @@ phase2_upgrade_wrapper_write() {
   local root="${1:?client root required}"
   local mirror="${2:?mirror URL required}"
   local ver="${3:-6.6.0}"
+  local bundle_sha="${4:-}"
   local dest="${root}/upgrade-phase2.sh"
   local man="${root}/${PHASE2_HELPER_GENERATION_MANIFEST_NAME}"
   local sha
@@ -103,6 +125,17 @@ phase2_upgrade_wrapper_write() {
     printf 'PHASE2_UPGRADE_WRAPPER=FAIL reason=generation_sha_invalid\n' >&2
     return 1
   }
+  if [[ -z "$bundle_sha" ]]; then
+    bundle_sha="$(phase2_published_bundle_sha256 "$ver" 2>/dev/null || true)"
+  fi
+  if [[ -z "$bundle_sha" ]]; then
+    printf 'PHASE2_UPGRADE_WRAPPER=FAIL reason=bundle_sha_missing\n' >&2
+    return 1
+  fi
+  [[ "$bundle_sha" =~ ^[0-9a-fA-F]{64}$ ]] || {
+    printf 'PHASE2_UPGRADE_WRAPPER=FAIL reason=bundle_sha_invalid\n' >&2
+    return 1
+  }
   cat >"$dest" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
@@ -112,6 +145,7 @@ VER='${ver}'
 SCRIPT='stage-dp-phase2.sh'
 GEN='phase2-helper-generation.manifest'
 H='${sha}'
+B='${bundle_sha}'
 # Allowlisted operator passthrough only. Target/mirror/trust anchors are fixed.
 SOURCE_DP_VERSION_OPT=()
 while [[ \$# -gt 0 ]]; do
@@ -159,7 +193,7 @@ printf '%s  %s\\n' "\$H" "\$GEN" | sha256sum -c -
 sha256sum -c "\$GEN"
 # Normal path: never force --same-version-recovery. Healthy source==target
 # must yield ALREADY_AT_TARGET / same-version gate without destructive recovery.
-sudo bash "./\$SCRIPT" --target-version "\$VER" --mirror-url "\$MIRROR" "\${SOURCE_DP_VERSION_OPT[@]}"
+sudo bash "./\$SCRIPT" --target-version "\$VER" --mirror-url "\$MIRROR" --expected-bundle-sha256 "\$B" "\${SOURCE_DP_VERSION_OPT[@]}"
 EOF
   chmod 0644 "$dest"
   bash -n "$dest" || {
@@ -181,6 +215,7 @@ VER='${ver}'
 SCRIPT='stage-dp-phase2.sh'
 GEN='phase2-helper-generation.manifest'
 H='${sha}'
+B='${bundle_sha}'
 if [[ "\${CONFIRM_SAME_VERSION_RECOVERY:-}" != "YES" ]]; then
   echo "FATAL: same-version recovery requires CONFIRM_SAME_VERSION_RECOVERY=YES" >&2
   echo "Use upgrade-phase2.sh for normal upgrades (source < target)." >&2
@@ -221,7 +256,7 @@ for F in "\$GEN" "\$SCRIPT" bringup_py3_dp_lifecycle.sh lib/dp-{offline-source-p
 done
 printf '%s  %s\\n' "\$H" "\$GEN" | sha256sum -c -
 sha256sum -c "\$GEN"
-sudo bash "./\$SCRIPT" --target-version "\$VER" --same-version-recovery --mirror-url "\$MIRROR" "\${SOURCE_DP_VERSION_OPT[@]}"
+sudo bash "./\$SCRIPT" --target-version "\$VER" --same-version-recovery --mirror-url "\$MIRROR" --expected-bundle-sha256 "\$B" "\${SOURCE_DP_VERSION_OPT[@]}"
 EOF
   chmod 0644 "$recovery"
   bash -n "$recovery" || {

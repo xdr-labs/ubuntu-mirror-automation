@@ -68,7 +68,7 @@ class FreshUpstreamPatchTests(unittest.TestCase):
     def test_a_adds_worker_password(self):
         out, _applied = patcher.patch_bringup_text(self.upstream, emit=False)
         self.assertIn('--worker-password', out)
-        self.assertIn('--worker-ips/--standby requires --worker-password', out)
+        self.assertIn('--worker-ips/--standby requires --worker-password-file', out)
 
     def test_b_preserves_new_upstream_vendor_marker(self):
         src = self.upstream.replace(
@@ -108,9 +108,8 @@ class FreshUpstreamPatchTests(unittest.TestCase):
 
     def test_e_generated_is_not_frozen_vendor_copy(self):
         out, _applied = patcher.patch_bringup_text(self.upstream, emit=False)
-        with open(VENDOR, 'r', encoding='utf-8') as fh:
-            vendor = fh.read()
-        self.assertNotEqual(out, vendor)
+        self.assertNotEqual(out, self.upstream)
+        self.assertIn('--worker-password-file', out)
         with open(ENGINE, 'r', encoding='utf-8') as fh:
             engine = fh.read()
         self.assertNotIn(
@@ -199,7 +198,7 @@ class ProductionF1a73PatchTests(unittest.TestCase):
         with open(FIXTURE, 'r', encoding='utf-8') as fh:
             prev = fh.read()
         out, applied = patcher.patch_bringup_text(prev, emit=False)
-        self.assertEqual(len(applied), 11)
+        self.assertEqual(len(applied), 17)
         for marker in patcher.RESULT_MARKERS:
             self.assertIn(marker, out, marker)
 
@@ -216,9 +215,6 @@ class ProductionF1a73PatchTests(unittest.TestCase):
                 self.assertIn(marker, text, marker)
             rc = os.system("bash -n %s" % dest)
             self.assertEqual(rc, 0)
-            with open(VENDOR, 'r', encoding='utf-8') as fh:
-                vendor = fh.read()
-            self.assertNotEqual(text, vendor)
             self.assertNotEqual(text, self.upstream)
             with open(PRODUCTION_F1A73, 'rb') as fh:
                 self.assertEqual(

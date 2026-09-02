@@ -160,6 +160,10 @@ pass "lifecycle wrapper and ubuntu-prerequisites covered by generation"
 export MM_PROJECT_ROOT="$ROOT"
 export MM_CLIENT_ROOT="$UNIT"
 export SKIP_MIRROR_HOST_VALIDATE=1
+# shellcheck source=lib/phase2_bundle_trust_fixture.sh
+source "${ROOT}/tests/lib/phase2_bundle_trust_fixture.sh"
+phase2_trust_fixture_export_dp_phase2_root "$TMP" >/dev/null
+phase2_trust_fixture_write_bundle_sidecar "$MM_DP_PHASE2_ROOT" "6.5.0" >/dev/null
 phase2_upgrade_wrapper_write "$UNIT" "http://192.0.2.10" "6.5.0" >/dev/null
 LIB_INST="${TMP}/installer-lib.sh"
 awk -v sd="${ROOT}/scripts" '
@@ -187,8 +191,9 @@ grep -q 'sha256sum -c "$GEN"' "${UNIT}/upgrade-phase2.sh" \
 # The wrapper must return from sudo normally so its EXIT trap removes the mktemp tree.
 grep -Fq 'trap '\''rm -rf "$W"'\'' EXIT' "${UNIT}/upgrade-phase2.sh" \
   || fail "wrapper missing temp cleanup EXIT trap"
-grep -Fq 'sudo bash "./$SCRIPT" --target-version "$VER" --mirror-url "$MIRROR"' \
+grep -Fq 'sudo bash "./$SCRIPT" --target-version "$VER" --mirror-url "$MIRROR" --expected-bundle-sha256 "$B"' \
   "${UNIT}/upgrade-phase2.sh" || fail "wrapper missing Phase 2 stage invocation"
+grep -Fq "B='" "${UNIT}/upgrade-phase2.sh" || fail "wrapper missing bundle hash pin"
 if grep -E 'sudo bash.*"\$SCRIPT".*--same-version-recovery' "${UNIT}/upgrade-phase2.sh" >/dev/null 2>&1; then
   fail "normal wrapper must not force same-version-recovery"
 fi

@@ -333,34 +333,30 @@ else
 fi
 
 # 14 nginx -t failure -> rollback
+# Deterministic: cutover runs preflight nginx_test (call 1=PASS) then post-rename
+# nginx_test (call 2=FAIL via MIGRATE_TEST_NGINX_T_FAIL_ON_CALL). Call 3 during
+# rollback is PASS again. Do not use a background mount-table watcher — that
+# races the umount→fake-remount window (sleep 0.05 polling) and flakes under load.
 CUT14="$WORKDIR/cut14"
 SPOOL14="$(setup_cutover_tree "$CUT14")"
 cut_env_for "$CUT14" "$SPOOL14"
-# Flip nginx_t to FAIL once mounts table loses the source (after fake umount)
-(
-  for _ in $(seq 1 200); do
-    if ! awk -v t="$SPOOL14" '$1==t {found=1} END{exit !found}' "$CUT14/mounts"; then
-      printf 'FAIL\n' >"$CUT14/nginx_t"
-      exit 0
-    fi
-    sleep 0.05
-  done
-) &
-WATCH=$!
+CUT_ENV+=(MIGRATE_TEST_NGINX_T_FAIL_ON_CALL=2)
 out="$(run_script "$CUT14/repo" "${CUT_ENV[@]}" --cutover --execute 2>&1)" || true
-kill "$WATCH" 2>/dev/null || true
-wait "$WATCH" 2>/dev/null || true
-if printf '%s' "$out" | grep -qiE 'ROLLBACK=PASS|CUTOVER_FAILED_AFTER_ROLLBACK|nginx -t failed'; then
-  # After rollback, disk should be remounted in fake table
+if printf '%s' "$out" | grep -q 'ROLLBACK=PASS'; then
   if awk -v t="$SPOOL14" '$1==t {found=1} END{exit !found}' "$CUT14/mounts"; then
     pass "14 nginx failure triggered rollback + remount"
+  elif grep -qE '^UUID=d48ae479-10f5-4ff5-b9be-4baa34dd15ea[[:space:]]' "$CUT14/etc/fstab"; then
+    pass "14 nginx failure rollback restored fstab"
   else
-    # rollback may have remounted; check fstab restored
-    if grep -qE '^UUID=d48ae479-10f5-4ff5-b9be-4baa34dd15ea[[:space:]]' "$CUT14/etc/fstab"; then
-      pass "14 nginx failure rollback restored fstab"
-    else
-      fail "14 rollback incomplete ($out)"
-    fi
+    fail "14 rollback incomplete ($out)"
+  fi
+elif printf '%s' "$out" | grep -qiE 'CUTOVER_FAILED_AFTER_ROLLBACK|nginx -t failed'; then
+  # Accept partial rollback evidence if remount/fstab restored.
+  if awk -v t="$SPOOL14" '$1==t {found=1} END{exit !found}' "$CUT14/mounts" \
+    || grep -qE '^UUID=d48ae479-10f5-4ff5-b9be-4baa34dd15ea[[:space:]]' "$CUT14/etc/fstab"; then
+    pass "14 nginx failure triggered rollback path"
+  else
+    fail "14 rollback incomplete ($out)"
   fi
 else
   fail "14 nginx rollback ($out)"

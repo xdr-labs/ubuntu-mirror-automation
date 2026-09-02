@@ -33,6 +33,13 @@ PATCH_SCHEMA_VERSION = '1'
 
 RESULT_MARKERS = (
     '--worker-password',
+    '--worker-password-file',
+    'ACPS_DIRECT_DOWNLOAD=FAIL',
+    'init_phase2_ssh_known_hosts',
+    'StrictHostKeyChecking=accept-new',
+    'PHASE2_WORKER_PASSWORD_FILE',
+    'require_worker_password_file_for_remote_orchestration',
+    'sshpass -f',
     'wait_for_master_token_api',
     'validate_expected_cluster_nodes',
     'validate_apt_dependency_graph',
@@ -53,7 +60,7 @@ RESULT_MARKERS = (
     'copy_phase2_prereq_contract_to_worker',
     'normalize_remote_orchestration_nodes',
     'has_remote_orchestration_nodes',
-    '--worker-ips/--standby requires --worker-password',
+    '--worker-ips/--standby requires --worker-password-file',
 )
 
 
@@ -214,6 +221,13 @@ def _compat_fragment():
     return body
 
 
+def _credential_ssh_fragment():
+    body = _fragment('fragment_credential_ssh.sh')
+    if not body.endswith('\n'):
+        body += '\n'
+    return body + '\n'
+
+
 def _heartbeat_fragment():
     body = _fragment('fragment_heartbeat.sh')
     if not body.endswith('\n'):
@@ -248,6 +262,14 @@ def apply_worker_password_docs(text):
         '#   --worker-key <path>       (deprecated) Use --worker-password instead',
         'args_doc_worker_password',
     )
+    text = replace_exactly_once(
+        text,
+        '#   --worker-key <path>       (deprecated) Use --worker-password instead',
+        '#   --worker-password-file <path>  Mode-0600 file with SSH password (production path)\n'
+        '#   --worker-password <pass>  Legacy manual path; migrated to a private file internally\n'
+        '#   --worker-key <path>       (deprecated) Use --worker-password-file instead',
+        'args_doc_worker_password_file',
+    )
     return text
 
 
@@ -265,6 +287,123 @@ def apply_worker_password_globals(text):
         'worker_ssh_key_comment',
     )
     return text
+
+
+def apply_credential_ssh_helpers(text):
+    anchors = (
+        '# AELDEV-71573: keepalive is REQUIRED on the master->worker SSH.',
+        'SCP_OPTS="-o StrictHostKeyChecking=no"\nSSH_OPTS="-o StrictHostKeyChecking=no"',
+    )
+    for anchor in anchors:
+        if _count(text, anchor) == 1:
+            return insert_before(
+                text, anchor, _credential_ssh_fragment(), 'credential_ssh_helpers_insert',
+            )
+    raise PatchCompatError('credential_ssh_helpers_insert', 'anchor_count=0 expected=1')
+
+
+def apply_ssh_host_keys(text):
+    opts_full = (
+        'SCP_OPTS="-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=${PHASE2_SSH_KNOWN_HOSTS_FILE} '
+        '-o ConnectTimeout=30 -o ServerAliveInterval=30 -o ServerAliveCountMax=240 -o TCPKeepAlive=yes"\n'
+        'SSH_OPTS="-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=${PHASE2_SSH_KNOWN_HOSTS_FILE} '
+        '-o ConnectTimeout=30 -o ServerAliveInterval=30 -o ServerAliveCountMax=240 -o TCPKeepAlive=yes"'
+    )
+    opts_minimal = (
+        'SCP_OPTS="-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=${PHASE2_SSH_KNOWN_HOSTS_FILE} '
+        '-o ConnectTimeout=30"\n'
+        'SSH_OPTS="-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=${PHASE2_SSH_KNOWN_HOSTS_FILE} '
+        '-o ConnectTimeout=30"'
+    )
+    return replace_exactly_one_mapping(
+        text,
+        (
+            (
+                'SCP_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=30 '
+                '-o ServerAliveInterval=30 -o ServerAliveCountMax=240 -o TCPKeepAlive=yes"\n'
+                'SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=30 '
+                '-o ServerAliveInterval=30 -o ServerAliveCountMax=240 -o TCPKeepAlive=yes"',
+                opts_full,
+            ),
+            (
+                'SCP_OPTS="-o StrictHostKeyChecking=no"\nSSH_OPTS="-o StrictHostKeyChecking=no"',
+                opts_minimal,
+            ),
+        ),
+        'ssh_host_keys',
+    )
+
+
+def apply_acps_credential_removal(text):
+    if "ACPS_PASS='WroTQfm/W6x10'" not in text:
+        return text
+    return replace_exactly_once(
+        text,
+        "ACPS_PASS='WroTQfm/W6x10'",
+        'ACPS_PASS=""  # embedded credentials removed; use Mirror Manager --skip-download',
+        'acps_credential_removal',
+    )
+
+
+def apply_acps_preflight_fail_closed(text):
+    preflight_prev = (
+        '    # Check ACPS connectivity\n'
+        '    if [[ "$SKIP_DOWNLOAD" != "true" ]]; then\n'
+        '        mkdir -p "$STAGING_DIR" "$AELLADEB_DIR" 2>/dev/null || true\n'
+        '        if check_local_artifacts; then\n'
+        '            log "All artifacts pre-staged locally -- download not required"\n'
+        '        else\n'
+        '            if ! command -v curl &>/dev/null; then\n'
+        '                die "curl not found. Install with: apt-get install -y curl"\n'
+        '            fi\n'
+        '            log "Testing ACPS connectivity..."\n'
+        '            local http_code\n'
+        '            http_code=$(curl -s -o /dev/null -w "%{http_code}" -k -u "${ACPS_USER}:${ACPS_PASS}" \\\n'
+        '                --connect-timeout 30 --max-time 30 "https://${ACPS_HOST}/" || echo "000")\n'
+        '            if [[ "$http_code" != "200" ]] && [[ "$http_code" != "401" ]]; then\n'
+        '                log "WARNING: Cannot connect to ACPS (${ACPS_HOST}, HTTP ${http_code}) -- will use local artifacts only"\n'
+        '                SKIP_DOWNLOAD=true\n'
+        '            elif [[ "$http_code" == "401" ]]; then\n'
+        '                die "ACPS authentication failed (HTTP 401). Check ACPS_USER/ACPS_PASS."\n'
+        '            else\n'
+        '                log "ACPS reachable (HTTP ${http_code})"\n'
+        '            fi\n'
+        '        fi\n'
+        '    fi\n'
+    )
+    preflight_new = (
+        '    # Direct ACPS download is disabled in patched production bringup.\n'
+        '    # Mirror Manager stages artifacts; operators must use --skip-download.\n'
+        '    if [[ "$SKIP_DOWNLOAD" != "true" ]]; then\n'
+        '        if check_local_artifacts; then\n'
+        '            log "All artifacts pre-staged locally -- treating as --skip-download"\n'
+        '            SKIP_DOWNLOAD=true\n'
+        '        else\n'
+        '            phase2_acps_direct_download_fail_closed\n'
+        '        fi\n'
+        '    fi\n'
+    )
+    if preflight_prev not in text:
+        return text
+    return replace_exactly_once(
+        text, preflight_prev, preflight_new, 'acps_preflight_fail_closed',
+    )
+
+
+def apply_acps_download_fail_closed(text):
+    anchor = (
+        '    log "Downloading from ACPS (${ACPS_HOST})"\n'
+        '\n'
+        '    local curl_opts=(-fsS -k -u "${ACPS_USER}:${ACPS_PASS}" --connect-timeout 30 --max-time 1800)\n'
+    )
+    if anchor not in text:
+        return text
+    return replace_exactly_once(
+        text,
+        anchor,
+        '    phase2_acps_direct_download_fail_closed\n',
+        'acps_download_fail_closed',
+    )
 
 
 def apply_parse_args_worker_password(text):
@@ -286,6 +425,15 @@ def apply_parse_args_worker_password(text):
         '            --worker-password=*)\n'
         '                WORKER_PASSWORD="${1#*=}"\n'
         '                [[ -n "$WORKER_PASSWORD" ]] || die "--worker-password requires a value"\n'
+        '                shift ;;\n'
+        '            --worker-password-file)\n'
+        '                if [[ $# -lt 2 || -z "${2:-}" || "$2" == --* ]]; then\n'
+        '                    die "--worker-password-file requires a path"\n'
+        '                fi\n'
+        '                PHASE2_WORKER_PASSWORD_FILE="$2"; shift 2 ;;\n'
+        '            --worker-password-file=*)\n'
+        '                PHASE2_WORKER_PASSWORD_FILE="${1#*=}"\n'
+        '                [[ -n "$PHASE2_WORKER_PASSWORD_FILE" ]] || die "--worker-password-file requires a value"\n'
         '                shift ;;\n'
         '            --role)\n',
         'parse_args_worker_password_case',
@@ -321,13 +469,15 @@ def apply_parse_args_worker_password(text):
             (
                 help_prev,
                 '                echo "  --worker-ips <ip,ip>    Comma-separated worker IPs (master orchestrates)"\n'
-                '                echo "  --worker-password <pw>  SSH password for aella on remote nodes (required with --worker-ips/--standby)"\n'
+                '                echo "  --worker-password-file <path>  Mode-0600 SSH password file (production path)"\n'
+                '                echo "  --worker-password <pw>  Legacy manual password (migrated to private file)"\n'
                 '                echo "  --role <role>           Override auto-detect (AIO|DR-master|DL-master|DR-worker|DL-worker)"\n',
             ),
             (
                 help_f1a73,
                 '                echo "  --worker-ips <ip,ip>    Comma-separated worker IPs (master orchestrates)"\n'
-                '                echo "  --worker-password <pw>  SSH password for aella on remote nodes (required with --worker-ips/--standby)"\n'
+                '                echo "  --worker-password-file <path>  Mode-0600 SSH password file (production path)"\n'
+                '                echo "  --worker-password <pw>  Legacy manual password (migrated to private file)"\n'
                 '                echo "  --standby <ip[,ip]>     Standby node IP(s) -- orchestrated like workers but with"\n'
                 '                echo "                          role standby, always AFTER the workers. May be used with"\n'
                 '                echo "                          or without --worker-ips."\n'
@@ -346,9 +496,8 @@ def apply_parse_args_worker_password(text):
         '    done\n'
         '\n'
         '    # WORKER_PASSWORD applies to all remote orchestration nodes (workers and standby).\n'
-        '    if [[ ( -n "$WORKER_IPS" || -n "${STANDBY_IPS:-}" ) && -z "$WORKER_PASSWORD" ]]; then\n'
-        '        die "--worker-ips/--standby requires --worker-password"\n'
-        '    fi\n'
+        '    finalize_worker_password_credential\n'
+        '    require_worker_password_file_for_remote_orchestration\n'
         '    if declare -F normalize_remote_orchestration_nodes >/dev/null 2>&1; then\n'
         '        normalize_remote_orchestration_nodes || die "REMOTE_ORCH_NODES=FAIL"\n'
         '    fi\n'
@@ -563,17 +712,35 @@ def apply_install_python3_gates(text):
 
 
 def apply_overlay2_worker_password(text):
-    return replace_exactly_once(
+    text = replace_exactly_once(
         text,
         '    local WORKER_USER="aella" WORKER_PASS="aelladata"\n'
         '    local workers worker_ip dry_flag=""\n',
-        '    local WORKER_USER="aella" WORKER_PASS="${WORKER_PASSWORD}"\n'
-        '    if [[ -z "$WORKER_PASS" ]]; then\n'
-        '        die "--worker-ips/--standby requires --worker-password"\n'
-        '    fi\n'
+        '    init_phase2_ssh_known_hosts\n'
+        '    local WORKER_USER="aella"\n'
+        '    require_worker_password_file_for_remote_orchestration\n'
         '    local workers worker_ip dry_flag=""\n',
         'overlay2_worker_password',
     )
+    text = replace_exactly_once(
+        text,
+        '        if ! sshpass -p "$WORKER_PASS" scp -O $SCP_OPTS "$SCRIPT_PATH" \\\n'
+        '                "${WORKER_USER}@${worker_ip}:/tmp/${SCRIPT_NAME}" >/dev/null 2>&1; then\n',
+        '        if ! sshpass -f "$PHASE2_WORKER_PASSWORD_FILE" scp -O $SCP_OPTS "$SCRIPT_PATH" \\\n'
+        '                "${WORKER_USER}@${worker_ip}:/tmp/${SCRIPT_NAME}" >/dev/null 2>&1; then\n',
+        'overlay2_sshpass_scp',
+    ) if (
+        '        if ! sshpass -p "$WORKER_PASS" scp -O $SCP_OPTS "$SCRIPT_PATH" \\\n'
+        in text
+    ) else text
+    if '        sshpass -p "$WORKER_PASS" ssh $SSH_OPTS "${WORKER_USER}@${worker_ip}" \\\n' in text:
+        text = replace_exactly_once(
+            text,
+            '        sshpass -p "$WORKER_PASS" ssh $SSH_OPTS "${WORKER_USER}@${worker_ip}" \\\n',
+            '        sshpass -f "$PHASE2_WORKER_PASSWORD_FILE" ssh $SSH_OPTS "${WORKER_USER}@${worker_ip}" \\\n',
+            'overlay2_sshpass_ssh',
+        )
+    return text
 
 
 def apply_orchestrate_workers(text):
@@ -583,18 +750,47 @@ def apply_orchestrate_workers(text):
         '    local WORKER_PASS="aelladata"\n'
         '    local WORKER_USER="aella"\n'
         '    if ! command -v sshpass &>/dev/null; then\n',
-        '    # Worker SSH via sshpass (username aella; password from --worker-password)\n'
-        '    local WORKER_PASS="${WORKER_PASSWORD}"\n'
+        '    # Worker SSH via sshpass -f (private password file; never argv literal)\n'
         '    local WORKER_USER="aella"\n'
-        '    if [[ -z "$WORKER_PASS" ]]; then\n'
-        '        die "--worker-ips/--standby requires --worker-password"\n'
-        '    fi\n'
+        '    init_phase2_ssh_known_hosts\n'
+        '    require_worker_password_file_for_remote_orchestration\n'
         '    if declare -F normalize_remote_orchestration_nodes >/dev/null 2>&1; then\n'
         '        normalize_remote_orchestration_nodes || die "REMOTE_ORCH_NODES=FAIL"\n'
         '    fi\n'
         '    if ! command -v sshpass &>/dev/null; then\n',
         'orchestrate_workers_password',
     )
+    text = replace_exactly_once(
+        text,
+        '    worker_ssh() {\n'
+        '        local ip="$1"; shift\n'
+        '        sshpass -p "$WORKER_PASS" ssh $SSH_OPTS "${WORKER_USER}@${ip}" "$@"\n'
+        '    }\n'
+        '    worker_scp() {\n'
+        '        local src="$1" dst_ip="$2" dst_path="$3"\n'
+        '        sshpass -p "$WORKER_PASS" scp $SCP_OPTS "$src" "${WORKER_USER}@${dst_ip}:${dst_path}"\n'
+        '    }\n',
+        '    worker_ssh() {\n'
+        '        local ip="$1"; shift\n'
+        '        sshpass -f "$PHASE2_WORKER_PASSWORD_FILE" ssh $SSH_OPTS "${WORKER_USER}@${ip}" "$@"\n'
+        '    }\n'
+        '    worker_scp() {\n'
+        '        local src="$1" dst_ip="$2" dst_path="$3"\n'
+        '        sshpass -f "$PHASE2_WORKER_PASSWORD_FILE" scp $SCP_OPTS "$src" "${WORKER_USER}@${dst_ip}:${dst_path}"\n'
+        '    }\n',
+        'orchestrate_workers_sshpass_file',
+    )
+    if '    # due to key exchange. SSH_OPTS uses UserKnownHostsFile=/dev/null so\n' in text:
+        text = replace_exactly_once(
+            text,
+            '    # Warm up SSH connections to workers: first sshpass connect can be slow\n'
+            '    # due to key exchange. SSH_OPTS uses UserKnownHostsFile=/dev/null so\n'
+            '    # known_hosts isn\'t used; the retry below handles the timing issue.\n',
+            '    # Warm up SSH connections to workers: first sshpass connect can be slow\n'
+            '    # due to key exchange. SSH_OPTS uses accept-new with a persistent\n'
+            '    # project-owned known_hosts file; the retry below handles timing.\n',
+            'orchestrate_workers_ssh_comment',
+        )
     fail_state_prev = (
         '    IFS=\',\' read -ra workers <<< "$WORKER_IPS"\n'
         '\n'
@@ -1130,6 +1326,13 @@ def apply_image_import_heartbeat(text):
 
 def apply_dp_resume_notices(text):
     _require_absent(text, '# BEGIN_DP_RESUME_OPERATOR_NOTICE', 'resume_notice_already_present')
+    if 'LOG_FILE="${LOG_FILE:-/var/log/aella/aella_py3_bringup.log}"' not in text:
+        text = replace_exactly_once(
+            text,
+            'LOG_FILE="/var/log/aella/aella_py3_bringup.log"\n',
+            'LOG_FILE="${LOG_FILE:-/var/log/aella/aella_py3_bringup.log}"\n',
+            'resume_log_file_default',
+        )
     resume_prev = (
         '    } >> "$LOG_FILE" 2>/dev/null || true\n'
         '}\n'
@@ -1217,14 +1420,40 @@ def apply_dp_resume_notices(text):
     return text
 
 
+def apply_esdata_probe_ssh(text):
+    anchor = (
+        '        out=$(timeout 25 sshpass -p aelladata ssh \\\n'
+        '                -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \\\n'
+        '                -o ConnectTimeout=10 -o PreferredAuthentications=password \\\n'
+    )
+    if anchor not in text:
+        return text
+    return replace_exactly_once(
+        text,
+        anchor,
+        '        init_phase2_ssh_known_hosts\n'
+        '        if [[ -z "${PHASE2_WORKER_PASSWORD_FILE:-}" ]]; then echo "UNKNOWN"; return; fi\n'
+        '        out=$(timeout 25 sshpass -f "$PHASE2_WORKER_PASSWORD_FILE" ssh \\\n'
+        '                $SSH_OPTS \\\n'
+        '                -o ConnectTimeout=10 -o PreferredAuthentications=password \\\n',
+        'esdata_probe_ssh',
+    )
+
+
 TRANSFORMS = (
     ('usage_docs', apply_worker_password_docs),
     ('globals', apply_worker_password_globals),
+    ('credential_ssh_helpers', apply_credential_ssh_helpers),
+    ('ssh_host_keys', apply_ssh_host_keys),
+    ('acps_credential_removal', apply_acps_credential_removal),
+    ('acps_preflight_fail_closed', apply_acps_preflight_fail_closed),
+    ('acps_download_fail_closed', apply_acps_download_fail_closed),
     ('parse_args', apply_parse_args_worker_password),
     ('compat_block', apply_compat_block),
     ('install_python3', apply_install_python3_gates),
     ('overlay2_password', apply_overlay2_worker_password),
     ('orchestrate_workers', apply_orchestrate_workers),
+    ('esdata_probe_ssh', apply_esdata_probe_ssh),
     ('join_k8s_cluster', apply_join_k8s_cluster),
     ('main_gates', apply_main_orchestration_gates),
     ('image_import_heartbeat', apply_image_import_heartbeat),

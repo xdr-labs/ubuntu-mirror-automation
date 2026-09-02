@@ -190,8 +190,10 @@ engine_ensure_phase2_helpers() {
     rm -rf "$stage"
     return 1
   fi
+  local bundle_sha=""
+  bundle_sha="$(phase2_published_bundle_sha256 "${PHASE2_TARGET_VERSION:-6.6.0}" 2>/dev/null || true)"
   if ! phase2_upgrade_wrapper_write "$stage" "$mirror" \
-    "${PHASE2_TARGET_VERSION:-6.6.0}" >/dev/null
+    "${PHASE2_TARGET_VERSION:-6.6.0}" "$bundle_sha" >/dev/null
   then
     rm -rf "$stage"
     return 1

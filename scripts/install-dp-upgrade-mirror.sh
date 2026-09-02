@@ -1196,8 +1196,8 @@ EOF
 # Cluster bringup one-liner that prompts for the worker SSH password at runtime.
 # The Mirror Manager config still requires WORKER_SSH_PASSWORD to be set (proves
 # credentials were configured), but the published command file must never contain
-# the plaintext password. Residual risk: vendor bringup still receives the
-# password via argv once the operator types it.
+# the plaintext password. Password is written to a mode-0600 file at runtime;
+# bringup receives --worker-password-file only (never argv password literals).
 gui_cluster_bringup_command_line() {
   local ver="$1"
   local worker_ips="$2"
@@ -1205,7 +1205,7 @@ gui_cluster_bringup_command_line() {
   # into a shell variable; it is never embedded in the saved command file.
   # worker_ips is embedded raw so the outer mm_shell_quote escapes it once.
   printf 'sudo bash -c %s\n' \
-    "$(mm_shell_quote "IFS= read -rsp 'Worker SSH password (aella): ' WP; printf '\\n'; exec bash /home/aella/bringup_py3_dp_after_os_upgrade.sh --version ${ver} --skip-download --worker-ips ${worker_ips} --worker-password \"\$WP\"")"
+    "$(mm_shell_quote "IFS= read -rsp 'Worker SSH password (aella): ' WP; printf '\\n'; install -d -m 700 /var/lib/dp-phase2-bringup; PWFILE=\$(mktemp /var/lib/dp-phase2-bringup/worker-password.XXXXXX); printf '%s' \"\$WP\" >\"\$PWFILE\"; chmod 600 \"\$PWFILE\"; unset WP; exec bash /home/aella/bringup_py3_dp_after_os_upgrade.sh --version ${ver} --skip-download --worker-ips ${worker_ips} --worker-password-file \"\$PWFILE\"")"
 }
 
 # STEP 7A/7B (FULL) and STEP 3A/3B (PHASE2_ONLY) master bringup section.

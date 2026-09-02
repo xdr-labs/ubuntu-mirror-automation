@@ -194,6 +194,10 @@ do
   install -m 0755 "${ROOT}/client/lib/${hf}" "${CLIENT_ROOT}/lib/${hf}"
 done
 phase2_helper_generation_write "$CLIENT_ROOT" >/dev/null
+# shellcheck source=lib/phase2_bundle_trust_fixture.sh
+source "${ROOT}/tests/lib/phase2_bundle_trust_fixture.sh"
+phase2_trust_fixture_export_dp_phase2_root "$WORKDIR" >/dev/null
+phase2_trust_fixture_write_bundle_sidecar "$MM_DP_PHASE2_ROOT" "6.5.0" >/dev/null
 phase2_upgrade_wrapper_write "$CLIENT_ROOT" "$MIRROR" "6.5.0" >/dev/null
 printf 'CLIENT_WRAPPER_PHASE2_SHA256=%s\n' \
   "$(awk '{print $1}' "${CLIENT_ROOT}/upgrade-phase2.sh.sha256")" >>"${CLIENT_ROOT}/client-set.env"

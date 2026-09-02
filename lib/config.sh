@@ -267,7 +267,7 @@ um_migrate_selective_runtime_config() {
   backup="$(um_backup_file "$conf" 2>/dev/null || true)"
   um_conf_set_key "$conf" "MIRROR_MODE" "$mode" || return 1
   um_conf_set_key "$conf" "SELECTIVE_MIRROR_ROOT" "$sel_root" || return 1
-  um_conf_set_key "$conf" "SELECTIVE_NGINX_ROOT" "${sel_root}/current" || return 1
+  um_conf_set_key "$conf" "SELECTIVE_NGINX_ROOT" "${sel_root}" || return 1
   um_conf_set_key "$conf" "FULL_MIRROR_SEED_ROOT" "$seed_root" || return 1
   um_conf_set_key "$conf" "PROJECTED_SIZE_GIB_SELECTIVE" "$projected" || return 1
   um_conf_set_key "$conf" "SUITE_SUFFIXES" "${SUITE_SUFFIXES:-updates security backports}" || return 1
@@ -295,7 +295,7 @@ um_migrate_selective_runtime_config() {
   fi
   MIRROR_MODE="$mode"
   SELECTIVE_MIRROR_ROOT="$sel_root"
-  SELECTIVE_NGINX_ROOT="${sel_root}/current"
+  SELECTIVE_NGINX_ROOT="${sel_root}"
   FULL_MIRROR_SEED_ROOT="$seed_root"
   return 0
 }

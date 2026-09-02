@@ -39,6 +39,10 @@ do
   install -m 0755 "${ROOT}/client/lib/${hf}" "${MM_CLIENT_ROOT}/lib/${hf}"
 done
 phase2_helper_generation_write "$MM_CLIENT_ROOT" >/dev/null
+# shellcheck source=lib/phase2_bundle_trust_fixture.sh
+source "${ROOT}/tests/lib/phase2_bundle_trust_fixture.sh"
+phase2_trust_fixture_export_dp_phase2_root "$TMP" >/dev/null
+phase2_trust_fixture_write_bundle_sidecar "$MM_DP_PHASE2_ROOT" "6.6.0" >/dev/null
 phase2_upgrade_wrapper_write "$MM_CLIENT_ROOT" "http://192.0.2.10" "6.6.0" >/dev/null
 export SCRIPT_DIR="${ROOT}/scripts"
 PREPARATION_MODE=FULL
@@ -63,10 +67,12 @@ assert_no_plaintext_password() {
 assert_cluster_prompt_shape() {
   local file="$1" worker_ips="$2"
   local ip
-  grep -q -- '--worker-password' "$file" \
-    || fail "cluster command missing --worker-password flag"
+  grep -q -- '--worker-password-file' "$file" \
+    || fail "cluster command missing --worker-password-file flag"
   grep -q -- '--worker-ips' "$file" \
     || fail "cluster command missing --worker-ips"
+  grep -q -- '--worker-password ' "$file" \
+    && fail "cluster command still passes --worker-password on argv" || true
   # IPs may be shell-escaped (e.g. 192.0.2.1\\\,192.0.2.2); require each token.
   IFS=',' read -r -a ips <<<"$worker_ips"
   for ip in "${ips[@]}"; do
@@ -76,8 +82,10 @@ assert_cluster_prompt_shape() {
   done
   grep -Eq 'read(\\[[:space:]]|[[:space:]])+-rsp|Worker(\\[[:space:]]|[[:space:]])+SSH' "$file" \
     || fail "cluster command missing runtime password prompt"
-  grep -Eq '(\\\$WP|\$WP|"\$WP")' "$file" \
-    || fail "cluster command missing \$WP password placeholder"
+  grep -Eq 'mktemp|worker-password\\.XXXXXX|/var/lib/dp-phase2-bringup' "$file" \
+    || fail "cluster command missing private password file pattern"
+  grep -Eq '(\\\$PWFILE|\$PWFILE|"\$PWFILE")' "$file" \
+    || fail "cluster command missing password file placeholder"
 }
 
 # --- Cluster: flag present, plaintext absent ---
@@ -141,9 +149,11 @@ secret='Sp3c#Pw!x9Q'
 redacted="$(printf 'cmd --worker-password %s trailing\nWORKER_SSH_PASSWORD=%s rest\n' \
   "$secret" "$secret" | mm_redact)"
 printf '%s\n' "$redacted" | grep -Fq "$secret" && fail "mm_redact leaked secret" || true
-[[ "$redacted" == *'--worker-password ***'* ]] \
+[[ "$redacted" == *'--worker-password-file ***'* ]] \
+  || [[ "$redacted" == *'--worker-password-file=***'* ]] \
+  || [[ "$redacted" == *'--worker-password ***'* ]] \
   || [[ "$redacted" == *'--worker-password=***'* ]] \
-  || fail "mm_redact did not mask --worker-password value"
+  || fail "mm_redact did not mask worker password value"
 [[ "$redacted" == *'WORKER_SSH_PASSWORD=***'* ]] \
   || fail "mm_redact did not mask WORKER_SSH_PASSWORD="
 pass "mm_redact masks worker password forms"

@@ -238,6 +238,7 @@ mm_run_id() { date -u +%Y%m%dT%H%M%SZ; }
 mm_redact() {
   sed -E \
     -e 's/(ACPS_PASSWORD|ACPS_PASS|ACPS_TOKEN|PASSWORD|TOKEN|PASSWD|WORKER_SSH_PASSWORD)=[^[:space:]]+/\1=***/Ig' \
+    -e 's/(--worker-password-file(=|[[:space:]]+))([^[:space:]]+)/\1***/g' \
     -e 's/(--worker-password(=|[[:space:]]+))([^[:space:]]+)/\1***/g' \
     -e 's/(-u[[:space:]]+)[^[:space:]]+/\1***/g' \
     -e 's#(://[^:/@]+:)[^@/]+@#\1***@#g' \

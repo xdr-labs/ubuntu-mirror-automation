@@ -45,7 +45,24 @@ STATUS_ONLY=0
 DIAGNOSE_ONLY=0
 WORKER_MODE=0
 TARGET_VERSION=""
+WORKER_PASSWORD_FILE=""
 PASSTHRU=()
+
+p2b_store_worker_password() {
+  local pw="$1"
+  local d f
+  d="$(p2b_dir)"
+  p2b_ensure_dir
+  f="${d}/worker-password"
+  printf '%s' "$pw" | p2b_atomic_write "$f" || return 1
+  WORKER_PASSWORD_FILE="$f"
+  return 0
+}
+
+p2b_append_worker_password_file_passthru() {
+  [[ -n "${WORKER_PASSWORD_FILE:-}" ]] || return 0
+  PASSTHRU+=("--worker-password-file" "$WORKER_PASSWORD_FILE")
+}
 
 usage() {
   cat <<EOF
@@ -58,9 +75,12 @@ Options:
   --skip-download     Passed through to vendor bringup
   --worker-ips IPS    Passed through to vendor bringup
   --worker-password PW
-                      Passed through to vendor bringup (not logged). If PW begins
-                      with --, use --worker-password=PW so it cannot be parsed as
-                      a lifecycle control option.
+                      Legacy: password migrated to a private lifecycle file
+                      (not passed on argv). If PW begins with --, use
+                      --worker-password=PW so it cannot be parsed as a
+                      lifecycle control option.
+  --worker-password-file PATH
+                      Mode-0600 password file (production path; passed through)
   --standby IPS       Passed through to vendor bringup
   --detach            Return immediately after verified worker handoff
   --status            Read-only lifecycle status
@@ -109,16 +129,35 @@ parse_args() {
           echo "ERROR: --worker-password requires a value" >&2
           exit 1
         fi
-        PASSTHRU+=("--worker-password" "$worker_password_value")
+        p2b_store_worker_password "$worker_password_value" \
+          || { echo "ERROR: could not store worker password file" >&2; exit 1; }
         shift
         ;;
-      --skip-download|--worker-ips|--worker-password|--dry-run|--standby)
+      --worker-password-file=*)
+        WORKER_PASSWORD_FILE="${1#*=}"
+        if [[ -z "$WORKER_PASSWORD_FILE" ]]; then
+          echo "ERROR: --worker-password-file requires a path" >&2
+          exit 1
+        fi
+        PASSTHRU+=("--worker-password-file" "$WORKER_PASSWORD_FILE")
+        shift
+        ;;
+      --skip-download|--worker-ips|--worker-password|--worker-password-file|--dry-run|--standby)
         if [[ "$1" == "--worker-password" ]]; then
           if [[ $# -lt 2 || -z "${2:-}" || "$2" == --* ]]; then
             echo "ERROR: $1 requires a value (use --worker-password=VALUE when VALUE begins with --)" >&2
             exit 1
           fi
-          PASSTHRU+=("$1" "$2")
+          p2b_store_worker_password "$2" \
+            || { echo "ERROR: could not store worker password file" >&2; exit 1; }
+          shift 2
+        elif [[ "$1" == "--worker-password-file" ]]; then
+          if [[ $# -lt 2 || -z "${2:-}" || "$2" == --* ]]; then
+            echo "ERROR: $1 requires a path" >&2
+            exit 1
+          fi
+          WORKER_PASSWORD_FILE="$2"
+          PASSTHRU+=("--worker-password-file" "$2")
           shift 2
         elif [[ "$1" == "--worker-ips" || "$1" == "--standby" ]]; then
           if [[ $# -lt 2 || -z "${2:-}" || "$2" == --* ]]; then
@@ -138,6 +177,7 @@ parse_args() {
         ;;
     esac
   done
+  p2b_append_worker_password_file_passthru
 }
 
 print_diagnose() {

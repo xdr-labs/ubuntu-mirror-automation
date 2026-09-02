@@ -184,4 +184,28 @@ client_fixture_install_runtime() {
   CLIENT_FIXTURE_SELECTIVE="${runtime}/var/spool/apt-mirror/selective"
   CLIENT_FIXTURE_CLIENT_ROOT="${runtime}/var/spool/apt-mirror/client"
   CLIENT_FIXTURE_SIGNING_DIR="${runtime}/etc/ubuntu-mirror/client-signing"
+  client_fixture_populate_dp_phase2 "${CLIENT_FIXTURE_MIRROR_ROOT}"
+}
+
+# Minimal published Phase 2 bundle sidecar for wrapper/client finalization tests.
+client_fixture_populate_dp_phase2() {
+  local mirror_root="${1:?mirror root required}"
+  local ver="${2:-6.6.0}"
+  local dp_root="${mirror_root}/dp-phase2"
+  local dir="${dp_root}/${ver}"
+  local tar="${dir}/dp_bundle_${ver}-current.tar"
+  mkdir -p "$dir"
+  printf 'client-fixture-phase2-bundle\n' >"$tar"
+  (
+    cd "$dir"
+    sha256sum "dp_bundle_${ver}-current.tar" >"dp_bundle_${ver}-current.tar.sha256"
+  )
+  cat >"${dir}/release.env" <<EOF
+TARGET_DP_VERSION=${ver}
+PHASE2_ARTIFACT_VERSION=${ver}
+DP_PHASE2_VERSION=${ver}
+STABLE_BUNDLE_NAME=dp_bundle_${ver}-current.tar
+VERIFICATION_RESULT=PASS
+EOF
+  chmod 0644 "${dir}/release.env"
 }

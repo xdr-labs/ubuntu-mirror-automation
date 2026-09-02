@@ -35,7 +35,14 @@ source "${ROOT}/scripts/lib/http_publication_permissions.sh"
 SPOOL="${WORKDIR}/spool"
 CLIENT="${SPOOL}/client"
 DP="${SPOOL}/dp-phase2/6.6.0"
-PORT=18765
+PORT="$(python3 - <<'PY'
+import socket
+s = socket.socket()
+s.bind(('127.0.0.1', 0))
+print(s.getsockname()[1])
+s.close()
+PY
+)"
 mkdir -p "$CLIENT" "$DP" "${WORKDIR}/logs" "${WORKDIR}/tmp" "${WORKDIR}/body"
 
 # Fixture content

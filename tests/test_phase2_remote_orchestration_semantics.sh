@@ -6,6 +6,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PATCHER="${ROOT}/scripts/lib/patch_dp_phase2_bringup.py"
 COMPAT="${ROOT}/scripts/lib/phase2_bringup_patch/fragment_compat.sh"
+CRED_SSH="${ROOT}/scripts/lib/phase2_bringup_patch/fragment_credential_ssh.sh"
 PREV_UPSTREAM="${ROOT}/tests/fixtures/dp-phase2/upstream_bringup_unpatched.sh"
 F1A73="${ROOT}/tests/fixtures/dp-phase2/production-f1a73/bringup_py3_dp_after_os_upgrade.sh"
 EXPECTED_F1A73_SHA1="f1a73c1d4502e2efcf55197865d2ade345d9c82f"
@@ -83,6 +84,7 @@ run_parse() {
     VERSION=""
     WORKER_IPS=""
     WORKER_PASSWORD=""
+    PHASE2_WORKER_PASSWORD_FILE=""
     STANDBY_IPS=""
     ROLE=""
     DRY_RUN=false
@@ -93,9 +95,12 @@ run_parse() {
     RECLAIM_OVERLAY2_ONLY=false
     RELABEL_ELASTIC_ONLY=false
     WORKER_SSH_KEY=""
+    PHASE2_WORKER_PASSWORD_PRIVATE_DIR="$WORKDIR"
     die() { echo "FATAL: $*" >&2; exit 1; }
     log() { echo "$*" >&2; }
     check_version_guard() { return 0; }
+    # shellcheck disable=SC1090
+    source "$CRED_SSH"
     # shellcheck disable=SC1090
     source "$COMPAT"
     # shellcheck disable=SC1090
@@ -103,7 +108,11 @@ run_parse() {
     parse_args "$@"
     printf 'WORKER_IPS=%s\n' "$WORKER_IPS"
     printf 'STANDBY_IPS=%s\n' "$STANDBY_IPS"
-    printf 'WORKER_PASSWORD=%s\n' "$WORKER_PASSWORD"
+    printf 'WORKER_PASSWORD=%s\n' "${WORKER_PASSWORD:-}"
+    printf 'PHASE2_WORKER_PASSWORD_FILE=%s\n' "${PHASE2_WORKER_PASSWORD_FILE:-}"
+    if [[ -n "${PHASE2_WORKER_PASSWORD_FILE:-}" && -f "$PHASE2_WORKER_PASSWORD_FILE" ]]; then
+      printf 'PHASE2_WORKER_PASSWORD_FILE_CONTENT=%s\n' "$(cat "$PHASE2_WORKER_PASSWORD_FILE")"
+    fi
   )"
   PARSE_RC=$?
   PARSE_ERR="$(cat "$err")"
@@ -118,20 +127,21 @@ run_parse --version 6.6.0 --skip-download
 # CASE 2: worker only, password missing
 run_parse --version 6.6.0 --skip-download --worker-ips 192.0.2.10
 [[ "$PARSE_RC" -ne 0 ]] \
-  && echo "$PARSE_ERR" | grep -q -- '--worker-ips/--standby requires --worker-password' \
+  && echo "$PARSE_ERR" | grep -q -- '--worker-ips/--standby requires --worker-password-file' \
   && pass "CASE2 worker-only missing password rejected before orch" \
   || fail "CASE2: rc=${PARSE_RC} ${PARSE_ERR}"
 
 # CASE 3: worker only, password provided
 run_parse --version 6.6.0 --skip-download --worker-ips 192.0.2.10 --worker-password 'secret'
-[[ "$PARSE_RC" -eq 0 ]] && echo "$PARSE_OUT" | grep -Fxq 'WORKER_PASSWORD=secret' \
+[[ "$PARSE_RC" -eq 0 ]] && echo "$PARSE_OUT" | grep -qx 'WORKER_PASSWORD=' \
+  && echo "$PARSE_OUT" | grep -Fxq 'PHASE2_WORKER_PASSWORD_FILE_CONTENT=secret' \
   && pass "CASE3 worker-only with password accepted" \
   || fail "CASE3: rc=${PARSE_RC} ${PARSE_ERR}"
 
 # CASE 4: standby only, password missing
 run_parse --version 6.6.0 --skip-download --standby 192.0.2.20
 [[ "$PARSE_RC" -ne 0 ]] \
-  && echo "$PARSE_ERR" | grep -q -- '--worker-ips/--standby requires --worker-password' \
+  && echo "$PARSE_ERR" | grep -q -- '--worker-ips/--standby requires --worker-password-file' \
   && pass "CASE4 standby-only missing password rejected before orch" \
   || fail "CASE4: rc=${PARSE_RC} ${PARSE_ERR}"
 
@@ -187,10 +197,11 @@ fi
 # Previous upstream still requires password for workers.
 extract_fn "$PREV_GEN" parse_args "${WORKDIR}/parse_prev.sh"
 set +e
-PREV_ERR="$(
+  PREV_ERR="$(
   VERSION=""
   WORKER_IPS=""
   WORKER_PASSWORD=""
+  PHASE2_WORKER_PASSWORD_FILE=""
   STANDBY_IPS=""
   ROLE=""
   DRY_RUN=false
@@ -200,9 +211,11 @@ PREV_ERR="$(
   AUTO_OS_UPGRADE=false
   RECLAIM_OVERLAY2_ONLY=false
   WORKER_SSH_KEY=""
+  PHASE2_WORKER_PASSWORD_PRIVATE_DIR="$WORKDIR"
   die() { echo "FATAL: $*"; exit 1; }
   log() { :; }
   check_version_guard() { return 0; }
+  source "$CRED_SSH"
   source "$COMPAT"
   source "${WORKDIR}/parse_prev.sh"
   parse_args --version 6.6.0 --skip-download --worker-ips 192.0.2.10
@@ -210,7 +223,7 @@ PREV_ERR="$(
 )"
 PREV_RC=$?
 set -e
-[[ "$PREV_RC" -ne 0 ]] && echo "$PREV_ERR" | grep -q -- '--worker-ips/--standby requires --worker-password' \
+[[ "$PREV_RC" -ne 0 ]] && echo "$PREV_ERR" | grep -q -- '--worker-ips/--standby requires --worker-password-file' \
   && pass "previous upstream worker-password contract" \
   || fail "previous upstream worker-password contract: ${PREV_ERR}"
 
@@ -337,7 +350,9 @@ printf '0\n' >"$BRINGUP_RC_FILE"
 
 cat >"${ORCH_BIN}/sshpass" <<EOF
 #!/usr/bin/env bash
-if [[ "\$1" == "-p" ]]; then
+if [[ "\$1" == "-f" ]]; then
+  shift 2
+elif [[ "\$1" == "-p" ]]; then
   shift 2
 fi
 if [[ "\$1" != "ssh" && "\$1" != "scp" ]]; then
@@ -398,7 +413,9 @@ run_orch() {
   VERSION=6.6.0
   WORKER_IPS="$worker_ips"
   STANDBY_IPS="$standby_ips"
-  WORKER_PASSWORD='orch-secret-not-for-logs'
+  PHASE2_WORKER_PASSWORD_FILE="${WORKDIR}/orch-worker-password"
+  printf '%s' 'orch-secret-not-for-logs' >"$PHASE2_WORKER_PASSWORD_FILE"
+  chmod 0600 "$PHASE2_WORKER_PASSWORD_FILE"
   ROLE=DL-master
   WORKER_MODE=false
   SKIP_DOWNLOAD=true
@@ -406,8 +423,8 @@ run_orch() {
   AELLADEB_DIR="${WORKDIR}/aelladeb"
   SCRIPT_PATH="${WORKDIR}/bringup_copy.sh"
   SCRIPT_NAME=bringup_py3_dp_after_os_upgrade.sh
-  SSH_OPTS="-o StrictHostKeyChecking=no"
-  SCP_OPTS="-o StrictHostKeyChecking=no"
+  SSH_OPTS="-o StrictHostKeyChecking=accept-new"
+  SCP_OPTS="-o StrictHostKeyChecking=accept-new"
   CLUSTER_TARGET_READY_ATTEMPTS=1
   CLUSTER_TARGET_READY_SLEEP_SECONDS=0
   mkdir -p "$STAGING_DIR" "$AELLADEB_DIR"
@@ -416,6 +433,8 @@ run_orch() {
   log() { echo "$*"; }
   log_phase() { echo "PHASE: $*"; }
   copy_phase2_prereq_contract_to_worker() { return 0; }
+  # shellcheck disable=SC1090
+  source "$CRED_SSH"
   # shellcheck disable=SC1090
   source "$COMPAT"
   copy_phase2_prereq_contract_to_worker() { return 0; }
@@ -577,19 +596,24 @@ WRAP_OUT="$(
   DIAGNOSE_ONLY=0
   WORKER_MODE=0
   TARGET_VERSION=""
+  WORKER_PASSWORD_FILE=""
   PASSTHRU=()
+  PHASE2_BRINGUP_DIR="$WORKDIR/lifecycle"
+  PHASE2_WORKER_PASSWORD_PRIVATE_DIR="$WORKDIR/lifecycle"
   DP_PHASE2_BRINGUP_LIB_ONLY=1
   # shellcheck disable=SC1090
   source "$WRAPPER"
   parse_args --version 6.6.0 --standby 192.0.2.20 --worker-password 'wrap-secret' --skip-download
   printf 'TARGET=%s\n' "$TARGET_VERSION"
   printf 'PASSTHRU=%s\n' "${PASSTHRU[*]}"
+  printf 'WORKER_PASSWORD_FILE=%s\n' "${WORKER_PASSWORD_FILE:-}"
 )"
 WRAP_RC=$?
 set -e
 [[ "$WRAP_RC" -eq 0 ]] \
   && echo "$WRAP_OUT" | grep -q -- '--standby 192.0.2.20' \
-  && echo "$WRAP_OUT" | grep -q -- '--worker-password' \
+  && echo "$WRAP_OUT" | grep -q -- '--worker-password-file' \
+  && ! echo "$WRAP_OUT" | grep -q -- '--worker-password wrap-secret' \
   && echo "$WRAP_OUT" | grep -q -- '--skip-download' \
   && pass "lifecycle wrapper keeps --standby with its value" \
   || fail "lifecycle wrapper standby passthrough: ${WRAP_OUT}"

@@ -109,8 +109,10 @@
 #   --version <ver>           Required (bringup). DP version, e.g., 6.5.0
 #   --skip-download           Use already-staged tarballs (skip download)
 #   --worker-ips <ip1,ip2>    Comma-separated worker IPs for master to orchestrate
-#   --worker-password <pass>  SSH password for aella on worker nodes (required with --worker-ips)
-#   --worker-key <path>       (deprecated) Use --worker-password instead
+#   --worker-password <pass>  SSH password for aella on remote nodes (required with --worker-ips/--standby)
+#   --worker-password-file <path>  Mode-0600 file with SSH password (production path)
+#   --worker-password <pass>  Legacy manual path; migrated to a private file internally
+#   --worker-key <path>       (deprecated) Use --worker-password-file instead
 #   --role <role>             Override auto-detect: AIO|DR-master|DL-master|DR-worker|DL-worker
 #   --dry-run                 Pre-flight checks only, no changes
 #   --skip-download           Use already-staged tarballs (skip download)
@@ -204,6 +206,7 @@ WORKER_MODE=false
 PRE_UPGRADE_CLEANUP=false
 AUTO_OS_UPGRADE=false
 RECLAIM_OVERLAY2_ONLY=false
+RELABEL_ELASTIC_ONLY=false
 
 LOG_FILE="${LOG_FILE:-/var/log/aella/aella_py3_bringup.log}"
 DA_CONF="/opt/aelladata/work/da_conf.yml"
@@ -215,9 +218,78 @@ PROVISION_STAGING_DIR="/opt/aelladata/work/metarepo/root/provision/aelladeb_py3"
 # Support server (default download source -- no key needed)
 ACPS_HOST="acps.stellarcyber.ai"
 ACPS_USER="AellaMeta"
-ACPS_PASS='WroTQfm/W6x10'
+ACPS_PASS=""  # embedded credentials removed; use Mirror Manager --skip-download
 ACPS_PROVISION_URL="https://${ACPS_HOST}/provision/aelladeb_py3"
 ACPS_COMMON_TARBALL="aelladeb_py3_common.tar.gz"
+
+###############################################################################
+# PHASE 2 CREDENTIAL + SSH HOST-KEY HARDENING (project patch layer)
+###############################################################################
+PHASE2_SSH_STATE_DIR="${PHASE2_SSH_STATE_DIR:-/var/lib/dp-phase2-bringup}"
+PHASE2_SSH_KNOWN_HOSTS_FILE="${PHASE2_SSH_KNOWN_HOSTS_FILE:-${PHASE2_SSH_STATE_DIR}/known_hosts}"
+PHASE2_WORKER_PASSWORD_FILE="${PHASE2_WORKER_PASSWORD_FILE:-}"
+PHASE2_WORKER_PASSWORD_PRIVATE_DIR="${PHASE2_WORKER_PASSWORD_PRIVATE_DIR:-${PHASE2_SSH_STATE_DIR}}"
+
+init_phase2_ssh_known_hosts() {
+    local d="${PHASE2_SSH_STATE_DIR}" f="${PHASE2_SSH_KNOWN_HOSTS_FILE}" base
+    if ! mkdir -p "$d" 2>/dev/null; then
+        d="${TMPDIR:-/tmp}/dp-phase2-bringup-${$:-$$}"
+        mkdir -p "$d" || die "SSH_KNOWN_HOSTS=FAIL reason=state_dir"
+    fi
+    chmod 0700 "$d" 2>/dev/null || true
+    f="${d}/known_hosts"
+    touch "$f"
+    chmod 0600 "$f" 2>/dev/null || true
+    export PHASE2_SSH_KNOWN_HOSTS_FILE="$f"
+    export PHASE2_SSH_STATE_DIR="$d"
+    base="-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=${PHASE2_SSH_KNOWN_HOSTS_FILE} -o ConnectTimeout=30 -o ServerAliveInterval=30 -o ServerAliveCountMax=240 -o TCPKeepAlive=yes"
+    SSH_OPTS="$base"
+    SCP_OPTS="$base"
+}
+
+phase2_ssh_transport_opts() {
+    printf '%s' \
+        "-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=${PHASE2_SSH_KNOWN_HOSTS_FILE} -o ConnectTimeout=30 -o ServerAliveInterval=30 -o ServerAliveCountMax=240 -o TCPKeepAlive=yes"
+}
+
+# Legacy --worker-password is accepted for manual callers only. Production paths
+# must pass --worker-password-file; argv passwords are migrated to a mode-0600
+# private file and cleared from shell variables before orchestration.
+finalize_worker_password_credential() {
+    local d f
+    if [[ -n "${WORKER_PASSWORD:-}" ]]; then
+        d="${PHASE2_WORKER_PASSWORD_PRIVATE_DIR}"
+        if ! mkdir -p "$d" 2>/dev/null; then
+            d="${TMPDIR:-/tmp}/dp-phase2-bringup-${$:-$$}"
+            mkdir -p "$d" || die "WORKER_PASSWORD_FILE=FAIL reason=private_dir"
+        fi
+        chmod 0700 "$d" 2>/dev/null || true
+        if [[ -z "${PHASE2_WORKER_PASSWORD_FILE:-}" ]]; then
+            f="$(mktemp "${d}/worker-password.XXXXXX")" \
+                || die "WORKER_PASSWORD_FILE=FAIL reason=temp_file"
+            chmod 0600 "$f"
+            printf '%s' "$WORKER_PASSWORD" >"$f" \
+                || die "WORKER_PASSWORD_FILE=FAIL reason=write"
+            PHASE2_WORKER_PASSWORD_FILE="$f"
+        fi
+        unset WORKER_PASSWORD
+    fi
+    if [[ -n "${PHASE2_WORKER_PASSWORD_FILE:-}" ]]; then
+        [[ -f "$PHASE2_WORKER_PASSWORD_FILE" && -r "$PHASE2_WORKER_PASSWORD_FILE" ]] \
+            || die "WORKER_PASSWORD_FILE=UNREADABLE path=${PHASE2_WORKER_PASSWORD_FILE}"
+        chmod 0600 "$PHASE2_WORKER_PASSWORD_FILE" 2>/dev/null || true
+    fi
+}
+
+require_worker_password_file_for_remote_orchestration() {
+    if has_remote_orchestration_nodes && [[ -z "${PHASE2_WORKER_PASSWORD_FILE:-}" ]]; then
+        die "--worker-ips/--standby requires --worker-password-file"
+    fi
+}
+
+phase2_acps_direct_download_fail_closed() {
+    die "ACPS_DIRECT_DOWNLOAD=FAIL Mirror Manager required; re-run with --skip-download and staged artifacts"
+}
 
 # AELDEV-71573: keepalive is REQUIRED on the master->worker SSH. The worker's
 # "Install Docker" phase has a long SILENT window (up to 90s graceful drain of
@@ -228,9 +300,10 @@ ACPS_COMMON_TARBALL="aelladeb_py3_common.tar.gz"
 # "Sent SIGTERM to N stateful service(s)". Earlier wiped/fresh test clusters had
 # nothing to drain so the window never got long enough to surface this.
 # ServerAliveInterval=30 * ServerAliveCountMax=240 tolerates ~120 min of silence.
-SCP_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=30 -o ServerAliveInterval=30 -o ServerAliveCountMax=240 -o TCPKeepAlive=yes"
-SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=30 -o ServerAliveInterval=30 -o ServerAliveCountMax=240 -o TCPKeepAlive=yes"
+SCP_OPTS="-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=${PHASE2_SSH_KNOWN_HOSTS_FILE} -o ConnectTimeout=30 -o ServerAliveInterval=30 -o ServerAliveCountMax=240 -o TCPKeepAlive=yes"
+SSH_OPTS="-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=${PHASE2_SSH_KNOWN_HOSTS_FILE} -o ConnectTimeout=30 -o ServerAliveInterval=30 -o ServerAliveCountMax=240 -o TCPKeepAlive=yes"
 WORKER_SSH_KEY=""  # deprecated: use --worker-password
+STANDBY_IPS=""     # AELDEV-73583: --standby <ip[,ip]> -- orchestrated AFTER workers, role standby
 
 # AELDEV-70673: expected major-version line for the Docker / containerd / runc
 # packages bundled in aelladeb_py3_common.tar.gz. Used by the install
@@ -723,9 +796,28 @@ parse_args() {
             --version)
                 VERSION="$2"; shift 2 ;;
             --worker-ips)
+                if [[ $# -lt 2 || -z "${2:-}" || "$2" == --* ]]; then
+                    die "--worker-ips requires a value"
+                fi
                 WORKER_IPS="$2"; shift 2 ;;
             --worker-password)
+                if [[ $# -lt 2 || -z "${2:-}" || "$2" == --* ]]; then
+                    die "--worker-password requires a value (use --worker-password=VALUE when VALUE begins with --)"
+                fi
                 WORKER_PASSWORD="$2"; shift 2 ;;
+            --worker-password=*)
+                WORKER_PASSWORD="${1#*=}"
+                [[ -n "$WORKER_PASSWORD" ]] || die "--worker-password requires a value"
+                shift ;;
+            --worker-password-file)
+                if [[ $# -lt 2 || -z "${2:-}" || "$2" == --* ]]; then
+                    die "--worker-password-file requires a path"
+                fi
+                PHASE2_WORKER_PASSWORD_FILE="$2"; shift 2 ;;
+            --worker-password-file=*)
+                PHASE2_WORKER_PASSWORD_FILE="${1#*=}"
+                [[ -n "$PHASE2_WORKER_PASSWORD_FILE" ]] || die "--worker-password-file requires a value"
+                shift ;;
             --role)
                 ROLE="$2"; shift 2 ;;
             --dry-run)
@@ -742,6 +834,13 @@ parse_args() {
                 AUTO_OS_UPGRADE=true; shift ;;
             --reclaim-overlay2)
                 RECLAIM_OVERLAY2_ONLY=true; shift ;;
+            --relabel-elastic)
+                RELABEL_ELASTIC_ONLY=true; shift ;;
+            --standby)
+                if [[ $# -lt 2 || -z "${2:-}" || "$2" == --* ]]; then
+                    die "--standby requires a value"
+                fi
+                STANDBY_IPS="$2"; shift 2 ;;
             --help|-h)
                 echo "Usage: $SCRIPT_NAME --version <dp-version> [options]"
                 echo ""
@@ -750,11 +849,20 @@ parse_args() {
                 echo ""
                 echo "Optional:"
                 echo "  --worker-ips <ip,ip>    Comma-separated worker IPs (master orchestrates)"
-                echo "  --worker-password <pw>  SSH password for aella on workers (required with --worker-ips)"
-                echo "  --role <role>           Override auto-detect (AIO|DR-master|DL-master|DR-worker|DL-worker)"
+                echo "  --worker-password-file <path>  Mode-0600 SSH password file (production path)"
+                echo "  --worker-password <pw>  Legacy manual password (migrated to private file)"
+                echo "  --standby <ip[,ip]>     Standby node IP(s) -- orchestrated like workers but with"
+                echo "                          role standby, always AFTER the workers. May be used with"
+                echo "                          or without --worker-ips."
+                echo "  --role <role>           Override auto-detect (AIO|DR-master|DL-master|DR-worker|DL-worker|standby)"
                 echo "  --dry-run               Pre-flight checks only"
                 echo "  --skip-download         Use already-staged tarballs"
                 echo "  --worker-mode           Internal: worker node mode"
+                echo "  --relabel-elastic       Standalone: (re)apply elastic=enabled pre-labels on this"
+                echo "                          DL-master/AIO, then print node labels and exit. Run on the"
+                echo "                          master AFTER late-joining workers (by-hand section 4c flow)."
+                echo "                          Only labels nodes with preserved ES data; skips standby and"
+                echo "                          data-less nodes (e.g. ES coordinate candidates)."
                 echo "  --pre-upgrade-cleanup   Clean stale apt repos, add correct Ubuntu repos, verify"
                 echo "                          apt update/upgrade work. Run BEFORE do-release-upgrade."
                 echo "  --auto-os-upgrade       Automated OS upgrade chain (16.04->24.04). Installs a"
@@ -776,13 +884,16 @@ parse_args() {
         esac
     done
 
-    if [[ -n "$WORKER_IPS" && -z "$WORKER_PASSWORD" ]]; then
-        die "--worker-ips requires --worker-password"
+    # WORKER_PASSWORD applies to all remote orchestration nodes (workers and standby).
+    finalize_worker_password_credential
+    require_worker_password_file_for_remote_orchestration
+    if declare -F normalize_remote_orchestration_nodes >/dev/null 2>&1; then
+        normalize_remote_orchestration_nodes || die "REMOTE_ORCH_NODES=FAIL"
     fi
 
     # --version not required for pre-upgrade cleanup, auto-os-upgrade, or the
-    # standalone overlay2 reclaim (a version-independent cleanup).
-    if [[ "$PRE_UPGRADE_CLEANUP" != "true" && "$AUTO_OS_UPGRADE" != "true" && "$RECLAIM_OVERLAY2_ONLY" != "true" ]]; then
+    # standalone overlay2 reclaim / elastic relabel (version-independent ops).
+    if [[ "$PRE_UPGRADE_CLEANUP" != "true" && "$AUTO_OS_UPGRADE" != "true" && "$RECLAIM_OVERLAY2_ONLY" != "true" && "$RELABEL_ELASTIC_ONLY" != "true" ]]; then
         if [[ -z "$VERSION" ]]; then die "--version is required"; fi
         # Version guard: only >= 6.5.0 for py3
         check_version_guard
@@ -828,6 +939,7 @@ preflight_resources() {
         AIO|DL-master)                       role_min=100 ;;
         DR-master|DA-master)                 role_min=80  ;;
         DR-worker|DA-worker|DL-worker)       role_min=80  ;;
+        standby)                             role_min=80  ;;  # worker-tier gate; ACTIVATION capacity (>= its master's spec) is a sizing decision, not gated here
         *)                                   role_min=60  ;;
     esac
 
@@ -991,30 +1103,40 @@ preflight_checks() {
     # Validate role
     case "$ROLE" in
         AIO|DR-master|DL-master|DR-worker|DL-worker) ;;
+        standby)
+            # AELDEV-73583: warm-standby for a DL/DR master. Provisions like a
+            # worker: same debs + full DL-worker image load (aellautil's
+            # get_standby_worker_status reuses DL_WORKER_AELLA_IMAGE_LIST), same
+            # kubeadm join to the PRIMARY's cluster (node_configure.join_cluster
+            # explicitly allows role standby). Differences handled downstream:
+            #   - join token fetched with standby=1 (master records the node via
+            #     record_standby_node; node_bootstrap.sh parity),
+            #   - config_worker.sh (called post-join) self-skips its cni0 wait
+            #     for role standby (a standby runs no workload pods, so the cni0
+            #     bridge may never appear -- the wait would hang),
+            #   - pre_label_dl_elastic_nodes never labels standby nodes,
+            #   - workload pods stay off via the standby label the master's
+            #     standby_controller applies (service-yml anti-affinity).
+            # Bring up AFTER the primary master is fully up, either orchestrated
+            # from the master via --standby <ip> (recommended; NEVER via
+            # --worker-ips, which forces DL/DR-worker) or per-node with
+            # --role standby (section 4c style).
+            if [[ "$WORKER_MODE" != "true" ]]; then
+                log "Role standby: enabling worker-mode (join primary's cluster; no master init)"
+                WORKER_MODE=true
+            fi
+            ;;
         *) die "Invalid role: $ROLE" ;;
     esac
 
-    # Check ACPS connectivity
+    # Direct ACPS download is disabled in patched production bringup.
+    # Mirror Manager stages artifacts; operators must use --skip-download.
     if [[ "$SKIP_DOWNLOAD" != "true" ]]; then
-        mkdir -p "$STAGING_DIR" "$AELLADEB_DIR" 2>/dev/null || true
         if check_local_artifacts; then
-            log "All artifacts pre-staged locally -- download not required"
+            log "All artifacts pre-staged locally -- treating as --skip-download"
+            SKIP_DOWNLOAD=true
         else
-            if ! command -v curl &>/dev/null; then
-                die "curl not found. Install with: apt-get install -y curl"
-            fi
-            log "Testing ACPS connectivity..."
-            local http_code
-            http_code=$(curl -s -o /dev/null -w "%{http_code}" -k -u "${ACPS_USER}:${ACPS_PASS}" \
-                --connect-timeout 30 --max-time 30 "https://${ACPS_HOST}/" || echo "000")
-            if [[ "$http_code" != "200" ]] && [[ "$http_code" != "401" ]]; then
-                log "WARNING: Cannot connect to ACPS (${ACPS_HOST}, HTTP ${http_code}) -- will use local artifacts only"
-                SKIP_DOWNLOAD=true
-            elif [[ "$http_code" == "401" ]]; then
-                die "ACPS authentication failed (HTTP 401). Check ACPS_USER/ACPS_PASS."
-            else
-                log "ACPS reachable (HTTP ${http_code})"
-            fi
+            phase2_acps_direct_download_fail_closed
         fi
     fi
 
@@ -1064,6 +1186,7 @@ preflight_checks() {
     log "  Version to install: $VERSION"
     log "  Worker mode: $WORKER_MODE"
     log "  Worker IPs: ${WORKER_IPS:-none}"
+    log "  Standby IPs: ${STANDBY_IPS:-none}"
 
     if [[ "$DRY_RUN" == "true" ]]; then
         log "Dry run complete. All pre-flight checks passed."
@@ -1217,9 +1340,7 @@ download_artifacts() {
         return 0
     fi
 
-    log "Downloading from ACPS (${ACPS_HOST})"
-
-    local curl_opts=(-fsS -k -u "${ACPS_USER}:${ACPS_PASS}" --connect-timeout 30 --max-time 1800)
+    phase2_acps_direct_download_fail_closed
 
     # Download 1: UVP deb (version-specific, per release)
     # Save to STAGING_DIR (aelladeb_py3/) -- not AELLADEB_DIR (aelladeb/) because
@@ -1301,6 +1422,206 @@ PHASE2_CRITICAL_PYTHON_IMPORTS="${PHASE2_CRITICAL_PYTHON_IMPORTS:-click flask we
 MASTER_TOKEN_API_PORT="${MASTER_TOKEN_API_PORT:-8003}"
 MASTER_TOKEN_API_WAIT_SECONDS="${MASTER_TOKEN_API_WAIT_SECONDS:-180}"
 CLUSTER_JOIN_WAIT_SECONDS="${CLUSTER_JOIN_WAIT_SECONDS:-300}"
+# Bounded per-target Ready wait used by orchestrate_workers. Tests may lower this.
+CLUSTER_TARGET_READY_ATTEMPTS="${CLUSTER_TARGET_READY_ATTEMPTS:-60}"
+CLUSTER_TARGET_READY_SLEEP_SECONDS="${CLUSTER_TARGET_READY_SLEEP_SECONDS:-5}"
+# Local worker/standby completion evidence. Paths are overrideable for tests only.
+PHASE2_KUBELET_CONF_PATH="${PHASE2_KUBELET_CONF_PATH:-/etc/kubernetes/kubelet.conf}"
+PHASE2_FLANNEL_INTERFACE="${PHASE2_FLANNEL_INTERFACE:-flannel.1}"
+
+# WORKER_PASSWORD is the SSH password for ALL remote orchestration nodes
+# (workers from --worker-ips and standby from --standby). The CLI flag name
+# is kept for compatibility; it is not worker-only.
+
+has_remote_orchestration_nodes() {
+    [[ -n "${WORKER_IPS:-}" || -n "${STANDBY_IPS:-}" ]]
+}
+
+_phase2_trim_ip() {
+    local s="${1:-}"
+    s="${s#"${s%%[![:space:]]*}"}"
+    s="${s%"${s##*[![:space:]]}"}"
+    printf '%s' "$s"
+}
+
+# Split a comma-separated IP list. Empty tokens after trim fail closed.
+# Does not attempt a general network parser.
+_phase2_split_ip_csv() {
+    local csv="${1:-}"
+    local -n _phase2_split_out="$2"
+    _phase2_split_out=()
+    csv="$(_phase2_trim_ip "$csv")"
+    [[ -n "$csv" ]] || return 0
+    # Bash `read -a` drops a trailing empty field, so reject edge commas
+    # before splitting. Internal empty/whitespace-only fields are caught below.
+    if [[ "$csv" == ,* || "$csv" == *, ]]; then
+        log "ERROR: REMOTE_ORCH_NODES=FAIL reason=empty_ip"
+        return 1
+    fi
+    local IFS=','
+    local -a _phase2_parts=()
+    read -ra _phase2_parts <<< "$csv"
+    local _phase2_p _phase2_t
+    for _phase2_p in "${_phase2_parts[@]}"; do
+        _phase2_t="$(_phase2_trim_ip "$_phase2_p")"
+        if [[ -z "$_phase2_t" ]]; then
+            log "ERROR: REMOTE_ORCH_NODES=FAIL reason=empty_ip"
+            return 1
+        fi
+        _phase2_split_out+=("$_phase2_t")
+    done
+    return 0
+}
+
+# Canonical remote-node lists. Fail-closed policy:
+#   duplicate worker IP          -> FAIL
+#   duplicate standby IP         -> FAIL
+#   same IP as worker and standby -> FAIL (conflicting desired roles)
+# Harmless exact duplicates are NOT silently deduplicated: this is an
+# upgrade orchestration path. Rewrites WORKER_IPS / STANDBY_IPS with
+# whitespace normalized. Workers remain first; standby remains second.
+normalize_remote_orchestration_nodes() {
+    local -a _phase2_workers=() _phase2_standbys=()
+    local _phase2_ip
+    local -A _phase2_seen_worker=() _phase2_seen_standby=()
+
+    _phase2_split_ip_csv "${WORKER_IPS:-}" _phase2_workers || return 1
+    _phase2_split_ip_csv "${STANDBY_IPS:-}" _phase2_standbys || return 1
+
+    for _phase2_ip in "${_phase2_workers[@]}"; do
+        if [[ -n "${_phase2_seen_worker[$_phase2_ip]:-}" ]]; then
+            log "ERROR: REMOTE_ORCH_NODES=FAIL reason=duplicate_worker_ip"
+            return 1
+        fi
+        _phase2_seen_worker[$_phase2_ip]=1
+    done
+    for _phase2_ip in "${_phase2_standbys[@]}"; do
+        if [[ -n "${_phase2_seen_standby[$_phase2_ip]:-}" ]]; then
+            log "ERROR: REMOTE_ORCH_NODES=FAIL reason=duplicate_standby_ip"
+            return 1
+        fi
+        if [[ -n "${_phase2_seen_worker[$_phase2_ip]:-}" ]]; then
+            log "ERROR: REMOTE_ORCH_NODES=FAIL reason=role_conflict_ip"
+            return 1
+        fi
+        _phase2_seen_standby[$_phase2_ip]=1
+    done
+
+    local IFS=','
+    WORKER_IPS="${_phase2_workers[*]}"
+    STANDBY_IPS="${_phase2_standbys[*]}"
+    log "REMOTE_ORCH_NODES workers=${#_phase2_workers[@]} standby=${#_phase2_standbys[@]}"
+    return 0
+}
+
+_phase2_canonical_role() {
+    case "${1:-}" in
+        DA-master) printf '%s' 'DR-master' ;;
+        DA-worker) printf '%s' 'DR-worker' ;;
+        *) printf '%s' "${1:-}" ;;
+    esac
+}
+
+phase2_is_local_ipv4_address() {
+    local candidate="${1:-}"
+    [[ -n "$candidate" ]] || return 1
+    command -v ip >/dev/null 2>&1 || return 1
+    ip -o -4 addr show 2>/dev/null \
+        | awk '{split($4,a,"/"); print a[1]}' \
+        | grep -Fxq -- "$candidate"
+}
+
+# Read-only pre-mutation identity gate for every remotely orchestrated node.
+# The master must never force a role override onto a different DP role (or
+# accidentally target one of its own local addresses).
+validate_remote_role_identity() {
+    local worker_ip="${1:-}"
+    local expected_role="${2:-}"
+    local actual_role="" expected_canonical actual_canonical
+    if [[ -z "$worker_ip" || -z "$expected_role" ]]; then
+        log "WORKER_RESULT ip=${worker_ip:-unknown} result=FAIL reason=role_probe"
+        return 1
+    fi
+    if phase2_is_local_ipv4_address "$worker_ip"; then
+        log "WORKER_RESULT ip=${worker_ip} role=${expected_role} result=FAIL reason=self_ip"
+        return 1
+    fi
+    if ! declare -F worker_ssh >/dev/null 2>&1; then
+        log "WORKER_RESULT ip=${worker_ip} role=${expected_role} result=FAIL reason=role_probe"
+        return 1
+    fi
+    actual_role=$(worker_ssh "$worker_ip" \
+        "grep aella_role /opt/aelladata/work/da_conf.yml 2>/dev/null | awk -F': ' '{print \$2}' | tr -d \"' \\\"\"" \
+        2>/dev/null || true)
+    actual_role="$(_phase2_trim_ip "$actual_role")"
+    if [[ -z "$actual_role" ]]; then
+        log "WORKER_RESULT ip=${worker_ip} role=${expected_role} result=FAIL reason=role_probe"
+        return 1
+    fi
+    expected_canonical="$(_phase2_canonical_role "$expected_role")"
+    actual_canonical="$(_phase2_canonical_role "$actual_role")"
+    if [[ "$actual_canonical" != "$expected_canonical" ]]; then
+        # Keep the legacy `reason=role_mismatch actual=...` prefix stable for
+        # existing diagnostics/tests, then append the stricter expected role.
+        log "WORKER_RESULT ip=${worker_ip} role=${expected_role} result=FAIL reason=role_mismatch actual=${actual_role} expected=${expected_role}"
+        return 1
+    fi
+    log "REMOTE_ROLE_IDENTITY ip=${worker_ip} expected=${expected_role} actual=${actual_role} result=PASS"
+    return 0
+}
+
+# Hard completion gate for a node executing in worker mode, including the
+# standalone `--role standby` path. Vendor validate_all remains diagnostic;
+# these three local facts must all be true before the run can complete.
+validate_local_remote_join_state() {
+    local role="${ROLE:-unknown}"
+    case "$role" in
+        *worker*|standby) ;;
+        *) return 0 ;;
+    esac
+    if ! systemctl is-active --quiet kubelet 2>/dev/null; then
+        log "REMOTE_JOIN_LOCAL_STATE=FAIL role=${role} reason=kubelet_inactive"
+        return 1
+    fi
+    if [[ ! -s "$PHASE2_KUBELET_CONF_PATH" ]]; then
+        log "REMOTE_JOIN_LOCAL_STATE=FAIL role=${role} reason=kubelet_conf_missing path=${PHASE2_KUBELET_CONF_PATH}"
+        return 1
+    fi
+    if ! ip link show "$PHASE2_FLANNEL_INTERFACE" >/dev/null 2>&1; then
+        log "REMOTE_JOIN_LOCAL_STATE=FAIL role=${role} reason=flannel_missing interface=${PHASE2_FLANNEL_INTERFACE}"
+        return 1
+    fi
+    log "REMOTE_JOIN_LOCAL_STATE=PASS role=${role} kubelet_conf=${PHASE2_KUBELET_CONF_PATH} flannel=${PHASE2_FLANNEL_INTERFACE}"
+    return 0
+}
+
+# Print canonical ip:role specs, workers first (vendor f1a73 order), then standby.
+remote_orchestration_node_specs() {
+    local default_worker_role="${1:-DR-worker}"
+    local -a _phase2_workers=() _phase2_standbys=()
+    local _phase2_ip
+    _phase2_split_ip_csv "${WORKER_IPS:-}" _phase2_workers || return 1
+    _phase2_split_ip_csv "${STANDBY_IPS:-}" _phase2_standbys || return 1
+    for _phase2_ip in "${_phase2_workers[@]}"; do
+        printf '%s:%s\n' "$_phase2_ip" "$default_worker_role"
+    done
+    for _phase2_ip in "${_phase2_standbys[@]}"; do
+        printf '%s:standby\n' "$_phase2_ip"
+    done
+}
+
+count_remote_orchestration_nodes() {
+    local -a _phase2_workers=() _phase2_standbys=()
+    _phase2_split_ip_csv "${WORKER_IPS:-}" _phase2_workers || { printf '0\n'; return 1; }
+    _phase2_split_ip_csv "${STANDBY_IPS:-}" _phase2_standbys || { printf '0\n'; return 1; }
+    printf '%s\n' $((${#_phase2_workers[@]} + ${#_phase2_standbys[@]}))
+}
+
+# Diagnostic helper only. Not a cluster-size correctness criterion.
+# Returns the number of requested remote orchestration nodes (workers+standby).
+count_expected_cluster_nodes() {
+    count_remote_orchestration_nodes
+}
 
 phase2_prereq_lib_paths() {
     printf '%s\n' \
@@ -1319,22 +1640,6 @@ source_phase2_prereq_lib() {
         fi
     done < <(phase2_prereq_lib_paths)
     return 1
-}
-
-count_expected_cluster_nodes() {
-    local ips="$1"
-    local n=0 ip
-    [[ -n "$ips" ]] || { printf '0\n'; return 0; }
-    IFS=',' read -ra _exp_workers <<< "$ips"
-    for ip in "${_exp_workers[@]}"; do
-        ip="${ip//[[:space:]]/}"
-        [[ -n "$ip" ]] && n=$((n + 1))
-    done
-    if [[ "$n" -eq 0 ]]; then
-        printf '0\n'
-    else
-        printf '%s\n' $((n + 1))
-    fi
 }
 
 validate_apt_dependency_graph() {
@@ -1405,74 +1710,122 @@ install_phase2_ubuntu_prerequisites() {
         dp2_install_phase2_ubuntu_prerequisites
         return $?
     fi
-    local artifact="${STAGING_DIR}/${PHASE2_PREREQ_ARTIFACT_NAME}"
-    local state="${STAGING_DIR}/phase2-ubuntu-prerequisites.state"
-    local required=""
-    if [[ -f "$state" ]]; then
-        required="$(awk -F= '$1=="PHASE2_PREREQ_REQUIRED"{print $2; exit}' "$state")"
-    fi
-    if [[ ! -f "$artifact" ]]; then
-        if [[ "$required" == "NO" ]]; then
-            validate_apt_dependency_graph prerequisites || return 1
-            log "PHASE2_PREREQ_INSTALL=SKIP reason=not_required"
+    log "ERROR: PHASE2_PREREQ_INSTALL=FAIL reason=prereq_lib_missing"
+    return 1
+}
+
+# Exact prerequisite contract filenames. Do not use extension globs as the
+# protocol: workers must receive these files intentionally.
+phase2_prereq_contract_state_name() { printf '%s\n' "phase2-ubuntu-prerequisites.state"; }
+phase2_prereq_contract_artifact_name() { printf '%s\n' "phase2-ubuntu-prerequisites.tar.gz"; }
+phase2_prereq_contract_sidecar_name() { printf '%s\n' "phase2-ubuntu-prerequisites.tar.gz.sha256"; }
+phase2_prereq_contract_manifest_name() { printf '%s\n' "phase2-ubuntu-prerequisites.manifest.json"; }
+phase2_prereq_contract_lib_name() { printf '%s\n' "dp-phase2-ubuntu-prerequisites.sh"; }
+
+phase2_prereq_lib_source_path() {
+    local p
+    for p in \
+        "${STAGING_DIR}/lib/dp-phase2-ubuntu-prerequisites.sh" \
+        "/home/aella/lib/dp-phase2-ubuntu-prerequisites.sh" \
+        "/opt/aelladata/os-upgrade/offline/phase2-bringup/lib/dp-phase2-ubuntu-prerequisites.sh"
+    do
+        if [[ -f "$p" ]]; then
+            printf '%s\n' "$p"
             return 0
         fi
-        log "ERROR: PHASE2_PREREQ_INSTALL=FAIL reason=artifact_absent_required"
+    done
+    return 1
+}
+
+# Remove only the current-generation prerequisite contract files. Never
+# glob-delete unrelated staged artifacts.
+clean_phase2_prereq_contract_files() {
+    local dir="${1:-${STAGING_DIR:-/opt/aelladata/aelladeb_py3}}"
+    rm -f \
+        "${dir}/phase2-ubuntu-prerequisites.state" \
+        "${dir}/phase2-ubuntu-prerequisites.tar.gz" \
+        "${dir}/phase2-ubuntu-prerequisites.tar.gz.sha256" \
+        "${dir}/phase2-ubuntu-prerequisites.manifest.json"
+}
+
+# Copy the current prerequisite contract to one worker. MUST run after the
+# generic staging glob copy so a leftover REQUIRED=YES tarball cannot remain
+# as the worker's current artifact when the new state is REQUIRED=NO.
+copy_phase2_prereq_contract_to_worker() {
+    local worker_ip="$1"
+    local staging="${STAGING_DIR:-/opt/aelladata/aelladeb_py3}"
+    local state="${staging}/phase2-ubuntu-prerequisites.state"
+    local artifact="${staging}/phase2-ubuntu-prerequisites.tar.gz"
+    local sidecar="${artifact}.sha256"
+    local manifest="${staging}/phase2-ubuntu-prerequisites.manifest.json"
+    local lib_src="" required=""
+    local remote_clean remote_mkdir
+
+    if ! declare -F worker_ssh >/dev/null 2>&1 || ! declare -F worker_scp >/dev/null 2>&1; then
+        log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=ssh_helpers_missing"
         return 1
     fi
-    local extract pkg rc=0 line fn
-    local -a files
-    extract="$(mktemp -d /tmp/phase2-prereq-inst.XXXXXX)"
-    tar -xzf "$artifact" -C "$extract" || { rm -rf "$extract"; return 1; }
-    if [[ ! -f "${extract}/install-order.txt" ]]; then
-        shopt -s nullglob
-        files=("${extract}/debs/"*.deb)
-        shopt -u nullglob
-        if [[ ${#files[@]} -gt 0 ]]; then
-            rm -rf "$extract"
-            log "ERROR: PHASE2_PREREQ_INSTALL=FAIL reason=install_order_missing"
-            return 1
-        fi
-        rm -rf "$extract"
-        validate_apt_dependency_graph prerequisites || return 1
-        log "PHASE2_PREREQ_INSTALL=PASS"
+
+    remote_clean="sudo rm -f \
+'${staging}/phase2-ubuntu-prerequisites.state' \
+'${staging}/phase2-ubuntu-prerequisites.tar.gz' \
+'${staging}/phase2-ubuntu-prerequisites.tar.gz.sha256' \
+'${staging}/phase2-ubuntu-prerequisites.manifest.json' \
+'${staging}/lib/dp-phase2-ubuntu-prerequisites.sh'"
+    remote_mkdir="sudo mkdir -p '${staging}' '${staging}/lib' && sudo chmod 777 '${staging}' '${staging}/lib'"
+    if ! worker_ssh "$worker_ip" "$remote_mkdir"; then
+        log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=worker_mkdir"
+        return 1
+    fi
+    if ! worker_ssh "$worker_ip" "$remote_clean"; then
+        log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=worker_clean"
+        return 1
+    fi
+
+    if [[ ! -f "$state" ]]; then
+        log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=state_missing"
+        return 1
+    fi
+    if ! worker_scp "$state" "$worker_ip" "${staging}/"; then
+        log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=state_copy"
+        return 1
+    fi
+
+    if ! lib_src="$(phase2_prereq_lib_source_path)"; then
+        log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=lib_missing"
+        return 1
+    fi
+    if ! worker_scp "$lib_src" "$worker_ip" "${staging}/lib/dp-phase2-ubuntu-prerequisites.sh"; then
+        log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=lib_copy"
+        return 1
+    fi
+
+    required="$(awk -F= '$1=="PHASE2_PREREQ_REQUIRED"{print $2; exit}' "$state")"
+    if [[ "$required" == "NO" ]]; then
+        log "PHASE2_PREREQ_WORKER_COPY=NOT_REQUIRED"
         return 0
     fi
-    while IFS= read -r line || [[ -n "$line" ]]; do
-        line="${line#"${line%%[![:space:]]*}"}"
-        [[ -z "$line" || "$line" == \#* ]] && continue
-        files=()
-        # shellcheck disable=SC2086
-        for fn in $line; do
-            files+=("${extract}/debs/${fn}")
-        done
-        [[ ${#files[@]} -gt 0 ]] || continue
-        pkg="$(dpkg-deb -f "${files[0]}" Package 2>/dev/null || true)"
-        if [[ -z "$pkg" ]]; then
-            rm -rf "$extract"
-            log "ERROR: PHASE2_PREREQ_INSTALL=FAIL reason=deb_control_missing"
-            return 1
-        fi
-        if [[ ${#files[@]} -eq 1 ]] && dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -qx 'install ok installed'; then
-            log "PHASE2_PREREQ_ALREADY_INSTALLED package=${pkg}"
-            continue
-        fi
-        local prev_e=0
-        [[ $- == *e* ]] && prev_e=1
-        set +e
-        dpkg -i "${files[@]}"
-        rc=$?
-        [[ "$prev_e" -eq 1 ]] && set -e
-        if [[ "$rc" -ne 0 ]]; then
-            rm -rf "$extract"
-            log "ERROR: PHASE2_PREREQ_DPKG=FAIL package=${pkg} rc=${rc}"
-            return "$rc"
-        fi
-        log "PHASE2_PREREQ_DPKG=PASS package=${pkg}"
-    done < "${extract}/install-order.txt"
-    rm -rf "$extract"
-    validate_apt_dependency_graph prerequisites || return 1
-    log "PHASE2_PREREQ_INSTALL=PASS"
+    if [[ "$required" != "YES" ]]; then
+        log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=required_invalid"
+        return 1
+    fi
+    if [[ ! -f "$artifact" || ! -f "$sidecar" || ! -f "$manifest" ]]; then
+        log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=required_file_missing"
+        return 1
+    fi
+    if ! worker_scp "$artifact" "$worker_ip" "${staging}/"; then
+        log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=artifact_copy"
+        return 1
+    fi
+    if ! worker_scp "$sidecar" "$worker_ip" "${staging}/"; then
+        log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=sidecar_copy"
+        return 1
+    fi
+    if ! worker_scp "$manifest" "$worker_ip" "${staging}/"; then
+        log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=manifest_copy"
+        return 1
+    fi
+    log "PHASE2_PREREQ_WORKER_COPY=PASS"
     return 0
 }
 
@@ -1483,7 +1836,8 @@ wait_for_master_token_api() {
     local loopback_code=000 master_ip_code=000
     local loopback_ready=0 master_ip_ready=0
     local cluster_mode=0
-    if [[ -n "${WORKER_IPS:-}" ]]; then
+    # Remote workers and/or standby are cluster nodes; loopback-only is not enough.
+    if [[ -n "${WORKER_IPS:-}" || -n "${STANDBY_IPS:-}" ]]; then
         cluster_mode=1
     fi
     started="$(date +%s)"
@@ -1564,31 +1918,21 @@ kubectl_ready_node_count() {
 }
 
 validate_expected_cluster_nodes() {
-    local expected timeout_s started now elapsed ready
-    expected="$(count_expected_cluster_nodes "${WORKER_IPS:-}")"
-    if [[ "${expected:-0}" -le 1 ]]; then
-        log "CLUSTER_JOIN_STATE skipped (no worker IPs; single-node/AIO)"
+    local requested ready
+    # Diagnostic only. Per-target hostname Ready validation in
+    # orchestrate_workers is the correctness criterion. Extra existing
+    # Ready nodes are expected on retry / incremental worker add and must
+    # never cause a false FAIL or hide a missing requested target.
+    requested="$(count_remote_orchestration_nodes)"
+    ready="$(kubectl_ready_node_count)"
+    if [[ "${requested:-0}" -eq 0 ]]; then
+        log "CLUSTER_JOIN_STATE skipped (no remote orchestration nodes; single-node/AIO)"
+        log "CLUSTER_JOIN_STATE ready=${ready:-0} requested=0 diagnostic=YES"
         return 0
     fi
-    timeout_s="${1:-$CLUSTER_JOIN_WAIT_SECONDS}"
-    started="$(date +%s)"
-    while true; do
-        ready="$(kubectl_ready_node_count)"
-        log "CLUSTER_JOIN_STATE ready=${ready} expected=${expected}"
-        if [[ "${ready:-0}" -eq "$expected" ]]; then
-            return 0
-        fi
-        now="$(date +%s)"
-        elapsed=$((now - started))
-        if [[ "$elapsed" -ge "$timeout_s" ]]; then
-            log "ERROR: CLUSTER_JOIN_STATE ready=${ready} expected=${expected} waited=${elapsed}s"
-            log "BRINGUP_RESULT=FAIL"
-            return 1
-        fi
-        sleep 5
-    done
+    log "CLUSTER_JOIN_STATE ready=${ready:-0} requested=${requested} diagnostic=YES"
+    return 0
 }
-
 ###############################################################################
 # PHASE 2: INSTALL PYTHON 3
 ###############################################################################
@@ -1670,19 +2014,21 @@ install_python3() {
     # aellautil.py imports psutil, pymongo, kazoo, flask, tornado, etc.
     # All debs pre-staged in py3-apt-packages.tar.gz (no internet needed).
     # Must install these BEFORE pip3: python3-pip depends on python3-wheel which
-    # comes from this tarball. Unmet Depends after dpkg are a hard failure
-    # (apt-get check), not something to paper over with apt --fix-broken.
+    # comes from this tarball, and dpkg -i on these debs may leave unmet
+    # dependencies that apt --fix-broken needs to resolve.
     local apt_tarball="${STAGING_DIR}/py3-apt-packages.tar.gz"
     if [[ -f "$apt_tarball" ]]; then
         log "Installing Python 3 system apt packages from local tarball..."
         local apt_tmpdir="/tmp/py3-apt-debs-$$"
         mkdir -p "$apt_tmpdir"
         tar -xzf "$apt_tarball" -C "$apt_tmpdir" || log "WARNING: Failed to extract py3-apt-packages.tar.gz"
-        # Prefer a complete offline closure (prereq artifact + ACPS debs)
-        # without forcing dependency violations. Bulk dpkg -i without
-        # --force-depends works when Depends are already present.
-        # --force-depends is only a last-resort unpack-order compatibility
-        # retry and is NEVER a success criterion; apt-get check is.
+        # AELDEV-71573: install all debs at once with --force-depends so
+        # interdependent packages (python3-flask -> python3-werkzeug,
+        # python3-pyinotify -> python3-pyasyncore, etc.) resolve in any
+        # order. Previous per-deb loop with "skip if installed" left stale
+        # packages and missed re-installs after apt fix-broken rolled them
+        # back. Bulk dpkg -i is faster + idempotent (already-installed +
+        # same-version is a no-op for dpkg).
         if ls "$apt_tmpdir"/*.deb &>/dev/null; then
             local py3_apt_rc=0
             set +e
@@ -1707,8 +2053,16 @@ install_python3() {
         log "  Place py3-apt-packages.tar.gz in $STAGING_DIR and re-run"
     fi
 
-    # Dark-site and online: never run apt --fix-broken install as a repair.
-    # That path proposed removing python3-gevent/kazoo/pyinotify in the lab.
+    # AELDEV-71573: dark-site (--skip-download) skips apt-based pip3 install.
+    # `apt --fix-broken install` and `apt install python3-pip` were RE-INSTALLING
+    # python3-flask via apt, but the missing deps that fix-broken couldn't
+    # resolve (no internet, stale local cache) caused apt to ROLL BACK the
+    # python3-flask install we just did via dpkg above. End result: flask gone,
+    # aella_da_restful crash-loop, port 8003 never binds, DA worker can't join.
+    # py3-apt-packages.tar.gz (debs above) + pip3-site-packages.tar.gz
+    # (extracted in install_pip3_packages) together are self-sufficient on
+    # dark-site -- no apt/internet ops needed. Online mode keeps the full
+    # apt flow as before.
     if [[ "$SKIP_DOWNLOAD" == "true" ]]; then
         log "  --skip-download: skipping apt-based pip3 install (no internet)"
         log "  Python deps come from py3-apt-packages.tar.gz (already dpkg-installed)"
@@ -1718,6 +2072,12 @@ install_python3() {
             log "  installed Python packages remain functional via direct imports."
         fi
     elif ! command -v pip3 &>/dev/null; then
+        # Online mode: full apt flow (sequence matters):
+        # 1. `apt-get update` to refresh cache (post-OS-upgrade cache can be stale,
+        #    e.g. pinning to 404'd python3.12-dev versions)
+        # 2. `apt --fix-broken install` to resolve unmet deps left by dpkg -i above
+        #    (python3-gevent->python3-zope.event, python3-werkzeug->libjs-jquery, etc)
+        # 3. Then `apt install python3-pip python3-wheel` can succeed.
         log "Installing pip3..."
         apt-get update -qq 2>&1 | tail -3 || log "WARNING: apt-get update had errors"
         if apt-get install -y -qq python3-pip python3-wheel python3-setuptools 2>&1 | tail -3; then
@@ -1731,6 +2091,7 @@ install_python3() {
         log "pip3: $(pip3 --version 2>&1 || echo 'not found')"
     fi
 
+    # Verify critical imports
     # dpkg --audit and --force-depends are not sufficient. The APT graph
     # must be consistent before Python runtime validation or worker orch.
     validate_apt_dependency_graph python3_apt || \
@@ -1925,10 +2286,9 @@ reclaim_overlay2_on_workers() {
         log "AELDEV-71912: sshpass unavailable -- skipping worker overlay2 sweep"
         return 0
     fi
-    local WORKER_USER="aella" WORKER_PASS="${WORKER_PASSWORD}"
-    if [[ -z "$WORKER_PASS" ]]; then
-        die "--worker-ips requires --worker-password"
-    fi
+    init_phase2_ssh_known_hosts
+    local WORKER_USER="aella"
+    require_worker_password_file_for_remote_orchestration
     local workers worker_ip dry_flag=""
     [[ "$DRY_RUN" == "true" ]] && dry_flag=" --dry-run"
     IFS=',' read -ra workers <<< "$WORKER_IPS"
@@ -1937,13 +2297,13 @@ reclaim_overlay2_on_workers() {
         worker_ip=$(echo "$worker_ip" | xargs)
         [[ -z "$worker_ip" ]] && continue
         # Stage the script (-O = legacy scp protocol; 24.04 OpenSSH routes scp via SFTP).
-        if ! sshpass -p "$WORKER_PASS" scp -O $SCP_OPTS "$SCRIPT_PATH" \
+        if ! sshpass -f "$PHASE2_WORKER_PASSWORD_FILE" scp -O $SCP_OPTS "$SCRIPT_PATH" \
                 "${WORKER_USER}@${worker_ip}:/tmp/${SCRIPT_NAME}" >/dev/null 2>&1; then
             log "  WARNING: could not stage script on $worker_ip -- skipping (non-fatal)"
             continue
         fi
         log "  [$worker_ip] reclaiming legacy docker overlay2 (if any)..."
-        sshpass -p "$WORKER_PASS" ssh $SSH_OPTS "${WORKER_USER}@${worker_ip}" \
+        sshpass -f "$PHASE2_WORKER_PASSWORD_FILE" ssh $SSH_OPTS "${WORKER_USER}@${worker_ip}" \
             "sudo bash /tmp/${SCRIPT_NAME} --reclaim-overlay2${dry_flag}" 2>&1 \
             | while IFS= read -r line; do log "    [$worker_ip] $line"; done \
             || log "  WARNING: overlay2 reclaim on $worker_ip failed (non-fatal; rerun: sudo bash /tmp/${SCRIPT_NAME} --reclaim-overlay2${dry_flag})"
@@ -2539,6 +2899,7 @@ run_image_import_with_heartbeat() {
 }
 # END_IMAGE_IMPORT_HEARTBEAT
 
+
 load_local_images() {
     [[ "$SKIP_DOWNLOAD" != "true" ]] && return 0
     log_phase "Load Local Image Tarballs (dark-site)"
@@ -2608,7 +2969,6 @@ load_local_images() {
         # every layer into moby snapshots duplicates the k8s.io set (~1681 snapshots
         # for 155 images though Docker runs only ~5) = ~65G dead weight. --no-unpack
         # keeps moby metadata-only; Docker lazy-unpacks on demand what it runs.
-        # Heartbeat wrapper preserves the same ctr argv / serial order / log files.
         k8s_rc=0; moby_rc=0
         run_image_import_with_heartbeat "k8s.io" "$tarball" "$k8s_log" || k8s_rc=$?
         log "IMAGE_IMPORT_NEXT namespace=moby file=$(basename "$tarball") note=serial_after_k8s.io"
@@ -2837,7 +3197,15 @@ KUBEDROPIN
     swapoff -a
     sed -i '/swap/d' /etc/fstab
 
-    # Enable kubelet
+    # Enable kubelet. AELDEV-73583: UNMASK first -- purging the old 1.19
+    # kubelet (preflight) while its unit was enabled can leave the unit
+    # masked (dangling enablement -> systemd "masked" state), especially
+    # when a prior bringup run was interrupted between purge and install.
+    # A masked unit silently defeats both `systemctl enable` and kubeadm's
+    # own kubelet-start -> kubeadm init times out at wait-control-plane
+    # with kubelet dead (observed live 2026-07-23). unmask is a no-op when
+    # not masked.
+    systemctl unmask kubelet 2>/dev/null || true
     systemctl daemon-reload
     systemctl enable kubelet 2>/dev/null || true
 
@@ -4136,40 +4504,96 @@ deploy_k8s_services() {
 #                     (elastic required, master forbidden). elasticsearch2-master
 #                     stays DESIRED=0 -- DLm has master but not elastic.
 #
-# Safety: idempotent (--overwrite); all nodes already passed the 80G/100G RAM
-# gate in preflight_resources() (fix #2), so per-node memory check is
-# unnecessary (matches what cluster-controller's
-# get_unlabeled_worker_nodes_with_enough_mem(target_mem) would compute).
-# DR-master/DR-worker skipped (no ES manifests). Fresh installs unaffected:
-# controller would label these nodes anyway; this just does it sooner.
+# Safety: idempotent (--overwrite); DR-master/DR-worker skipped (no ES
+# manifests). Fresh installs unaffected: controller labels eligible nodes
+# anyway once healthy; this just breaks the preserved-data deadlock sooner.
+#
+# AELDEV-73583 refinement -- label ONLY nodes that hold preserved ES data:
+# the deadlock this fix breaks is caused by PRESERVED shards, so preserved
+# data is the correct eligibility signal (not RAM/labels). Per non-master
+# node, probe /opt/aelladata/esdata|es-data-lvm over ssh (standard aella
+# creds):
+#   - preserved data found  -> label elastic=enabled (deadlock breaker)
+#   - probe OK, no data     -> SKIP: node never held ES data. Covers ES
+#     coordinate candidates (small nodes; es.py node_can_run_es requires
+#     >=80% of max data-node storage) and any fresh/empty node. The
+#     controller applies its own disk-rule labeling once ES is green.
+#   - probe FAILS           -> label anyway (old behavior; a missed label
+#     risks the red-state deadlock, a spurious one only mis-places a pod
+#     the controller can correct).
+# Standby nodes are NEVER labeled here (skipped via the master's preserved
+# /opt/aelladata/work/standby/standby_config node list + the standby node
+# label): standby ES participation is owned by standby_controller/es.py
+# (data_sync-gated), not by provisioning.
+# NO label REMOVALS here: removal stays controller/operator-owned.
 pre_label_dl_elastic_nodes() {
     [[ "$ROLE" == "DL-master" || "$ROLE" == "AIO" ]] || return 0
 
     local k="kubectl --kubeconfig=/etc/kubernetes/admin.conf"
-    local n labeled=0 node_count
+    local standby_conf="/opt/aelladata/work/standby/standby_config"
+    local n labeled=0 skipped=0 node_count
     node_count=$($k get nodes --no-headers 2>/dev/null | wc -l)
     node_count=${node_count:-0}
+
+    # Probe a node for preserved ES data over ssh (aella/aelladata, the
+    # standard on-prem DP credentials -- same auth orchestrate_workers uses).
+    # Prints HASDATA / NODATA / UNKNOWN.
+    _esdata_probe() {
+        local ip="$1" out=""
+        if ! command -v sshpass &>/dev/null; then echo "UNKNOWN"; return; fi
+        init_phase2_ssh_known_hosts
+        if [[ -z "${PHASE2_WORKER_PASSWORD_FILE:-}" ]]; then echo "UNKNOWN"; return; fi
+        out=$(timeout 25 sshpass -f "$PHASE2_WORKER_PASSWORD_FILE" ssh \
+                $SSH_OPTS \
+                -o ConnectTimeout=10 -o PreferredAuthentications=password \
+                "aella@${ip}" \
+                "test -d /opt/aelladata/esdata/nodes -o -d /opt/aelladata/es-data-lvm/nodes && echo HASDATA || echo NODATA" \
+                2>/dev/null | tail -1)
+        case "$out" in HASDATA|NODATA) echo "$out" ;; *) echo "UNKNOWN" ;; esac
+    }
 
     # Mirror node_configure.py:init_dl_labels() topology rule -- master only
     # gets `elastic=enabled` when this is a single-node cluster (AIO or
     # workerless DL-master). For multi-node, label workers only; otherwise we
     # would force elasticsearch2-master DaemonSet onto DLm and grow the ES
     # data-node count by one, which is a topology change vs the prior cluster.
-    # Memory check skipped: every node already passed the role-specific RAM
-    # gate in preflight_resources() (fix #2), so all are eligible.
     for n in $($k get nodes -o name 2>/dev/null | sed 's|node/||'); do
-        local is_master
+        local is_master is_standby node_ip verdict
         is_master=$($k get node "$n" -o jsonpath='{.metadata.labels.master}' 2>/dev/null)
         if [[ "$is_master" == "enabled" && "$node_count" -gt 1 ]]; then
             continue   # multi-node DL: leave master unlabeled, ES2 data lives on workers
         fi
+
+        if [[ "$node_count" -gt 1 ]]; then
+            # Skip standby nodes: preserved standby record on this master
+            # (WARM_STANDBY_CONF_FILE "nodes" list) or an already-applied
+            # standby label. Case-insensitive: record stores lowercase.
+            is_standby=$($k get node "$n" -o jsonpath='{.metadata.labels.standby}' 2>/dev/null)
+            if [[ "$is_standby" == "enabled" ]] || \
+               { [[ -f "$standby_conf" ]] && grep -qiw "$n" "$standby_conf" 2>/dev/null; }; then
+                log "  pre-label: $n is a standby node -- skipping (standby ES is controller-owned)"
+                skipped=$((skipped + 1))
+                continue
+            fi
+
+            node_ip=$($k get node "$n" -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null)
+            verdict=$([[ -n "$node_ip" ]] && _esdata_probe "$node_ip" || echo "UNKNOWN")
+            if [[ "$verdict" == "NODATA" ]]; then
+                log "  pre-label: $n has no preserved ES data -- skipping (controller labels eligible nodes once green; expected for ES coordinate candidates)"
+                skipped=$((skipped + 1))
+                continue
+            fi
+            [[ "$verdict" == "UNKNOWN" ]] && \
+                log "  pre-label: $n esdata probe inconclusive -- labeling anyway (deadlock-safe default)"
+        fi
+
         if $k label node "$n" elastic=enabled --overwrite >/dev/null 2>&1; then
             labeled=$((labeled + 1))
         fi
     done
 
-    if (( labeled > 0 )); then
-        log "Pre-labeled $labeled DL node(s) with elastic=enabled (preempt cluster-controller red-state deadlock)"
+    if (( labeled > 0 || skipped > 0 )); then
+        log "Pre-labeled $labeled DL node(s) with elastic=enabled, skipped $skipped (standby/no-preserved-data)"
     fi
 }
 
@@ -4648,7 +5072,7 @@ validate_all() {
     fi
 
     # K8s worker validation
-    if [[ "$ROLE" == *worker* ]]; then
+    if [[ "$ROLE" == *worker* || "$ROLE" == "standby" ]]; then
         if systemctl is-active --quiet kubelet 2>/dev/null; then
             log "  PASS: kubelet active (worker)"
         else
@@ -4670,7 +5094,7 @@ validate_all() {
     fi
 
     # K8s cluster (master/AIO only)
-    if [[ "$ROLE" != *worker* ]]; then
+    if [[ "$ROLE" == "AIO" || "$ROLE" == *master* ]]; then
         export KUBECONFIG=/etc/kubernetes/admin.conf
         if kubectl get nodes &>/dev/null; then
             local node_status
@@ -4718,7 +5142,7 @@ validate_all() {
     done
 
     # Flannel networking (master/AIO)
-    if [[ "$ROLE" != *worker* ]]; then
+    if [[ "$ROLE" == "AIO" || "$ROLE" == *master* ]]; then
         if ip link show flannel.1 &>/dev/null; then
             log "  PASS: flannel.1 interface exists"
         else
@@ -4778,16 +5202,17 @@ validate_all() {
 orchestrate_workers() {
     log_phase "Orchestrate Worker Nodes"
 
-    if [[ -z "$WORKER_IPS" ]]; then
-        log "No worker IPs specified, skipping"
+    if [[ -z "$WORKER_IPS" && -z "$STANDBY_IPS" ]]; then
+        log "No worker/standby IPs specified, skipping"
         return 0
     fi
 
-    # Worker SSH via sshpass (username aella; password from --worker-password)
-    local WORKER_PASS="${WORKER_PASSWORD}"
+    # Worker SSH via sshpass -f (private password file; never argv literal)
     local WORKER_USER="aella"
-    if [[ -z "$WORKER_PASS" ]]; then
-        die "--worker-ips requires --worker-password"
+    init_phase2_ssh_known_hosts
+    require_worker_password_file_for_remote_orchestration
+    if declare -F normalize_remote_orchestration_nodes >/dev/null 2>&1; then
+        normalize_remote_orchestration_nodes || die "REMOTE_ORCH_NODES=FAIL"
     fi
     if ! command -v sshpass &>/dev/null; then
         log "Installing sshpass (needed for worker SSH)..."
@@ -4798,11 +5223,11 @@ orchestrate_workers() {
     # Helper functions for SSH/SCP to workers
     worker_ssh() {
         local ip="$1"; shift
-        sshpass -p "$WORKER_PASS" ssh $SSH_OPTS "${WORKER_USER}@${ip}" "$@"
+        sshpass -f "$PHASE2_WORKER_PASSWORD_FILE" ssh $SSH_OPTS "${WORKER_USER}@${ip}" "$@"
     }
     worker_scp() {
         local src="$1" dst_ip="$2" dst_path="$3"
-        sshpass -p "$WORKER_PASS" scp $SCP_OPTS "$src" "${WORKER_USER}@${dst_ip}:${dst_path}"
+        sshpass -f "$PHASE2_WORKER_PASSWORD_FILE" scp $SCP_OPTS "$src" "${WORKER_USER}@${dst_ip}:${dst_path}"
     }
 
     local master_ip
@@ -4810,17 +5235,43 @@ orchestrate_workers() {
     log "Master IP: $master_ip"
     log "Worker auth: sshpass (${WORKER_USER})"
 
-    # Warm up SSH connections to workers: first sshpass connect can be slow
-    # due to key exchange. SSH_OPTS uses UserKnownHostsFile=/dev/null so
-    # known_hosts isn't used; the retry below handles the timing issue.
-    IFS=',' read -ra workers <<< "$WORKER_IPS"
-    local orch_failed=0
+    # Detect worker role from master's perspective (standby entries get role
+    # standby regardless -- AELDEV-73583 --standby orchestration).
+    local default_worker_role
+    if [[ "$ROLE" == "DR-master" ]]; then
+        default_worker_role="DR-worker"
+    elif [[ "$ROLE" == "DL-master" ]]; then
+        default_worker_role="DL-worker"
+    else
+        default_worker_role="DR-worker"  # default
+    fi
 
-    for worker_ip in "${workers[@]}"; do
-        worker_ip=$(echo "$worker_ip" | xargs)  # trim whitespace
-        [[ -z "$worker_ip" ]] && continue
+    # Build the deployment list: workers first (data path up ASAP), then
+    # standby node(s) -- a standby joins the already-forming cluster and its
+    # heartbeat/sync machinery expects the primary side to exist.
+    local node_specs=()
+    local _ip
+    IFS=',' read -ra workers <<< "$WORKER_IPS"
+    for _ip in "${workers[@]}"; do
+        _ip=$(echo "$_ip" | xargs)
+        [[ -n "$_ip" ]] && node_specs+=("${_ip}:${default_worker_role}")
+    done
+    IFS=',' read -ra standbys <<< "$STANDBY_IPS"
+    for _ip in "${standbys[@]}"; do
+        _ip=$(echo "$_ip" | xargs)
+        [[ -n "$_ip" ]] && node_specs+=("${_ip}:standby")
+    done
+
+    # Warm up SSH connections to workers: first sshpass connect can be slow
+    # due to key exchange. SSH_OPTS uses accept-new with a persistent
+    # project-owned known_hosts file; the retry below handles timing.
+    local node_spec worker_ip node_role
+    local orch_failed=0
+    for node_spec in "${node_specs[@]}"; do
+        worker_ip="${node_spec%%:*}"
+        node_role="${node_spec##*:}"
         log ""
-        log "--- Deploying worker: $worker_ip ---"
+        log "--- Deploying node: $worker_ip (role: $node_role) ---"
         local worker_failed=0
         local worker_reason=""
 
@@ -4835,6 +5286,11 @@ orchestrate_workers() {
                 orch_failed=1
                 continue
             fi
+        fi
+
+        if ! validate_remote_role_identity "$worker_ip" "$node_role"; then
+            orch_failed=1
+            continue
         fi
 
         # Create directories on worker (sudo needed for aella user) and
@@ -4909,6 +5365,13 @@ orchestrate_workers() {
         done
 
         # Copy UVP and sub-debs from aelladeb dir
+        # Explicit Phase 2 prerequisite contract. Do not rely on
+        # filename-extension globs as the prerequisite protocol.
+        if ! copy_phase2_prereq_contract_to_worker "$worker_ip"; then
+            log "WORKER_RESULT ip=${worker_ip} result=FAIL reason=prereq_contract_copy"
+            orch_failed=1
+            continue
+        fi
         log "Copying UVP debs to $worker_ip..."
         for f in "${AELLADEB_DIR}"/*.deb; do
             [[ -f "$f" ]] || continue
@@ -4925,24 +5388,24 @@ orchestrate_workers() {
             continue
         fi
 
-        # Detect worker role from master's perspective
-        local worker_role
-        if [[ "$ROLE" == "DR-master" ]]; then
-            worker_role="DR-worker"
-        elif [[ "$ROLE" == "DL-master" ]]; then
-            worker_role="DL-worker"
-        else
-            worker_role="DR-worker"  # default
-        fi
-
+        # Run script on the node (sudo for root access) with its intended role.
+        # AELDEV-73583: propagate the MASTER's download mode instead of
+        # hard-coding --skip-download. Hard-coding broke ONLINE --worker-ips
+        # bringups: remote preflight_bundle demands images-<ver>.tar, which
+        # does not exist online (images are registry-pulled) -> every remote
+        # node died "FATAL: Bundle incomplete" (observed live 2026-07-23).
+        # Online mode: the scp'd UVP+common satisfy check_local_artifacts, so
+        # remote nodes skip ACPS download and pull images from the registry.
+        local skip_flag=""
+        [[ "$SKIP_DOWNLOAD" == "true" ]] && skip_flag="--skip-download"
         # Run script on worker (sudo for root access). Capture rc without a
         # pipe so set -euo pipefail cannot hide a remote nonzero status.
-        log "Running bringup on worker $worker_ip (role: $worker_role)..."
+        log "Running bringup on $worker_ip (role: $node_role)..."
         local worker_out worker_rc=0
         worker_out="$(mktemp /tmp/worker-bringup.XXXXXX)"
         set +e
         worker_ssh "$worker_ip" \
-            "sudo bash /tmp/${SCRIPT_NAME} --version $VERSION --role $worker_role --worker-mode --skip-download" \
+            "sudo bash /tmp/${SCRIPT_NAME} --version $VERSION --role $node_role --worker-mode ${skip_flag}" \
             >"$worker_out" 2>&1
         worker_rc=$?
         set -e
@@ -4956,25 +5419,38 @@ orchestrate_workers() {
             continue
         fi
 
-        # Verify worker appeared in cluster and became Ready (bounded wait).
+        # Verify worker appeared in cluster (check from master)
+        # Verify the requested target hostname is Ready (bounded wait).
+        # Identity of THIS target is authoritative; global Ready count is not.
         local worker_hostname ready_wait=0 ready_ok=0
-        worker_hostname=$(worker_ssh "$worker_ip" "hostname" 2>/dev/null || echo "unknown")
-        while [[ "$ready_wait" -lt 60 ]]; do
+        local ready_attempts="${CLUSTER_TARGET_READY_ATTEMPTS:-60}"
+        local ready_sleep="${CLUSTER_TARGET_READY_SLEEP_SECONDS:-5}"
+        local result_role="${node_role:-${worker_role:-}}"
+        worker_hostname=$(worker_ssh "$worker_ip" "hostname" 2>/dev/null || true)
+        worker_hostname="${worker_hostname//$'\r'/}"
+        worker_hostname="${worker_hostname#"${worker_hostname%%[![:space:]]*}"}"
+        worker_hostname="${worker_hostname%"${worker_hostname##*[![:space:]]}"}"
+        if [[ -z "$worker_hostname" || "$worker_hostname" == "unknown" ]]; then
+            log "WORKER_RESULT ip=${worker_ip} role=${result_role} result=FAIL reason=hostname"
+            orch_failed=1
+            continue
+        fi
+        while [[ "$ready_wait" -lt "$ready_attempts" ]]; do
             if kubectl get nodes --no-headers 2>/dev/null \
                 | awk -v h="$worker_hostname" 'BEGIN{IGNORECASE=1} $1==h && $2 ~ /^Ready($|,)/ {found=1} END{exit found?0:1}'; then
                 ready_ok=1
                 break
             fi
-            sleep 5
+            sleep "$ready_sleep"
             ready_wait=$((ready_wait + 1))
         done
         if [[ "$ready_ok" -ne 1 ]]; then
-            log "WORKER_RESULT ip=${worker_ip} result=FAIL reason=not_ready host=${worker_hostname}"
+            log "WORKER_RESULT ip=${worker_ip} role=${result_role} result=FAIL reason=not_ready host=${worker_hostname}"
             orch_failed=1
             continue
         fi
 
-        log "WORKER_RESULT ip=${worker_ip} result=PASS"
+        log "WORKER_RESULT ip=${worker_ip} role=${result_role} result=PASS"
         log "Worker $worker_ip ($worker_hostname) joined cluster successfully"
     done
 
@@ -5030,11 +5506,18 @@ join_k8s_cluster() {
     local host_name
     host_name=$(hostname)
 
+    # AELDEV-73583: node_bootstrap.sh parity -- a standby announces itself on
+    # the token fetch (standby=1) so the master records it via
+    # record_standby_node. Harmless no-op on re-bringup (record preserved in
+    # /opt/aelladata/work/standby on the master); required for a fresh standby.
+    local token_extra=""
+    [[ "$ROLE" == "standby" ]] && token_extra="&standby=1"
+
     if [[ -n "$username" && -n "$password" ]]; then
         local token_response curl_rc=0
         token_response="$(curl -sk --connect-timeout 10 --max-time 30 \
             -u "${username}:${password}" \
-            "https://${master_ip}:8003/api/1.0/master_token?host=${host_name}" \
+            "https://${master_ip}:8003/api/1.0/master_token?host=${host_name}${token_extra}" \
             2>/dev/null)" || {
             curl_rc=$?
             log "ERROR: join-token API request failed master=${master_ip} port=8003 curl_rc=${curl_rc}"
@@ -6028,6 +6511,24 @@ main() {
         exit 0
     fi
 
+    # AELDEV-73583: relabel-only mode -- (re)run the elastic pre-labeling on a
+    # DL-master/AIO and show the resulting labels, then exit. For the by-hand
+    # (section 4c) flow where workers join AFTER the master's bringup already
+    # ran its labeling pass: run this on the master once all workers are Ready.
+    # Idempotent; labels only nodes with preserved ES data; skips standby and
+    # data-less nodes (ES coordinate candidates). No removals.
+    if [[ "$RELABEL_ELASTIC_ONLY" == "true" ]]; then
+        if [[ $EUID -ne 0 ]]; then die "Must run as root"; fi
+        detect_role
+        [[ "$ROLE" == "DL-master" || "$ROLE" == "AIO" ]] || \
+            die "--relabel-elastic runs on a DL-master or AIO node (this node: ${ROLE})"
+        pre_label_dl_elastic_nodes
+        log "Current node labels:"
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf get nodes -L elastic,coordinate,standby,master 2>&1 | \
+            while IFS= read -r line; do log "  $line"; done
+        exit 0
+    fi
+
     # Download from ACPS (or use local artifacts if pre-staged)
 
     log "Version: $VERSION | Role: ${ROLE:-auto-detect} | Worker mode: $WORKER_MODE"
@@ -6075,6 +6576,7 @@ main() {
     # Worker join (worker mode only)
     if [[ "$WORKER_MODE" == "true" ]]; then
         join_k8s_cluster
+        validate_local_remote_join_state || die "REMOTE_JOIN_LOCAL_STATE=FAIL"
     fi
 
     # Phase 11: elasticdump
@@ -6089,10 +6591,10 @@ main() {
     # Phase 12: Validate
     validate_all || true
 
-    # Phase 13: Orchestrate workers (master only, after self is fully up).
+    # Phase 13: Orchestrate workers + standby (master only, after self is fully up).
     # Token API / TCP 8003 must be functionally ready first. systemctl is-active
     # aellad is not sufficient — the failed lab had aellad active with 8003 down.
-    if [[ "$WORKER_MODE" != "true" && -n "$WORKER_IPS" ]]; then
+    if [[ "$WORKER_MODE" != "true" && ( -n "$WORKER_IPS" || -n "$STANDBY_IPS" ) ]]; then
         if ! validate_critical_python_runtime; then
             die "CRITICAL_PYTHON_RUNTIME=FAIL before worker orchestration"
         fi
@@ -6158,17 +6660,6 @@ main() {
     echo "  Version: $VERSION"
     echo "  Log: $LOG_FILE"
     echo "========================================================================"
-    # Dual-write Bringup complete banner into the log when detached
-    # (stdout is /dev/null under setsid; log()/notice helpers still append).
-    {
-        echo ""
-        echo "========================================================================"
-        echo "  Bringup complete: $(date)"
-        echo "  Role: $ROLE"
-        echo "  Version: $VERSION"
-        echo "  Log: $LOG_FILE"
-        echo "========================================================================"
-    } >> "$LOG_FILE" 2>/dev/null || true
     emit_dp_resume_post_complete_notice
 }
 
@@ -6186,7 +6677,7 @@ main() {
 detach_guard() {
     case " $* " in
         *" --worker-mode "*|*" --pre-upgrade-cleanup "*|*" --auto-os-upgrade "*) return 0 ;;
-        *" --reclaim-overlay2 "*) return 0 ;;
+        *" --reclaim-overlay2 "*|*" --relabel-elastic "*) return 0 ;;
         *" --dry-run "*|*" --help "*|*" -h "*) return 0 ;;
     esac
     [[ -n "${BRINGUP_DETACHED:-}" ]] && return 0
@@ -6299,6 +6790,7 @@ emit_dp_resume_post_complete_notice() {
     emit_dp_resume_notice_line "============================================================"
 }
 # END_DP_RESUME_OPERATOR_NOTICE
+
 
 if [[ "${BRINGUP_TEST_EMIT_PRE_DETACH_NOTICE_ONLY:-0}" == "1" ]]; then
     emit_dp_resume_pre_detach_notice

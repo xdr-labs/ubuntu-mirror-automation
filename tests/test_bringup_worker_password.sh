@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# --worker-password parsing and worker-orchestration credential use.
+# --worker-password-file parsing and worker-orchestration credential use.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -25,12 +25,22 @@ grep -n 'WORKER_PASS="aelladata"' "$BRINGUP" \
   && fail "hardcoded WORKER_PASS=aelladata still present" \
   || pass "no hardcoded WORKER_PASS=aelladata"
 
+grep -q -- '--worker-password-file' "$BRINGUP" \
+  || fail "--worker-password-file not in bringup"
 grep -q -- '--worker-password' "$BRINGUP" \
-  || fail "--worker-password not in bringup"
-grep -q 'WORKER_IPS requires --worker-password\|--worker-ips requires --worker-password\|--worker-ips/--standby requires --worker-password' "$BRINGUP" \
-  || fail "missing --worker-ips/--worker-password validation"
+  || fail "legacy --worker-password not in bringup"
+grep -q 'WORKER_IPS requires --worker-password\|--worker-ips requires --worker-password\|--worker-ips/--standby requires --worker-password-file' "$BRINGUP" \
+  || fail "missing --worker-ips/--worker-password-file validation"
 
-# Extract parse_args + orchestrate_workers with local stubs.
+grep -q 'sshpass -f' "$BRINGUP" \
+  || fail "sshpass -f not used in patched bringup"
+grep 'sshpass -p' "$BRINGUP" \
+  && fail "sshpass -p still present in patched bringup" \
+  || pass "no sshpass -p in patched bringup"
+
+CRED_SRC="${ROOT}/scripts/lib/phase2_bringup_patch/fragment_credential_ssh.sh"
+COMPAT_SRC="${ROOT}/scripts/lib/phase2_bringup_patch/fragment_compat.sh"
+
 PARSE_SRC="${WORKDIR}/parse_args.sh"
 awk '
   /^parse_args\(\)/ {keep=1}
@@ -57,6 +67,7 @@ run_parse() {
     VERSION=""
     WORKER_IPS=""
     WORKER_PASSWORD=""
+    PHASE2_WORKER_PASSWORD_FILE=""
     STANDBY_IPS=""
     ROLE=""
     DRY_RUN=false
@@ -65,16 +76,27 @@ run_parse() {
     PRE_UPGRADE_CLEANUP=false
     AUTO_OS_UPGRADE=false
     RECLAIM_OVERLAY2_ONLY=false
-    WORKER_SSH_KEY=""
+    RELABEL_ELASTIC_ONLY=false
+    PHASE2_WORKER_PASSWORD_PRIVATE_DIR="$WORKDIR"
     die() { echo "FATAL: $*" >&2; exit 1; }
     log() { :; }
     check_version_guard() { return 0; }
+    # shellcheck disable=SC1090
+    source "$COMPAT_SRC"
+    # shellcheck disable=SC1090
+    source "$CRED_SRC"
     # shellcheck disable=SC1090
     source "$PARSE_SRC"
     parse_args "$@"
     printf 'VERSION=%s\n' "$VERSION"
     printf 'WORKER_IPS=%s\n' "$WORKER_IPS"
-    printf 'WORKER_PASSWORD=%s\n' "$WORKER_PASSWORD"
+    printf 'WORKER_PASSWORD=%s\n' "${WORKER_PASSWORD:-}"
+    printf 'PHASE2_WORKER_PASSWORD_FILE=%s\n' "${PHASE2_WORKER_PASSWORD_FILE:-}"
+    if [[ -n "${PHASE2_WORKER_PASSWORD_FILE:-}" && -f "$PHASE2_WORKER_PASSWORD_FILE" ]]; then
+      printf 'PHASE2_WORKER_PASSWORD_FILE_CONTENT=%s\n' "$(cat "$PHASE2_WORKER_PASSWORD_FILE")"
+    else
+      printf 'PHASE2_WORKER_PASSWORD_FILE_CONTENT=\n'
+    fi
   )"
   rc=$?
   PARSE_RC="$rc"
@@ -88,8 +110,9 @@ run_parse() {
 run_parse --version 6.6.0 --skip-download
 if [[ "$PARSE_RC" -eq 0 ]]; then
   echo "$PARSE_OUT" | grep -qx 'WORKER_IPS=' || fail "unexpected worker ips on AIO"
-  echo "$PARSE_OUT" | grep -qx 'WORKER_PASSWORD=' || fail "unexpected worker password on AIO"
-  pass "AIO parse does not require --worker-password"
+  echo "$PARSE_OUT" | grep -qx 'WORKER_PASSWORD=' || fail "unexpected worker password var on AIO"
+  echo "$PARSE_OUT" | grep -qx 'PHASE2_WORKER_PASSWORD_FILE=' || fail "unexpected password file on AIO"
+  pass "AIO parse does not require worker password file"
 else
   fail "AIO parse failed: ${PARSE_ERR}"
 fi
@@ -103,25 +126,37 @@ fi
 
 # worker-ips without password → error
 run_parse --version 6.6.0 --skip-download --worker-ips "192.168.124.23,192.168.124.25"
-[[ "$PARSE_RC" -ne 0 ]] || fail "worker-ips without password accepted"
-echo "$PARSE_ERR" | grep -q -- '--worker-ips/--standby requires --worker-password\|--worker-ips requires --worker-password' \
+[[ "$PARSE_RC" -ne 0 ]] || fail "worker-ips without password file accepted"
+echo "$PARSE_ERR" | grep -q -- '--worker-ips/--standby requires --worker-password-file\|--worker-ips requires --worker-password' \
   || fail "missing validation error: ${PARSE_ERR}"
-pass "worker-ips without password is rejected"
+pass "worker-ips without password file is rejected"
 
-# worker-password parsed (including special characters)
+# legacy --worker-password migrates to private file (including special characters)
 for spec_pass in 'something' 'Test123!' 'Abc$123!' 'worker@Pass#2026' 'A&b!c$123'; do
   run_parse --version 6.6.0 --skip-download \
       --worker-ips "192.168.124.23" --worker-password "$spec_pass"
   if [[ "$PARSE_RC" -eq 0 ]]; then
-    echo "$PARSE_OUT" | grep -Fxq "WORKER_PASSWORD=${spec_pass}" \
-      || fail "parsed password mismatch for special-character case"
+    echo "$PARSE_OUT" | grep -qx 'WORKER_PASSWORD=' \
+      || fail "WORKER_PASSWORD not cleared after migration"
+    echo "$PARSE_OUT" | grep -Fxq "PHASE2_WORKER_PASSWORD_FILE_CONTENT=${spec_pass}" \
+      || fail "password file content mismatch for special-character case"
   else
     fail "parse failed for special-character password case: ${PARSE_ERR}"
   fi
 done
-pass "parse_args preserves --worker-password including special characters"
+pass "legacy --worker-password migrates to private file"
 
-# Worker orchestration uses configured password, not aelladata.
+PWFILE="${WORKDIR}/worker-password.file"
+printf '%s' 'file-mode-pass' >"$PWFILE"
+chmod 0600 "$PWFILE"
+run_parse --version 6.6.0 --skip-download \
+  --worker-ips "192.168.124.23" --worker-password-file "$PWFILE"
+[[ "$PARSE_RC" -eq 0 ]] || fail "--worker-password-file parse failed: ${PARSE_ERR}"
+echo "$PARSE_OUT" | grep -Fxq "PHASE2_WORKER_PASSWORD_FILE=${PWFILE}" \
+  || fail "--worker-password-file path not preserved"
+pass "--worker-password-file accepted"
+
+# Worker orchestration uses password file, not argv literal or aelladata.
 BIN="${WORKDIR}/bin"
 mkdir -p "$BIN"
 SSHPASS_PASS_FILE="${WORKDIR}/sshpass.pass"
@@ -131,16 +166,24 @@ SSHPASS_CMD_FILE="${WORKDIR}/sshpass.cmd"
 
 cat >"${BIN}/sshpass" <<EOF
 #!/usr/bin/env bash
-if [[ "\$1" == "-p" ]]; then
+if [[ "\$1" == "-f" ]]; then
+  cat "\$2" >>"${SSHPASS_PASS_FILE}"
+  shift 2
+elif [[ "\$1" == "-p" ]]; then
   printf '%s\\n' "\$2" >>"${SSHPASS_PASS_FILE}"
   shift 2
 fi
 printf '%s\\n' "\$*" >>"${SSHPASS_CMD_FILE}"
+if [[ "\$1" == "scp" ]]; then
+  exit 0
+fi
 if [[ "\$1" == "ssh" ]]; then
   remote="\${@: -1}"
   case "\$remote" in
     "echo ok") echo ok ;;
     hostname) echo worker1 ;;
+    *aella_role*) echo DL-worker ;;
+    *) echo ok ;;
   esac
 fi
 exit 0
@@ -162,6 +205,9 @@ AELLADEB="${WORKDIR}/aelladeb"
 mkdir -p "$STAGING" "$AELLADEB"
 SCRIPT_COPY="${WORKDIR}/bringup_copy.sh"
 printf '#!/bin/bash\necho fake\n' >"$SCRIPT_COPY"
+ORCH_PWFILE="${WORKDIR}/orch-worker-password"
+printf '%s' 'Abc$123!' >"$ORCH_PWFILE"
+chmod 0600 "$ORCH_PWFILE"
 
 export PATH="${BIN}:${PATH}"
 export LOG_FILE="${WORKDIR}/bringup-test.log"
@@ -173,7 +219,8 @@ cat >"$ORCH_RUNNER" <<EOF
 set -euo pipefail
 VERSION="6.6.0"
 WORKER_IPS="192.168.124.23"
-WORKER_PASSWORD='Abc\$123!'
+STANDBY_IPS=""
+PHASE2_WORKER_PASSWORD_FILE=$(printf '%q' "$ORCH_PWFILE")
 ROLE="DL-master"
 WORKER_MODE=false
 DRY_RUN=false
@@ -182,11 +229,15 @@ STAGING_DIR=$(printf '%q' "$STAGING")
 AELLADEB_DIR=$(printf '%q' "$AELLADEB")
 SCRIPT_PATH=$(printf '%q' "$SCRIPT_COPY")
 SCRIPT_NAME="bringup_py3_dp_after_os_upgrade.sh"
-SSH_OPTS="-o StrictHostKeyChecking=no"
-SCP_OPTS="-o StrictHostKeyChecking=no"
+SCP_OPTS="-o StrictHostKeyChecking=accept-new"
+SSH_OPTS="-o StrictHostKeyChecking=accept-new"
 die() { echo "FATAL: \$*" >&2; exit 1; }
 log() { echo "\$*"; }
 log_phase() { echo "PHASE: \$*"; }
+# shellcheck disable=SC1090
+source $(printf '%q' "$COMPAT_SRC")
+# shellcheck disable=SC1090
+source $(printf '%q' "$CRED_SRC")
 copy_phase2_prereq_contract_to_worker() { return 0; }
 normalize_remote_orchestration_nodes() { return 0; }
 # shellcheck disable=SC1090
@@ -199,10 +250,10 @@ orch_rc=$?
 set -e
 
 [[ "$orch_rc" -eq 0 ]] || fail "orchestrate_workers rc=${orch_rc} out=${orch_out}"
-if grep -Fxq 'Abc$123!' "$SSHPASS_PASS_FILE"; then
-  pass "orchestrate_workers passed configured password to sshpass"
+if grep -Fq 'Abc$123!' "$SSHPASS_PASS_FILE"; then
+  pass "orchestrate_workers passed configured password via sshpass -f"
 else
-  fail "sshpass did not receive configured password"
+  fail "sshpass -f did not receive configured password"
 fi
 if grep -Fxq 'aelladata' "$SSHPASS_PASS_FILE"; then
   fail "orchestrate_workers still used hardcoded aelladata"
@@ -211,7 +262,7 @@ else
 fi
 grep -q 'sshpass -p' <<<"$orch_out" && fail "password leaked into orchestration stdout" || true
 
-# reclaim_overlay2_on_workers also uses WORKER_PASSWORD
+# reclaim_overlay2_on_workers also uses password file
 RECLAIM_SRC="${WORKDIR}/reclaim.sh"
 awk '
   /^reclaim_overlay2_on_workers\(\)/ {keep=1}
@@ -219,19 +270,26 @@ awk '
   keep && /^}$/ {exit}
 ' "$BRINGUP" >"$RECLAIM_SRC"
 : >"$SSHPASS_PASS_FILE"
+RECLAIM_PWFILE="${WORKDIR}/reclaim-worker-password"
+printf '%s' 'worker@Pass#2026' >"$RECLAIM_PWFILE"
+chmod 0600 "$RECLAIM_PWFILE"
 RECLAIM_RUNNER="${WORKDIR}/run_reclaim.sh"
 cat >"$RECLAIM_RUNNER" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 WORKER_IPS="192.168.124.23"
-WORKER_PASSWORD='worker@Pass#2026'
+PHASE2_WORKER_PASSWORD_FILE=$(printf '%q' "$RECLAIM_PWFILE")
 DRY_RUN=true
 SCRIPT_PATH=$(printf '%q' "$SCRIPT_COPY")
 SCRIPT_NAME="bringup_py3_dp_after_os_upgrade.sh"
-SCP_OPTS="-o StrictHostKeyChecking=no"
-SSH_OPTS="-o StrictHostKeyChecking=no"
+SCP_OPTS="-o StrictHostKeyChecking=accept-new"
+SSH_OPTS="-o StrictHostKeyChecking=accept-new"
 die() { echo "FATAL: \$*" >&2; exit 1; }
 log() { echo "\$*"; }
+# shellcheck disable=SC1090
+source $(printf '%q' "$COMPAT_SRC")
+# shellcheck disable=SC1090
+source $(printf '%q' "$CRED_SRC")
 # shellcheck disable=SC1090
 source $(printf '%q' "$RECLAIM_SRC")
 reclaim_overlay2_on_workers
@@ -241,8 +299,8 @@ reclaim_out="$(bash "$RECLAIM_RUNNER" 2>&1)"
 reclaim_rc=$?
 set -e
 [[ "$reclaim_rc" -eq 0 ]] || fail "reclaim_overlay2_on_workers rc=${reclaim_rc} out=${reclaim_out}"
-if grep -Fxq 'worker@Pass#2026' "$SSHPASS_PASS_FILE"; then
-  pass "overlay2 worker sweep used configured password"
+if grep -Fq 'worker@Pass#2026' "$SSHPASS_PASS_FILE"; then
+  pass "overlay2 worker sweep used password file"
 else
   fail "overlay2 sweep password missing"
 fi

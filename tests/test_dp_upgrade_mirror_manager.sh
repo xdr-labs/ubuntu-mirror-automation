@@ -101,9 +101,10 @@ s=socket.socket(); s.bind(('127.0.0.1',0)); print(s.getsockname()[1]); s.close()
 PY
 )"
   python3 - "$root" "$HTTP_PORT" "$auth_mode" "${WORKDIR}/http-counts" <<'PY' &
-import base64, http.server, os, sys, pathlib
+import base64, http.server, os, sys, pathlib, threading
 root, port, auth_mode, count_dir = sys.argv[1], int(sys.argv[2]), sys.argv[3], pathlib.Path(sys.argv[4])
 count_dir.mkdir(parents=True, exist_ok=True)
+_get_lock = threading.Lock()
 class H(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *a, **k):
         super().__init__(*a, directory=root, **k)
@@ -125,7 +126,8 @@ class H(http.server.SimpleHTTPRequestHandler):
         if not self._auth_ok():
             self.send_response(401); self.send_header('WWW-Authenticate','Basic realm=t'); self.end_headers(); return
         p = count_dir / 'gets'
-        p.write_text(str(int(p.read_text())+1 if p.exists() else 1))
+        with _get_lock:
+            p.write_text(str(int(p.read_text())+1 if p.exists() else 1))
         path = self.translate_path(self.path)
         if not os.path.isfile(path):
             self.send_error(404); return
@@ -164,9 +166,10 @@ s=socket.socket(); s.bind(('127.0.0.1',0)); print(s.getsockname()[1]); s.close()
 PY
 )"
   python3 - "$root" "$R2_PORT" "${WORKDIR}/http-counts-r2" "$mode" <<'PY' &
-import http.server, os, sys, pathlib
+import http.server, os, sys, pathlib, threading
 root, port, count_dir, mode = sys.argv[1], int(sys.argv[2]), pathlib.Path(sys.argv[3]), sys.argv[4]
 count_dir.mkdir(parents=True, exist_ok=True)
+_get_lock = threading.Lock()
 class H(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *a, **k):
         super().__init__(*a, directory=root, **k)
@@ -182,7 +185,8 @@ class H(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
     def do_GET(self):
         p = count_dir / 'gets'
-        p.write_text(str(int(p.read_text())+1 if p.exists() else 1))
+        with _get_lock:
+            p.write_text(str(int(p.read_text())+1 if p.exists() else 1))
         path = self.translate_path(self.path)
         if not os.path.isfile(path):
             self.send_error(404); return

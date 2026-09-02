@@ -39,6 +39,10 @@ do
   install -m 0755 "${ROOT}/client/lib/${hf}" "${MM_CLIENT_ROOT}/lib/${hf}"
 done
 phase2_helper_generation_write "$MM_CLIENT_ROOT" >/dev/null
+# shellcheck source=lib/phase2_bundle_trust_fixture.sh
+source "${ROOT}/tests/lib/phase2_bundle_trust_fixture.sh"
+phase2_trust_fixture_export_dp_phase2_root "$TMP" >/dev/null
+phase2_trust_fixture_write_bundle_sidecar "$MM_DP_PHASE2_ROOT" "6.6.0" >/dev/null
 phase2_upgrade_wrapper_write "$MM_CLIENT_ROOT" "http://192.0.2.10" "6.6.0" >/dev/null
 export SCRIPT_DIR="${ROOT}/scripts"
 mkdir -p "$MM_LOG_DIR" "$MM_CONFIG_DIR" "$MM_CLIENT_ROOT"
@@ -371,7 +375,7 @@ gui_build_client_commands "http://192.0.2.10" "cluster" "192.168.124.23,192.168.
 grep -q -- '--worker-ips' "$CLUSTER_OUT" || fail "DL --worker-ips missing"
 grep -Fq '192.168.124.23' "$CLUSTER_OUT" && grep -Fq '192.168.124.25' "$CLUSTER_OUT" \
   || fail "DL worker ips missing"
-grep -q -- '--worker-password' "$CLUSTER_OUT" || fail "DL --worker-password missing"
+grep -q -- '--worker-password-file' "$CLUSTER_OUT" || fail "DL --worker-password-file missing"
 grep -Fq 'customer-password' "$CLUSTER_OUT" && fail "DL plaintext password embedded" || true
 grep -Eq 'read(\\[[:space:]]|[[:space:]])+-rsp|Worker(\\[[:space:]]|[[:space:]])+SSH' "$CLUSTER_OUT" \
   || fail "DL runtime password prompt missing"
@@ -390,8 +394,9 @@ assert_cluster_bringup_prompt() {
     [[ -n "$ip" ]] || continue
     grep -Fq "$ip" "$file" || fail "worker ip missing: ${ip}"
   done
-  grep -q -- '--worker-password' "$file" || fail "missing --worker-password flag"
+  grep -q -- '--worker-password-file' "$file" || fail "missing --worker-password-file flag"
   grep -Eq 'read(\\[[:space:]]|[[:space:]])+-rsp|Worker(\\[[:space:]]|[[:space:]])+SSH' "$file" || fail "missing runtime password prompt"
+  grep -q -- '--worker-password ' "$file" && fail "unexpected --worker-password argv in cluster command" || true
   if [[ -n "$password" ]]; then
     grep -Fq -- "$password" "$file" && fail "plaintext password present in command output" || true
   fi

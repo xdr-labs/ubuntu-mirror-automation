@@ -116,6 +116,9 @@ PY
 HTTP_PID=$!
 sleep 0.4
 
+GOOD_BUNDLE_SHA256="$(awk 'NF {print $1; exit}' "${WORKDIR}/http/dp-phase2/6.6.0/dp_bundle_6.6.0-current.tar.sha256")"
+EXPECTED_BUNDLE_SHA256="$GOOD_BUNDLE_SHA256"
+
 body_gets() { cat "${WORKDIR}/http-counts/body_gets" 2>/dev/null || echo 0; }
 
 echo "[test] fresh download"
@@ -137,15 +140,17 @@ ensure_verified_bundle
 [[ "$ARTIFACT_CHECKSUM_RESULT" == "PASS" ]] && pass "re-download after corrupt" || fail "corrupt recover"
 [[ -f "${CACHE_DIR}/VERIFIED" ]] && pass "re-verified" || fail "re-verified"
 
-echo "[test] checksum change invalidates cache"
+echo "[test] mismatched HTTP sidecar does not override pretrusted hash"
 echo '0000000000000000000000000000000000000000000000000000000000000001  x' \
   >"${WORKDIR}/http/dp-phase2/6.6.0/dp_bundle_6.6.0-current.tar.sha256"
 set +e
 out="$(ensure_verified_bundle 2>&1)"
 rc=$?
 set -e
-[[ "$rc" -ne 0 ]] && pass "checksum change STOP" || fail "checksum change should fail"
-# restore good checksum
+[[ "$rc" -eq 0 ]] && pass "pretrusted ignores stale sidecar" || fail "pretrusted should win over sidecar"
+echo "$out" | grep -q 'SIDECAR_CROSSCHECK=FAIL' && pass "sidecar mismatch logged" \
+  || fail "missing SIDECAR_CROSSCHECK=FAIL"
+# restore good checksum sidecar for subsequent tests
 sha256sum "${WORKDIR}/http/dp-phase2/6.6.0/dp_bundle_6.6.0-current.tar" \
   | awk '{print $1"  dp_bundle_6.6.0-current.tar"}' \
   >"${WORKDIR}/http/dp-phase2/6.6.0/dp_bundle_6.6.0-current.tar.sha256"

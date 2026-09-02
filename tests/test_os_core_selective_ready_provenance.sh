@@ -268,10 +268,16 @@ echo "=== 8. Phase2-only does not require OS-hop READY ==="
 PREPARATION_MODE=PHASE2_ONLY
 export PREPARATION_MODE
 rm -rf "$MM_SELECTIVE_ROOT"
-mkdir -p "$MM_CLIENT_ROOT"
+mkdir -p "$MM_CLIENT_ROOT" "${MM_MIRROR_ROOT}/dp-phase2/6.6.0"
 printf '#!/bin/bash\necho stage\n' >"${MM_CLIENT_ROOT}/stage-dp-phase2.sh"
 chmod +x "${MM_CLIENT_ROOT}/stage-dp-phase2.sh"
 (cd "$MM_CLIENT_ROOT" && sha256sum stage-dp-phase2.sh >stage-dp-phase2.sh.sha256)
+printf 'p2only-fixture\n' >"${MM_MIRROR_ROOT}/dp-phase2/6.6.0/dp_bundle_6.6.0-current.tar"
+(
+  cd "${MM_MIRROR_ROOT}/dp-phase2/6.6.0"
+  sha256sum dp_bundle_6.6.0-current.tar >dp_bundle_6.6.0-current.tar.sha256
+)
+export MM_DP_PHASE2_ROOT="${MM_MIRROR_ROOT}/dp-phase2"
 set +e
 engine_finalize_local_client_set >"${TMP}/p2only.log" 2>&1
 p2rc=$?
