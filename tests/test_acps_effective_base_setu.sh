@@ -38,11 +38,12 @@ acps_setup_curl_auth
   || fail "ACPS_EFFECTIVE_BASE empty after acps_setup_curl_auth"
 
 # 3) Missing credentials must fail closed with a clear error (not unbound).
-unset ACPS_EFFECTIVE_BASE ACPS_USERNAME ACPS_PASSWORD DP_PHASE2_SOURCE_BASE || true
+# Clear both naming conventions (USERNAME/PASSWORD and USER/PASS).
+unset ACPS_EFFECTIVE_BASE ACPS_USERNAME ACPS_PASSWORD ACPS_USER ACPS_PASS DP_PHASE2_SOURCE_BASE || true
 set +e
 err="$(
   set -euo pipefail
-  unset ACPS_EFFECTIVE_BASE ACPS_USERNAME ACPS_PASSWORD DP_PHASE2_SOURCE_BASE || true
+  unset ACPS_EFFECTIVE_BASE ACPS_USERNAME ACPS_PASSWORD ACPS_USER ACPS_PASS DP_PHASE2_SOURCE_BASE || true
   acps_setup_curl_auth 2>&1
 )"
 rc=$?

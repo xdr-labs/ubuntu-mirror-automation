@@ -41,7 +41,7 @@ Detects Ubuntu release and rewrites apt sources to use the local selective mirro
   - meta-release URI/URI_LTS → http://MIRROR/offline/meta-release(-lts)
 
 Options:
-  --mirror-url URL   e.g. http://10.34.200.20
+  --mirror-url URL   e.g. http://192.0.2.10
   --mirror-ip IP     Alias for building http://IP
   --hop NAME         Use hop snapshot URL /hops/NAME/ubuntu (e.g. xenial-to-bionic)
   --force            Rewrite even when already pointing at a local mirror

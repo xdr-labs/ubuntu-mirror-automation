@@ -12,7 +12,7 @@ SCRIPT_VERSION="1.0.0-xenial-to-bionic"
 SCRIPT_PATH="$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || printf '%s' "$0")"
 
 # --- build-time pins (do not edit by hand; re-run build-client) ---
-PIN_MIRROR_BASE='http://221.139.249.111'
+PIN_MIRROR_BASE='http://192.0.2.10'
 PIN_HOP='xenial-to-bionic'
 PIN_SOURCE_CODENAME='xenial'
 PIN_TARGET_CODENAME='bionic'
@@ -31,7 +31,7 @@ PIN_UPGRADER_GPG_SHA256='9013e2a3ceb64a31dd1c2713f64fa00d494cbdfb6542165f46c82f9
 PIN_PLAN_CHECKSUM='8eb3d478e2d40e7a19510239fcbf6e2e6824b2587e6e7172d60ef01e8920b157'
 PIN_DISCOVERY_CHECKSUM='d08f76a4e87bbaabc82b2aea3f552d26b9ece53be83735a74dffdfd70a816b56'
 PIN_MANIFEST_SHA256='2d18251c5c7896fe066318328b5edd0a12b8dc7447b8dddc5e87fb2975a9684e'
-PIN_SAMPLE_DEB_URL='http://221.139.249.111/hops/xenial-to-bionic/ubuntu/pool/main/a/acl/acl_2.2.52-3build1_amd64.deb'
+PIN_SAMPLE_DEB_URL='http://192.0.2.10/hops/xenial-to-bionic/ubuntu/pool/main/a/acl/acl_2.2.52-3build1_amd64.deb'
 PIN_CONFIRM_PHRASE='UPGRADE-XENIAL-TO-BIONIC'
 PIN_GENERATED_AT='2026-08-26T15:17:18Z'
 PIN_PROFILE_NAME='offline-upgrade-selective'

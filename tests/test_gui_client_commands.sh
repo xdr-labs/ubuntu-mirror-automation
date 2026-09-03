@@ -7,6 +7,9 @@ INSTALLER="${ROOT}/scripts/install-dp-upgrade-mirror.sh"
 COMMON="${ROOT}/scripts/lib/mirror_manager_common.sh"
 ENGINE="${ROOT}/scripts/lib/mirror_install_engine.sh"
 
+# shellcheck source=lib/portable_ip_policy.sh
+source "${ROOT}/tests/lib/portable_ip_policy.sh"
+
 fail() { echo "FAIL: $*" >&2; exit 1; }
 pass() { echo "PASS: $*"; }
 
@@ -61,23 +64,23 @@ awk -v sd="${ROOT}/scripts" '
 source "$LIB"
 
 # --- worker IP validation ---
-ok="$(mm_validate_worker_ips '192.168.124.23, 192.168.124.24')" \
+ok="$(mm_validate_worker_ips '192.0.2.23, 192.0.2.24')" \
   || fail "valid cluster worker ips rejected"
-[[ "$ok" == "192.168.124.23,192.168.124.24" ]] || fail "worker ips not normalized: $ok"
-ok_mgmt="$(mm_validate_worker_ips '10.10.10.23,10.10.10.24')" \
+[[ "$ok" == "192.0.2.23,192.0.2.24" ]] || fail "worker ips not normalized: $ok"
+ok_mgmt="$(mm_validate_worker_ips '198.51.100.23,198.51.100.24')" \
   || fail "valid management worker ips rejected"
-[[ "$ok_mgmt" == "10.10.10.23,10.10.10.24" ]] || fail "mgmt ips not normalized"
+[[ "$ok_mgmt" == "198.51.100.23,198.51.100.24" ]] || fail "mgmt ips not normalized"
 mm_validate_worker_ips '' >/dev/null 2>&1 && fail "empty worker ips accepted" || true
-mm_validate_worker_ips '192.168.1.1;rm -rf /' >/dev/null 2>&1 && fail "metachar accepted" || true
+mm_validate_worker_ips '192.0.2.1;rm -rf /' >/dev/null 2>&1 && fail "metachar accepted" || true
 pass "worker IP validation"
 
 mm_validate_worker_ssh_password '' '' \
   || fail "empty password should be allowed with no worker IPs"
-mm_validate_worker_ssh_password '' '192.168.124.23' \
+mm_validate_worker_ssh_password '' '192.0.2.23' \
   && fail "empty password accepted with worker IPs" || true
-mm_validate_worker_ssh_password 'customer-password' '192.168.124.23' \
+mm_validate_worker_ssh_password 'customer-password' '192.0.2.23' \
   || fail "non-empty password rejected with worker IPs"
-mm_validate_worker_ssh_password 'Abc$123!' '192.168.124.23,192.168.124.25' \
+mm_validate_worker_ssh_password 'Abc$123!' '192.0.2.23,192.0.2.25' \
   || fail "special-character password rejected"
 pass "worker SSH password validation"
 
@@ -87,8 +90,8 @@ ACPS_USERNAME=u
 ACPS_PASSWORD=p
 MIRROR_HTTP_URL="http://192.0.2.10"
 WORKER_SSH_PASSWORD='customer-password'
-DL_WORKER_IPS='192.168.124.23,192.168.124.25'
-DA_WORKER_IPS='192.168.124.24,192.168.124.26'
+DL_WORKER_IPS='192.0.2.23,192.0.2.25'
+DA_WORKER_IPS='192.0.2.24,192.0.2.26'
 mm_save_gui_config >/dev/null
 grep -q 'WORKER_SSH_PASSWORD=' "$MM_CONFIG_FILE" || fail "WORKER_SSH_PASSWORD not written"
 grep -q 'DL_WORKER_IPS=' "$MM_CONFIG_FILE" || fail "DL_WORKER_IPS not written"
@@ -98,8 +101,8 @@ DL_WORKER_IPS=""
 DA_WORKER_IPS=""
 mm_load_gui_config
 [[ "$WORKER_SSH_PASSWORD" == "customer-password" ]] || fail "worker password not reloaded"
-[[ "$DL_WORKER_IPS" == '192.168.124.23,192.168.124.25' ]] || fail "DL worker IPs not reloaded"
-[[ "$DA_WORKER_IPS" == '192.168.124.24,192.168.124.26' ]] || fail "DA worker IPs not reloaded"
+[[ "$DL_WORKER_IPS" == '192.0.2.23,192.0.2.25' ]] || fail "DL worker IPs not reloaded"
+[[ "$DA_WORKER_IPS" == '192.0.2.24,192.0.2.26' ]] || fail "DA worker IPs not reloaded"
 WORKER_SSH_PASSWORD='Abc$123!'
 mm_save_gui_config >/dev/null
 WORKER_SSH_PASSWORD=""
@@ -146,8 +149,8 @@ pass "Configuration uses Preparation Mode + exact footer"
 config_text="Preparation Mode: Full OS Upgrade + Phase 2
 ACPS Username: configured
 ACPS Password: configured
-DL Worker IPs: 192.168.124.23,192.168.124.25
-DA Worker IPs: 192.168.124.24,192.168.124.26
+DL Worker IPs: 192.0.2.23,192.0.2.25
+DA Worker IPs: 192.0.2.24,192.0.2.26
 Worker SSH Password (aella): configured
 ACPS Server: Fixed
 OS Core Source: Cloudflare R2
@@ -349,13 +352,12 @@ fi
 mm_http_probe_ok() { return 0; }
 PREPARATION_MODE=PHASE2_ONLY
 
-# Forbidden strings
+# Forbidden strings (no historical environment-IP denylist — portable policy below)
 for bad in \
   CLIENT_DOWNLOAD_SOURCE CLIENT_R2_ACCESS CLIENT_ACPS_ACCESS \
   PROJECT_ROLLBACK_SUPPORTED 'Repeat similarly' '<mirror-ip>' \
   'Worker management IPs' '--source-dp-version' \
-  'Current DP Version' 'Target DP Version' \
-  '221.139.249.111' '221.139.249.112'
+  'Current DP Version' 'Target DP Version'
 do
   if grep -Fq -- "$bad" "$OUT"; then
     fail "forbidden string present in FULL: $bad"
@@ -366,14 +368,21 @@ do
 done
 pass "forbidden strings absent"
 
+# Generated Menu 7 / client commands must not embed non-portable IPs.
+portable_ip_policy_assert_file "menu7-full" "$OUT" \
+  || fail "FULL client commands contain non-portable IP literals"
+portable_ip_policy_assert_file "menu7-phase2-only" "$P2_OUT" \
+  || fail "PHASE2_ONLY client commands contain non-portable IP literals"
+pass "generated Menu 7 commands use portable IP policy"
+
 # Cluster bringup: DL master workers + password configured (runtime prompt; no plaintext)
 CLUSTER_OUT="$TMP/cluster-dl.txt"
 PREPARATION_MODE=FULL
 WORKER_SSH_PASSWORD='customer-password'
-gui_build_client_commands "http://192.0.2.10" "cluster" "192.168.124.23,192.168.124.25" "" \
+gui_build_client_commands "http://192.0.2.10" "cluster" "192.0.2.23,192.0.2.25" "" \
   "customer-password" >"$CLUSTER_OUT"
 grep -q -- '--worker-ips' "$CLUSTER_OUT" || fail "DL --worker-ips missing"
-grep -Fq '192.168.124.23' "$CLUSTER_OUT" && grep -Fq '192.168.124.25' "$CLUSTER_OUT" \
+grep -Fq '192.0.2.23' "$CLUSTER_OUT" && grep -Fq '192.0.2.25' "$CLUSTER_OUT" \
   || fail "DL worker ips missing"
 grep -q -- '--worker-password-file' "$CLUSTER_OUT" || fail "DL --worker-password-file missing"
 grep -Fq 'customer-password' "$CLUSTER_OUT" && fail "DL plaintext password embedded" || true
@@ -411,31 +420,31 @@ assert_single_bringup_no_workers() {
   printf '%s\n' "$line" | grep -q -- '--worker-password' && fail "unexpected --worker-password" || true
 }
 
-assert_cluster_bringup_prompt "$CLUSTER_OUT" "192.168.124.23,192.168.124.25" "customer-password"
+assert_cluster_bringup_prompt "$CLUSTER_OUT" "192.0.2.23,192.0.2.25" "customer-password"
 pass "DL worker-ips present; password not embedded"
 
 # DA master workers use the same configured password (prompt; not embedded)
 DA_OUT="$TMP/cluster-da.txt"
-gui_build_client_commands "http://192.0.2.10" "cluster" "" "192.168.124.24,192.168.124.26" \
+gui_build_client_commands "http://192.0.2.10" "cluster" "" "192.0.2.24,192.0.2.26" \
   "customer-password" >"$DA_OUT"
 grep -q -- '--worker-ips' "$DA_OUT" || fail "DA --worker-ips missing"
-grep -Fq '192.168.124.24' "$DA_OUT" && grep -Fq '192.168.124.26' "$DA_OUT" \
+grep -Fq '192.0.2.24' "$DA_OUT" && grep -Fq '192.0.2.26' "$DA_OUT" \
   || fail "DA worker ips missing"
-assert_cluster_bringup_prompt "$DA_OUT" "192.168.124.24,192.168.124.26" "customer-password"
+assert_cluster_bringup_prompt "$DA_OUT" "192.0.2.24,192.0.2.26" "customer-password"
 pass "DA worker-ips present; password not embedded"
 
 # DL and DA cluster commands are emitted together from one configuration.
 DUAL_OUT="$TMP/cluster-dual.txt"
 gui_build_client_commands "http://192.0.2.10" "cluster" \
-  "192.168.124.23,192.168.124.25" "192.168.124.24,192.168.124.26" \
+  "192.0.2.23,192.0.2.25" "192.0.2.24,192.0.2.26" \
   "customer-password" >"$DUAL_OUT"
 [[ "$(grep -cE 'bringup_py3_dp_after_os_upgrade\.sh|read(\\[[:space:]]|[[:space:]])+-rsp' "$DUAL_OUT" || true)" -ge 2 ]] \
   || fail "dual cluster output must contain DL and DA bringup prompts"
 grep -q 'STEP 7A — DL CLUSTER MASTER' "$DUAL_OUT" || fail "STEP 7A missing"
 grep -q 'STEP 7B — DA CLUSTER MASTER' "$DUAL_OUT" || fail "STEP 7B missing"
-grep -Fq '192.168.124.23' "$DUAL_OUT" && grep -Fq '192.168.124.25' "$DUAL_OUT" \
+grep -Fq '192.0.2.23' "$DUAL_OUT" && grep -Fq '192.0.2.25' "$DUAL_OUT" \
   || fail "dual DL worker list missing"
-grep -Fq '192.168.124.24' "$DUAL_OUT" && grep -Fq '192.168.124.26' "$DUAL_OUT" \
+grep -Fq '192.0.2.24' "$DUAL_OUT" && grep -Fq '192.0.2.26' "$DUAL_OUT" \
   || fail "dual DA worker list missing"
 grep -Fq 'customer-password' "$DUAL_OUT" && fail "dual plaintext password embedded" || true
 pass "dual DL/DA cluster bringup commands"
@@ -446,7 +455,7 @@ pass "single-node bringup omits worker flags"
 
 # Cluster without password is rejected
 set +e
-gui_build_client_commands "http://192.0.2.10" "cluster" "192.168.124.23" "" "" \
+gui_build_client_commands "http://192.0.2.10" "cluster" "192.0.2.23" "" "" \
   >"$TMP/cluster-nopass.txt" 2>"$TMP/cluster-nopass.err"
 nopass_rc=$?
 set -e
@@ -458,9 +467,9 @@ pass "cluster without password rejected"
 # Special-character passwords must NOT appear in generated command output
 for spec_pass in 'Test123!' 'Abc$123!' 'worker@Pass#2026' 'A&b!c$123'; do
   spec_out="$TMP/cluster-spec.txt"
-  gui_build_client_commands "http://192.0.2.10" "cluster" "192.168.124.23" "" \
+  gui_build_client_commands "http://192.0.2.10" "cluster" "192.0.2.23" "" \
     "$spec_pass" >"$spec_out"
-  assert_cluster_bringup_prompt "$spec_out" "192.168.124.23" "$spec_pass"
+  assert_cluster_bringup_prompt "$spec_out" "192.0.2.23" "$spec_pass"
 done
 pass "special-character worker passwords not embedded in generated command"
 
@@ -656,8 +665,8 @@ pass "non-root prints clear sudo guidance"
 # Required cluster workflow regression markers (distinct DL/DA IP lists).
 # Never print the raw worker password in test output.
 # ---------------------------------------------------------------------------
-REG_DL_IPS='10.10.10.21,10.10.10.22'
-REG_DA_IPS='10.20.20.21,10.20.20.22'
+REG_DL_IPS='198.51.100.21,198.51.100.22'
+REG_DA_IPS='203.0.113.21,203.0.113.22'
 REG_PW='Sp3c#Pw!x9Q'
 
 grep -q '"5" "DL Worker IP addresses"' "$INSTALLER" \
@@ -715,10 +724,10 @@ awk '/STEP 7A — DL CLUSTER MASTER/,/STEP 7B — DA CLUSTER MASTER/' "$REG_DUAL
 awk '/STEP 7B — DA CLUSTER MASTER/,/^STEP 8 —/' "$REG_DUAL" \
   >"$REG_DA_SEC"
 grep -q -- '--worker-ips' "$REG_DL_SEC" || fail "MENU7_DL_COMMAND_USES_ONLY_DL_WORKERS"
-grep -Fq '10.10.10.21' "$REG_DL_SEC" && grep -Fq '10.10.10.22' "$REG_DL_SEC" \
+grep -Fq '198.51.100.21' "$REG_DL_SEC" && grep -Fq '198.51.100.22' "$REG_DL_SEC" \
   || fail "MENU7_DL_COMMAND_USES_ONLY_DL_WORKERS"
 grep -q -- '--worker-ips' "$REG_DA_SEC" || fail "MENU7_DA_COMMAND_USES_ONLY_DA_WORKERS"
-grep -Fq '10.20.20.21' "$REG_DA_SEC" && grep -Fq '10.20.20.22' "$REG_DA_SEC" \
+grep -Fq '203.0.113.21' "$REG_DA_SEC" && grep -Fq '203.0.113.22' "$REG_DA_SEC" \
   || fail "MENU7_DA_COMMAND_USES_ONLY_DA_WORKERS"
 echo "MENU7_DL_COMMAND_USES_ONLY_DL_WORKERS=PASS"
 echo "MENU7_DA_COMMAND_USES_ONLY_DA_WORKERS=PASS"
@@ -775,7 +784,7 @@ REG_DL_ONLY="$TMP/reg-dl-only.txt"
 gui_build_client_commands "http://192.0.2.10" "cluster" \
   "$REG_DL_IPS" "" "$REG_PW" >"$REG_DL_ONLY"
 grep -q -- '--worker-ips' "$REG_DL_ONLY" || fail "DL-only missing --worker-ips"
-grep -Fq '10.10.10.21' "$REG_DL_ONLY" && grep -Fq '10.10.10.22' "$REG_DL_ONLY" \
+grep -Fq '198.51.100.21' "$REG_DL_ONLY" && grep -Fq '198.51.100.22' "$REG_DL_ONLY" \
   || fail "DL-only missing DL workers"
 grep -F "$REG_DA_IPS" "$REG_DL_ONLY" && fail "DL-only contains DA workers" || true
 grep -q 'DA cluster bringup command was not generated because' "$REG_DL_ONLY" \
@@ -790,7 +799,7 @@ REG_DA_ONLY="$TMP/reg-da-only.txt"
 gui_build_client_commands "http://192.0.2.10" "cluster" \
   "" "$REG_DA_IPS" "$REG_PW" >"$REG_DA_ONLY"
 grep -q -- '--worker-ips' "$REG_DA_ONLY" || fail "DA-only missing --worker-ips"
-grep -Fq '10.20.20.21' "$REG_DA_ONLY" && grep -Fq '10.20.20.22' "$REG_DA_ONLY" \
+grep -Fq '203.0.113.21' "$REG_DA_ONLY" && grep -Fq '203.0.113.22' "$REG_DA_ONLY" \
   || fail "DA-only missing DA workers"
 grep -F "$REG_DL_IPS" "$REG_DA_ONLY" && fail "DA-only contains DL workers" || true
 grep -q 'DL cluster bringup command was not generated because' "$REG_DA_ONLY" \
@@ -816,7 +825,7 @@ awk '/STEP 3A — DL CLUSTER MASTER/,/STEP 3B — DA CLUSTER MASTER/' "$REG_P2" 
   | grep -q -- '--worker-ips' \
   || fail "PHASE2 DL command missing --worker-ips"
 awk '/STEP 3A — DL CLUSTER MASTER/,/STEP 3B — DA CLUSTER MASTER/' "$REG_P2" \
-  | grep -Fq '10.10.10.21' \
+  | grep -Fq '198.51.100.21' \
   || fail "PHASE2 DL command missing DL workers"
 awk '/STEP 3A — DL CLUSTER MASTER/,/STEP 3B — DA CLUSTER MASTER/' "$REG_P2" \
   | grep -F "$REG_DA_IPS" \
@@ -825,7 +834,7 @@ awk '/STEP 3B — DA CLUSTER MASTER/,/^STEP 4 —/' "$REG_P2" \
   | grep -q -- '--worker-ips' \
   || fail "PHASE2 DA command missing --worker-ips"
 awk '/STEP 3B — DA CLUSTER MASTER/,/^STEP 4 —/' "$REG_P2" \
-  | grep -Fq '10.20.20.21' \
+  | grep -Fq '203.0.113.21' \
   || fail "PHASE2 DA command missing DA workers"
 awk '/STEP 3B — DA CLUSTER MASTER/,/^STEP 4 —/' "$REG_P2" \
   | grep -F "$REG_DL_IPS" \

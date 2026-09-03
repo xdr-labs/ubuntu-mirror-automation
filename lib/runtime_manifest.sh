@@ -41,6 +41,7 @@ UM_RUNTIME_SCRIPT_LIB_SHELL=(
   mirror_install_engine.sh
   mirror_workflow_state.sh
   r2_acquire.sh
+  acps_auth.sh
   acps_acquire.sh
   dp-phase2-common.sh
   mirror_host_ip.sh
@@ -80,6 +81,7 @@ UM_RUNTIME_SCRIPT_LIB_PYTHON_EXECUTABLES=(
 # patch fragments that the patcher hashes into BRINGUP_PATCH_GENERATION.
 UM_RUNTIME_SCRIPT_LIB_EXTRA=(
   phase2_bringup_patch/fragment_compat.sh
+  phase2_bringup_patch/fragment_credential_ssh.sh
   phase2_bringup_patch/fragment_heartbeat.sh
   phase2_bringup_patch/fragment_resume.sh
   phase2_bringup_patch/README.md
@@ -91,6 +93,7 @@ UM_RUNTIME_SCRIPT_LIB_EXTRA=(
 UM_RUNTIME_VENDOR_FILES=(
   dp-phase2/bringup_py3_dp_after_os_upgrade.sh
   dp-phase2/bringup_py3_dp_after_os_upgrade.sh.upstream.sha1
+  dp-phase2/approved-upstream-bringup.sha256
 )
 
 UM_RUNTIME_TEMPLATE_FILES=(

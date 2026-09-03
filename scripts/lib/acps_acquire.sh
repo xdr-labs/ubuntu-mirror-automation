@@ -9,15 +9,16 @@ fi
 ACPS_ACQUIRE_LOADED=1
 
 # Expects mirror_manager_common.sh and dp-phase2-common.sh already sourced.
+# Auth/TLS (netrc, ACPS_INSECURE_TLS) lives in acps_auth.sh — shared with
+# standalone scripts/download-dp-phase2.sh.
+
+# shellcheck source=acps_auth.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/acps_auth.sh"
 
 ACPS_CURL_CONNECT_TIMEOUT="${ACPS_CURL_CONNECT_TIMEOUT:-30}"
 ACPS_CURL_RETRIES="${ACPS_CURL_RETRIES:-5}"
 ACPS_CURL_RETRY_DELAY="${ACPS_CURL_RETRY_DELAY:-5}"
 ACPS_PROGRESS_INTERVAL_SEC="${ACPS_PROGRESS_INTERVAL_SEC:-3}"
-ACPS_CURL_AUTH_ARGS=()
-ACPS_CURL_TLS_ARGS=()
-ACPS_CURL_NETRC_FILE=""
-ACPS_INSECURE_TLS="${ACPS_INSECURE_TLS:-0}"
 
 acps_cache_dir() {
   local ver="${1:-$DP_PHASE2_VERSION}"
@@ -462,82 +463,6 @@ mm_calc_disk_requirements() {
   mm_info "DISK_PREFLIGHT_RESULT=${DISK_PREFLIGHT_RESULT}"
   mm_info "DISK_PREFLIGHT=${DISK_PREFLIGHT}"
   [[ "$DISK_PREFLIGHT" == "PASS" ]] || mm_die "DISK_PREFLIGHT=FAIL"
-}
-
-acps_setup_curl_auth() {
-  ACPS_CURL_AUTH_ARGS=()
-  ACPS_CURL_TLS_ARGS=()
-  ACPS_CURL_NETRC_FILE="${ACPS_CURL_NETRC_FILE:-}"
-  if [[ -n "${DP_PHASE2_SOURCE_BASE:-}" ]]; then
-    ACPS_EFFECTIVE_BASE="${DP_PHASE2_SOURCE_BASE}"
-    return 0
-  fi
-  ACPS_EFFECTIVE_BASE="${ACPS_BASE_URL:-$ACPS_BASE_URL_FIXED}"
-  [[ -n "${ACPS_USERNAME:-}" ]] || mm_die "ACPS_USERNAME=FAIL missing"
-  [[ -n "${ACPS_PASSWORD:-}" ]] || mm_die "ACPS_PASSWORD=FAIL missing"
-
-  # Prefer secure TLS verification. Explicit opt-in required for -k.
-  if [[ "${ACPS_INSECURE_TLS:-0}" == "1" ]]; then
-    ACPS_CURL_TLS_ARGS+=(-k)
-    mm_warn "ACPS_TLS_VERIFY=DISABLED ACPS_INSECURE_TLS_WARNING=YES"
-  else
-    mm_info "ACPS_TLS_VERIFY=ENABLED"
-  fi
-
-  # Never put username:password on curl argv (visible via /proc). Use a
-  # 0600 netrc under a private run directory and clean it up afterwards.
-  acps_install_netrc_auth || mm_die "ACPS_AUTH_SETUP=FAIL"
-}
-
-acps_auth_run_dir() {
-  local d
-  if [[ -n "${ACPS_AUTH_RUN_DIR:-}" ]]; then
-    d="$ACPS_AUTH_RUN_DIR"
-  elif [[ -d /run && -w /run ]]; then
-    d="/run/ubuntu-mirror-acps.$$"
-  else
-    d="${TMPDIR:-/tmp}/ubuntu-mirror-acps.$$"
-  fi
-  mkdir -p "$d" || return 1
-  chmod 0700 "$d" || return 1
-  printf '%s\n' "$d"
-}
-
-acps_cleanup_curl_auth() {
-  local f="${ACPS_CURL_NETRC_FILE:-}"
-  local d
-  ACPS_CURL_AUTH_ARGS=()
-  if [[ -n "$f" ]]; then
-    d="$(dirname "$f")"
-    rm -f "$f" 2>/dev/null || true
-    if [[ "$d" == /run/ubuntu-mirror-acps.* || "$d" == "${TMPDIR:-/tmp}/ubuntu-mirror-acps."* ]]; then
-      rmdir "$d" 2>/dev/null || true
-    fi
-  fi
-  ACPS_CURL_NETRC_FILE=""
-}
-
-acps_install_netrc_auth() {
-  local run_dir machine host
-  acps_cleanup_curl_auth
-  run_dir="$(acps_auth_run_dir)" || return 1
-  ACPS_CURL_NETRC_FILE="${run_dir}/netrc"
-  # Extract host from URL for netrc "machine" field.
-  host="$(printf '%s' "${ACPS_EFFECTIVE_BASE}" | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##' | cut -d/ -f1 | cut -d@ -f2 | cut -d: -f1)"
-  [[ -n "$host" ]] || return 1
-  machine="$host"
-  # Restrictive umask while writing credentials.
-  (
-    umask 077
-    {
-      printf 'machine %s\n' "$machine"
-      printf 'login %s\n' "${ACPS_USERNAME}"
-      printf 'password %s\n' "${ACPS_PASSWORD}"
-    } >"${ACPS_CURL_NETRC_FILE}"
-  ) || return 1
-  chmod 0600 "${ACPS_CURL_NETRC_FILE}" || return 1
-  ACPS_CURL_AUTH_ARGS=(--netrc-file "${ACPS_CURL_NETRC_FILE}")
-  return 0
 }
 
 acps_test_connection() {

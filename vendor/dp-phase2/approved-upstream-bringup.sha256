@@ -1,0 +1,29 @@
+# Approved upstream bringup SHA256 allowlist (repository-controlled).
+#
+# Production Download and Prepare verifies the ACPS .sha1 sidecar, then requires
+# SHA256(upstream bytes) to match one of these digests before the deterministic
+# patcher may produce root-executable bringup output.
+#
+# HTTPS, same-channel SHA1 sidecars, and patch-anchor compatibility are NOT an
+# approval root. New vendor bringup bytes must be reviewed and intentionally
+# added here after patch compatibility/tests pass.
+#
+# Operational update process:
+#   vendor releases new bringup
+#     → acquisition detects unknown SHA256
+#     → Download and Prepare fails closed (UPSTREAM_BRINGUP_PROVENANCE=FAIL)
+#     → engineer reviews new upstream
+#     → patch compatibility/tests run
+#     → approved SHA256 is intentionally added below
+#     → normal preparation can proceed
+#
+# Format: <sha256>  <label>
+
+# Synthetic regression fixture (tests/fixtures/dp-phase2/upstream_bringup_unpatched.sh)
+f912e81632fce481a0ce9b597779b14dbab45873321d137adc09c5e40adfffe5  upstream_bringup_unpatched
+
+# Production ACPS generation f1a73 (tests/fixtures/dp-phase2/production-f1a73/)
+a5e4ee81bf08a17b33212c296462a1ca09b025adece8d41fb9d3ddf98b94f3fb  production-f1a73
+
+# Production ACPS generation 3af369 (tests/fixtures/dp-phase2/production-3af369/)
+c4a881bfaa906adbcee6fc2826469b2bc472402a81f9b0fb4f4a9bbb871f187a  production-3af369

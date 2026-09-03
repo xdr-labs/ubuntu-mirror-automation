@@ -219,7 +219,7 @@ while IFS= read -r cline; do
 done <"$phase2_block"
 
 # Prove the 125-column bound with the current field mirror URL.
-PROD_MIRROR="http://221.139.249.112"
+PROD_MIRROR="http://198.51.100.10"
 PROD_CANONICAL="${TMP}/prod-canonical.txt"
 PROD_DISPLAY="${TMP}/prod-display.txt"
 sed "s#${MIRROR}#${PROD_MIRROR}#g" "$CANONICAL" >"$PROD_CANONICAL"

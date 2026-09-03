@@ -330,35 +330,57 @@ Preflight logs structured fields (`DISK_PREFLIGHT_*`,
 `TOTAL_CAPACITY_BASED_PROJECTED_PEAK_BYTES`). Insufficient free space fails closed
 with `DISK_PREFLIGHT=FAIL`.
 
-## Bringup integrity and reference SHA
+## Bringup integrity and provenance
 
-Authoritative integrity for `bringup_py3_dp_after_os_upgrade.sh` is the
-current ACPS `.sha1` sidecar. If the downloaded (or reused) script SHA1 does
-not match that sidecar, preparation fails (`ACPS_BRINGUP_CHECKSUM=FAIL`).
+Authoritative integrity for `bringup_py3_dp_after_os_upgrade.sh` has two
+blocking gates:
+
+1. Current ACPS `.sha1` sidecar must match downloaded bytes
+   (`ACPS_BRINGUP_CHECKSUM`).
+2. `SHA256(upstream bytes)` must match a digest in the repository-controlled
+   allowlist `vendor/dp-phase2/approved-upstream-bringup.sha256`
+   (`UPSTREAM_BRINGUP_PROVENANCE`). Unknown digests fail closed with
+   `UPSTREAM_BRINGUP_APPROVAL_REQUIRED=YES` — they are **not**
+   `UPSTREAM_BRINGUP_DRIFT=NON_BLOCKING`.
+
+HTTPS alone, same-channel sidecars, and patch-anchor compatibility are not an
+approval root. New vendor bringup bytes require engineer review, patch
+compatibility/tests, and an intentional allowlist update.
 
 `vendor/dp-phase2/bringup_py3_dp_after_os_upgrade.sh.upstream.sha1` is a
-previously known reference SHA for change detection only. A mismatch is
-logged as `UPSTREAM_BRINGUP_DRIFT=NON_BLOCKING` and does not fail the
-install or block HTTP distribution.
+previously known reference SHA for change detection only. A mismatch after
+provenance PASS is logged as `UPSTREAM_BRINGUP_CHANGED=YES` /
+`UPSTREAM_BRINGUP_REFERENCE_MISMATCH=YES` and does not by itself fail the
+install.
 
-A changed upstream must still pass syntax (`bash -n`) and required patch
-anchors. Project modifications are then applied **to that fresh upstream**
-by `scripts/lib/patch_dp_phase2_bringup.py`. Missing anchors or a failed
-generation is fatal (`BRINGUP_PATCH_COMPAT` / `PATCHED_BRINGUP_GENERATION` /
-`BRINGUP_PATCH_RESULT` / `PATCHED_BRINGUP_SYNTAX`), independent of SHA drift.
-The repository vendor full copy is a reference artifact only and is never
-copied over a newly downloaded ACPS bringup.
+A changed-but-approved upstream must still pass syntax (`bash -n`) and
+required patch anchors. Project modifications are then applied **to that
+fresh upstream** by `scripts/lib/patch_dp_phase2_bringup.py`. Missing anchors
+or a failed generation is fatal (`BRINGUP_PATCH_COMPAT` /
+`PATCHED_BRINGUP_GENERATION` / `BRINGUP_PATCH_RESULT` /
+`PATCHED_BRINGUP_SYNTAX`). The repository vendor full copy is a reference
+artifact only and is never copied over a newly downloaded ACPS bringup.
+
+Worker SSH uses `StrictHostKeyChecking=accept-new` with a persistent
+project-owned `known_hosts` under `/var/lib/dp-phase2-bringup` (mode
+`0700`/`0600`). TOFU does **not** cryptographically authenticate the first
+connection; this provides persistent first-seen-key continuity and
+changed-key rejection. Production paths do not silently fall back to a
+process-local `/tmp` known_hosts file.
 
 ## Client HTTP only
 
 ## Test vs development Mirror addresses
 
-- Development Mirror Server: `http://221.139.249.111`
-- Test Mirror Server used by DP clients: `http://221.139.249.112`
+Documentation examples only (RFC 5737; replace with the operator Mirror URL):
 
-Clients published from the test Mirror must embed the same base URL for
+- Development Mirror Server example: `http://192.0.2.10`
+- Test Mirror Server example: `http://198.51.100.10`
+
+Clients published from a given Mirror must embed that same base URL for
 `PIN_MIRROR_BASE`, APT sources, meta-release UpgradeTool URIs, and sample DEB
-URLs. Do not point test-server client runtime at the development Mirror.
+URLs. Do not point one environment's client runtime at another environment's
+Mirror.
 
 Optional HTTP `/client/<hop>/meta-release-lts` may be absent (HTTP 404). In that
 case the signed embedded meta-release copy is authoritative

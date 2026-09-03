@@ -92,8 +92,8 @@ assert_cluster_prompt_shape() {
 CLUSTER_OUT="$TMP/cluster.txt"
 WORKER_SSH_PASSWORD='customer-password'
 gui_build_client_commands "http://192.0.2.10" "cluster" \
-  "192.168.124.23,192.168.124.25" "" "customer-password" >"$CLUSTER_OUT"
-assert_cluster_prompt_shape "$CLUSTER_OUT" "192.168.124.23,192.168.124.25"
+  "192.0.2.23,192.0.2.25" "" "customer-password" >"$CLUSTER_OUT"
+assert_cluster_prompt_shape "$CLUSTER_OUT" "192.0.2.23,192.0.2.25"
 assert_no_plaintext_password "$CLUSTER_OUT" "customer-password"
 pass "cluster commands use runtime prompt; password not embedded"
 
@@ -108,16 +108,16 @@ pass "AIO/single omits worker password"
 # --- Special-character passwords never appear in command output ---
 for spec_pass in 'Test123!' 'Abc$123!' 'worker@Pass#2026' 'A&b!c$123' 'p$ss"wo'\''rd`!'; do
   spec_out="$TMP/cluster-spec.txt"
-  gui_build_client_commands "http://192.0.2.10" "cluster" "192.168.124.23" "" \
+  gui_build_client_commands "http://192.0.2.10" "cluster" "192.0.2.23" "" \
     "$spec_pass" >"$spec_out"
-  assert_cluster_prompt_shape "$spec_out" "192.168.124.23"
+  assert_cluster_prompt_shape "$spec_out" "192.0.2.23"
   assert_no_plaintext_password "$spec_out" "$spec_pass"
 done
 pass "special-character passwords absent from command output"
 
 # --- Config still requires password for cluster generation ---
 set +e
-gui_build_client_commands "http://192.0.2.10" "cluster" "192.168.124.23" "" "" \
+gui_build_client_commands "http://192.0.2.10" "cluster" "192.0.2.23" "" "" \
   >"$TMP/nopass.txt" 2>"$TMP/nopass.err"
 nopass_rc=$?
 set -e
@@ -131,7 +131,7 @@ mm_wf_ensure_file
 PREPARATION_MODE=PHASE2_ONLY
 PUB_TMP="$TMP/cmds.publish.tmp"
 PUB_DEST="$TMP/cmds.publish"
-gui_build_client_commands "http://192.0.2.10" "cluster" "192.168.124.23" "" \
+gui_build_client_commands "http://192.0.2.10" "cluster" "192.0.2.23" "" \
   "customer-password" >"$PUB_TMP"
 chmod 0644 "$PUB_TMP"
 mm_wf_atomic_publish_command_file "$PUB_TMP" "$PUB_DEST" PHASE2_ONLY "gen-secret-1" >/dev/null \

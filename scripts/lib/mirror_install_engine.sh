@@ -954,11 +954,60 @@ engine_bringup_sha1_of() {
 }
 
 # Previously known unmodified ACPS bringup SHA1. Observability / change
-# detection only — never a production blocking gate.
+# detection only — never a production blocking gate. Blocking approval is the
+# repository-controlled SHA256 allowlist (approved-upstream-bringup.sha256).
 engine_bringup_reference_sha1() {
   local baseline="${MM_PROJECT_ROOT}/vendor/dp-phase2/bringup_py3_dp_after_os_upgrade.sh.upstream.sha1"
   [[ -f "$baseline" ]] || mm_die "UPSTREAM_BASELINE_MISSING path=${baseline}"
   awk '{print $1; exit}' "$baseline"
+}
+
+engine_bringup_approved_sha256_list_path() {
+  printf '%s\n' "${MM_PROJECT_ROOT}/vendor/dp-phase2/approved-upstream-bringup.sha256"
+}
+
+engine_bringup_sha256_of() {
+  sha256sum "$1" | awk '{print $1}'
+}
+
+# Repository-controlled cryptographic provenance: SHA256(upstream) must match
+# an intentionally approved digest. Same-channel ACPS sidecars are NOT enough.
+engine_verify_upstream_bringup_provenance() {
+  local upstream_file="$1"
+  local list actual matched=0 line digest
+  list="$(engine_bringup_approved_sha256_list_path)"
+  [[ -f "$list" ]] || {
+    mm_error "UPSTREAM_BRINGUP_PROVENANCE=FAIL"
+    mm_error "UPSTREAM_BRINGUP_APPROVAL_REQUIRED=YES"
+    mm_error "UPSTREAM_BRINGUP_APPROVAL_LIST_MISSING path=${list}"
+    mm_state_set HTTP_DISTRIBUTION_READY NO
+    mm_die "UPSTREAM_BRINGUP_PROVENANCE=FAIL"
+  }
+  engine_bringup_require_nonempty "$upstream_file"
+  actual="$(engine_bringup_sha256_of "$upstream_file")"
+  BRINGUP_UPSTREAM_SHA256="$actual"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -n "$line" && "$line" != \#* ]] || continue
+    digest="$(printf '%s\n' "$line" | awk '{print $1; exit}')"
+    [[ "$digest" =~ ^[0-9a-fA-F]{64}$ ]] || continue
+    if [[ "${digest,,}" == "${actual,,}" ]]; then
+      matched=1
+      break
+    fi
+  done <"$list"
+  if [[ "$matched" -ne 1 ]]; then
+    mm_error "UPSTREAM_BRINGUP_PROVENANCE=FAIL"
+    mm_error "UPSTREAM_BRINGUP_APPROVAL_REQUIRED=YES"
+    mm_error "UPSTREAM_BRINGUP_SHA256=${actual}"
+    mm_error "INSTALL_RESULT=FAIL"
+    mm_state_set HTTP_DISTRIBUTION_READY NO
+    mm_state_set UPSTREAM_BRINGUP_PROVENANCE FAIL
+    mm_status_set UPSTREAM_BRINGUP_PROVENANCE FAIL
+    mm_die "UPSTREAM_BRINGUP_PROVENANCE=FAIL"
+  fi
+  mm_state_set UPSTREAM_BRINGUP_PROVENANCE PASS
+  mm_status_set UPSTREAM_BRINGUP_PROVENANCE PASS
+  mm_ok "UPSTREAM_BRINGUP_PROVENANCE=PASS sha256=${actual}"
 }
 
 # Coarse layout checks before the deterministic patcher runs. Missing =>
@@ -1103,6 +1152,8 @@ engine_verify_acps_upstream_bringup() {
   local anchors=()
 
   engine_verify_acps_bringup_sidecar "$files_dir"
+  # Cryptographic pre-authorization (repository allowlist) BEFORE patching.
+  engine_verify_upstream_bringup_provenance "$upstream_file"
   actual="${BRINGUP_UPSTREAM_SHA1}"
   reference="$(engine_bringup_reference_sha1)"
 
@@ -1110,7 +1161,9 @@ engine_verify_acps_upstream_bringup() {
     mm_warn "UPSTREAM_BRINGUP_CHANGED=YES"
     mm_info "PREVIOUS_KNOWN_SHA1=${reference}"
     mm_info "CURRENT_UPSTREAM_SHA1=${actual}"
-    mm_warn "UPSTREAM_BRINGUP_DRIFT=NON_BLOCKING"
+    mm_info "CURRENT_UPSTREAM_SHA256=${BRINGUP_UPSTREAM_SHA256:-}"
+    # Reference mismatch is observability only once SHA256 allowlist passes.
+    mm_warn "UPSTREAM_BRINGUP_REFERENCE_MISMATCH=YES"
     mm_state_set UPSTREAM_BRINGUP_DRIFT NON_BLOCKING
   else
     mm_state_set UPSTREAM_BRINGUP_DRIFT NO
@@ -1663,6 +1716,7 @@ engine_mark_phase2_reused() {
   mm_status_set ACPS_CONNECTION REUSED
   mm_status_set ACPS_PHASE2_DOWNLOADED REUSED
   mm_status_set ACPS_CHECKSUM REUSED
+  mm_status_set UPSTREAM_BRINGUP_PROVENANCE PASS
   mm_status_set UPSTREAM_BRINGUP_DRIFT NO
   mm_status_set PATCHED_BRINGUP_APPLIED YES
   mm_status_set PHASE2_BUNDLE_ENTRY_COUNT 9
@@ -1670,6 +1724,7 @@ engine_mark_phase2_reused() {
   mm_state_set ACPS_CONNECTION REUSED
   mm_state_set ACPS_PHASE2_DOWNLOADED REUSED
   mm_state_set ACPS_CHECKSUM REUSED
+  mm_state_set UPSTREAM_BRINGUP_PROVENANCE PASS
   mm_state_set PHASE2_BUNDLE_ENTRY_COUNT 9
   mm_state_set PHASE2_BUNDLE_CHECKSUM PASS
   mm_state_set PHASE2_BUNDLE_ACTION REUSE
@@ -2211,6 +2266,7 @@ engine_compute_readiness() {
     ACPS_CONNECTION
     ACPS_PHASE2_DOWNLOADED
     ACPS_CHECKSUM
+    UPSTREAM_BRINGUP_PROVENANCE
     UPSTREAM_BRINGUP_DRIFT
     PATCHED_BRINGUP_APPLIED
     PHASE2_BUNDLE_ENTRY_COUNT
@@ -2234,8 +2290,12 @@ engine_compute_readiness() {
   for k in "${keys[@]}"; do
     v="$(mm_status_get "$k")"
     case "$k" in
+      UPSTREAM_BRINGUP_PROVENANCE)
+        [[ "$v" == "PASS" ]] || all=FAIL
+        ;;
       UPSTREAM_BRINGUP_DRIFT)
-        # NO = unchanged vs reference; NON_BLOCKING = changed but ACPS sidecar OK.
+        # NO = unchanged vs reference; NON_BLOCKING = reference mismatch after
+        # SHA256 allowlist provenance already passed.
         [[ "$v" == "NO" || "$v" == "NON_BLOCKING" ]] || all=FAIL
         ;;
       PHASE2_BUNDLE_ENTRY_COUNT)
@@ -2514,6 +2574,8 @@ engine_download_and_prepare() {
     engine_stage_work_from_existing_final "$TARGET_DP_VERSION" "$work"
     saved_upstream="$(engine_phase2_saved_upstream_path "$TARGET_DP_VERSION")"
     [[ -f "$saved_upstream" ]] || mm_die "BRINGUP_UPSTREAM_COPY_MISSING path=${saved_upstream}"
+    # Re-check repository-controlled provenance before re-patching saved bytes.
+    engine_verify_upstream_bringup_provenance "$saved_upstream"
     # Patch from the saved immutable upstream before deleting the old final.
     engine_apply_local_bringup_patch "$work" "$saved_upstream"
     # Release the old final before writing .new (peak = work + new tar).
@@ -2522,9 +2584,11 @@ engine_download_and_prepare() {
     engine_prepare_phase2_ubuntu_prerequisites "$work"
     mm_status_set ACPS_PHASE2_DOWNLOADED REUSED
     mm_status_set ACPS_CHECKSUM REUSED
+    mm_status_set UPSTREAM_BRINGUP_PROVENANCE PASS
     mm_status_set UPSTREAM_BRINGUP_DRIFT NO
     mm_state_set ACPS_PHASE2_DOWNLOADED REUSED
     mm_state_set ACPS_CHECKSUM REUSED
+    mm_state_set UPSTREAM_BRINGUP_PROVENANCE PASS
   else
     acps_acquire_all "$TARGET_DP_VERSION"
     cache="$(acps_cache_dir "$TARGET_DP_VERSION")"

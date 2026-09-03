@@ -4,10 +4,10 @@ Version: 22.04.6 LTS
 Date: Thu, 23 April 2020 20:04:00 UTC
 Supported: 1
 Description: This is the 22.04.6 LTS release
-Release-File: http://221.139.249.111/hops/jammy-to-noble/ubuntu/dists/jammy/Release
-ReleaseNotes: http://221.139.249.111/client/jammy-to-noble/ReleaseAnnouncement
-UpgradeTool: http://221.139.249.111/offline/release-upgraders/noble/noble.tar.gz
-UpgradeToolSignature: http://221.139.249.111/offline/release-upgraders/noble/noble.tar.gz.gpg
+Release-File: http://192.0.2.10/hops/jammy-to-noble/ubuntu/dists/jammy/Release
+ReleaseNotes: http://192.0.2.10/client/jammy-to-noble/ReleaseAnnouncement
+UpgradeTool: http://192.0.2.10/offline/release-upgraders/noble/noble.tar.gz
+UpgradeToolSignature: http://192.0.2.10/offline/release-upgraders/noble/noble.tar.gz.gpg
 
 Dist: noble
 Name: Noble Jellyfish
@@ -15,8 +15,8 @@ Version: 24.04.5 LTS
 Date: Thu, 21 April 2022 22:04:00 UTC
 Supported: 1
 Description: This is the 24.04.5 LTS release
-Release-File: http://221.139.249.111/hops/jammy-to-noble/ubuntu/dists/noble/Release
-ReleaseNotes: http://221.139.249.111/client/jammy-to-noble/ReleaseAnnouncement
-ReleaseNotesHtml: http://221.139.249.111/client/jammy-to-noble/ReleaseAnnouncement.html
-UpgradeTool: http://221.139.249.111/offline/release-upgraders/noble/noble.tar.gz
-UpgradeToolSignature: http://221.139.249.111/offline/release-upgraders/noble/noble.tar.gz.gpg
+Release-File: http://192.0.2.10/hops/jammy-to-noble/ubuntu/dists/noble/Release
+ReleaseNotes: http://192.0.2.10/client/jammy-to-noble/ReleaseAnnouncement
+ReleaseNotesHtml: http://192.0.2.10/client/jammy-to-noble/ReleaseAnnouncement.html
+UpgradeTool: http://192.0.2.10/offline/release-upgraders/noble/noble.tar.gz
+UpgradeToolSignature: http://192.0.2.10/offline/release-upgraders/noble/noble.tar.gz.gpg

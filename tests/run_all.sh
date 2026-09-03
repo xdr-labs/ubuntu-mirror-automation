@@ -92,9 +92,11 @@ TEST_LIST=(
   test_bringup_completion_contract.sh
   test_http_publication_identity.sh
   test_acps_auth_tls_hardening.sh
+  test_download_dp_phase2_acps_auth.sh
   test_bringup_worker_password.sh
   test_bringup_acps_fail_closed.sh
   test_bringup_ssh_host_keys.sh
+  test_bringup_ssh_known_hosts_persistent.sh
   test_bringup_acps_sha_policy.sh
   test_patch_dp_phase2_bringup.py
   test_phase2_bringup_fresh_upstream.sh

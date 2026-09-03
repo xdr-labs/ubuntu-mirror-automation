@@ -10,7 +10,7 @@ EXPECT_VERSIONS="xenial bionic focal jammy noble"
 usage() {
   cat <<'EOF'
 Usage: ./client-validate.sh --mirror-url http://MIRROR_IP
-       ./client-validate.sh --mirror-ip 10.34.200.20
+       ./client-validate.sh --mirror-ip 192.0.2.10
 
 Tests ICMP, TCP/80, HTTP Release for archive + security pockets,
 meta-release-lts + sample upgrader endpoints, and ensures apt sources

@@ -125,7 +125,7 @@ else
 fi
 
 # worker-ips without password → error
-run_parse --version 6.6.0 --skip-download --worker-ips "192.168.124.23,192.168.124.25"
+run_parse --version 6.6.0 --skip-download --worker-ips "192.0.2.23,192.0.2.25"
 [[ "$PARSE_RC" -ne 0 ]] || fail "worker-ips without password file accepted"
 echo "$PARSE_ERR" | grep -q -- '--worker-ips/--standby requires --worker-password-file\|--worker-ips requires --worker-password' \
   || fail "missing validation error: ${PARSE_ERR}"
@@ -134,7 +134,7 @@ pass "worker-ips without password file is rejected"
 # legacy --worker-password migrates to private file (including special characters)
 for spec_pass in 'something' 'Test123!' 'Abc$123!' 'worker@Pass#2026' 'A&b!c$123'; do
   run_parse --version 6.6.0 --skip-download \
-      --worker-ips "192.168.124.23" --worker-password "$spec_pass"
+      --worker-ips "192.0.2.23" --worker-password "$spec_pass"
   if [[ "$PARSE_RC" -eq 0 ]]; then
     echo "$PARSE_OUT" | grep -qx 'WORKER_PASSWORD=' \
       || fail "WORKER_PASSWORD not cleared after migration"
@@ -150,7 +150,7 @@ PWFILE="${WORKDIR}/worker-password.file"
 printf '%s' 'file-mode-pass' >"$PWFILE"
 chmod 0600 "$PWFILE"
 run_parse --version 6.6.0 --skip-download \
-  --worker-ips "192.168.124.23" --worker-password-file "$PWFILE"
+  --worker-ips "192.0.2.23" --worker-password-file "$PWFILE"
 [[ "$PARSE_RC" -eq 0 ]] || fail "--worker-password-file parse failed: ${PARSE_ERR}"
 echo "$PARSE_OUT" | grep -Fxq "PHASE2_WORKER_PASSWORD_FILE=${PWFILE}" \
   || fail "--worker-password-file path not preserved"
@@ -193,8 +193,8 @@ chmod +x "${BIN}/sshpass"
 cat >"${BIN}/kubectl" <<'EOF'
 #!/usr/bin/env bash
 if [[ "$1" == "get" && "$2" == "nodes" ]]; then
-  printf 'master Ready  <none>  1d  v1.31.0  192.168.124.21  192.168.124.21  Ubuntu 24.04\n'
-  printf 'worker1 Ready <none>  1d  v1.31.0  192.168.124.23  192.168.124.23  Ubuntu 24.04\n'
+  printf 'master Ready  <none>  1d  v1.31.0  192.0.2.21  192.0.2.21  Ubuntu 24.04\n'
+  printf 'worker1 Ready <none>  1d  v1.31.0  192.0.2.23  192.0.2.23  Ubuntu 24.04\n'
 fi
 exit 0
 EOF
@@ -218,9 +218,14 @@ cat >"$ORCH_RUNNER" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 VERSION="6.6.0"
-WORKER_IPS="192.168.124.23"
+WORKER_IPS="192.0.2.23"
 STANDBY_IPS=""
 PHASE2_WORKER_PASSWORD_FILE=$(printf '%q' "$ORCH_PWFILE")
+PHASE2_SSH_STATE_DIR=$(printf '%q' "$WORKDIR/ssh-state")
+PHASE2_WORKER_PASSWORD_PRIVATE_DIR=$(printf '%q' "$WORKDIR")
+export PHASE2_SSH_STATE_DIR
+mkdir -p "\$PHASE2_SSH_STATE_DIR"
+export PATH=$(printf '%q' "$BIN"):"\$PATH"
 ROLE="DL-master"
 WORKER_MODE=false
 DRY_RUN=false
@@ -277,9 +282,13 @@ RECLAIM_RUNNER="${WORKDIR}/run_reclaim.sh"
 cat >"$RECLAIM_RUNNER" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-WORKER_IPS="192.168.124.23"
+WORKER_IPS="192.0.2.23"
 PHASE2_WORKER_PASSWORD_FILE=$(printf '%q' "$RECLAIM_PWFILE")
+PHASE2_SSH_STATE_DIR=$(printf '%q' "$WORKDIR/ssh-state")
+export PHASE2_SSH_STATE_DIR
+mkdir -p "\$PHASE2_SSH_STATE_DIR"
 DRY_RUN=true
+export PATH=$(printf '%q' "$BIN"):"\$PATH"
 SCRIPT_PATH=$(printf '%q' "$SCRIPT_COPY")
 SCRIPT_NAME="bringup_py3_dp_after_os_upgrade.sh"
 SCP_OPTS="-o StrictHostKeyChecking=accept-new"

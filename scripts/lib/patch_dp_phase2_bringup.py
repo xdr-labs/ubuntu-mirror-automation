@@ -25,6 +25,7 @@ from __future__ import print_function, unicode_literals
 import argparse
 import hashlib
 import os
+import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -335,14 +336,49 @@ def apply_ssh_host_keys(text):
 
 
 def apply_acps_credential_removal(text):
-    if "ACPS_PASS='WroTQfm/W6x10'" not in text:
-        return text
-    return replace_exactly_once(
-        text,
-        "ACPS_PASS='WroTQfm/W6x10'",
-        'ACPS_PASS=""  # embedded credentials removed; use Mirror Manager --skip-download',
-        'acps_credential_removal',
+    """Remove embedded ACPS password literals without secret-value anchors.
+
+    Identifies ACPS_PASS assignments with a non-empty quoted literal in the
+    bringup configuration area. Exactly one such candidate is required when
+    the upstream still embeds a password; zero candidates is allowed only when
+    the password is already empty or the upstream has no ACPS_PASS assignment.
+    Ambiguous (2+) candidates fail closed.
+    """
+    # Match whole-line ACPS_PASS='...' / ACPS_PASS="..." assignments only.
+    assign_re = re.compile(
+        r'(?m)^(?P<prefix>ACPS_PASS=)(?P<q>[\'"])(?P<val>.*?)(?P=q)(?P<suffix>.*)$'
     )
+    matches = list(assign_re.finditer(text))
+    nonempty = [m for m in matches if m.group('val')]
+    empty = [m for m in matches if not m.group('val')]
+
+    if len(nonempty) > 1:
+        raise PatchCompatError(
+            'acps_credential_removal',
+            'anchor_count=%d expected=1' % len(nonempty),
+        )
+
+    if len(nonempty) == 1:
+        m = nonempty[0]
+        replacement = (
+            'ACPS_PASS=""  # embedded credentials removed; use Mirror Manager --skip-download'
+        )
+        return text[:m.start()] + replacement + text[m.end():]
+
+    # Zero nonempty literals: already scrubbed, or no ACPS_PASS line.
+    # Fail closed only when upstream still has ACPS auth curl using ${ACPS_PASS}
+    # but no replaceable ACPS_PASS assignment exists at all.
+    uses_embedded_auth = (
+        '-u "${ACPS_USER}:${ACPS_PASS}"' in text
+        or "-u \"${ACPS_USER}:${ACPS_PASS}\"" in text
+    )
+    if uses_embedded_auth and not matches and not empty:
+        # ACPS_PASS referenced for auth but no assignment line found.
+        raise PatchCompatError(
+            'acps_credential_removal',
+            'anchor_count=0 expected=1',
+        )
+    return text
 
 
 def apply_acps_preflight_fail_closed(text):
@@ -371,6 +407,38 @@ def apply_acps_preflight_fail_closed(text):
         '        fi\n'
         '    fi\n'
     )
+    # production-3af369 adds dark-site DNS fallback cleanup inside the warning branch.
+    preflight_prev_3af369 = (
+        '    # Check ACPS connectivity\n'
+        '    if [[ "$SKIP_DOWNLOAD" != "true" ]]; then\n'
+        '        mkdir -p "$STAGING_DIR" "$AELLADEB_DIR" 2>/dev/null || true\n'
+        '        if check_local_artifacts; then\n'
+        '            log "All artifacts pre-staged locally -- download not required"\n'
+        '        else\n'
+        '            if ! command -v curl &>/dev/null; then\n'
+        '                die "curl not found. Install with: apt-get install -y curl"\n'
+        '            fi\n'
+        '            log "Testing ACPS connectivity..."\n'
+        '            local http_code\n'
+        '            http_code=$(curl -s -o /dev/null -w "%{http_code}" -k -u "${ACPS_USER}:${ACPS_PASS}" \\\n'
+        '                --connect-timeout 30 --max-time 30 "https://${ACPS_HOST}/" || echo "000")\n'
+        '            if [[ "$http_code" != "200" ]] && [[ "$http_code" != "401" ]]; then\n'
+        '                log "WARNING: Cannot connect to ACPS (${ACPS_HOST}, HTTP ${http_code}) -- will use local artifacts only"\n'
+        '                SKIP_DOWNLOAD=true\n'
+        '                # AELDEV-74638: auto-detected dark site -- remove any public\n'
+        '                # fallback nameservers the DNS preflight appended\n'
+        '                if [[ -n "$DNS_FALLBACK_LINES" ]]; then\n'
+        '                    log "Dark-site auto-detected -- removing appended public fallback nameservers"\n'
+        '                    remove_dns_fallback\n'
+        '                fi\n'
+        '            elif [[ "$http_code" == "401" ]]; then\n'
+        '                die "ACPS authentication failed (HTTP 401). Check ACPS_USER/ACPS_PASS."\n'
+        '            else\n'
+        '                log "ACPS reachable (HTTP ${http_code})"\n'
+        '            fi\n'
+        '        fi\n'
+        '    fi\n'
+    )
     preflight_new = (
         '    # Direct ACPS download is disabled in patched production bringup.\n'
         '    # Mirror Manager stages artifacts; operators must use --skip-download.\n'
@@ -383,10 +451,19 @@ def apply_acps_preflight_fail_closed(text):
         '        fi\n'
         '    fi\n'
     )
-    if preflight_prev not in text:
+    present = []
+    for prev in (preflight_prev, preflight_prev_3af369):
+        if prev in text:
+            present.append(prev)
+    if not present:
         return text
+    if len(present) != 1:
+        raise PatchCompatError(
+            'acps_preflight_fail_closed',
+            'multiple_alternative_anchors count=%d' % len(present),
+        )
     return replace_exactly_once(
-        text, preflight_prev, preflight_new, 'acps_preflight_fail_closed',
+        text, present[0], preflight_new, 'acps_preflight_fail_closed',
     )
 
 

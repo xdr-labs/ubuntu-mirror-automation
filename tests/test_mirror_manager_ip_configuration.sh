@@ -176,17 +176,18 @@ grep -q 'AUTO_DETECTION_ROLE=CONFIGURATION_SUGGESTION\|mirror_host_suggest_prima
   && pass "AUTO_DETECTION_ROLE=suggestion" \
   || fail "suggestion role missing"
 
-# Hardcode check
-hc=0
-for f in \
+# Portable-IP policy on Mirror Manager sources (no historical-IP denylist).
+# shellcheck source=lib/portable_ip_policy.sh
+source "${ROOT}/tests/lib/portable_ip_policy.sh"
+if portable_ip_policy_assert_files "mm-ip-config" \
   "${ROOT}/scripts/lib/mirror_host_ip.sh" \
   "${ROOT}/scripts/lib/mirror_manager_common.sh" \
   "${ROOT}/scripts/install-dp-upgrade-mirror.sh"
-do
-  n="$(grep -c -E '221\.139\.249\.(111|112)' "$f" || true)"
-  hc=$((hc + n))
-done
-[[ "$hc" -eq 0 ]] && pass "no hardcoded environment IPs" || fail "hardcoded IPs=${hc}"
+then
+  pass "no non-portable IPs in Mirror Manager sources"
+else
+  fail "non-portable IP literals in Mirror Manager sources"
+fi
 
 if [[ "$FAIL" -eq 0 ]]; then
   echo "=== test_mirror_manager_ip_configuration PASS ==="

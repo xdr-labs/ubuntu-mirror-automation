@@ -202,6 +202,7 @@ WORKER_PASSWORD=""
 ROLE=""
 DRY_RUN=false
 SKIP_DOWNLOAD=false
+DNS_FALLBACK_LINES=""  # public nameservers appended by preflight (revertible)
 WORKER_MODE=false
 PRE_UPGRADE_CLEANUP=false
 AUTO_OS_UPGRADE=false
@@ -222,6 +223,7 @@ ACPS_PASS=""  # embedded credentials removed; use Mirror Manager --skip-download
 ACPS_PROVISION_URL="https://${ACPS_HOST}/provision/aelladeb_py3"
 ACPS_COMMON_TARBALL="aelladeb_py3_common.tar.gz"
 
+# shellcheck shell=bash
 ###############################################################################
 # PHASE 2 CREDENTIAL + SSH HOST-KEY HARDENING (project patch layer)
 ###############################################################################
@@ -231,15 +233,16 @@ PHASE2_WORKER_PASSWORD_FILE="${PHASE2_WORKER_PASSWORD_FILE:-}"
 PHASE2_WORKER_PASSWORD_PRIVATE_DIR="${PHASE2_WORKER_PASSWORD_PRIVATE_DIR:-${PHASE2_SSH_STATE_DIR}}"
 
 init_phase2_ssh_known_hosts() {
-    local d="${PHASE2_SSH_STATE_DIR}" f="${PHASE2_SSH_KNOWN_HOSTS_FILE}" base
-    if ! mkdir -p "$d" 2>/dev/null; then
-        d="${TMPDIR:-/tmp}/dp-phase2-bringup-${$:-$$}"
-        mkdir -p "$d" || die "SSH_KNOWN_HOSTS=FAIL reason=state_dir"
-    fi
-    chmod 0700 "$d" 2>/dev/null || true
+    # Persistent project-owned known_hosts only. Do NOT fall back to /tmp —
+    # that silently loses changed-key continuity across executions.
+    local d="${PHASE2_SSH_STATE_DIR}" f base
+    mkdir -p "$d" || die "SSH_KNOWN_HOSTS=FAIL reason=state_dir path=${d}"
+    chmod 0700 "$d" || die "SSH_KNOWN_HOSTS=FAIL reason=state_dir_mode path=${d}"
     f="${d}/known_hosts"
-    touch "$f"
-    chmod 0600 "$f" 2>/dev/null || true
+    if [[ ! -f "$f" ]]; then
+        touch "$f" || die "SSH_KNOWN_HOSTS=FAIL reason=create path=${f}"
+    fi
+    chmod 0600 "$f" || die "SSH_KNOWN_HOSTS=FAIL reason=known_hosts_mode path=${f}"
     export PHASE2_SSH_KNOWN_HOSTS_FILE="$f"
     export PHASE2_SSH_STATE_DIR="$d"
     base="-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=${PHASE2_SSH_KNOWN_HOSTS_FILE} -o ConnectTimeout=30 -o ServerAliveInterval=30 -o ServerAliveCountMax=240 -o TCPKeepAlive=yes"
@@ -426,9 +429,9 @@ check_version_guard() {
 #   sudo bash bringup_py3_dp_after_os_upgrade.sh --pre-upgrade-cleanup
 #
 # Dead repos commonly found on 16.04/18.04 DPs:
-#   1. dl.aelladata.com:8080 (10.38.1.46) -- internal build mirror, not reachable
+#   1. dl.aelladata.com:8080 -- internal build mirror, not reachable
 #   2. deb.nodesource.com/node_8.x -- EOL, GPG key 1655A0AB68576280 expired
-#   3. 129.146.74.109:32081/repository/dataprocessor -- internal Nexus repo
+#   3. internal Nexus :32081/repository/dataprocessor -- not reachable off-network
 #   4. dl.stellarcyber.ai -- may be unreachable depending on network
 #   5. kubernetes.io/apt repos -- may have expired GPG keys or wrong codename
 #   6. docker.com repos -- may reference old release codenames
@@ -483,7 +486,7 @@ pre_upgrade_cleanup() {
     # but the file is still dead config that confuses operators.
     for f in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
         [[ -f "$f" ]] || continue
-        if grep -qE 'aelladata|nodesource|129\.146\.74\.109|dl\.stellarcyber' "$f" 2>/dev/null; then
+        if grep -qE 'aelladata|nodesource|repository/dataprocessor|dl\.stellarcyber' "$f" 2>/dev/null; then
             log "  Removing dead repo file: $f"
             rm -f "$f"
             ((removed++)) || true
@@ -530,10 +533,10 @@ pre_upgrade_cleanup() {
         ((removed++)) || true
     fi
 
-    # Remove internal Nexus repo entries (129.146.74.109)
-    if grep -q '129\.146\.74\.109' /etc/apt/sources.list 2>/dev/null; then
-        log "  Removing 129.146.74.109 (Nexus) entries"
-        sed -i '/129\.146\.74\.109/d' /etc/apt/sources.list
+    # Remove internal Nexus dataprocessor repo entries (path match; host-agnostic)
+    if grep -q 'repository/dataprocessor' /etc/apt/sources.list 2>/dev/null; then
+        log "  Removing repository/dataprocessor (internal Nexus) entries"
+        sed -i '/repository\/dataprocessor/d' /etc/apt/sources.list
         ((removed++)) || true
     fi
 
@@ -639,7 +642,7 @@ pre_upgrade_cleanup() {
     log "--- Step 4: Clean stale /etc/hosts entries ---"
 
     if grep -q 'dl\.aelladata\.com' /etc/hosts 2>/dev/null; then
-        log "  Removing dl.aelladata.com from /etc/hosts (stale 10.38.1.46 mapping)"
+        log "  Removing dl.aelladata.com from /etc/hosts (stale internal mapping)"
         sed -i '/dl\.aelladata\.com/d' /etc/hosts
         ((removed++)) || true
     fi
@@ -1028,38 +1031,122 @@ preflight_bundle() {
     log "Bundle pre-flight: 3 required files present in $found_in"
 }
 
+# AELDEV-74638: is /etc/resolv.conf usable as-is? Usable = exists, has a
+# nameserver line, and is not a LOOPBACK-ONLY file (systemd stub 127.0.0.53,
+# dnsmasq/resolvconf 127.0.0.1, ::1) while systemd-resolved has no upstream
+# servers. 16.04-upgraded boxes often leave resolved enabled but unconfigured
+# (stub resolves nothing), and phase-7 masks dnsmasq (a 127.0.0.1 file then
+# points at a dead forwarder); copying loopback lines into resolv-kube.conf
+# would hand every pod an unreachable resolver.
+resolv_conf_usable() {
+    [[ -e /etc/resolv.conf ]] || return 1
+    grep -q "^nameserver" /etc/resolv.conf 2>/dev/null || return 1
+    if ! grep "^nameserver" /etc/resolv.conf 2>/dev/null | \
+            grep -qvE "^nameserver[[:space:]]+(127\.|::1)"; then
+        # loopback-only: usable only while resolved actually has upstreams
+        grep -q "^nameserver" /run/systemd/resolve/resolv.conf 2>/dev/null || return 1
+    fi
+    return 0
+}
+
+# Remove exactly the public fallback nameservers this run appended (tracked
+# in DNS_FALLBACK_LINES; pre-existing customer 8.8.8.8 lines are never added
+# to the list and therefore never removed).
+remove_dns_fallback() {
+    local fb
+    for fb in $DNS_FALLBACK_LINES; do
+        sed -i "/^nameserver ${fb//./\\.}\$/d" /etc/resolv.conf 2>/dev/null || true
+    done
+    DNS_FALLBACK_LINES=""
+}
+
+# AELDEV-74638: rebuild /etc/resolv.conf from the DNS servers the box is
+# configured with -- the systemd-resolved runtime file first (netplan boxes
+# feed their nameservers into it), then ifupdown dns-nameservers lines
+# (16.04-upgraded boxes); 8.8.8.8 only as a last resort. Callers must guard
+# with resolv_conf_usable so a working customer DNS config is never clobbered.
+rebuild_resolv_conf() {
+    rm -f /etc/resolv.conf  # remove dangling symlink to systemd-resolved stub
+    local configured_dns
+    if grep -q "^nameserver" /run/systemd/resolve/resolv.conf 2>/dev/null; then
+        # netplan boxes feed their configured DNS into systemd-resolved
+        ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
+        log "DNS: linked to systemd-resolved"
+    else
+        # loopback entries (127.x/::1 -- e.g. a local dnsmasq that phase-7
+        # masks) are skipped: they cannot serve as rebuilt upstreams
+        configured_dns=$(grep -rhE "^[[:space:]]*dns-nameservers[[:space:]]" \
+                /etc/network/interfaces /etc/network/interfaces.d/ 2>/dev/null | \
+                sed 's/^[[:space:]]*dns-nameservers[[:space:]]*//' | tr ' ' '\n' | \
+                grep -E '^[0-9A-Fa-f.:]+$' | grep -vE '^(127\.|::1$)' | \
+                awk '!seen[$0]++' | head -3 || true)
+        if [[ -n "$configured_dns" ]]; then
+            : > /etc/resolv.conf
+            local ns
+            for ns in $configured_dns; do echo "nameserver $ns" >> /etc/resolv.conf; done
+            log "DNS: restored configured nameservers (ifupdown)"
+        elif systemctl restart systemd-resolved 2>/dev/null && \
+                grep -q "^nameserver" /run/systemd/resolve/resolv.conf 2>/dev/null; then
+            ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
+            log "DNS: linked to systemd-resolved (after restart)"
+        else
+            # Last resort: static public DNS (online bringup still needs to
+            # reach ACPS; on dark-site there was no configured DNS to keep)
+            echo "nameserver 8.8.8.8" > /etc/resolv.conf
+            echo "nameserver 8.8.4.4" >> /etc/resolv.conf
+            log "DNS: static resolv.conf (8.8.8.8, 8.8.4.4) -- no configured DNS found"
+        fi
+    fi
+    log "DNS: $(grep nameserver /etc/resolv.conf 2>/dev/null | tr '\n' ' ')"
+}
+
 preflight_checks() {
     log_phase "Pre-flight Checks"
 
     # Must be root
     if [[ $EUID -ne 0 ]]; then die "Must run as root"; fi
 
-    # Fix DNS if broken (common after OS upgrade -- systemd-resolved stub missing)
-    if [[ ! -f /etc/resolv.conf ]] || ! getent hosts "${ACPS_HOST}" &>/dev/null; then
-        log "DNS broken -- fixing /etc/resolv.conf"
-        rm -f /etc/resolv.conf  # remove dangling symlink to systemd-resolved stub
-        # Try systemd-resolved first (proper way on 24.04)
-        if systemctl is-active systemd-resolved &>/dev/null; then
-            ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
-            log "DNS: linked to systemd-resolved"
-        else
-            # Start systemd-resolved if available
-            if systemctl start systemd-resolved 2>/dev/null; then
-                ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
-                log "DNS: started systemd-resolved"
+    # Fix DNS only if truly broken (missing / dangling symlink / no nameserver
+    # lines). AELDEV-74638: the old logic treated "cannot resolve ${ACPS_HOST}"
+    # as broken DNS and rewrote /etc/resolv.conf with 8.8.8.8/8.8.4.4 -- but on
+    # a dark site ACPS is unreachable BY DESIGN, so it wiped the customer's
+    # configured DNS (e.g. dns-nameservers 192.168.1.1 in
+    # /etc/network/interfaces on a 16.04-upgraded ifupdown box). Never clobber
+    # a resolv.conf that has nameservers; when rebuilding, restore the DNS the
+    # box is configured with and use 8.8.8.8 only as a last resort.
+    if resolv_conf_usable; then
+        if ! getent hosts "${ACPS_HOST}" &>/dev/null; then
+            if [[ "$SKIP_DOWNLOAD" == "true" ]]; then
+                log "DNS: ${ACPS_HOST} does not resolve (expected on dark-site); keeping existing resolv.conf"
+            elif [[ ! -L /etc/resolv.conf ]]; then
+                # Online mode needs ACPS: keep the configured nameservers but
+                # APPEND public fallbacks after them so downloads can proceed
+                # (the old code REPLACED the file, wiping customer DNS). The
+                # append is REVERTED if it does not help, and again if this
+                # later turns out to be an auto-detected dark site -- the
+                # customer file must never keep lines that did no good.
+                # Symlinked (systemd-resolved-managed) files are left alone.
+                log "WARN: ${ACPS_HOST} does not resolve with the configured DNS; trying public fallback nameservers"
+                local fb
+                for fb in 8.8.8.8 8.8.4.4; do
+                    if ! grep -q "^nameserver ${fb//./\\.}\$" /etc/resolv.conf 2>/dev/null; then
+                        echo "nameserver ${fb}" >> /etc/resolv.conf
+                        DNS_FALLBACK_LINES="${DNS_FALLBACK_LINES} ${fb}"
+                    fi
+                done
+                if getent hosts "${ACPS_HOST}" &>/dev/null; then
+                    log "DNS: ${ACPS_HOST} resolves via appended fallback nameservers"
+                else
+                    remove_dns_fallback
+                    log "WARN: fallback did not help -- restored original resolv.conf; downloads may fail (fix DNS or use --skip-download)"
+                fi
             else
-                # Fallback: static resolv.conf
-                echo "nameserver 8.8.8.8" > /etc/resolv.conf
-                echo "nameserver 8.8.4.4" >> /etc/resolv.conf
-                log "DNS: static resolv.conf (8.8.8.8, 8.8.4.4)"
+                log "WARN: ${ACPS_HOST} does not resolve (systemd-resolved-managed resolv.conf); downloads may fail"
             fi
         fi
-        # Ensure we have DNS servers configured
-        if ! grep -q nameserver /etc/resolv.conf 2>/dev/null; then
-            echo "nameserver 8.8.8.8" >> /etc/resolv.conf
-            echo "nameserver 8.8.4.4" >> /etc/resolv.conf
-        fi
-        log "DNS: $(grep nameserver /etc/resolv.conf 2>/dev/null | tr '\n' ' ')"
+    else
+        log "DNS broken -- rebuilding /etc/resolv.conf"
+        rebuild_resolv_conf
     fi
 
     # Must be Ubuntu 24.04
@@ -2029,21 +2116,43 @@ install_python3() {
         # packages and missed re-installs after apt fix-broken rolled them
         # back. Bulk dpkg -i is faster + idempotent (already-installed +
         # same-version is a no-op for dpkg).
+        #
+        # AELDEV-74638: the tarball now carries the FULL recursive dependency
+        # closure (python3-click, colorama, openssl, zope.*, libev4t64,
+        # pyasyncore, libjs-jquery, jinja2, blinker, markupsafe, pip, ...),
+        # including shared libs the base may already have. dpkg -i would
+        # silently DOWNGRADE any base package that is newer than the bundled
+        # deb, so filter to debs that are absent or strictly newer than the
+        # installed version before the bulk install.
         if ls "$apt_tmpdir"/*.deb &>/dev/null; then
-            local py3_apt_rc=0
-            set +e
-            dpkg -i "$apt_tmpdir"/*.deb
-            py3_apt_rc=$?
-            set -e
-            if [[ "$py3_apt_rc" -ne 0 ]]; then
-                log "ACPS_PY3_APT_DPKG=RETRY force_depends=YES (intra-bundle unpack order)"
+            local deb pkg dver iver install_list=()
+            for deb in "$apt_tmpdir"/*.deb; do
+                pkg=$(dpkg-deb -f "$deb" Package 2>/dev/null)
+                dver=$(dpkg-deb -f "$deb" Version 2>/dev/null)
+                [[ -z "$pkg" || -z "$dver" ]] && continue
+                iver=$(dpkg-query -W -f '${Version}' "$pkg" 2>/dev/null || true)
+                if [[ -n "$iver" ]] && dpkg --compare-versions "$iver" gt "$dver"; then
+                    continue    # installed is newer -- never downgrade
+                fi
+                install_list+=("$deb")
+            done
+            log "py3-apt-packages: installing ${#install_list[@]} of $(ls "$apt_tmpdir"/*.deb | wc -l) debs (rest already current)"
+            if [[ ${#install_list[@]} -gt 0 ]]; then
+                local py3_apt_rc=0
                 set +e
-                dpkg -i --force-depends "$apt_tmpdir"/*.deb
+                dpkg -i "${install_list[@]}"
                 py3_apt_rc=$?
                 set -e
-                log "ACPS_PY3_APT_FORCE_DEPENDS=USED rc=${py3_apt_rc} (not a success criterion)"
-            else
-                log "ACPS_PY3_APT_DPKG=PASS force_depends=NO"
+                if [[ "$py3_apt_rc" -ne 0 ]]; then
+                    log "ACPS_PY3_APT_DPKG=RETRY force_depends=YES (intra-bundle unpack order)"
+                    set +e
+                    dpkg -i --force-depends "${install_list[@]}"
+                    py3_apt_rc=$?
+                    set -e
+                    log "ACPS_PY3_APT_FORCE_DEPENDS=USED rc=${py3_apt_rc} (not a success criterion)"
+                else
+                    log "ACPS_PY3_APT_DPKG=PASS force_depends=NO"
+                fi
             fi
         fi
         rm -rf "$apt_tmpdir"
@@ -2091,7 +2200,10 @@ install_python3() {
         log "pip3: $(pip3 --version 2>&1 || echo 'not found')"
     fi
 
-    # Verify critical imports
+    # AELDEV-74638 named flask/click as critical, but warning-and-continue
+    # is not sufficient for dark-site Phase 2. APT graph + runtime imports
+    # are hard gates; wait_for_da_restful_8003 remains as an additional
+    # listen check before worker orchestration.
     # dpkg --audit and --force-depends are not sufficient. The APT graph
     # must be consistent before Python runtime validation or worker orch.
     validate_apt_dependency_graph python3_apt || \
@@ -2100,9 +2212,7 @@ install_python3() {
     # installed" is not sufficient — Flask without click still fails to import.
     validate_critical_python_runtime || \
         die "CRITICAL_PYTHON_RUNTIME=FAIL Phase 2 cannot continue"
-    python3 -c "import psutil" 2>/dev/null || log "WARNING: psutil still missing"
-    python3 -c "import pymongo" 2>/dev/null || log "WARNING: pymongo still missing"
-    log "Python 3 system packages installed"
+    log "Python 3 system packages installed (psutil pymongo flask click OK)"
 }
 
 install_pip3_packages() {
@@ -3478,24 +3588,40 @@ prepare_system() {
     systemctl mask dnsmasq 2>/dev/null || true
     systemctl enable systemd-resolved 2>/dev/null || true
     systemctl start systemd-resolved 2>/dev/null || true
-    # Ensure resolv.conf points to systemd-resolved (verify target exists)
-    if [[ -f /run/systemd/resolve/resolv.conf ]]; then
-        rm -f /etc/resolv.conf
-        ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
-        log "DNS: linked to systemd-resolved"
-    elif [[ ! -f /etc/resolv.conf ]] || [[ -L /etc/resolv.conf && ! -e /etc/resolv.conf ]]; then
-        # Dangling symlink or missing -- create static resolv.conf
-        rm -f /etc/resolv.conf
-        echo "nameserver 8.8.8.8" > /etc/resolv.conf
-        echo "nameserver 8.8.4.4" >> /etc/resolv.conf
-        log "DNS: static resolv.conf (systemd-resolved not available)"
+    # Ensure resolv.conf is usable. AELDEV-74638: never repoint a resolv.conf
+    # that already has real nameservers -- on a 16.04-upgraded ifupdown box
+    # systemd-resolved has no DNS config, so unconditionally linking to its
+    # runtime file (or writing 8.8.8.8) discards the customer's configured DNS.
+    # EXCEPTION: the 127.0.0.53 stub (netplan boxes) is fine for host lookups
+    # but must not leak into resolv-kube.conf (kubelet resolvConf, generated
+    # below) -- the stub is unreachable from inside containers. The resolved
+    # runtime file carries the same configured DNS, so swapping to it
+    # preserves the customer's servers.
+    if resolv_conf_usable; then
+        # Swap ONLY a loopback-ONLY file (the resolv_conf_usable pass above
+        # then guarantees the runtime file has the upstreams) -- a mixed file
+        # with real nameservers is kept, and the resolv-kube.conf generation
+        # below filters the loopback lines out for pods.
+        if ! grep "^nameserver" /etc/resolv.conf 2>/dev/null | \
+                grep -qvE "^nameserver[[:space:]]+(127\.|::1)"; then
+            rm -f /etc/resolv.conf
+            ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
+            log "DNS: swapped loopback-only resolv.conf for systemd-resolved runtime file"
+        else
+            log "DNS: existing resolv.conf has real nameservers -- keeping"
+        fi
+    else
+        rebuild_resolv_conf
     fi
 
     # Create resolv-kube.conf (needed for musl/Alpine containers in K8s 1.31)
     # Copy nameserver lines from resolv.conf, strip cloud search domains, append "search ."
+    # AELDEV-74638: loopback resolvers (127.x/::1) are unreachable from inside
+    # a pod netns -- filter them so pods only ever get real upstreams.
     log "Creating /etc/resolv-kube.conf..."
     {
-        grep '^nameserver' /etc/resolv.conf 2>/dev/null || echo "nameserver 8.8.8.8"
+        grep '^nameserver' /etc/resolv.conf 2>/dev/null | \
+            grep -vE '^nameserver[[:space:]]+(127\.|::1)' || echo "nameserver 8.8.8.8"
         echo "search ."
     } > /etc/resolv-kube.conf
     log "resolv-kube.conf created with nameservers + 'search .'"
@@ -3830,7 +3956,7 @@ init_k8s_master() {
 
     # AELDEV-70735 Fix #17: for AIO/master roles, master_ip MUST be the LOCAL ip,
     # not whatever was preserved from a prior usage. Stale master_ip pointing to
-    # a different DP (seen on .11 with master_ip=10.39.200.7 left over from a
+    # a different DP (seen on lab hosts with a stale master_ip left over from a
     # prior cluster role) causes hostPath-mounted containers like spark-slave's
     # meta-sync to download from the wrong host and CrashLoop indefinitely.
     # TWO files hold this IP and BOTH must be updated:
@@ -4308,6 +4434,24 @@ init_k8s_master() {
     # Update common config
     log "Updating common config..."
     python3 /opt/aelladata/kubernetes/scripts/update_common_config.py 2>/dev/null || true
+
+    # AELDEV-74638: verify the rendered fflag secret is usable. An empty
+    # FFLAG_PROJECT_KEY (stale pre-6.5.0 /opt/aelladata/work/fflag_settings.yml
+    # preserved across the OS upgrade) crashes stellar-cluster-controller,
+    # which blocks aella-cm-master init and stellar-report pods.
+    local ff_project_key
+    ff_project_key=$(kubectl get secret common-config-ff \
+        -o jsonpath='{.data.FFLAG_PROJECT_KEY}' 2>/dev/null | base64 -d 2>/dev/null || true)
+    if [[ -z "$ff_project_key" ]]; then
+        log "  WARN: common-config-ff secret has an empty FFLAG_PROJECT_KEY"
+        log "        (likely a stale ff: section in /opt/aelladata/work/fflag_settings.yml)."
+        log "        stellar-cluster-controller / aella-cm-master / stellar-report pods will crash."
+        log "        Fix the ff: values in that file (FFLAG_PROJECT_KEY: openxdr; and if"
+        log "        FFLAG_SDK_KEY is empty set FFLAG_OFFLINE: \"true\"), then re-run:"
+        log "        python3 /opt/aelladata/kubernetes/scripts/update_common_config.py"
+    else
+        log "  common-config-ff secret OK (FFLAG_PROJECT_KEY=${ff_project_key})"
+    fi
 
     # Apply service-scheduling labels
     if [[ -f /opt/aelladata/work/cluster-controller/service_scheduling.yml ]]; then
@@ -5184,14 +5328,15 @@ validate_all() {
         ((warnings++)) || true
     fi
 
-    echo ""
-    echo "========================================"
+    # AELDEV-74638: log(), not bare echo -- detached runs discard stdout
+    log ""
+    log "========================================"
     if [[ $errors -eq 0 ]]; then
         log "VALIDATION RESULT: PASSED ($warnings warnings)"
     else
         log "VALIDATION RESULT: FAILED ($errors errors, $warnings warnings)"
     fi
-    echo "========================================"
+    log "========================================"
 
     return $errors
 }
@@ -5199,6 +5344,57 @@ validate_all() {
 ###############################################################################
 # PHASE 13: ORCHESTRATE WORKERS
 ###############################################################################
+
+# AELDEV-74638: gate worker orchestration on the master's aella_da_restful
+# actually listening on :8003. Workers fetch their kubeadm join token from
+# https://<master>:8003/api/1.0/master_token; if aella_da_restful is dead
+# (e.g. flask import failure from an incomplete py3-apt-packages.tar.gz) the
+# workers stall forever at "Getting join token from master..." with no error
+# on the master side. Stop HERE, on the master, with a self-service
+# remediation recipe -- the operator installs the named packages and reruns;
+# no dev/ACPS bundle rebuild needed to get unblocked.
+wait_for_da_restful_8003() {
+    local timeout_s=300 waited=0
+    log "Waiting for aella_da_restful on :8003 (worker join token endpoint, ${timeout_s}s budget)..."
+    while [[ $waited -lt $timeout_s ]]; do
+        # ( ... || true ) guards pipefail: grep -q's early exit can SIGPIPE ss.
+        if (ss -ltn 2>/dev/null || true) | grep -q ':8003 '; then
+            log "aella_da_restful is listening on :8003 (after ${waited}s)"
+            return 0
+        fi
+        sleep 10; waited=$((waited + 10))
+    done
+    log "ERROR: :8003 not listening after ${timeout_s}s -- workers cannot fetch join"
+    log "tokens, so worker orchestration is stopped BEFORE it can hang."
+    local missing="" mod
+    for mod in flask click psutil pymongo; do
+        python3 -c "import $mod" 2>/dev/null || missing="$missing python3-$mod"
+    done
+    if [[ -n "$missing" ]]; then
+        log "Cause: python3 module(s) missing (incomplete py3-apt-packages.tar.gz,"
+        log "AELDEV-74638). ACTION REQUIRED (self-service, no new bundle needed):"
+        log "  1. Install the missing packages ON THIS MASTER:"
+        log "       online:    apt-get install -y$missing"
+        log "       dark-site: on any internet Ubuntu 24.04 host run:"
+        log "                    apt-get download$missing"
+        log "                  copy the .debs here and run: dpkg -i <debs>"
+        log "  2. Verify: python3 -c 'import flask' && ss -ltn | grep 8003"
+        log "     (aella_da_restful restarts on its own; give it ~1 min)"
+        log "  3. Rerun this bringup with the SAME arguments (safe to rerun) --"
+        log "     it will skip completed phases and proceed to the worker join."
+        log "  A fixed py3-apt-packages bundle (2026-08+) on ACPS prevents this"
+        log "  on future bringups; no need to wait for it to recover this DP."
+    else
+        log "Cause: python3 imports are OK -- aella_da_restful itself is not up."
+        log "  Check: pgrep -af aella_da_restful; aellad logs under /var/log/aella/;"
+        log "  then rerun this bringup with the SAME arguments."
+        # pgrep rc=1 on no match would kill the script under set -e before die.
+        (pgrep -af aella_da_restful 2>/dev/null || true) | head -3 | \
+            while read -r line; do log "  proc: $line"; done
+    fi
+    die "aella_da_restful not on :8003 -- fix per instructions above, then rerun bringup (AELDEV-74638)"
+}
+
 orchestrate_workers() {
     log_phase "Orchestrate Worker Nodes"
 
@@ -6021,7 +6217,7 @@ export UCF_FORCE_CONFFOLD=YES
 # "do not install package maintainer's version, keep my local mods" --
 # the same outcome as --force-confold for native dpkg conffiles, applied
 # to ucf-managed conffiles too (e.g. /etc/apt/apt.conf.d/50unattended-
-# upgrades, which broke 10.36.11.20's recovery test 2026-05-07).
+# upgrades, which broke a QA DP recovery test 2026-05-07).
 sudo tee /etc/ucf.conf >/dev/null <<'UCF_EOF'
 # AELDEV-70680 #14: keep local conffile mods during automated OS upgrade
 conf_force_install=NO
@@ -6041,7 +6237,7 @@ libc6 libraries/restart-without-asking boolean true
 DEBCONF_PRE_EOF
 
 # ---- AELDEV-70504 + AELDEV-70680: Purge legacy packages that don't transition cleanly ----
-# Observed on QA DP 10.36.11.20 (2026-05-01): xenial-era packages survive
+# Observed on a QA DP (2026-05-01): xenial-era packages survive
 # multi-hop upgrades and trigger unmet-dependency errors that wedge
 # do-release-upgrade with rc=1 ("Please install all available updates").
 # Concrete cases:
@@ -6298,7 +6494,7 @@ fi
 # updating a package which requires a reboot. Please reboot before
 # upgrading.") whenever apt has installed a kernel/glibc/libc6/etc. without
 # a subsequent boot. The kernel install can be from a pre-existing host
-# state (QA's 10.36.11.20: linux-image-5.4.0-216-generic mtime predates the
+# state (QA lab DP: linux-image-5.4.0-216-generic mtime predates the
 # auto-upgrade chain) OR from the dist-upgrade we just ran. Either way,
 # without rebooting first, do-release-upgrade exits 1 in 3s and the script
 # previously declared FATAL and disabled the service. Instead: detect the
@@ -6595,6 +6791,9 @@ main() {
     # Token API / TCP 8003 must be functionally ready first. systemctl is-active
     # aellad is not sufficient — the failed lab had aellad active with 8003 down.
     if [[ "$WORKER_MODE" != "true" && ( -n "$WORKER_IPS" || -n "$STANDBY_IPS" ) ]]; then
+        # AELDEV-74638: listen-gate on :8003 (upstream). Project layer still
+        # requires a functional token API, not TCP listen alone.
+        wait_for_da_restful_8003
         if ! validate_critical_python_runtime; then
             die "CRITICAL_PYTHON_RUNTIME=FAIL before worker orchestration"
         fi
@@ -6653,13 +6852,20 @@ main() {
         ( reclaim_legacy_docker_overlay2 ) || log "AELDEV-71912: post-convergence overlay2 reclaim on master hit an error (non-fatal; cluster already converged)"
     fi
 
-    echo ""
-    echo "========================================================================"
-    echo "  Bringup complete: $(date)"
-    echo "  Role: $ROLE"
-    echo "  Version: $VERSION"
-    echo "  Log: $LOG_FILE"
-    echo "========================================================================"
+    # AELDEV-74638 (QA Issue #3): this banner MUST go through log(), not bare
+    # echo. Detached (master/AIO) runs redirect stdout to /dev/null (the
+    # AELDEV-71725 duplicate-line fix), so an echo'd banner never reaches
+    # LOG_FILE -- while detach_guard explicitly tells the operator to wait for
+    # "Bringup complete:" in that log. A fully successful bringup then looks
+    # stuck forever. (Worker-mode runs were unaffected: they run inline and the
+    # orchestrator logs their stdout.)
+    log ""
+    log "========================================================================"
+    log "  Bringup complete: $(date)"
+    log "  Role: $ROLE"
+    log "  Version: $VERSION"
+    log "  Log: $LOG_FILE"
+    log "========================================================================"
     emit_dp_resume_post_complete_notice
 }
 

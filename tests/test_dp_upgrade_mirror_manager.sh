@@ -583,19 +583,19 @@ set -e
 [[ "$rc_auth" -ne 0 ]] && pass "G ACPS auth fail" || fail "G auth"
 echo "$out_auth" | grep -qi 'testpass' && fail "F secret leaked" || pass "F no secret in output"
 
-echo "======== I. legitimate upstream SHA change is non-blocking ========"
+echo "======== I. unknown upstream SHA256 fails closed (not NON_BLOCKING) ========"
 kill "$HTTP_PID" 2>/dev/null || true; wait "$HTTP_PID" 2>/dev/null || true; HTTP_PID=""
 kill "$R2_PID" 2>/dev/null || true; wait "$R2_PID" 2>/dev/null || true; R2_PID=""
 ACPS_DRIFT="${WORKDIR}/acps-drift"; cp -a "$ACPS_ROOT" "$ACPS_DRIFT"
-# Valid unpatched ACPS bringup whose SHA differs from the last-known
-# reference. Do not use the frozen vendor full copy as "upstream".
+# Mutate an otherwise valid unpatched ACPS bringup so sidecar can be refreshed
+# but repository SHA256 allowlist rejects it.
 python3 - "${ROOT}/tests/fixtures/dp-phase2/upstream_bringup_unpatched.sh" \
   "${ACPS_DRIFT}/bringup_py3_dp_after_os_upgrade.sh" <<'PY'
 import sys
 src = open(sys.argv[1]).read()
 src = src.replace(
     'log "download_artifacts placeholder"',
-    'log "download_artifacts placeholder"\n    # LEGITIMATE_UPSTREAM_SHA_DRIFT',
+    'log "download_artifacts placeholder"\n    # UNAPPROVED_UPSTREAM_SHA_DRIFT',
 )
 open(sys.argv[2], 'w').write(src)
 PY
@@ -615,14 +615,14 @@ seed_client_files "$MM_CLIENT_ROOT"
 set +e
 out_drift="$(run_prepare 2>&1)"; rc_drift=$?
 set -e
-[[ "$rc_drift" -eq 0 ]] && echo "$out_drift" | grep -q 'UPSTREAM_BRINGUP_DRIFT=NON_BLOCKING' \
-  && pass "I legitimate upstream change continues" || fail "I drift should be non-blocking"
-echo "$out_drift" | grep -q 'INSTALL_RESULT=FAIL' && fail "I INSTALL_RESULT=FAIL on SHA change" \
-  || pass "I no INSTALL_RESULT=FAIL on SHA change"
-echo "$out_drift" | grep -q 'UPSTREAM_BRINGUP_DRIFT=YES' && fail "I blocking DRIFT=YES" \
-  || pass "I no blocking DRIFT=YES"
-[[ -f "${WORKDIR}/mirror-drift/dp-phase2/6.6.0/dp_bundle_6.6.0-current.tar" ]] \
-  && pass "I final bundle published after SHA change" || fail "I bundle missing after SHA change"
+[[ "$rc_drift" -ne 0 ]] && echo "$out_drift" | grep -q 'UPSTREAM_BRINGUP_PROVENANCE=FAIL' \
+  && pass "I unknown upstream provenance FAIL" || fail "I unknown upstream should fail provenance"
+echo "$out_drift" | grep -q 'UPSTREAM_BRINGUP_APPROVAL_REQUIRED=YES' \
+  && pass "I approval required" || fail "I approval required missing"
+echo "$out_drift" | grep -q 'UPSTREAM_BRINGUP_DRIFT=NON_BLOCKING' \
+  && fail "I unknown became NON_BLOCKING" || pass "I unknown not NON_BLOCKING"
+[[ ! -f "${WORKDIR}/mirror-drift/dp-phase2/6.6.0/dp_bundle_6.6.0-current.tar" ]] \
+  && pass "I no final bundle after provenance fail" || fail "I bundle published after provenance fail"
 
 echo "======== G resume ========"
 kill "$HTTP_PID" 2>/dev/null || true; wait "$HTTP_PID" 2>/dev/null || true; HTTP_PID=""
@@ -790,8 +790,8 @@ bash "${ROOT}/scripts/ubuntu-offline-mirror.sh" --help 2>&1 | grep -q 'mirror-ma
 bash "${ROOT}/scripts/ubuntu-offline-mirror.sh" --help 2>&1 | grep -qE 'install-standard|install-menu|Mode 2' \
   && fail "entrypoint obsolete cmds" || pass "entrypoint no obsolete cmds"
 
-# Hardcoded credential absence in new manager scripts
-grep -RInE 'AellaMeta|WroTQfm' "${ROOT}/scripts/lib/mirror_manager_common.sh" \
+# Hardcoded credential absence in new manager scripts (no historical password literals).
+grep -RInE 'AellaMeta' "${ROOT}/scripts/lib/mirror_manager_common.sh" \
   "${ROOT}/scripts/lib/mirror_install_engine.sh" "${ROOT}/scripts/lib/acps_acquire.sh" \
   "${ROOT}/scripts/install-dp-upgrade-mirror.sh" 2>/dev/null \
   && fail "F hardcoded creds in manager" || pass "F no hardcoded manager creds"

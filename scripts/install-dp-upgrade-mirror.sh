@@ -488,7 +488,7 @@ Separate multiple IP addresses with commas.
 Leave empty if there are no DL workers.
 
 Example:
-192.168.124.23,192.168.124.24" \
+192.0.2.23,192.0.2.24" \
           "${DL_WORKER_IPS:-}")" || continue
         dl_clean="$(printf '%s' "$dl_in" | tr -d '[:space:]')"
         if [[ -n "$dl_clean" ]]; then
@@ -514,7 +514,7 @@ Separate multiple IP addresses with commas.
 Leave empty if there are no DA workers.
 
 Example:
-192.168.124.25,192.168.124.26" \
+192.0.2.25,192.0.2.26" \
           "${DA_WORKER_IPS:-}")" || continue
         da_clean="$(printf '%s' "$da_in" | tr -d '[:space:]')"
         if [[ -n "$da_clean" ]]; then

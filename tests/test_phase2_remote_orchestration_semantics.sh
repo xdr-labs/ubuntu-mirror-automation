@@ -9,7 +9,7 @@ COMPAT="${ROOT}/scripts/lib/phase2_bringup_patch/fragment_compat.sh"
 CRED_SSH="${ROOT}/scripts/lib/phase2_bringup_patch/fragment_credential_ssh.sh"
 PREV_UPSTREAM="${ROOT}/tests/fixtures/dp-phase2/upstream_bringup_unpatched.sh"
 F1A73="${ROOT}/tests/fixtures/dp-phase2/production-f1a73/bringup_py3_dp_after_os_upgrade.sh"
-EXPECTED_F1A73_SHA1="f1a73c1d4502e2efcf55197865d2ade345d9c82f"
+EXPECTED_F1A73_SHA1="f57ea3964582322e0dc401fa8dd731c7443622fd"
 WRAPPER="${ROOT}/client/bringup_py3_dp_lifecycle.sh"
 LIFECYCLE="${ROOT}/client/lib/dp-phase2-bringup-lifecycle.sh"
 
@@ -414,6 +414,9 @@ run_orch() {
   WORKER_IPS="$worker_ips"
   STANDBY_IPS="$standby_ips"
   PHASE2_WORKER_PASSWORD_FILE="${WORKDIR}/orch-worker-password"
+  PHASE2_SSH_STATE_DIR="${WORKDIR}/ssh-state"
+  export PHASE2_SSH_STATE_DIR
+  mkdir -p "$PHASE2_SSH_STATE_DIR"
   printf '%s' 'orch-secret-not-for-logs' >"$PHASE2_WORKER_PASSWORD_FILE"
   chmod 0600 "$PHASE2_WORKER_PASSWORD_FILE"
   ROLE=DL-master

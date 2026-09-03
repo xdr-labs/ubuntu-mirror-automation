@@ -247,26 +247,25 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 9. No environment-specific addresses baked into resolution/deploy sources
+# 9. Resolution/deploy sources must not bake in non-portable environment IPs
 # ---------------------------------------------------------------------------
-hardcode_count=0
-for f in \
-  "${ROOT}/scripts/lib/mirror_host_ip.sh" \
-  "${ROOT}/scripts/lib/client_mirror_gates.sh" \
-  "${ROOT}/scripts/rebuild-publish-clients.sh" \
-  "${ROOT}"/scripts/deploy-client-*-atomic.sh \
-  "${ROOT}/scripts/deploy-stage-dp-phase2-client-atomic.sh" \
+# shellcheck source=lib/portable_ip_policy.sh
+source "${ROOT}/tests/lib/portable_ip_policy.sh"
+POLICY_FILES=(
+  "${ROOT}/scripts/lib/mirror_host_ip.sh"
+  "${ROOT}/scripts/lib/client_mirror_gates.sh"
+  "${ROOT}/scripts/rebuild-publish-clients.sh"
+  "${ROOT}/scripts/deploy-stage-dp-phase2-client-atomic.sh"
   "${ROOT}/scripts/deploy-dp-phase2-helpers-only.sh"
-do
-  [[ -f "$f" ]] || continue
-  n="$(grep -c -E '221\.139\.249\.(111|112)' "$f" || true)"
-  hardcode_count=$((hardcode_count + n))
-done
-echo "MIRROR_HARDCODED_IP_COUNT=${hardcode_count}"
-if [[ "$hardcode_count" -eq 0 ]]; then
-  pass "no hardcoded environment IPs in resolution/deploy sources"
+)
+shopt -s nullglob
+POLICY_FILES+=("${ROOT}"/scripts/deploy-client-*-atomic.sh)
+shopt -u nullglob
+if portable_ip_policy_assert_files "mirror-host-sources" "${POLICY_FILES[@]}"; then
+  echo "MIRROR_HARDCODED_IP_COUNT=0"
+  pass "no non-portable IPs in resolution/deploy sources"
 else
-  fail "hardcoded environment IPs present (count=${hardcode_count})"
+  fail "non-portable IP literals in resolution/deploy sources"
 fi
 
 if [[ "$FAIL" -eq 0 ]]; then

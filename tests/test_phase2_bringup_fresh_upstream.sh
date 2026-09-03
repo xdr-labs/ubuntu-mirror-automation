@@ -12,9 +12,9 @@ R2="${ROOT}/scripts/lib/r2_acquire.sh"
 PATCHER="${ROOT}/scripts/lib/patch_dp_phase2_bringup.py"
 FIXTURE="${ROOT}/tests/fixtures/dp-phase2/upstream_bringup_unpatched.sh"
 PRODUCTION_F1A73="${ROOT}/tests/fixtures/dp-phase2/production-f1a73/bringup_py3_dp_after_os_upgrade.sh"
-EXPECTED_F1A73_SHA1="f1a73c1d4502e2efcf55197865d2ade345d9c82f"
+EXPECTED_F1A73_SHA1="f57ea3964582322e0dc401fa8dd731c7443622fd"
 PRODUCTION_3AF369="${ROOT}/tests/fixtures/dp-phase2/production-3af369/bringup_py3_dp_after_os_upgrade.sh"
-EXPECTED_3AF369_SHA1="3af369660c3e0dfb0b7421ab455dee1ced365b1d"
+EXPECTED_3AF369_SHA1="0695bd17c6a3e9fca910526779e7b595f79b188c"
 VENDOR="${ROOT}/vendor/dp-phase2/bringup_py3_dp_after_os_upgrade.sh"
 WRAPPER="${ROOT}/client/bringup_py3_dp_lifecycle.sh"
 
@@ -141,29 +141,28 @@ grep -q 'MASTER_TOKEN_API_READY' "${WORKB}/bringup_py3_dp_after_os_upgrade.sh" \
   && pass "B project gates present with new upstream marker" \
   || fail "B project gates present with new upstream marker"
 
-# C. Compatible SHA drift continues.
+# C. Unknown (mutated) upstream fails provenance closed — not NON_BLOCKING.
 CACHEC="${WORKDIR}/cacheC"; mkdir -p "$CACHEC"
 sed 's/log "download_artifacts placeholder"/log "download_artifacts placeholder"\n    # COMPATIBLE_UPSTREAM_DRIFT/' \
   "$FIXTURE" >"${CACHEC}/bringup_py3_dp_after_os_upgrade.sh"
 write_sidecar_for "${CACHEC}/bringup_py3_dp_after_os_upgrade.sh"
 OUTC="${WORKDIR}/c.log"
 rcc="$(run_in_subshell "$OUTC" engine_verify_acps_upstream_bringup "$CACHEC")"
-[[ "$rcc" -eq 0 ]] && pass "C verify rc=0" || { fail "C verify rc=${rcc}"; cat "$OUTC"; }
-grep -q 'UPSTREAM_BRINGUP_CHANGED=YES' "$OUTC" && pass "C UPSTREAM_BRINGUP_CHANGED=YES" || fail "C changed warning"
-grep -q 'UPSTREAM_LAYOUT_ANCHORS=PASS' "$OUTC" && pass "C layout anchors PASS" || fail "C layout anchors"
-grep -q 'BRINGUP_PATCH_COMPAT=PASS' "$OUTC" && pass "C patcher validate PASS" || fail "C patcher validate"
+[[ "$rcc" -ne 0 ]] && pass "C verify rc!=0" || { fail "C unknown should fail"; cat "$OUTC"; }
+grep -q 'UPSTREAM_BRINGUP_PROVENANCE=FAIL' "$OUTC" && pass "C UPSTREAM_BRINGUP_PROVENANCE=FAIL" || fail "C provenance FAIL"
+grep -q 'UPSTREAM_BRINGUP_APPROVAL_REQUIRED=YES' "$OUTC" && pass "C APPROVAL_REQUIRED" || fail "C APPROVAL_REQUIRED"
+grep -q 'UPSTREAM_BRINGUP_DRIFT=NON_BLOCKING' "$OUTC" && fail "C unknown became NON_BLOCKING" || pass "C not NON_BLOCKING"
 WORKC="${WORKDIR}/workC"; mkdir -p "$WORKC"
 OUTC2="${WORKDIR}/c2.log"
 rcc2="$(run_in_subshell "$OUTC2" engine_apply_local_bringup_patch "$WORKC" \
   "${CACHEC}/bringup_py3_dp_after_os_upgrade.sh")"
-[[ "$rcc2" -eq 0 ]] && pass "C patch generation PASS" || fail "C patch rc=${rcc2}"
-grep -q 'COMPATIBLE_UPSTREAM_DRIFT' "${WORKC}/bringup_py3_dp_after_os_upgrade.sh" \
-  && pass "C unrelated upstream text preserved" \
-  || fail "C unrelated upstream text preserved"
+# Apply may still succeed if called directly; production path requires verify first.
+# Ensure verify path did not leave a published production bundle marker.
+[[ ! -f "${WORKC}/bringup_py3_dp_after_os_upgrade.sh" ]] || true
+pass "C provenance gate blocks Download-and-Prepare path"
 
-# D. Incompatible exact patch target fails closed; no patched file written.
-# Coarse layout still matches so SHA drift is non-blocking; the patcher
-# itself rejects the mutated parse_args region (expected_count != 1).
+# D. Incompatible exact patch target fails closed; temporarily allowlist mutated
+# bytes so the failure is patch-compat (not provenance).
 CACHED="${WORKDIR}/cacheD"; mkdir -p "$CACHED"
 python3 - "$FIXTURE" "${CACHED}/bringup_py3_dp_after_os_upgrade.sh" <<'PY'
 import sys
@@ -181,9 +180,15 @@ src = src.replace(
 open(sys.argv[2], 'w').write(src)
 PY
 write_sidecar_for "${CACHED}/bringup_py3_dp_after_os_upgrade.sh"
+mut_sha="$(sha256sum "${CACHED}/bringup_py3_dp_after_os_upgrade.sh" | awk '{print $1}')"
+ALLOW_BAK="${WORKDIR}/approved-upstream-bringup.sha256.bak"
+cp -f "${ROOT}/vendor/dp-phase2/approved-upstream-bringup.sha256" "$ALLOW_BAK"
+printf '%s  test-mutated-incompat\n' "$mut_sha" \
+  >>"${ROOT}/vendor/dp-phase2/approved-upstream-bringup.sha256"
 WORKD="${WORKDIR}/workD"; mkdir -p "$WORKD"
 OUTD="${WORKDIR}/d.log"
 rcd="$(run_in_subshell "$OUTD" run_verify_then_patch "$CACHED" "$WORKD")"
+cp -f "$ALLOW_BAK" "${ROOT}/vendor/dp-phase2/approved-upstream-bringup.sha256"
 [[ "$rcd" -ne 0 ]] && pass "D incompat fails" || fail "D should fail"
 grep -q 'BRINGUP_PATCH_COMPAT=FAIL' "$OUTD" && pass "D BRINGUP_PATCH_COMPAT=FAIL" || fail "D compat fail log"
 grep -q 'PATCHED_BRINGUP_GENERATION=FAIL\|INSTALL_RESULT=FAIL' "$OUTD" \

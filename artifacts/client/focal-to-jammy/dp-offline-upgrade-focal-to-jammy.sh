@@ -12,7 +12,7 @@ SCRIPT_VERSION="1.0.0-focal-to-jammy"
 SCRIPT_PATH="$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || printf '%s' "$0")"
 
 # --- build-time pins (do not edit by hand; re-run build-client) ---
-PIN_MIRROR_BASE='http://221.139.249.111'
+PIN_MIRROR_BASE='http://192.0.2.10'
 PIN_HOP='focal-to-jammy'
 PIN_SOURCE_CODENAME='focal'
 PIN_TARGET_CODENAME='jammy'
@@ -31,7 +31,7 @@ PIN_UPGRADER_GPG_SHA256='722ba7c8f5ae524ebd5b84482fa4f2ca41059c58013d128dc04447f
 PIN_PLAN_CHECKSUM='8eb3d478e2d40e7a19510239fcbf6e2e6824b2587e6e7172d60ef01e8920b157'
 PIN_DISCOVERY_CHECKSUM='d08f76a4e87bbaabc82b2aea3f552d26b9ece53be83735a74dffdfd70a816b56'
 PIN_MANIFEST_SHA256='00f6952c9b047e951fc391a32469996a0e325a6b3f2f089d7d68c4c2edbd2ffb'
-PIN_SAMPLE_DEB_URL='http://221.139.249.111/hops/focal-to-jammy/ubuntu/pool/main/a/acl/acl_2.3.1-1_amd64.deb'
+PIN_SAMPLE_DEB_URL='http://192.0.2.10/hops/focal-to-jammy/ubuntu/pool/main/a/acl/acl_2.3.1-1_amd64.deb'
 PIN_CONFIRM_PHRASE='UPGRADE-FOCAL-TO-JAMMY'
 PIN_GENERATED_AT='2026-08-26T15:17:19Z'
 PIN_PROFILE_NAME='offline-upgrade-selective'

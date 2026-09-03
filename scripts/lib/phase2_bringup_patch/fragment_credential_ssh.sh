@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 ###############################################################################
 # PHASE 2 CREDENTIAL + SSH HOST-KEY HARDENING (project patch layer)
 ###############################################################################
@@ -7,15 +8,16 @@ PHASE2_WORKER_PASSWORD_FILE="${PHASE2_WORKER_PASSWORD_FILE:-}"
 PHASE2_WORKER_PASSWORD_PRIVATE_DIR="${PHASE2_WORKER_PASSWORD_PRIVATE_DIR:-${PHASE2_SSH_STATE_DIR}}"
 
 init_phase2_ssh_known_hosts() {
-    local d="${PHASE2_SSH_STATE_DIR}" f="${PHASE2_SSH_KNOWN_HOSTS_FILE}" base
-    if ! mkdir -p "$d" 2>/dev/null; then
-        d="${TMPDIR:-/tmp}/dp-phase2-bringup-${$:-$$}"
-        mkdir -p "$d" || die "SSH_KNOWN_HOSTS=FAIL reason=state_dir"
-    fi
-    chmod 0700 "$d" 2>/dev/null || true
+    # Persistent project-owned known_hosts only. Do NOT fall back to /tmp —
+    # that silently loses changed-key continuity across executions.
+    local d="${PHASE2_SSH_STATE_DIR}" f base
+    mkdir -p "$d" || die "SSH_KNOWN_HOSTS=FAIL reason=state_dir path=${d}"
+    chmod 0700 "$d" || die "SSH_KNOWN_HOSTS=FAIL reason=state_dir_mode path=${d}"
     f="${d}/known_hosts"
-    touch "$f"
-    chmod 0600 "$f" 2>/dev/null || true
+    if [[ ! -f "$f" ]]; then
+        touch "$f" || die "SSH_KNOWN_HOSTS=FAIL reason=create path=${f}"
+    fi
+    chmod 0600 "$f" || die "SSH_KNOWN_HOSTS=FAIL reason=known_hosts_mode path=${f}"
     export PHASE2_SSH_KNOWN_HOSTS_FILE="$f"
     export PHASE2_SSH_STATE_DIR="$d"
     base="-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=${PHASE2_SSH_KNOWN_HOSTS_FILE} -o ConnectTimeout=30 -o ServerAliveInterval=30 -o ServerAliveCountMax=240 -o TCPKeepAlive=yes"

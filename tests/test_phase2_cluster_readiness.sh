@@ -211,8 +211,8 @@ GATE_MIX="$(
   log() { echo "$*"; }
   MASTER_TOKEN_API_PORT=8003
   MASTER_TOKEN_API_WAIT_SECONDS=0
-  MASTER_IP=192.168.12.25
-  WORKER_IPS="192.168.12.26,192.168.12.27"
+  MASTER_IP=192.0.2.25
+  WORKER_IPS="192.0.2.26,192.0.2.27"
   # shellcheck disable=SC1090
   source "${WORKDIR}/wait_8003.sh"
   wait_for_master_token_api 0
@@ -240,8 +240,8 @@ GATE_BOTH="$(
   log() { echo "$*"; }
   MASTER_TOKEN_API_PORT=8003
   MASTER_TOKEN_API_WAIT_SECONDS=5
-  MASTER_IP=192.168.12.25
-  WORKER_IPS="192.168.12.26,192.168.12.27"
+  MASTER_IP=192.0.2.25
+  WORKER_IPS="192.0.2.26,192.0.2.27"
   # shellcheck disable=SC1090
   source "${WORKDIR}/wait_8003.sh"
   wait_for_master_token_api 5
@@ -297,7 +297,7 @@ set +e
 (
   PATH="${BINJOIN}:$PATH"
   DA_CONF="${WORKDIR}/da_conf.yml"
-  printf 'master_ip: 192.168.12.25\n' >"$DA_CONF"
+  printf 'master_ip: 192.0.2.25\n' >"$DA_CONF"
   LOG_FILE="${WORKDIR}/join.log"
   : >"$LOG_FILE"
   log() { echo "$*"; }
@@ -339,13 +339,13 @@ STANDBY_IPS=""
 [[ "$(count_remote_orchestration_nodes)" == "0" ]] \
   && pass "H no remote nodes => count 0 (single-node skip)" \
   || fail "H empty remote node count"
-WORKER_IPS='192.168.12.26,192.168.12.27'
+WORKER_IPS='192.0.2.26,192.0.2.27'
 STANDBY_IPS=""
 [[ "$(count_remote_orchestration_nodes)" == "2" ]] \
   && pass "G two workers => requested 2 (not master+workers exact size)" \
   || fail "G two workers count"
 WORKER_IPS=""
-STANDBY_IPS="192.168.12.30"
+STANDBY_IPS="192.0.2.30"
 [[ "$(count_remote_orchestration_nodes)" == "1" ]] \
   && pass "G standby only => requested 1" \
   || fail "G standby only count"
@@ -381,7 +381,7 @@ mkdir -p "$KBIN"
 write_kubectl_nodes "${KBIN}/kubectl" \
   '  printf "dl-master Ready  1d  v1.31.0\n"'
 set +e
-TOPO1="$(PATH="${KBIN}:$PATH" run_topo "192.168.12.26,192.168.12.27" 0 2>&1)"
+TOPO1="$(PATH="${KBIN}:$PATH" run_topo "192.0.2.26,192.0.2.27" 0 2>&1)"
 TOPO1_RC=$?
 set -e
 echo "$TOPO1" | grep -q 'CLUSTER_JOIN_STATE ready=1 requested=2 diagnostic=YES' \
@@ -395,7 +395,7 @@ write_kubectl_nodes "${KBIN}/kubectl" \
   '  printf "old-worker Ready 1d  v1.31.0\n"' \
   '  printf "dl-worker2 Ready 1d  v1.31.0\n"'
 set +e
-TOPO_EXTRA="$(PATH="${KBIN}:$PATH" run_topo "192.168.12.26" 5 2>&1)"
+TOPO_EXTRA="$(PATH="${KBIN}:$PATH" run_topo "192.0.2.26" 5 2>&1)"
 TOPO_EXTRA_RC=$?
 set -e
 echo "$TOPO_EXTRA" | grep -q 'CLUSTER_JOIN_STATE ready=4 requested=1 diagnostic=YES' \
@@ -443,8 +443,8 @@ exit 0
 EOF
 chmod +x "${ORCH_BIN}/sshpass"
 write_kubectl_nodes "${ORCH_BIN}/kubectl" \
-  '  printf "dl-master Ready 1d v1.31.0 192.168.12.25 192.168.12.25\n"' \
-  '  printf "worker1 Ready 1d v1.31.0 192.168.12.26 192.168.12.26\n"'
+  '  printf "dl-master Ready 1d v1.31.0 192.0.2.25 192.0.2.25\n"' \
+  '  printf "worker1 Ready 1d v1.31.0 192.0.2.26 192.0.2.26\n"'
 STAGING="${WORKDIR}/staging"
 AELLADEB="${WORKDIR}/aelladeb"
 mkdir -p "$STAGING" "$AELLADEB"
@@ -454,9 +454,12 @@ ORCH_FAIL_OUT="$(
   set +e
   PATH="${ORCH_BIN}:$PATH"
   VERSION=6.5.0
-  WORKER_IPS=192.168.12.26
+  WORKER_IPS=192.0.2.26
   STANDBY_IPS=""
   PHASE2_WORKER_PASSWORD_FILE="${WORKDIR}/orch-worker-password"
+  PHASE2_SSH_STATE_DIR="${WORKDIR}/ssh-state"
+  export PHASE2_SSH_STATE_DIR
+  mkdir -p "$PHASE2_SSH_STATE_DIR"
   printf '%s' 'secret-pass-not-for-logs' >"$PHASE2_WORKER_PASSWORD_FILE"
   chmod 0600 "$PHASE2_WORKER_PASSWORD_FILE"
   ROLE=DL-master
@@ -487,7 +490,7 @@ ORCH_FAIL_OUT="$(
 )"
 ORCH_FAIL_RC=$?
 set -e
-echo "$ORCH_FAIL_OUT" | grep -qE 'WORKER_RESULT ip=192.168.12.26 result=FAIL' \
+echo "$ORCH_FAIL_OUT" | grep -qE 'WORKER_RESULT ip=192.0.2.26 result=FAIL' \
   && echo "$ORCH_FAIL_OUT" | grep -q 'WORKER_ORCHESTRATION=FAIL' \
   && pass "F remote worker nonzero => master orchestration FAIL" \
   || fail "F remote worker fail: ${ORCH_FAIL_OUT}"

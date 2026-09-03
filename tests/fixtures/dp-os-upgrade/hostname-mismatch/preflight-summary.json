@@ -26,7 +26,7 @@
   },
   "requested_path": {
     "package_source_mode": "mirror",
-    "package_source_url": "http://10.34.200.20",
+    "package_source_url": "http://192.0.2.10",
     "bringup_mode": "offline",
     "snapshot_reference_present": true,
     "backup_reference_present": false,

@@ -4,6 +4,7 @@ from __future__ import print_function, unicode_literals
 
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -27,7 +28,7 @@ PRODUCTION_F1A73 = os.path.join(
     ROOT, 'tests', 'fixtures', 'dp-phase2', 'production-f1a73',
     'bringup_py3_dp_after_os_upgrade.sh',
 )
-PRODUCTION_F1A73_SHA1 = 'f1a73c1d4502e2efcf55197865d2ade345d9c82f'
+PRODUCTION_F1A73_SHA1 = 'f57ea3964582322e0dc401fa8dd731c7443622fd'
 F1A73_VENDOR_MARKERS = (
     'STANDBY_IPS=""',
     'AELDEV-73583',
@@ -297,7 +298,7 @@ PRODUCTION_3AF369 = os.path.join(
     ROOT, 'tests', 'fixtures', 'dp-phase2', 'production-3af369',
     'bringup_py3_dp_after_os_upgrade.sh',
 )
-PRODUCTION_3AF369_SHA1 = '3af369660c3e0dfb0b7421ab455dee1ced365b1d'
+PRODUCTION_3AF369_SHA1 = '0695bd17c6a3e9fca910526779e7b595f79b188c'
 N3_VENDOR_MARKERS = (
     'STANDBY_IPS=""',
     'AELDEV-73583',
@@ -379,6 +380,91 @@ class Production3af369PatchTests(unittest.TestCase):
             ctx.exception.transform, 'install_python3_dpkg_no_force_depends',
         )
         self.assertEqual(ctx.exception.reason, 'anchor_count=0 expected=1')
+
+
+class AcpsCredentialRemovalTests(unittest.TestCase):
+    """Structural ACPS_PASS scrub — never anchors on a historical secret value."""
+
+    def test_single_nonempty_literal_cleared(self):
+        src = (
+            'ACPS_HOST="acps.example.test"\n'
+            'ACPS_USER="fixture-user"\n'
+            'ACPS_PASS=\'fixture-acps-pass-placeholder\'\n'
+            'ACPS_PROVISION_URL="https://${ACPS_HOST}/provision"\n'
+        )
+        out = patcher.apply_acps_credential_removal(src)
+        self.assertIn(
+            'ACPS_PASS=""  # embedded credentials removed; use Mirror Manager --skip-download',
+            out,
+        )
+        self.assertNotIn('fixture-acps-pass-placeholder', out)
+
+    def test_ambiguous_multiple_assignments_fail_closed(self):
+        src = (
+            "ACPS_PASS='one'\n"
+            "ACPS_PASS='two'\n"
+        )
+        with self.assertRaises(patcher.PatchCompatError) as ctx:
+            patcher.apply_acps_credential_removal(src)
+        self.assertEqual(ctx.exception.transform, 'acps_credential_removal')
+        self.assertEqual(ctx.exception.reason, 'anchor_count=2 expected=1')
+
+    def test_missing_assignment_with_auth_curl_fails_closed(self):
+        src = (
+            'ACPS_USER="fixture-user"\n'
+            'http_code=$(curl -s -k -u "${ACPS_USER}:${ACPS_PASS}" https://x/)\n'
+        )
+        with self.assertRaises(patcher.PatchCompatError) as ctx:
+            patcher.apply_acps_credential_removal(src)
+        self.assertEqual(ctx.exception.transform, 'acps_credential_removal')
+        self.assertEqual(ctx.exception.reason, 'anchor_count=0 expected=1')
+
+    def test_already_empty_is_noop(self):
+        src = 'ACPS_PASS=""\n'
+        self.assertEqual(patcher.apply_acps_credential_removal(src), src)
+
+    def test_production_fixtures_patch_to_empty_password(self):
+        for path in (PRODUCTION_F1A73, PRODUCTION_3AF369):
+            with open(path, 'r', encoding='utf-8') as fh:
+                upstream = fh.read()
+            out, _applied = patcher.patch_bringup_text(upstream, emit=False)
+            self.assertRegex(out, r'(?m)^ACPS_PASS=""')
+            self.assertNotRegex(out, r"(?m)^ACPS_PASS='[^']+'")
+            self.assertIn('ACPS_DIRECT_DOWNLOAD=FAIL', out)
+
+    def test_repo_tracked_source_has_no_historical_credential_literal(self):
+        # SHA256 of the historical ACPS_PASS value (rotated; literal not stored here).
+        historical_sha256 = (
+            'fdf432999d365a197b80fd88933ad38766d2ed945538c11668d37e0e2b05c47e'
+        )
+        token_re = re.compile(rb"[A-Za-z0-9/+]{13}")
+        hits = []
+        tracked = subprocess.check_output(
+            ['git', '-C', ROOT, 'ls-files', '-z',
+             '--', 'scripts', 'tests', 'vendor/dp-phase2', 'docs'],
+        ).split(b'\0')
+        text_ext = (
+            b'.sh', b'.py', b'.md', b'.json', b'.txt', b'.sha1', b'.sha256',
+        )
+        for rel_b in tracked:
+            if not rel_b or not rel_b.endswith(text_ext):
+                continue
+            rel = rel_b.decode('utf-8', 'replace')
+            path = os.path.join(ROOT, rel)
+            try:
+                data = open(path, 'rb').read()
+            except (OSError, IOError):
+                continue
+            if len(data) > 2 * 1024 * 1024:
+                continue
+            for m in token_re.finditer(data):
+                if hashlib.sha256(m.group(0)).hexdigest() == historical_sha256:
+                    hits.append(rel)
+                    break
+        self.assertEqual(
+            hits, [],
+            'historical credential digest still present in: %s' % hits,
+        )
 
 
 if __name__ == '__main__':

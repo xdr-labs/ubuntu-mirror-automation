@@ -57,7 +57,7 @@ sudo ./scripts/dp-os-upgrade-preflight.sh \
   --collection /var/tmp/dp-upgrade-readiness-dp01-....tar.gz \
   --execution-profile discovery \
   --package-source-mode mirror \
-  --package-source-url http://10.34.200.20 \
+  --package-source-url http://192.0.2.10 \
   --output-dir /var/tmp \
   --keep-directory
 ```
@@ -69,7 +69,7 @@ sudo ./scripts/dp-os-upgrade-preflight.sh \
   --collection /var/tmp/dp-upgrade-readiness-dp01-....tar.gz \
   --execution-profile production \
   --package-source-mode mirror \
-  --package-source-url http://10.34.200.20 \
+  --package-source-url http://192.0.2.10 \
   --snapshot-reference "esxi-snapshot-id" \
   --output-dir /var/tmp
 ```

@@ -174,20 +174,23 @@ Phase 1 enables and validates **Ubuntu OS hops only** using the offline selectiv
 
 ## Mirror environments (do not confuse)
 
-Two active mirror environments exist. Neither is deprecated.
+Operators typically keep separate development and field-test Mirror Servers.
+Neither role is deprecated. URLs below are RFC 5737 documentation examples only
+— substitute the Mirror Server address discovered or configured at runtime.
 
-| Role | URL | Purpose |
-|------|-----|---------|
-| Development mirror | `http://221.139.249.111` | Cursor / development publication and retest |
-| Stellar test mirror | `http://221.139.249.112` | Current field OS-upgrade / Phase 2 retest |
+| Role | Example URL | Purpose |
+|------|-------------|---------|
+| Development mirror | `http://192.0.2.10` | Development publication and retest |
+| Field-test mirror | `http://198.51.100.10` | Field OS-upgrade / Phase 2 retest |
 
-Reusable product code must not hardcode either address. Runtime mirror
-configuration drives generated clients, launchers, manifests, Menu 7 commands,
-and readiness checks. Client generations, launcher SHA256 values, signed
-manifests, and public fingerprints must never be mixed between `.111` and `.112`.
+Reusable product code must not hardcode environment-specific addresses. Runtime
+mirror configuration drives generated clients, launchers, manifests, Menu 7
+commands, and readiness checks. Client generations, launcher SHA256 values,
+signed manifests, and public fingerprints must never be mixed across Mirror
+environments.
 
-- Commands signed or generated on `.111` are for development retest only.
-- Stellar retest commands must be regenerated on `.112` via Menu 2 → 3 → 4 → 7.
+- Commands signed or generated on one Mirror are valid only for that Mirror.
+- Field-test commands must be regenerated on the field-test Mirror via Menu 2 → 3 → 4 → 7.
 
 See [architecture-phase2-source-bringup.md](architecture-phase2-source-bringup.md)
 for Phase 2 source-version capture, staging progress, and bringup lifecycle.
@@ -285,7 +288,7 @@ Compatibility: `sudo bash scripts/download-dp-phase2-6.6.0.sh sync`
 ```bash
 # On mirror host (after READY): render pinned single-file client script
 sudo ./scripts/ubuntu-offline-mirror.sh build-client-xenial-to-bionic \
-  --mirror-base http://221.139.249.111
+  --mirror-base http://192.0.2.10
 
 # Deploy path for nginx /client/ (does not alter selective READY fingerprint)
 # /var/spool/apt-mirror/client/
@@ -316,14 +319,14 @@ See [operations-bionic-to-focal.md](operations-bionic-to-focal.md) for the full 
 
 ```bash
 sudo ./scripts/ubuntu-offline-mirror.sh build-client-bionic-to-focal \
-  --mirror-base http://221.139.249.111
+  --mirror-base http://192.0.2.10
 sudo ./scripts/deploy-client-bionic-to-focal-atomic.sh
 ```
 
 - Deliverable: `artifacts/client/dp-offline-upgrade-bionic-to-focal.sh`
 - Confirmation: `UPGRADE-BIONIC-TO-FOCAL`
 - Terminal state: `COMPLETED_FOCAL` — does **not** auto-start 20.04→22.04
-- Repository: `http://221.139.249.111/hops/bionic-to-focal/ubuntu`
+- Repository: `http://192.0.2.10/hops/bionic-to-focal/ubuntu`
 - Integration tests must use a **clean** Bionic VM (never the Xenial→Bionic success evidence VM)
 
 ## Failure recovery

@@ -8,7 +8,7 @@ COMPAT="${ROOT}/scripts/lib/phase2_bringup_patch/fragment_compat.sh"
 WRAPPER="${ROOT}/client/bringup_py3_dp_lifecycle.sh"
 PREV="${ROOT}/tests/fixtures/dp-phase2/upstream_bringup_unpatched.sh"
 F1="${ROOT}/tests/fixtures/dp-phase2/production-f1a73/bringup_py3_dp_after_os_upgrade.sh"
-F1_SHA="f1a73c1d4502e2efcf55197865d2ade345d9c82f"
+F1_SHA="f57ea3964582322e0dc401fa8dd731c7443622fd"
 
 PASS=0
 FAIL=0

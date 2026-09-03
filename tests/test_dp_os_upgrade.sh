@@ -526,7 +526,7 @@ export DP_OS_UPGRADE_FAKE_OS_VERSION=16.04
 # 27 package source mode mismatch
 setup_fake_root t27
 run_cli install --preflight "$FIX/preflight-ready-xenial" --execute \
-  --package-source-mode cache --package-source-url http://10.34.200.20:3142 \
+  --package-source-mode cache --package-source-url http://192.0.2.10:3142 \
   --acknowledge-destructive-upgrade "I_UNDERSTAND_THIS_OS_UPGRADE_IS_DESTRUCTIVE"
 [[ "$RC" -eq 20 ]] && pass "source mode mismatch blocked" || fail "mode mismatch rc=$RC"
 
@@ -621,7 +621,7 @@ ST_REVISION=0; ST_STATE=NEW; ST_HOSTNAME=ready-aio
 ST_SOURCE_OS=16.04; ST_SOURCE_CODENAME=xenial; ST_CURRENT_OS=16.04; ST_CURRENT_CODENAME=xenial
 ST_TARGET_OS=18.04; ST_TARGET_CODENAME=bionic; ST_CURRENT_HOP=0; ST_TOTAL_HOPS=4
 ST_ATTEMPT=1; ST_PREFLIGHT_ID=x; ST_PREFLIGHT_COMPLETED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-ST_SNAPSHOT_REF=snap; ST_BACKUP_REF=; ST_PKG_MODE=mirror; ST_PKG_URL=http://10.34.200.20
+ST_SNAPSHOT_REF=snap; ST_BACKUP_REF=; ST_PKG_MODE=mirror; ST_PKG_URL=http://192.0.2.10
 ST_WARNING_ACCEPTANCES='[]'; ST_LAST_STEP=; ST_LAST_ERROR=; ST_BLOCK_REASON=
 ST_RETRYABLE=false; ST_RETRY_COUNT=0; ST_PAUSE_REQUESTED=false; ST_CREATED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 ST_RUNTIME_SHA=; ST_BOOT_ID=; ST_FINAL_TARGET_OS=24.04; ST_FINAL_TARGET_CODENAME=noble
@@ -712,18 +712,18 @@ setup_fake_root repo
 source "$LIB"
 osu_init_test_mode; osu_load_config "$CONF"
 osu_plan_direct_sources xenial | grep -q deb && pass "direct source plan" || fail "direct plan"
-osu_plan_cache_proxy "http://10.0.0.1:3142" | grep -q Proxy && pass "cache proxy plan" || fail "cache plan"
-osu_plan_mirror_sources "http://10.34.200.20" jammy | grep -q '/ubuntu' && pass "mirror source plan" || fail "mirror plan"
+osu_plan_cache_proxy "http://192.0.2.1:3142" | grep -q Proxy && pass "cache proxy plan" || fail "cache plan"
+osu_plan_mirror_sources "http://192.0.2.10" jammy | grep -q '/ubuntu' && pass "mirror source plan" || fail "mirror plan"
 export DP_OS_UPGRADE_HTTP_OK_ALL=0
 # xenial old-releases: mark old-releases ok via fixture file
 mkdir -p "$FAKE/mirror/ubuntu/dists/xenial"
 # without archive, with old-releases marker via http-ok file
 printf 'http://old-releases.ubuntu.com/ubuntu/dists/xenial/Release\n' >"$FAKE/tmp/http-ok"
 # function uses osu_http_head_ok — with HTTP_OK_ALL=0 needs file
-osu_verify_hop_repository mirror "http://10.34.200.20" xenial && pass "mirror xenial release ok" || fail "mirror xenial"
+osu_verify_hop_repository mirror "http://192.0.2.10" xenial && pass "mirror xenial release ok" || fail "mirror xenial"
 # meta missing
 rm -f "$FAKE/mirror/offline/meta-release-lts"
-osu_verify_hop_repository mirror "http://10.34.200.20" bionic && fail "meta missing should block" || pass "mirror meta-release missing blocked"
+osu_verify_hop_repository mirror "http://192.0.2.10" bionic && fail "meta missing should block" || pass "mirror meta-release missing blocked"
 export DP_OS_UPGRADE_HTTP_OK_ALL=1
 
 # critical holds default block
@@ -1091,7 +1091,7 @@ ST_REVISION=1; ST_STATE=COMPLETED; ST_HOSTNAME=ready-aio
 ST_SOURCE_OS=16.04; ST_SOURCE_CODENAME=xenial; ST_CURRENT_OS=24.04; ST_CURRENT_CODENAME=noble
 ST_TARGET_OS=24.04; ST_TARGET_CODENAME=noble; ST_CURRENT_HOP=4; ST_TOTAL_HOPS=4
 ST_ATTEMPT=1; ST_PREFLIGHT_ID=x; ST_PREFLIGHT_COMPLETED_AT=2026-07-16T00:00:00Z
-ST_SNAPSHOT_REF=s; ST_PKG_MODE=mirror; ST_PKG_URL=http://10.34.200.20
+ST_SNAPSHOT_REF=s; ST_PKG_MODE=mirror; ST_PKG_URL=http://192.0.2.10
 ST_WARNING_ACCEPTANCES='[]'; ST_RETRYABLE=false; ST_RETRY_COUNT=0; ST_PAUSE_REQUESTED=false
 ST_CREATED_AT=2026-07-16T00:00:00Z; ST_FINAL_TARGET_OS=24.04; ST_FINAL_TARGET_CODENAME=noble
 osu_write_state_json "$(osu_build_state_json)"
@@ -1249,7 +1249,7 @@ ST_REVISION=1; ST_STATE=INITIALIZED; ST_HOSTNAME=ready-aio
 ST_SOURCE_OS=16.04; ST_SOURCE_CODENAME=xenial; ST_CURRENT_OS=16.04; ST_CURRENT_CODENAME=xenial
 ST_TARGET_OS=18.04; ST_TARGET_CODENAME=bionic; ST_CURRENT_HOP=0; ST_TOTAL_HOPS=4
 ST_ATTEMPT=1; ST_PREFLIGHT_ID=x; ST_PREFLIGHT_COMPLETED_AT=2026-07-16T00:00:00Z
-ST_SNAPSHOT_REF=s; ST_PKG_MODE=mirror; ST_PKG_URL=http://10.34.200.20
+ST_SNAPSHOT_REF=s; ST_PKG_MODE=mirror; ST_PKG_URL=http://192.0.2.10
 ST_WARNING_ACCEPTANCES='[]'; ST_RETRYABLE=false; ST_RETRY_COUNT=0; ST_PAUSE_REQUESTED=false
 ST_CREATED_AT=2026-07-16T00:00:00Z; ST_FINAL_TARGET_OS=24.04; ST_FINAL_TARGET_CODENAME=noble
 osu_write_state_json "$(osu_build_state_json)"
@@ -1417,7 +1417,7 @@ ST_CURRENT_OS=16.04; ST_CURRENT_CODENAME=xenial
 ST_TARGET_OS=18.04; ST_TARGET_CODENAME=bionic
 ST_CURRENT_HOP=1; ST_TOTAL_HOPS=4; ST_ATTEMPT=1
 ST_PREFLIGHT_ID=pf-mid; ST_PREFLIGHT_COMPLETED_AT=2026-07-16T00:00:00Z
-ST_SNAPSHOT_REF=s; ST_PKG_MODE=mirror; ST_PKG_URL=http://10.34.200.20
+ST_SNAPSHOT_REF=s; ST_PKG_MODE=mirror; ST_PKG_URL=http://192.0.2.10
 ST_WARNING_ACCEPTANCES='[]'; ST_RETRYABLE=false; ST_RETRY_COUNT=0; ST_PAUSE_REQUESTED=false
 ST_CREATED_AT=2026-07-16T00:00:00Z; ST_FINAL_TARGET_OS=24.04; ST_FINAL_TARGET_CODENAME=noble
 ST_EXECUTION_PROFILE=discovery; ST_DISCOVERY_ACKNOWLEDGED=true
@@ -1508,7 +1508,7 @@ _write_min_state() {
   ST_PREFLIGHT_COMPLETED_AT="${ST_PREFLIGHT_COMPLETED_AT:-2026-07-16T00:00:00Z}"
   ST_SNAPSHOT_REF="${ST_SNAPSHOT_REF:-s}"
   ST_PKG_MODE="${ST_PKG_MODE:-mirror}"
-  ST_PKG_URL="${ST_PKG_URL:-http://10.34.200.20}"
+  ST_PKG_URL="${ST_PKG_URL:-http://192.0.2.10}"
   ST_WARNING_ACCEPTANCES="${ST_WARNING_ACCEPTANCES:-[]}"
   ST_RETRYABLE="${ST_RETRYABLE:-false}"
   ST_RETRY_COUNT="${ST_RETRY_COUNT:-0}"

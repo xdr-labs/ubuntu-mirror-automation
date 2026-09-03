@@ -7,6 +7,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALLER="${ROOT}/scripts/install-dp-upgrade-mirror.sh"
 LAUNCHER_BUILDER="${ROOT}/scripts/lib/build_client_launchers.py"
 
+# shellcheck source=lib/portable_ip_policy.sh
+source "${ROOT}/tests/lib/portable_ip_policy.sh"
+
 FAIL=0
 pass() { echo "  PASS: $*"; }
 fail() { echo "  FAIL: $*"; FAIL=1; }
@@ -74,10 +77,10 @@ for script in "${HOPS[@]}"; do
     && fail "${hop}: curl|bash" || pass "${hop}: no curl|bash"
   grep -qE '\.sha256' "${TMP}/block-${hop}.sh" \
     && fail "${hop}: sidecar trust" || pass "${hop}: no sidecar trust"
-  if grep -qE '221\.139\.249\.(111|112)' "${TMP}/block-${hop}.sh"; then
-    fail "${hop}: hardcoded test server IP"
+  if portable_ip_policy_assert_file "hop-${hop}" "${TMP}/block-${hop}.sh"; then
+    pass "${hop}: portable IP policy"
   else
-    pass "${hop}: no hardcoded 221.139.249.111/112"
+    fail "${hop}: non-portable IP literal in generated hop command"
   fi
   bash -n "${TMP}/block-${hop}.sh" && pass "${hop}: bash -n PASS" || fail "${hop}: bash -n FAIL"
 done

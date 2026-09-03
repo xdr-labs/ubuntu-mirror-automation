@@ -205,6 +205,7 @@ EOF
   mm_status_set ACPS_PHASE2_DOWNLOADED PASS
   mm_status_set ACPS_CHECKSUM PASS
   mm_status_set UPSTREAM_BRINGUP_DRIFT NO
+  mm_status_set UPSTREAM_BRINGUP_PROVENANCE PASS
   mm_status_set PATCHED_BRINGUP_APPLIED YES
   return 0
 }
