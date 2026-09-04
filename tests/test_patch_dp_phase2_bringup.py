@@ -28,6 +28,7 @@ PRODUCTION_F1A73 = os.path.join(
     ROOT, 'tests', 'fixtures', 'dp-phase2', 'production-f1a73',
     'bringup_py3_dp_after_os_upgrade.sh',
 )
+# SANITIZED COMPATIBILITY FIXTURE identity (not a production provenance pin).
 PRODUCTION_F1A73_SHA1 = 'f57ea3964582322e0dc401fa8dd731c7443622fd'
 F1A73_VENDOR_MARKERS = (
     'STANDBY_IPS=""',
@@ -190,7 +191,7 @@ class ProductionF1a73PatchTests(unittest.TestCase):
             src if src is not None else self.upstream, emit=False,
         )
 
-    def test_fixture_sha1_is_production_f1a73(self):
+    def test_fixture_sha1_is_sanitized_compatibility_f1a73(self):
         self.assertEqual(
             hashlib.sha1(self.raw).hexdigest(), PRODUCTION_F1A73_SHA1,
         )
@@ -298,6 +299,7 @@ PRODUCTION_3AF369 = os.path.join(
     ROOT, 'tests', 'fixtures', 'dp-phase2', 'production-3af369',
     'bringup_py3_dp_after_os_upgrade.sh',
 )
+# SANITIZED COMPATIBILITY FIXTURE identity (not a production provenance pin).
 PRODUCTION_3AF369_SHA1 = '0695bd17c6a3e9fca910526779e7b595f79b188c'
 N3_VENDOR_MARKERS = (
     'STANDBY_IPS=""',
@@ -317,7 +319,7 @@ class Production3af369PatchTests(unittest.TestCase):
             self.raw = fh.read()
         self.assertEqual(hashlib.sha1(self.raw).hexdigest(), PRODUCTION_3AF369_SHA1)
 
-    def test_fixture_sha1_is_production_3af369(self):
+    def test_fixture_sha1_is_sanitized_compatibility_3af369(self):
         self.assertEqual(
             hashlib.sha1(self.raw).hexdigest(), PRODUCTION_3AF369_SHA1,
         )

@@ -26,9 +26,10 @@ by hand. If required anchors are missing, Download and Prepare fails closed
 - **Target DP version:** 6.6.0
 - **ACPS bringup is versionless** (`bringup_py3_dp_after_os_upgrade.sh`).
 - **Blocking approval root:** SHA256 digests listed in
-  `approved-upstream-bringup.sha256` (derived from reviewed fixture/reference
-  bytes). HTTPS alone, same-channel `.sha1` sidecars, and patch-anchor
-  compatibility are **not** an approval root.
+  `approved-upstream-bringup.sha256` (SHA256 of actual reviewed ACPS upstream
+  bytes only — never synthetic or sanitized fixture digests). HTTPS alone,
+  same-channel `.sha1` sidecars, and patch-anchor compatibility are **not** an
+  approval root.
 - **Reference / last-known unmodified upstream SHA1:**
   `70de02dd62409110dadb7553991d1ffb0a79f396`
   (recorded in `bringup_py3_dp_after_os_upgrade.sh.upstream.sha1`).

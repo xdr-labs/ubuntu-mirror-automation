@@ -264,12 +264,27 @@ setup_project_shadow_if_needed() {
     return 0
   fi
   SHADOW_ROOT="${WORKDIR}/shadow-project"
-  mkdir -p "$SHADOW_ROOT/vendor"
+  mkdir -p "$SHADOW_ROOT/vendor" "${WORKDIR}/vendor"
+  # Seed vendor from production, then replace allowlist with TEST-LOCAL digests.
+  if [[ ! -d "${WORKDIR}/vendor/dp-phase2" ]]; then
+    cp -a "${ROOT}/vendor/dp-phase2" "${WORKDIR}/vendor/dp-phase2"
+  fi
+  local synth
+  synth="$(sha256sum "${ROOT}/tests/fixtures/dp-phase2/upstream_bringup_unpatched.sh" | awk '{print $1}')"
+  cat >"${WORKDIR}/vendor/dp-phase2/approved-upstream-bringup.sha256" <<EOF
+# TEST-LOCAL allowlist for mirror-manager synthetic ACPS payloads
+${synth}  upstream_bringup_unpatched
+EOF
+  # Preserve real reviewed digests too (optional; synthetic is what prepare uses).
+  awk '/^[0-9a-fA-F]{64}([[:space:]]|$)/ {print}' \
+    "${ROOT}/vendor/dp-phase2/approved-upstream-bringup.sha256" \
+    >>"${WORKDIR}/vendor/dp-phase2/approved-upstream-bringup.sha256"
   ln -sfn "${ROOT}/scripts" "${SHADOW_ROOT}/scripts"
   ln -sfn "${ROOT}/client" "${SHADOW_ROOT}/client"
   ln -sfn "${ROOT}/lib" "${SHADOW_ROOT}/lib"
   ln -sfn "${ROOT}/config" "${SHADOW_ROOT}/config"
   ln -sfn "${ROOT}/mirror.conf" "${SHADOW_ROOT}/mirror.conf" 2>/dev/null || true
+  rm -rf "${SHADOW_ROOT}/vendor/dp-phase2"
   cp -a "${WORKDIR}/vendor/dp-phase2" "${SHADOW_ROOT}/vendor/dp-phase2"
 }
 
@@ -443,7 +458,8 @@ python3 "$OS_CORE_PY" verify --package "$PKG_BAD" 2>/dev/null && fail "E outer s
 
 echo "======== Prepare fixtures for install flow ========"
 common_env
-USE_WORKDIR_VENDOR=0
+# Isolate synthetic ACPS fixture digests in a TEST-LOCAL project allowlist.
+USE_WORKDIR_VENDOR=1
 ACPS_ROOT="${WORKDIR}/acps-http"
 make_acps_payload "$ACPS_ROOT" 6.6.0
 setup_project_shadow_if_needed

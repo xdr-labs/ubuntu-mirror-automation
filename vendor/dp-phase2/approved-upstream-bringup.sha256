@@ -4,6 +4,12 @@
 # SHA256(upstream bytes) to match one of these digests before the deterministic
 # patcher may produce root-executable bringup output.
 #
+# Entries MUST be SHA256 digests of the ACTUAL reviewed ACPS upstream bringup
+# bytes. Do NOT list:
+#   - synthetic regression fixtures
+#   - sanitized / scrubbed compatibility fixtures
+#   - any derivative whose bytes differ from the reviewed ACPS artifact
+#
 # HTTPS, same-channel SHA1 sidecars, and patch-anchor compatibility are NOT an
 # approval root. New vendor bringup bytes must be reviewed and intentionally
 # added here after patch compatibility/tests pass.
@@ -17,13 +23,14 @@
 #     → approved SHA256 is intentionally added below
 #     → normal preparation can proceed
 #
+# Digests below were computed from exact pre-scrub historical fixture bytes at
+# git commit 9bfac016d5f66b2abcb3e097284421fc3e62118b (SHA1 identities match
+# the reviewed generation names f1a73 / 3af369).
+#
 # Format: <sha256>  <label>
 
-# Synthetic regression fixture (tests/fixtures/dp-phase2/upstream_bringup_unpatched.sh)
-f912e81632fce481a0ce9b597779b14dbab45873321d137adc09c5e40adfffe5  upstream_bringup_unpatched
+# Reviewed ACPS generation f1a73 (SHA1 f1a73c1d4502e2efcf55197865d2ade345d9c82f)
+1d956d8b1221e2bfd621319951fc7665eed4cdbc046860b36e3f6e2eba885c9c  production-f1a73
 
-# Production ACPS generation f1a73 (tests/fixtures/dp-phase2/production-f1a73/)
-a5e4ee81bf08a17b33212c296462a1ca09b025adece8d41fb9d3ddf98b94f3fb  production-f1a73
-
-# Production ACPS generation 3af369 (tests/fixtures/dp-phase2/production-3af369/)
-c4a881bfaa906adbcee6fc2826469b2bc472402a81f9b0fb4f4a9bbb871f187a  production-3af369
+# Reviewed ACPS generation 3af369 (SHA1 3af369660c3e0dfb0b7421ab455dee1ced365b1d)
+6a69ff8671a1bd396efb4d103314cd5d347003fbda957e49a20c99fb5957e622  production-3af369

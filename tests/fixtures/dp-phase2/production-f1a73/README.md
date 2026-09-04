@@ -1,4 +1,4 @@
-# SANITIZED COMPATIBILITY FIXTURE: production-3af369
+# SANITIZED COMPATIBILITY FIXTURE: production-f1a73
 
 **SANITIZED COMPATIBILITY FIXTURE** — not byte-exact ACPS upstream.
 
@@ -6,11 +6,11 @@ This tree holds an environment-IP / credential-scrubbed derivative of the
 reviewed ACPS `bringup_py3_dp_after_os_upgrade.sh` generation whose historical
 SHA1 was:
 
-    3af369660c3e0dfb0b7421ab455dee1ced365b1d
+    f1a73c1d4502e2efcf55197865d2ade345d9c82f
 
 Current on-disk fixture SHA1 (sanitized bytes):
 
-    0695bd17c6a3e9fca910526779e7b595f79b188c
+    f57ea3964582322e0dc401fa8dd731c7443622fd
 
 Use this file for deterministic **patch compatibility** regression only.
 Its SHA256 is **NOT** a production provenance pin and must not appear in

@@ -11,10 +11,15 @@ ACPS="${ROOT}/scripts/lib/acps_acquire.sh"
 R2="${ROOT}/scripts/lib/r2_acquire.sh"
 PATCHER="${ROOT}/scripts/lib/patch_dp_phase2_bringup.py"
 FIXTURE="${ROOT}/tests/fixtures/dp-phase2/upstream_bringup_unpatched.sh"
+# Sanitized compatibility fixtures (patch regression only — not provenance pins).
 PRODUCTION_F1A73="${ROOT}/tests/fixtures/dp-phase2/production-f1a73/bringup_py3_dp_after_os_upgrade.sh"
-EXPECTED_F1A73_SHA1="f57ea3964582322e0dc401fa8dd731c7443622fd"
+SANITIZED_F1A73_SHA1="f57ea3964582322e0dc401fa8dd731c7443622fd"
 PRODUCTION_3AF369="${ROOT}/tests/fixtures/dp-phase2/production-3af369/bringup_py3_dp_after_os_upgrade.sh"
-EXPECTED_3AF369_SHA1="0695bd17c6a3e9fca910526779e7b595f79b188c"
+SANITIZED_3AF369_SHA1="0695bd17c6a3e9fca910526779e7b595f79b188c"
+# Reviewed real upstream identities (historical bytes at pre-scrub base).
+HIST_BASE="9bfac016d5f66b2abcb3e097284421fc3e62118b"
+HIST_3AF369_GITPATH="tests/fixtures/dp-phase2/production-3af369/bringup_py3_dp_after_os_upgrade.sh"
+REAL_3AF369_SHA1="3af369660c3e0dfb0b7421ab455dee1ced365b1d"
 VENDOR="${ROOT}/vendor/dp-phase2/bringup_py3_dp_after_os_upgrade.sh"
 WRAPPER="${ROOT}/client/bringup_py3_dp_lifecycle.sh"
 
@@ -161,8 +166,9 @@ rcc2="$(run_in_subshell "$OUTC2" engine_apply_local_bringup_patch "$WORKC" \
 [[ ! -f "${WORKC}/bringup_py3_dp_after_os_upgrade.sh" ]] || true
 pass "C provenance gate blocks Download-and-Prepare path"
 
-# D. Incompatible exact patch target fails closed; temporarily allowlist mutated
-# bytes so the failure is patch-compat (not provenance).
+# D. Incompatible exact patch target fails closed; use a TEST-LOCAL allowlist
+# under a temporary MM_PROJECT_ROOT so mutated synthetic bytes can pass
+# provenance while the real production allowlist stays untouched.
 CACHED="${WORKDIR}/cacheD"; mkdir -p "$CACHED"
 python3 - "$FIXTURE" "${CACHED}/bringup_py3_dp_after_os_upgrade.sh" <<'PY'
 import sys
@@ -181,14 +187,22 @@ open(sys.argv[2], 'w').write(src)
 PY
 write_sidecar_for "${CACHED}/bringup_py3_dp_after_os_upgrade.sh"
 mut_sha="$(sha256sum "${CACHED}/bringup_py3_dp_after_os_upgrade.sh" | awk '{print $1}')"
-ALLOW_BAK="${WORKDIR}/approved-upstream-bringup.sha256.bak"
-cp -f "${ROOT}/vendor/dp-phase2/approved-upstream-bringup.sha256" "$ALLOW_BAK"
+PROJ_D="${WORKDIR}/proj-d"
+mkdir -p "${PROJ_D}/vendor/dp-phase2" "${PROJ_D}/scripts/lib"
+cp -f "${ROOT}/vendor/dp-phase2/bringup_py3_dp_after_os_upgrade.sh.upstream.sha1" \
+  "${PROJ_D}/vendor/dp-phase2/"
+cp -f "${ROOT}/vendor/dp-phase2/approved-upstream-bringup.sha256" \
+  "${PROJ_D}/vendor/dp-phase2/approved-upstream-bringup.sha256"
 printf '%s  test-mutated-incompat\n' "$mut_sha" \
-  >>"${ROOT}/vendor/dp-phase2/approved-upstream-bringup.sha256"
+  >>"${PROJ_D}/vendor/dp-phase2/approved-upstream-bringup.sha256"
+cp -f "$PATCHER" "${PROJ_D}/scripts/lib/patch_dp_phase2_bringup.py"
+cp -a "${ROOT}/scripts/lib/phase2_bringup_patch" "${PROJ_D}/scripts/lib/"
 WORKD="${WORKDIR}/workD"; mkdir -p "$WORKD"
 OUTD="${WORKDIR}/d.log"
+MM_PROJECT_ROOT_SAVE="$MM_PROJECT_ROOT"
+export MM_PROJECT_ROOT="$PROJ_D"
 rcd="$(run_in_subshell "$OUTD" run_verify_then_patch "$CACHED" "$WORKD")"
-cp -f "$ALLOW_BAK" "${ROOT}/vendor/dp-phase2/approved-upstream-bringup.sha256"
+export MM_PROJECT_ROOT="$MM_PROJECT_ROOT_SAVE"
 [[ "$rcd" -ne 0 ]] && pass "D incompat fails" || fail "D should fail"
 grep -q 'BRINGUP_PATCH_COMPAT=FAIL' "$OUTD" && pass "D BRINGUP_PATCH_COMPAT=FAIL" || fail "D compat fail log"
 grep -q 'PATCHED_BRINGUP_GENERATION=FAIL\|INSTALL_RESULT=FAIL' "$OUTD" \
@@ -291,11 +305,12 @@ printf '%s\n' "$old_published" | grep -q 'NEW_UPSTREAM_VENDOR_FIX_MARKER=YES' \
   && fail "H old bundle already had new marker" \
   || pass "H old published bundle lacked new upstream marker"
 
-# P. Exact production f1a73 upstream patches through the engine path.
+# P. Sanitized f1a73 compatibility fixture patches through the engine path
+# (patch regression only — hashes are NOT production provenance pins).
 F1SHA="$(sha1sum "$PRODUCTION_F1A73" | awk '{print $1}')"
-[[ "$F1SHA" == "$EXPECTED_F1A73_SHA1" ]] \
-  && pass "P production fixture SHA1=${F1SHA}" \
-  || fail "P production fixture SHA1 want=${EXPECTED_F1A73_SHA1} got=${F1SHA}"
+[[ "$F1SHA" == "$SANITIZED_F1A73_SHA1" ]] \
+  && pass "P sanitized f1a73 fixture SHA1=${F1SHA}" \
+  || fail "P sanitized f1a73 SHA1 want=${SANITIZED_F1A73_SHA1} got=${F1SHA}"
 CACHEP="${WORKDIR}/cacheP"; mkdir -p "$CACHEP"
 cp -f "$PRODUCTION_F1A73" "${CACHEP}/bringup_py3_dp_after_os_upgrade.sh"
 write_sidecar_for "${CACHEP}/bringup_py3_dp_after_os_upgrade.sh"
@@ -317,26 +332,30 @@ grep -q 'ACPS_DIRECT_DOWNLOAD=FAIL' "${WORKP}/bringup_py3_dp_after_os_upgrade.sh
   && pass "P ACPS direct download fail-closed" \
   || fail "P ACPS direct download fail-closed"
 [[ "$(sha1sum "${WORKP}/bringup_py3_dp_after_os_upgrade.sh" | awk '{print $1}')" \
-    != "$EXPECTED_F1A73_SHA1" ]] \
-  && pass "P generated differs from raw f1a73 upstream" \
-  || fail "P generated equals raw f1a73 upstream"
+    != "$SANITIZED_F1A73_SHA1" ]] \
+  && pass "P generated differs from sanitized f1a73 fixture" \
+  || fail "P generated equals sanitized f1a73 fixture"
 bash -n "${WORKP}/bringup_py3_dp_after_os_upgrade.sh" \
   && pass "P patched bash -n" || fail "P patched bash -n"
 cmp -s "${CACHEP}/bringup_py3_dp_after_os_upgrade.sh" "$PRODUCTION_F1A73" \
   && pass "P cache upstream not mutated" \
   || fail "P cache upstream mutated"
 
-# Q. Exact production 3af369 upstream patches through verify then apply.
-QSHA="$(sha1sum "$PRODUCTION_3AF369" | awk '{print $1}')"
-[[ "$QSHA" == "$EXPECTED_3AF369_SHA1" ]] \
-  && pass "Q production fixture SHA1=${QSHA}" \
-  || fail "Q production fixture SHA1 want=${EXPECTED_3AF369_SHA1} got=${QSHA}"
+# Q. Exact reviewed ACPS 3af369 upstream (historical bytes via git show into
+# WORKDIR only — never restored into the tree) verifies against the production
+# allowlist, then patches.
 CACHEQ="${WORKDIR}/cacheQ"; mkdir -p "$CACHEQ"
-cp -f "$PRODUCTION_3AF369" "${CACHEQ}/bringup_py3_dp_after_os_upgrade.sh"
+git -C "$ROOT" show "${HIST_BASE}:${HIST_3AF369_GITPATH}" \
+  >"${CACHEQ}/bringup_py3_dp_after_os_upgrade.sh"
+QSHA="$(sha1sum "${CACHEQ}/bringup_py3_dp_after_os_upgrade.sh" | awk '{print $1}')"
+[[ "$QSHA" == "$REAL_3AF369_SHA1" ]] \
+  && pass "Q historical 3af369 SHA1=${QSHA}" \
+  || fail "Q historical 3af369 SHA1 want=${REAL_3AF369_SHA1} got=${QSHA}"
 write_sidecar_for "${CACHEQ}/bringup_py3_dp_after_os_upgrade.sh"
 OUTQ="${WORKDIR}/q.log"
 rcq="$(run_in_subshell "$OUTQ" engine_verify_acps_upstream_bringup "$CACHEQ")"
 [[ "$rcq" -eq 0 ]] && pass "Q verify rc=0" || { fail "Q verify rc=${rcq}"; cat "$OUTQ"; }
+grep -q 'UPSTREAM_BRINGUP_PROVENANCE=PASS' "$OUTQ" && pass "Q provenance PASS" || fail "Q provenance PASS"
 grep -q 'BRINGUP_PATCH_COMPAT=PASS' "$OUTQ" && pass "Q verify BRINGUP_PATCH_COMPAT=PASS" || fail "Q verify compat"
 WORKQ="${WORKDIR}/workQ"; mkdir -p "$WORKQ"
 OUTQ2="${WORKDIR}/q2.log"
@@ -352,9 +371,10 @@ grep -q 'wait_for_da_restful_8003' "${WORKQ}/bringup_py3_dp_after_os_upgrade.sh"
   || fail "Q 3af369 vendor + project markers"
 bash -n "${WORKQ}/bringup_py3_dp_after_os_upgrade.sh" \
   && pass "Q patched bash -n" || fail "Q patched bash -n"
-cmp -s "${CACHEQ}/bringup_py3_dp_after_os_upgrade.sh" "$PRODUCTION_3AF369" \
-  && pass "Q cache upstream not mutated" \
-  || fail "Q cache upstream mutated"
+# Sanitized tree fixture remains distinct from historical bytes used above.
+[[ "$(sha1sum "$PRODUCTION_3AF369" | awk '{print $1}')" == "$SANITIZED_3AF369_SHA1" ]] \
+  && pass "Q tree fixture remains sanitized compat SHA1" \
+  || fail "Q tree fixture SHA1 unexpected"
 
 # English-only on production patcher + engine hunks.
 if ROOT="$ROOT" python3 - <<'PY'
