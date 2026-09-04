@@ -8,7 +8,7 @@ Package layout (no absolute paths):
     payload/
       hops/...
       shared/...
-      ubuntu -> relative symlink (optional)
+      (ubuntu alias is recreated after materialize; archives carry dirs/files only)
 
 Used by the DP Upgrade Mirror Manager after R2 download. Does not modify
 production mirror data by itself. Safe-path rules are mandatory.
@@ -24,6 +24,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import tarfile
 import tempfile
 from datetime import datetime, timezone
 
@@ -615,43 +616,170 @@ def gpgv_verify(public_key_path, sig_path, payload_path):
             raise OsCoreError("GPG_VERIFY_FAIL")
 
 
+# Archive members allowed in the OS Core transport format: directories + regular
+# files only. Symlinks/hardlinks/devices/FIFOs/sockets are rejected before any
+# member is materialized (materialize recreates the ubuntu alias after extract).
+_TAR_ALLOWED_TYPES = frozenset([
+    tarfile.DIRTYPE,
+    tarfile.REGTYPE,
+    tarfile.AREGTYPE,
+])
+_TAR_SPECIAL_MEMBER_TYPES = frozenset([
+    tarfile.BLKTYPE,
+    tarfile.CHRTYPE,
+    tarfile.FIFOTYPE,
+    tarfile.SYMTYPE,
+    tarfile.LNKTYPE,
+])
+if hasattr(tarfile, "SOCKTYPE"):
+    _TAR_SPECIAL_MEMBER_TYPES = _TAR_SPECIAL_MEMBER_TYPES | {tarfile.SOCKTYPE}
+
+
+def _normalized_tar_member_path(name):
+    """Return cleaned member path or raise OsCoreError for unsafe names."""
+    cleaned = (name or "").replace("\\", "/").rstrip("/")
+    if not cleaned or cleaned.startswith("/") or cleaned.startswith("../"):
+        raise OsCoreError("TAR_UNSAFE_MEMBER member=%s" % name)
+    if cleaned.startswith("./"):
+        cleaned = cleaned[2:]
+        if not cleaned or cleaned.startswith("/"):
+            raise OsCoreError("TAR_UNSAFE_MEMBER member=%s" % name)
+    parts = [p for p in cleaned.split("/") if p not in ("", ".")]
+    if not parts or any(p == ".." for p in parts):
+        raise OsCoreError("TAR_UNSAFE_MEMBER member=%s" % name)
+    cleaned = "/".join(parts)
+    if not is_safe_relpath(cleaned):
+        raise OsCoreError("TAR_UNSAFE_MEMBER member=%s" % name)
+    return cleaned
+
+
+def _reject_unsafe_tar_member(member):
+    """Fail closed on links and special file types before extraction."""
+    name = member.name
+    if member.issym() or member.islnk():
+        raise OsCoreError("TAR_UNSAFE_MEMBER member=%s type=link" % name)
+    if member.type in _TAR_SPECIAL_MEMBER_TYPES:
+        raise OsCoreError(
+            "TAR_UNSAFE_MEMBER member=%s type=%s" % (name, member.type)
+        )
+    if member.type not in _TAR_ALLOWED_TYPES and not (
+        member.isdir() or member.isreg() or member.isfile()
+    ):
+        raise OsCoreError(
+            "TAR_UNSAFE_MEMBER member=%s type=%s" % (name, member.type)
+        )
+    mode = member.mode or 0
+    if mode & (stat.S_ISUID | stat.S_ISGID):
+        raise OsCoreError("TAR_UNSAFE_MEMBER member=%s setuid_setgid" % name)
+
+
+def _tar_extract_target(dest_dir, cleaned):
+    """Resolve member path under dest_dir; reject normalization escapes."""
+    dest_real = os.path.realpath(dest_dir)
+    target = os.path.normpath(os.path.join(dest_dir, cleaned))
+    if target != dest_real and not target.startswith(dest_real + os.sep):
+        raise OsCoreError("TAR_UNSAFE_MEMBER member=%s" % cleaned)
+    return target
+
+
 def safe_tar_create(src_dir, tar_path):
-    """Create tar with ubuntu-os-core/ as top-level; reject unsafe members via path scan."""
+    """Create tar with ubuntu-os-core/ as top-level; dirs and regular files only."""
     parent = os.path.dirname(os.path.abspath(tar_path))
     os.makedirs(parent, exist_ok=True)
     tmp = tar_path + ".part"
     if os.path.exists(tmp):
         os.unlink(tmp)
-    # Ensure only PACKAGE_ROOT_NAME is archived from src_dir.
     pkg = os.path.join(src_dir, PACKAGE_ROOT_NAME)
     if not os.path.isdir(pkg):
         raise OsCoreError("TAR_SOURCE_MISSING")
-    subprocess.check_call(
-        ["tar", "-C", src_dir, "-cf", tmp, PACKAGE_ROOT_NAME],
-    )
-    # Path safety on archive listing
-    listing = subprocess.check_output(["tar", "-tf", tmp]).decode("utf-8", "replace").splitlines()
-    for entry in listing:
-        entry = entry.rstrip("/")
-        if entry.startswith("/") or ".." in entry.split("/"):
+
+    try:
+        with tarfile.open(tmp, "w") as tf:
+            for dirpath, dirnames, filenames in os.walk(pkg, followlinks=False):
+                # Do not descend into or archive symlink directories.
+                dirnames[:] = sorted(
+                    d for d in dirnames
+                    if not os.path.islink(os.path.join(dirpath, d))
+                )
+                rel_dir = os.path.relpath(dirpath, src_dir).replace("\\", "/")
+                if rel_dir == ".":
+                    continue
+                cleaned_dir = _normalized_tar_member_path(rel_dir)
+                if not cleaned_dir.startswith(PACKAGE_ROOT_NAME):
+                    raise OsCoreError("TAR_UNEXPECTED_MEMBER member=%s" % rel_dir)
+                tf.add(dirpath, arcname=cleaned_dir, recursive=False)
+
+                for name in sorted(filenames):
+                    full = os.path.join(dirpath, name)
+                    if os.path.islink(full):
+                        # Omit in-tree aliases (e.g. payload/ubuntu); materialize
+                        # recreates the alias after a verified extract.
+                        continue
+                    if not os.path.isfile(full):
+                        reject_special_file(full)
+                        continue
+                    reject_special_file(full)
+                    rel = os.path.relpath(full, src_dir).replace("\\", "/")
+                    cleaned = _normalized_tar_member_path(rel)
+                    if not cleaned.startswith(PACKAGE_ROOT_NAME):
+                        raise OsCoreError("TAR_UNEXPECTED_MEMBER member=%s" % rel)
+                    tf.add(full, arcname=cleaned, recursive=False)
+    except Exception:
+        if os.path.exists(tmp):
             os.unlink(tmp)
-            raise OsCoreError("TAR_UNSAFE_MEMBER member=%s" % entry)
-        if not entry.startswith(PACKAGE_ROOT_NAME):
-            os.unlink(tmp)
-            raise OsCoreError("TAR_UNEXPECTED_MEMBER member=%s" % entry)
+        raise
+
+    # Re-scan created archive with the same pre-extract contract.
+    with tarfile.open(tmp, "r:") as tf:
+        for member in tf.getmembers():
+            cleaned = _normalized_tar_member_path(member.name)
+            if not cleaned.startswith(PACKAGE_ROOT_NAME):
+                os.unlink(tmp)
+                raise OsCoreError("TAR_UNEXPECTED_MEMBER member=%s" % member.name)
+            try:
+                _reject_unsafe_tar_member(member)
+            except OsCoreError:
+                os.unlink(tmp)
+                raise
     os.rename(tmp, tar_path)
 
 
 def safe_tar_extract(tar_path, dest_dir):
+    """Extract OS Core archive after fail-closed path and member-type validation.
+
+    Rejects absolute paths, parent traversal, path-normalization escapes, and all
+    non directory/regular-file members (symlinks, hardlinks, devices, FIFOs,
+    sockets, etc.) before any member is materialized under dest_dir.
+    """
     os.makedirs(dest_dir, exist_ok=True)
-    listing = subprocess.check_output(["tar", "-tf", tar_path]).decode("utf-8", "replace").splitlines()
-    for entry in listing:
-        cleaned = entry.rstrip("/")
-        if cleaned.startswith("/") or ".." in cleaned.split("/"):
-            raise OsCoreError("TAR_UNSAFE_MEMBER member=%s" % entry)
-        if not cleaned.startswith(PACKAGE_ROOT_NAME):
-            raise OsCoreError("TAR_UNEXPECTED_MEMBER member=%s" % entry)
-    subprocess.check_call(["tar", "-C", dest_dir, "-xf", tar_path])
+    dest_real = os.path.realpath(dest_dir)
+
+    with tarfile.open(tar_path, "r:*") as tf:
+        members = tf.getmembers()
+        # Pre-validate every member before writing anything.
+        for member in members:
+            cleaned = _normalized_tar_member_path(member.name)
+            if not cleaned.startswith(PACKAGE_ROOT_NAME):
+                raise OsCoreError("TAR_UNEXPECTED_MEMBER member=%s" % member.name)
+            _reject_unsafe_tar_member(member)
+            _tar_extract_target(dest_dir, cleaned)
+
+        for member in members:
+            cleaned = _normalized_tar_member_path(member.name)
+            target = _tar_extract_target(dest_dir, cleaned)
+            if member.isdir():
+                os.makedirs(target, exist_ok=True)
+                continue
+            parent = os.path.dirname(target)
+            os.makedirs(parent, exist_ok=True)
+            parent_real = os.path.realpath(parent)
+            if parent_real != dest_real and not parent_real.startswith(dest_real + os.sep):
+                raise OsCoreError("TAR_UNSAFE_MEMBER member=%s" % member.name)
+            src = tf.extractfile(member)
+            if src is None:
+                raise OsCoreError("TAR_EXTRACT_MISSING member=%s" % member.name)
+            with open(target, "wb") as out:
+                shutil.copyfileobj(src, out)
 
 
 def cmd_build(args):

@@ -79,6 +79,8 @@ TEST_LIST=(
   test_phase2_wrapper_source_override.sh
   test_workflow_negative_contracts.sh
   test_workflow_pure_reads_and_legacy.sh
+  test_download_fingerprint_fail_closed.sh
+  test_os_core_safe_tar_extract.py
   test_workflow_state_concurrent_writers.sh
   test_phase2_same_version_recovery_default.sh
   test_selective_readiness_content_identity.sh
