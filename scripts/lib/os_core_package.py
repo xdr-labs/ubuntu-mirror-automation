@@ -653,6 +653,17 @@ def _normalized_tar_member_path(name):
     return cleaned
 
 
+def is_package_root_member(cleaned):
+    """True iff cleaned is exactly PACKAGE_ROOT_NAME or under PACKAGE_ROOT_NAME/.
+
+    Rejects prefix confusion such as ubuntu-os-core-evil/... or
+    ubuntu-os-core123/... which would pass a bare startswith(PACKAGE_ROOT_NAME).
+    """
+    return cleaned == PACKAGE_ROOT_NAME or cleaned.startswith(
+        PACKAGE_ROOT_NAME + "/"
+    )
+
+
 def _reject_unsafe_tar_member(member):
     """Fail closed on links and special file types before extraction."""
     name = member.name
@@ -705,7 +716,7 @@ def safe_tar_create(src_dir, tar_path):
                 if rel_dir == ".":
                     continue
                 cleaned_dir = _normalized_tar_member_path(rel_dir)
-                if not cleaned_dir.startswith(PACKAGE_ROOT_NAME):
+                if not is_package_root_member(cleaned_dir):
                     raise OsCoreError("TAR_UNEXPECTED_MEMBER member=%s" % rel_dir)
                 tf.add(dirpath, arcname=cleaned_dir, recursive=False)
 
@@ -721,7 +732,7 @@ def safe_tar_create(src_dir, tar_path):
                     reject_special_file(full)
                     rel = os.path.relpath(full, src_dir).replace("\\", "/")
                     cleaned = _normalized_tar_member_path(rel)
-                    if not cleaned.startswith(PACKAGE_ROOT_NAME):
+                    if not is_package_root_member(cleaned):
                         raise OsCoreError("TAR_UNEXPECTED_MEMBER member=%s" % rel)
                     tf.add(full, arcname=cleaned, recursive=False)
     except Exception:
@@ -733,7 +744,7 @@ def safe_tar_create(src_dir, tar_path):
     with tarfile.open(tmp, "r:") as tf:
         for member in tf.getmembers():
             cleaned = _normalized_tar_member_path(member.name)
-            if not cleaned.startswith(PACKAGE_ROOT_NAME):
+            if not is_package_root_member(cleaned):
                 os.unlink(tmp)
                 raise OsCoreError("TAR_UNEXPECTED_MEMBER member=%s" % member.name)
             try:
@@ -759,7 +770,7 @@ def safe_tar_extract(tar_path, dest_dir):
         # Pre-validate every member before writing anything.
         for member in members:
             cleaned = _normalized_tar_member_path(member.name)
-            if not cleaned.startswith(PACKAGE_ROOT_NAME):
+            if not is_package_root_member(cleaned):
                 raise OsCoreError("TAR_UNEXPECTED_MEMBER member=%s" % member.name)
             _reject_unsafe_tar_member(member)
             _tar_extract_target(dest_dir, cleaned)

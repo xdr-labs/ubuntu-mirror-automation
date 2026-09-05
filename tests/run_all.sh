@@ -150,6 +150,7 @@ TEST_LIST=(
   test_phase2_helper_generation_trust.sh
   test_phase2_bundle_http_trust.sh
   test_acps_verified_cache_metadata.sh
+  test_acps_corrupt_final_retry.sh
   test_reused_artifact_status.sh
   test_mirror_workflow_state_without_logger.sh
   test_current_hop_env_path_runner.sh

@@ -90,6 +90,66 @@ def main():
                 fail("safe_tar_create must omit symlink/hardlink members")
         pass_("normal directory/regular-file archive accepted")
 
+        # --- Exact package-root namespace (directory-only member) ---
+        root_only = os.path.join(tmp, "root-only.tar")
+        with tarfile.open(root_only, "w") as tf:
+            info = tarfile.TarInfo(name=oc.PACKAGE_ROOT_NAME)
+            info.type = tarfile.DIRTYPE
+            info.mode = 0o755
+            tf.addfile(info)
+        root_dest = os.path.join(tmp, "out-root-only")
+        oc.safe_tar_extract(root_only, root_dest)
+        if not os.path.isdir(os.path.join(root_dest, oc.PACKAGE_ROOT_NAME)):
+            fail("exact ubuntu-os-core directory member not accepted")
+        pass_("exact ubuntu-os-core directory accepted")
+
+        # --- Prefix confusion: ubuntu-os-core-evil/... ---
+        bad = os.path.join(tmp, "evil-prefix.tar")
+        with tarfile.open(bad, "w") as tf:
+            info = tarfile.TarInfo(name="ubuntu-os-core-evil/file")
+            data = b"evil"
+            info.size = len(data)
+            tf.addfile(info, fileobj=__import__("io").BytesIO(data))
+        dest = os.path.join(tmp, "out-evil")
+        os.makedirs(dest)
+        _extract_should_reject(
+            bad, dest, "ubuntu-os-core-evil prefix rejected", "TAR_UNEXPECTED_MEMBER"
+        )
+        if os.path.lexists(os.path.join(dest, "ubuntu-os-core-evil")):
+            fail("evil prefix: member materialized before reject")
+
+        # --- Prefix confusion: ubuntu-os-core123/... (reject before any write) ---
+        bad = os.path.join(tmp, "num-prefix-ordered.tar")
+        with tarfile.open(bad, "w") as tf:
+            evil = tarfile.TarInfo(name="ubuntu-os-core123/file")
+            data = b"nope"
+            evil.size = len(data)
+            tf.addfile(evil, fileobj=__import__("io").BytesIO(data))
+            good = tarfile.TarInfo(name="ubuntu-os-core/payload/ok.txt")
+            gdata = b"ok"
+            good.size = len(gdata)
+            tf.addfile(good, fileobj=__import__("io").BytesIO(gdata))
+        dest = os.path.join(tmp, "out-num")
+        os.makedirs(dest)
+        _extract_should_reject(
+            bad, dest, "ubuntu-os-core123 prefix rejected", "TAR_UNEXPECTED_MEMBER"
+        )
+        if os.path.lexists(os.path.join(dest, oc.PACKAGE_ROOT_NAME)):
+            fail("prefix reject: ubuntu-os-core content materialized before reject")
+        if os.path.lexists(os.path.join(dest, "ubuntu-os-core123")):
+            fail("prefix reject: confused prefix materialized")
+
+        # --- Shared helper unit checks ---
+        if not oc.is_package_root_member("ubuntu-os-core"):
+            fail("helper: exact root should be accepted")
+        if not oc.is_package_root_member("ubuntu-os-core/payload/x"):
+            fail("helper: nested path should be accepted")
+        if oc.is_package_root_member("ubuntu-os-core-evil/file"):
+            fail("helper: evil prefix must be rejected")
+        if oc.is_package_root_member("ubuntu-os-core123/file"):
+            fail("helper: numeric suffix prefix must be rejected")
+        pass_("package-root namespace helper rejects prefix confusion")
+
         # --- ../escape ---
         bad = os.path.join(tmp, "escape.tar")
         with tarfile.open(bad, "w") as tf:

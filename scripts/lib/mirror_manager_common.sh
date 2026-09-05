@@ -648,24 +648,60 @@ mm_verify_sha1_pair_logged() {
   return 0
 }
 
+# Invalidate a payload final that failed authoritative checksum verification.
+# Removes only the bad data file so a subsequent acquire can redownload it;
+# sidecars and unrelated finals are left untouched.
+mm_acps_invalidate_corrupt_final() {
+  local data_file="$1"
+  [[ -e "$data_file" ]] || return 0
+  mm_warn "ACPS_CORRUPT_FINAL_INVALIDATE file=$(basename "$data_file")"
+  rm -f "$data_file"
+}
+
 # ACPS payload checksums with correct SHA1/SHA256 labels and heartbeat on images tar.
+# Optional second arg invalidate_corrupt=1: when a payload fails verification,
+# remove only that final before returning failure (retry self-heal). Default 0
+# preserves pure verify for work-dir / hardlink trust paths.
 mm_acps_verify_payload_checksums() {
   local files_dir="$1"
+  local invalidate_corrupt="${2:-0}"
   local ver="${DP_PHASE2_VERSION}"
   local img bytes img_h
+  local failed=0
   mm_set_phase "Verifying ACPS Checksums"
-  mm_verify_sha1_pair_logged \
+
+  if ! mm_verify_sha1_pair_logged \
     "${files_dir}/aelladeb_py3_common.tar.gz" \
-    "${files_dir}/aelladeb_py3_common.tar.gz.sha1" \
-    || return 1
-  mm_verify_sha1_pair_logged \
+    "${files_dir}/aelladeb_py3_common.tar.gz.sha1"; then
+    [[ "$invalidate_corrupt" == "1" ]] \
+      && mm_acps_invalidate_corrupt_final "${files_dir}/aelladeb_py3_common.tar.gz"
+    if [[ "$invalidate_corrupt" != "1" ]]; then
+      return 1
+    fi
+    failed=1
+  fi
+  if ! mm_verify_sha1_pair_logged \
     "${files_dir}/aella-uvp-2404_${ver}ubuntu1_amd64.deb" \
-    "${files_dir}/aella-uvp-2404_${ver}ubuntu1_amd64.deb.sha1" \
-    || return 1
-  mm_verify_sha1_pair_logged \
+    "${files_dir}/aella-uvp-2404_${ver}ubuntu1_amd64.deb.sha1"; then
+    [[ "$invalidate_corrupt" == "1" ]] \
+      && mm_acps_invalidate_corrupt_final \
+        "${files_dir}/aella-uvp-2404_${ver}ubuntu1_amd64.deb"
+    if [[ "$invalidate_corrupt" != "1" ]]; then
+      return 1
+    fi
+    failed=1
+  fi
+  if ! mm_verify_sha1_pair_logged \
     "${files_dir}/bringup_py3_dp_after_os_upgrade.sh" \
-    "${files_dir}/bringup_py3_dp_after_os_upgrade.sh.sha1" \
-    || return 1
+    "${files_dir}/bringup_py3_dp_after_os_upgrade.sh.sha1"; then
+    [[ "$invalidate_corrupt" == "1" ]] \
+      && mm_acps_invalidate_corrupt_final \
+        "${files_dir}/bringup_py3_dp_after_os_upgrade.sh"
+    if [[ "$invalidate_corrupt" != "1" ]]; then
+      return 1
+    fi
+    failed=1
+  fi
   img="${files_dir}/images-${ver}.tar"
   bytes="$(stat -c%s "$img" 2>/dev/null || echo 0)"
   img_h="$(mm_format_bytes "$bytes")"
@@ -675,12 +711,16 @@ mm_acps_verify_payload_checksums() {
     "Verification may take 5–10 minutes depending on disk performance." \
     "The program is still running normally." \
     "Please wait and do not interrupt the process."
-  mm_verify_sha256_pair_logged \
+  if ! mm_verify_sha256_pair_logged \
     "$img" \
     "${img}.sha256" \
     "ACPS_CHECKSUM_VERIFY" \
-    "Still verifying images-${ver}.tar SHA256..." \
-    || return 1
+    "Still verifying images-${ver}.tar SHA256..."; then
+    [[ "$invalidate_corrupt" == "1" ]] \
+      && mm_acps_invalidate_corrupt_final "$img"
+    failed=1
+  fi
+  [[ "$failed" -eq 0 ]] || return 1
   return 0
 }
 

@@ -650,7 +650,10 @@ acps_acquire_all() {
   done
 
   dp2_assert_exact_files_dir "$cache"
-  if ! mm_acps_verify_payload_checksums "$cache"; then
+  # Final checksum authority: on failure invalidate only the corrupt payload
+  # finals so a subsequent Menu 2 retry redownloads those files (not unrelated
+  # valid large artifacts that already passed verification).
+  if ! mm_acps_verify_payload_checksums "$cache" 1; then
     mm_state_set ACPS_CHECKSUM FAIL
     rm -f "${cache}/.VERIFIED"
     acps_cleanup_curl_auth
