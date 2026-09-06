@@ -47,18 +47,31 @@ WORKER_MODE=0
 TARGET_VERSION=""
 WORKER_PASSWORD_FILE=""
 WORKER_PASSWORD_FILE_OWNED=NO
+P2B_PASSWORD_HANDOFF_VERIFIED=NO
 PASSTHRU=()
 
+# Parent owns a lifecycle-created password until detached-worker handoff is
+# verified. Marker write failure after the file exists must still delete it.
 p2b_store_worker_password() {
   local pw="$1"
-  local d f
+  local d f marker
   d="$(p2b_dir)"
   p2b_ensure_dir
-  f="${d}/worker-password"
+  f="$(p2b_lifecycle_owned_worker_password_path)"
+  marker="$(p2b_lifecycle_owned_worker_password_marker_path)"
   printf '%s' "$pw" | p2b_atomic_write "$f" || return 1
   WORKER_PASSWORD_FILE="$f"
   WORKER_PASSWORD_FILE_OWNED=YES
-  printf '%s\n' "$f" | p2b_atomic_write "${d}/worker-password.owned" || return 1
+  P2B_PASSWORD_HANDOFF_VERIFIED=NO
+  p2b_install_parent_pre_handoff_trap
+  if [[ "${P2B_TEST_FAIL_PASSWORD_OWNED_MARKER:-0}" == "1" ]]; then
+    p2b_cleanup_lifecycle_owned_worker_password
+    return 1
+  fi
+  if ! printf '%s\n' "$f" | p2b_atomic_write "$marker"; then
+    p2b_cleanup_lifecycle_owned_worker_password
+    return 1
+  fi
   return 0
 }
 
@@ -241,15 +254,13 @@ start_or_monitor() {
   logf="${PHASE2_BRINGUP_LOG_DEFAULT}"
 
   if [[ -z "$VENDOR_BRINGUP" || ! -f "$VENDOR_BRINGUP" ]]; then
-    echo "ERROR: vendor bringup script not found (expected bringup_py3_dp_after_os_upgrade.vendor.sh beside wrapper)" >&2
-    exit 1
+    p2b_lifecycle_die "vendor bringup script not found (expected bringup_py3_dp_after_os_upgrade.vendor.sh beside wrapper)"
   fi
 
   if ! p2b_acquire_lock; then
-    echo "ERROR: could not acquire bringup lifecycle lock" >&2
-    exit 1
+    p2b_lifecycle_die "could not acquire bringup lifecycle lock"
   fi
-  trap 'p2b_release_lock' EXIT
+  p2b_install_parent_pre_handoff_trap
 
   p2b_status_snapshot
   if [[ "${BRINGUP_STATE}" == "RUNNING" || "${BRINGUP_STATE}" == "STARTING" ]] \
@@ -258,8 +269,8 @@ start_or_monitor() {
     echo "ACTION=MONITOR_EXISTING"
     echo "BRINGUP_WORKER_PID=${BRINGUP_WORKER_PID}"
     echo "BRINGUP_RUN_ID=${BRINGUP_RUN_ID}"
+    p2b_mark_password_handoff_verified
     p2b_release_lock
-    trap - EXIT
     if [[ "$ATTACH_MONITOR" -eq 1 ]]; then
       p2b_emit_handoff "${BRINGUP_RUN_ID}" "${BRINGUP_WORKER_PID}" "${BRINGUP_LOG}"
       p2b_monitor_loop "${BRINGUP_RUN_ID}"
@@ -286,8 +297,8 @@ start_or_monitor() {
       echo "ACTION=MONITOR_EXISTING"
       echo "BRINGUP_WORKER_PID=${BRINGUP_WORKER_PID}"
       echo "BRINGUP_RUN_ID=${BRINGUP_RUN_ID}"
+      p2b_mark_password_handoff_verified
       p2b_release_lock
-      trap - EXIT
       if [[ "$ATTACH_MONITOR" -eq 1 ]]; then
         p2b_emit_handoff "${BRINGUP_RUN_ID}" "${BRINGUP_WORKER_PID}" "${BRINGUP_LOG}"
         p2b_monitor_loop "${BRINGUP_RUN_ID}"
@@ -303,7 +314,7 @@ start_or_monitor() {
     echo "BRINGUP_PREVIOUS_FAILED_ARCHIVED=$(p2b_dir)/previous-failed"
   fi
 
-  [[ -n "$TARGET_VERSION" ]] || { echo "ERROR: --version is required to start bringup" >&2; exit 1; }
+  [[ -n "$TARGET_VERSION" ]] || p2b_lifecycle_die "--version is required to start bringup"
 
   run_id="$(p2b_new_run_id)"
   started="$(p2b_utc_now)"
@@ -357,20 +368,21 @@ start_or_monitor() {
     # Worker may have written state already (fast fail)
     p2b_status_snapshot
     if [[ "${BRINGUP_STATE}" == "FAILED" || "${BRINGUP_STATE}" == "COMPLETED" ]]; then
+      # Worker already reached a terminal state; its EXIT trap is authoritative
+      # if it installed one. If it died before that, parent still owns cleanup.
+      p2b_cleanup_pre_handoff_lifecycle_password
       p2b_release_lock
       trap - EXIT
       p2b_print_status
       return 1
     fi
-    echo "ERROR: BRINGUP_HANDOFF=FAIL worker pid not verified" >&2
     p2b_write_state "FAILED"
-    p2b_release_lock
-    exit 1
+    p2b_lifecycle_die "BRINGUP_HANDOFF=FAIL worker pid not verified"
   fi
 
   p2b_emit_handoff "$run_id" "$pid" "$logf"
+  p2b_mark_password_handoff_verified
   p2b_release_lock
-  trap - EXIT
 
   if [[ "$ATTACH_MONITOR" -eq 0 ]]; then
     echo "BRINGUP_MONITOR_MODE=DETACHED"
@@ -401,15 +413,17 @@ main() {
   fi
 
   if [[ "$WORKER_MODE" -eq 1 ]]; then
+    p2b_resolve_lifecycle_password_ownership
+    p2b_install_parent_pre_handoff_trap
     [[ -n "$VENDOR_BRINGUP" && -f "$VENDOR_BRINGUP" ]] \
-      || { echo "ERROR: vendor bringup missing in worker mode" >&2; exit 1; }
+      || p2b_lifecycle_die "vendor bringup missing in worker mode"
     # Filter passthru: drop our meta flags already consumed
     p2b_worker_main "$VENDOR_BRINGUP" "${PASSTHRU[@]}"
     exit $?
   fi
 
   [[ "${EUID}" -eq 0 || "${PHASE2_BRINGUP_ALLOW_NONROOT:-0}" == "1" ]] \
-    || { echo "ERROR: must run as root" >&2; exit 1; }
+    || p2b_lifecycle_die "must run as root"
 
   # Default attach monitor for interactive; honor --detach
   if [[ ! -t 0 || ! -t 1 ]]; then

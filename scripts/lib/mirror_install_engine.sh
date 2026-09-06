@@ -1146,27 +1146,119 @@ engine_phase2_upstream_allowlisted() {
   [[ "$matched" -eq 1 ]]
 }
 
+engine_phase2_private_file_mode() {
+  printf '%s' "${MM_PRIVATE_FILE_MODE:-0600}"
+}
+
+engine_phase2_private_dir_mode() {
+  printf '%s' "${MM_PRIVATE_DIR_MODE:-0700}"
+}
+
+# stat(1) %a is unpadded (700); config modes may be 0700.
+engine_phase2_mode_matches() {
+  local actual="$1"
+  local want="$2"
+  local actual_n want_n
+  actual_n="${actual#"${actual%%[!0]*}"}"
+  want_n="${want#"${want%%[!0]*}"}"
+  [[ -n "$actual_n" ]] || actual_n=0
+  [[ -n "$want_n" ]] || want_n=0
+  [[ "$actual_n" == "$want_n" ]]
+}
+
+engine_phase2_chmod_private_dir() {
+  local path="$1"
+  local want
+  want="$(engine_phase2_private_dir_mode)"
+  if [[ "${MM_TEST_FAIL_PRIVATE_MODE:-0}" == "1" ]]; then
+    chmod 0755 "$path" 2>/dev/null || true
+    return 1
+  fi
+  chmod "$want" "$path" || return 1
+  engine_phase2_mode_matches "$(stat -c '%a' "$path")" "$want" || return 1
+}
+
+engine_phase2_chmod_private_file() {
+  local path="$1"
+  local want
+  want="$(engine_phase2_private_file_mode)"
+  if [[ "${MM_TEST_FAIL_PRIVATE_MODE:-0}" == "1" ]]; then
+    chmod 0644 "$path" 2>/dev/null || true
+    return 1
+  fi
+  chmod "$want" "$path" || return 1
+  engine_phase2_mode_matches "$(stat -c '%a' "$path")" "$want" || return 1
+}
+
+engine_phase2_sha1_digest_of_file() {
+  local sidecar="$1"
+  local digest
+  [[ -f "$sidecar" && -s "$sidecar" ]] || return 1
+  digest="$(awk '{print $1; exit}' "$sidecar")"
+  [[ "$digest" =~ ^[0-9a-fA-F]{40}$ ]] || return 1
+  printf '%s' "${digest,,}"
+}
+
+engine_phase2_private_provenance_path() {
+  local ver="${1:-${TARGET_DP_VERSION:-${PHASE2_TARGET_VERSION}}}"
+  printf '%s/provenance.env\n' "$(engine_phase2_private_upstream_dir "$ver")"
+}
+
+# Complete private preservation set: raw + matching .sha1 + provenance.env,
+# SHA256-allowlisted, modes 0700/0600. Missing/wrong sidecar is not complete.
+engine_phase2_private_upstream_complete() {
+  local ver="${1:-${TARGET_DP_VERSION:-${PHASE2_TARGET_VERSION}}}"
+  local dir dest dest_sha prov expected actual p_ver p_sha1 p_sha256
+  dir="$(engine_phase2_private_upstream_dir "$ver")"
+  dest="$(engine_phase2_saved_upstream_path "$ver")"
+  dest_sha="${dest}.sha1"
+  prov="$(engine_phase2_private_provenance_path "$ver")"
+  [[ -d "$dir" ]] || return 1
+  engine_phase2_mode_matches "$(stat -c '%a' "$dir")" "$(engine_phase2_private_dir_mode)" || return 1
+  [[ -f "$dest" && -s "$dest" ]] || return 1
+  [[ -f "$dest_sha" && -s "$dest_sha" ]] || return 1
+  [[ -f "$prov" && -s "$prov" ]] || return 1
+  engine_phase2_mode_matches "$(stat -c '%a' "$dest")" "$(engine_phase2_private_file_mode)" || return 1
+  engine_phase2_mode_matches "$(stat -c '%a' "$dest_sha")" "$(engine_phase2_private_file_mode)" || return 1
+  engine_phase2_mode_matches "$(stat -c '%a' "$prov")" "$(engine_phase2_private_file_mode)" || return 1
+  engine_phase2_upstream_allowlisted "$dest" || return 1
+  expected="$(engine_phase2_sha1_digest_of_file "$dest_sha")" || return 1
+  actual="$(engine_bringup_sha1_of "$dest")"
+  [[ "${expected,,}" == "${actual,,}" ]] || return 1
+  p_ver="$(grep -E '^TARGET_DP_VERSION=' "$prov" 2>/dev/null | head -1 | cut -d= -f2- || true)"
+  p_sha1="$(grep -E '^BRINGUP_UPSTREAM_SHA1=' "$prov" 2>/dev/null | head -1 | cut -d= -f2- || true)"
+  p_sha256="$(grep -E '^BRINGUP_UPSTREAM_SHA256=' "$prov" 2>/dev/null | head -1 | cut -d= -f2- || true)"
+  [[ "$p_ver" == "$ver" ]] || return 1
+  [[ "${p_sha1,,}" == "${actual,,}" ]] || return 1
+  [[ "${p_sha256,,}" == "$(engine_bringup_sha256_of "$dest")" ]] || return 1
+  return 0
+}
+
 engine_phase2_install_private_upstream() {
   local src="$1"
   local ver="${2:-${TARGET_DP_VERSION:-${PHASE2_TARGET_VERSION}}}"
-  local dir dest dest_sha tmp tmp_sha sidecar_src
+  local dir dest dest_sha prov tmp tmp_sha tmp_prov sidecar_src sidecar_digest actual_sha1
   [[ -f "$src" && -s "$src" ]] || return 1
   engine_phase2_upstream_allowlisted "$src" || return 1
   dir="$(engine_phase2_private_upstream_dir "$ver")"
   dest="$(engine_phase2_saved_upstream_path "$ver")"
   dest_sha="${dest}.sha1"
+  prov="$(engine_phase2_private_provenance_path "$ver")"
   mkdir -p "$dir" || return 1
-  chmod "${MM_PRIVATE_DIR_MODE:-0700}" "$dir" 2>/dev/null || chmod 0700 "$dir" || true
-  # Restrict parent private/ as well when we created it.
-  chmod "${MM_PRIVATE_DIR_MODE:-0700}" "$(dirname "$dir")" 2>/dev/null || true
+  engine_phase2_chmod_private_dir "$dir" || return 1
+  if [[ -d "$(dirname "$dir")" ]]; then
+    engine_phase2_chmod_private_dir "$(dirname "$dir")" || return 1
+  fi
   tmp="${dest}.new.$$"
   tmp_sha="${dest_sha}.new.$$"
-  cp -f "$src" "$tmp" || { rm -f "$tmp" "$tmp_sha"; return 1; }
-  chmod "${MM_PRIVATE_FILE_MODE:-0600}" "$tmp" 2>/dev/null || chmod 0600 "$tmp" || true
+  tmp_prov="${prov}.new.$$"
+  cp -f "$src" "$tmp" || { rm -f "$tmp" "$tmp_sha" "$tmp_prov"; return 1; }
+  engine_phase2_chmod_private_file "$tmp" || { rm -f "$tmp" "$tmp_sha" "$tmp_prov"; return 1; }
   if [[ "$(engine_bringup_sha256_of "$tmp")" != "$(engine_bringup_sha256_of "$src")" ]]; then
-    rm -f "$tmp" "$tmp_sha"
+    rm -f "$tmp" "$tmp_sha" "$tmp_prov"
     return 1
   fi
+  actual_sha1="$(engine_bringup_sha1_of "$tmp")"
   sidecar_src=""
   if [[ -f "${src}.sha1" ]]; then
     sidecar_src="${src}.sha1"
@@ -1174,58 +1266,89 @@ engine_phase2_install_private_upstream() {
     sidecar_src="${src}.upstream.sha1"
   fi
   if [[ -n "$sidecar_src" && -f "$sidecar_src" ]]; then
-    cp -f "$sidecar_src" "$tmp_sha" || { rm -f "$tmp" "$tmp_sha"; return 1; }
+    sidecar_digest="$(engine_phase2_sha1_digest_of_file "$sidecar_src" 2>/dev/null || true)"
+    if [[ -n "$sidecar_digest" && "${sidecar_digest,,}" == "${actual_sha1,,}" ]]; then
+      cp -f "$sidecar_src" "$tmp_sha" || { rm -f "$tmp" "$tmp_sha" "$tmp_prov"; return 1; }
+    else
+      sha1sum "$tmp" | awk '{print $1"  bringup_py3_dp_after_os_upgrade.sh"}' >"$tmp_sha" \
+        || { rm -f "$tmp" "$tmp_sha" "$tmp_prov"; return 1; }
+    fi
   else
     sha1sum "$tmp" | awk '{print $1"  bringup_py3_dp_after_os_upgrade.sh"}' >"$tmp_sha" \
-      || { rm -f "$tmp" "$tmp_sha"; return 1; }
+      || { rm -f "$tmp" "$tmp_sha" "$tmp_prov"; return 1; }
   fi
-  chmod "${MM_PRIVATE_FILE_MODE:-0600}" "$tmp_sha" 2>/dev/null || chmod 0600 "$tmp_sha" || true
+  engine_phase2_chmod_private_file "$tmp_sha" || { rm -f "$tmp" "$tmp_sha" "$tmp_prov"; return 1; }
+  sidecar_digest="$(engine_phase2_sha1_digest_of_file "$tmp_sha")" || {
+    rm -f "$tmp" "$tmp_sha" "$tmp_prov"
+    return 1
+  }
+  if [[ "${sidecar_digest,,}" != "${actual_sha1,,}" ]]; then
+    rm -f "$tmp" "$tmp_sha" "$tmp_prov"
+    return 1
+  fi
   {
     printf 'TARGET_DP_VERSION=%s\n' "$ver"
-    printf 'BRINGUP_UPSTREAM_SHA1=%s\n' "$(engine_bringup_sha1_of "$tmp")"
+    printf 'BRINGUP_UPSTREAM_SHA1=%s\n' "$actual_sha1"
     printf 'BRINGUP_UPSTREAM_SHA256=%s\n' "$(engine_bringup_sha256_of "$tmp")"
-  } >"${dir}/provenance.env.new.$$" || { rm -f "$tmp" "$tmp_sha"; return 1; }
-  chmod "${MM_PRIVATE_FILE_MODE:-0600}" "${dir}/provenance.env.new.$$" 2>/dev/null || true
-  mv -f "$tmp" "$dest" || { rm -f "$tmp" "$tmp_sha" "${dir}/provenance.env.new.$$"; return 1; }
-  mv -f "$tmp_sha" "$dest_sha" || true
-  mv -f "${dir}/provenance.env.new.$$" "${dir}/provenance.env" || true
-  chmod "${MM_PRIVATE_FILE_MODE:-0600}" "$dest" "$dest_sha" "${dir}/provenance.env" 2>/dev/null || true
+  } >"$tmp_prov" || { rm -f "$tmp" "$tmp_sha" "$tmp_prov"; return 1; }
+  engine_phase2_chmod_private_file "$tmp_prov" || { rm -f "$tmp" "$tmp_sha" "$tmp_prov"; return 1; }
+
+  mv -f "$tmp" "$dest" || { rm -f "$tmp" "$tmp_sha" "$tmp_prov"; return 1; }
+  if [[ "${MM_TEST_FAIL_PRIVATE_SIDECAR_MOVE:-0}" == "1" ]]; then
+    rm -f "$tmp_sha" "$tmp_prov"
+    return 1
+  fi
+  mv -f "$tmp_sha" "$dest_sha" || { rm -f "$tmp_sha" "$tmp_prov"; return 1; }
+  if [[ "${MM_TEST_FAIL_PRIVATE_PROVENANCE_MOVE:-0}" == "1" ]]; then
+    rm -f "$tmp_prov"
+    return 1
+  fi
+  mv -f "$tmp_prov" "$prov" || { rm -f "$tmp_prov"; return 1; }
+
+  engine_phase2_chmod_private_file "$dest" || return 1
+  engine_phase2_chmod_private_file "$dest_sha" || return 1
+  engine_phase2_chmod_private_file "$prov" || return 1
+  engine_phase2_chmod_private_dir "$dir" || return 1
+
+  engine_phase2_private_upstream_complete "$ver" || return 1
   return 0
 }
 
 # Move a legacy public *.upstream copy into private storage. Never deletes
-# the public copy until the private canonical file is verified. Never
-# destroys the Phase 2 final directory.
+# the public raw or authentic public .sha1 until the complete private set is
+# verified. Never destroys the Phase 2 final directory.
 engine_phase2_migrate_legacy_public_upstream() {
   local ver="${1:-${TARGET_DP_VERSION:-${PHASE2_TARGET_VERSION}}}"
-  local public public_sha private dest
+  local public public_sha private src
   public="$(engine_phase2_legacy_public_upstream_path "$ver")"
   public_sha="${public}.sha1"
   private="$(engine_phase2_saved_upstream_path "$ver")"
-  dest="$(engine_phase2_final_dir "$ver")"
   if [[ ! -f "$public" ]]; then
     return 0
   fi
-  if [[ -f "$private" && -s "$private" ]]; then
-    if engine_phase2_upstream_allowlisted "$private"; then
-      rm -f "$public" "$public_sha"
-      mm_info "PHASE2_PUBLIC_UPSTREAM_REMOVED=YES reason=private_canonical_present"
-      return 0
-    fi
-    mm_error "PHASE2_PRIVATE_UPSTREAM=FAIL reason=private_not_allowlisted"
-    return 1
+  if engine_phase2_private_upstream_complete "$ver"; then
+    rm -f "$public" "$public_sha"
+    mm_info "PHASE2_PUBLIC_UPSTREAM_REMOVED=YES reason=private_canonical_present"
+    return 0
   fi
-  if ! engine_phase2_upstream_allowlisted "$public"; then
+  # Private raw may already exist with a missing/wrong sidecar. Repair from
+  # the allowlisted private raw when possible; otherwise from the public copy.
+  # Never delete the public pair until repair/preserve succeeds.
+  src=""
+  if [[ -f "$private" && -s "$private" ]] && engine_phase2_upstream_allowlisted "$private"; then
+    src="$private"
+  elif engine_phase2_upstream_allowlisted "$public"; then
+    src="$public"
+  else
     mm_error "PHASE2_UPSTREAM_MIGRATE=FAIL reason=public_not_allowlisted"
     return 1
   fi
-  if ! engine_phase2_install_private_upstream "$public" "$ver"; then
+  if ! engine_phase2_install_private_upstream "$src" "$ver"; then
     mm_error "PHASE2_UPSTREAM_MIGRATE=FAIL reason=private_preserve"
-    # Fail closed: leave the public copy as the only valid source.
     return 1
   fi
-  if [[ ! -f "$private" || ! -s "$private" ]]; then
-    mm_error "PHASE2_UPSTREAM_MIGRATE=FAIL reason=private_missing_after_copy"
+  if ! engine_phase2_private_upstream_complete "$ver"; then
+    mm_error "PHASE2_UPSTREAM_MIGRATE=FAIL reason=private_incomplete"
     return 1
   fi
   rm -f "$public" "$public_sha"

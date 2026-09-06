@@ -63,6 +63,10 @@ engine_phase2_install_private_upstream "$UPSTREAM_FIXTURE" 6.6.0 \
 dir="$(engine_phase2_private_upstream_dir 6.6.0)"
 [[ "$(stat -c '%a' "$dir")" == "700" ]] || fail "private dir mode=$(stat -c '%a' "$dir") want=0700"
 [[ "$(stat -c '%a' "$private")" == "600" ]] || fail "private file mode=$(stat -c '%a' "$private") want=0600"
+[[ "$(stat -c '%a' "${private}.sha1")" == "600" ]] || fail "private sidecar mode"
+[[ "$(stat -c '%a' "${dir}/provenance.env")" == "600" ]] || fail "provenance mode"
+engine_phase2_private_upstream_complete 6.6.0 \
+  || fail "complete private set not verified after install"
 pass "new preserve is private 0700/0600"
 
 # 2. Legacy public copy migrates without deleting a valid Phase 2 final.
@@ -77,6 +81,7 @@ engine_phase2_migrate_legacy_public_upstream 6.6.0 \
 [[ ! -f "$legacy" ]] || fail "public leftover after successful migrate"
 [[ -f "${MM_DP_PHASE2_ROOT}/6.6.0/dp_bundle_6.6.0-current.tar" ]] \
   || fail "Phase 2 final destroyed by migrate"
+engine_phase2_private_upstream_complete 6.6.0 || fail "migrate left incomplete private set"
 pass "legacy public upstream migrates; final preserved"
 
 # 3. Failed migration does not delete the only valid upstream copy.
@@ -96,5 +101,131 @@ if grep -n 'dest_tmp}/bringup_py3_dp_after_os_upgrade.sh.upstream' \
   fail "new Phase 2 publication still copies raw upstream into public dest_tmp"
 fi
 pass "new Phase 2 publication does not copy raw upstream into dest_tmp"
+
+plant_valid_public() {
+  mkdir -p "$(dirname "$legacy")"
+  cp -f "$UPSTREAM_FIXTURE" "$legacy"
+  sha1sum "$legacy" | awk '{print $1}' >"${legacy}.sha1"
+}
+
+plant_allowlisted_private_raw_only() {
+  mkdir -p "$(engine_phase2_private_upstream_dir 6.6.0)"
+  chmod 0700 "$(engine_phase2_private_upstream_dir 6.6.0)"
+  cp -f "$UPSTREAM_FIXTURE" "$private"
+  chmod 0600 "$private"
+}
+
+# private_sidecar_missing
+rm -rf "$(engine_phase2_private_upstream_dir 6.6.0)"
+plant_allowlisted_private_raw_only
+if engine_phase2_private_upstream_complete 6.6.0; then
+  fail "private_sidecar_missing was treated as complete"
+fi
+plant_valid_public
+if engine_phase2_private_upstream_complete 6.6.0; then
+  fail "missing sidecar plus public pair was complete"
+fi
+pass "private_sidecar_missing"
+
+# private_sidecar_wrong_digest
+rm -rf "$(engine_phase2_private_upstream_dir 6.6.0)"
+plant_allowlisted_private_raw_only
+printf '0000000000000000000000000000000000000000  bringup_py3_dp_after_os_upgrade.sh\n' \
+  >"${private}.sha1"
+chmod 0600 "${private}.sha1"
+{
+  printf 'TARGET_DP_VERSION=6.6.0\n'
+  printf 'BRINGUP_UPSTREAM_SHA1=%s\n' "$(sha1sum "$private" | awk '{print $1}')"
+  printf 'BRINGUP_UPSTREAM_SHA256=%s\n' "$(sha256sum "$private" | awk '{print $1}')"
+} >"$(engine_phase2_private_upstream_dir 6.6.0)/provenance.env"
+chmod 0600 "$(engine_phase2_private_upstream_dir 6.6.0)/provenance.env"
+if engine_phase2_private_upstream_complete 6.6.0; then
+  fail "private_sidecar_wrong_digest was treated as complete"
+fi
+plant_valid_public
+# Must not delete public merely because private raw exists.
+MM_TEST_FAIL_PRIVATE_SIDECAR_MOVE=1
+if engine_phase2_migrate_legacy_public_upstream 6.6.0; then
+  fail "wrong-digest private plus injected sidecar move must not migrate"
+fi
+unset MM_TEST_FAIL_PRIVATE_SIDECAR_MOVE
+[[ -f "$legacy" ]] || fail "wrong digest migrate deleted public raw"
+[[ -f "${legacy}.sha1" ]] || fail "wrong digest migrate deleted public sidecar"
+pass "private_sidecar_wrong_digest"
+
+# private_sidecar_move_failure
+rm -rf "$(engine_phase2_private_upstream_dir 6.6.0)"
+plant_valid_public
+MM_TEST_FAIL_PRIVATE_SIDECAR_MOVE=1
+if engine_phase2_install_private_upstream "$UPSTREAM_FIXTURE" 6.6.0; then
+  fail "private_sidecar_move_failure succeeded"
+fi
+unset MM_TEST_FAIL_PRIVATE_SIDECAR_MOVE
+if engine_phase2_private_upstream_complete 6.6.0; then
+  fail "sidecar move failure left a complete private set"
+fi
+pass "private_sidecar_move_failure"
+
+# provenance_move_failure
+rm -rf "$(engine_phase2_private_upstream_dir 6.6.0)"
+plant_valid_public
+MM_TEST_FAIL_PRIVATE_PROVENANCE_MOVE=1
+if engine_phase2_install_private_upstream "$UPSTREAM_FIXTURE" 6.6.0; then
+  fail "provenance_move_failure succeeded"
+fi
+unset MM_TEST_FAIL_PRIVATE_PROVENANCE_MOVE
+if engine_phase2_private_upstream_complete 6.6.0; then
+  fail "provenance move failure left a complete private set"
+fi
+[[ -f "$legacy" && -f "${legacy}.sha1" ]] || fail "provenance move failure deleted public pair"
+pass "provenance_move_failure"
+
+# required_private_mode_failure
+rm -rf "$(engine_phase2_private_upstream_dir 6.6.0)"
+plant_valid_public
+MM_TEST_FAIL_PRIVATE_MODE=1
+if engine_phase2_install_private_upstream "$UPSTREAM_FIXTURE" 6.6.0; then
+  fail "required_private_mode_failure succeeded"
+fi
+unset MM_TEST_FAIL_PRIVATE_MODE
+if engine_phase2_private_upstream_complete 6.6.0; then
+  fail "mode failure left a complete private set"
+fi
+[[ -f "$legacy" && -f "${legacy}.sha1" ]] || fail "mode failure deleted public pair"
+pass "required_private_mode_failure"
+
+# existing_private_raw_missing_sidecar_plus_valid_legacy_pair
+rm -rf "$(engine_phase2_private_upstream_dir 6.6.0)"
+plant_allowlisted_private_raw_only
+rm -f "${private}.sha1"
+plant_valid_public
+printf 'valid-final-bundle\n' >"${MM_DP_PHASE2_ROOT}/6.6.0/dp_bundle_6.6.0-current.tar"
+engine_phase2_migrate_legacy_public_upstream 6.6.0 \
+  || fail "existing_private_raw_missing_sidecar_plus_valid_legacy_pair migrate"
+engine_phase2_private_upstream_complete 6.6.0 \
+  || fail "repair did not complete private set"
+[[ ! -f "$legacy" ]] || fail "public raw remained after successful repair"
+[[ ! -f "${legacy}.sha1" ]] || fail "public sidecar remained after successful repair"
+[[ -f "${MM_DP_PHASE2_ROOT}/6.6.0/dp_bundle_6.6.0-current.tar" ]] \
+  || fail "repair destroyed Phase 2 final"
+pass "existing_private_raw_missing_sidecar_plus_valid_legacy_pair"
+
+# migration_failure_retains_public_raw_and_sidecar
+rm -rf "$(engine_phase2_private_upstream_dir 6.6.0)"
+plant_valid_public
+public_raw_before="$(sha256sum "$legacy" | awk '{print $1}')"
+public_sha_before="$(cat "${legacy}.sha1")"
+MM_TEST_FAIL_PRIVATE_SIDECAR_MOVE=1
+if engine_phase2_migrate_legacy_public_upstream 6.6.0; then
+  fail "migration_failure_retains_public_raw_and_sidecar unexpectedly succeeded"
+fi
+unset MM_TEST_FAIL_PRIVATE_SIDECAR_MOVE
+[[ -f "$legacy" ]] || fail "failed migrate deleted public raw"
+[[ -f "${legacy}.sha1" ]] || fail "failed migrate deleted public sidecar"
+[[ "$(sha256sum "$legacy" | awk '{print $1}')" == "$public_raw_before" ]] \
+  || fail "failed migrate mutated public raw"
+[[ "$(cat "${legacy}.sha1")" == "$public_sha_before" ]] \
+  || fail "failed migrate mutated public sidecar"
+pass "migration_failure_retains_public_raw_and_sidecar"
 
 echo "ALL test_phase2_private_upstream_storage checks passed"
