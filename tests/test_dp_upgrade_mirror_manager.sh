@@ -533,8 +533,13 @@ find "${WORKDIR}/mirror/dp-phase2" -maxdepth 1 -name '6.6.0.old.*' | grep -q . \
 
 echo "======== N. readiness ========"
 MM_PROJECT_ROOT="$SHADOW_ROOT" bash "${SHADOW_ROOT}/scripts/install-dp-upgrade-mirror.sh" enable-http >/dev/null
-MM_PROJECT_ROOT="$SHADOW_ROOT" bash "${SHADOW_ROOT}/scripts/install-dp-upgrade-mirror.sh" verify-readiness \
-  | grep -q 'UPGRADE_READINESS=PASS' && pass "N readiness PASS" || fail "N readiness"
+ready_out="$(MM_PROJECT_ROOT="$SHADOW_ROOT" bash "${SHADOW_ROOT}/scripts/install-dp-upgrade-mirror.sh" verify-readiness 2>&1)" || true
+if printf '%s\n' "$ready_out" | grep -q 'UPGRADE_READINESS=PASS'; then
+  pass "N readiness PASS"
+else
+  printf '%s\n' "$ready_out" >&2
+  fail "N readiness"
+fi
 
 echo "======== D/G R2 HTML + ACPS failures ========"
 kill "$HTTP_PID" 2>/dev/null || true; wait "$HTTP_PID" 2>/dev/null || true; HTTP_PID=""

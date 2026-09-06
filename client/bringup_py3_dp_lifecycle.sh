@@ -46,6 +46,7 @@ DIAGNOSE_ONLY=0
 WORKER_MODE=0
 TARGET_VERSION=""
 WORKER_PASSWORD_FILE=""
+WORKER_PASSWORD_FILE_OWNED=NO
 PASSTHRU=()
 
 p2b_store_worker_password() {
@@ -56,11 +57,19 @@ p2b_store_worker_password() {
   f="${d}/worker-password"
   printf '%s' "$pw" | p2b_atomic_write "$f" || return 1
   WORKER_PASSWORD_FILE="$f"
+  WORKER_PASSWORD_FILE_OWNED=YES
+  printf '%s\n' "$f" | p2b_atomic_write "${d}/worker-password.owned" || return 1
   return 0
 }
 
 p2b_append_worker_password_file_passthru() {
   [[ -n "${WORKER_PASSWORD_FILE:-}" ]] || return 0
+  local i
+  for ((i = 0; i < ${#PASSTHRU[@]}; i++)); do
+    if [[ "${PASSTHRU[$i]}" == "--worker-password-file" ]]; then
+      return 0
+    fi
+  done
   PASSTHRU+=("--worker-password-file" "$WORKER_PASSWORD_FILE")
 }
 
@@ -135,11 +144,11 @@ parse_args() {
         ;;
       --worker-password-file=*)
         WORKER_PASSWORD_FILE="${1#*=}"
+        WORKER_PASSWORD_FILE_OWNED=NO
         if [[ -z "$WORKER_PASSWORD_FILE" ]]; then
           echo "ERROR: --worker-password-file requires a path" >&2
           exit 1
         fi
-        PASSTHRU+=("--worker-password-file" "$WORKER_PASSWORD_FILE")
         shift
         ;;
       --skip-download|--worker-ips|--worker-password|--worker-password-file|--dry-run|--standby)
@@ -157,7 +166,7 @@ parse_args() {
             exit 1
           fi
           WORKER_PASSWORD_FILE="$2"
-          PASSTHRU+=("--worker-password-file" "$2")
+          WORKER_PASSWORD_FILE_OWNED=NO
           shift 2
         elif [[ "$1" == "--worker-ips" || "$1" == "--standby" ]]; then
           if [[ $# -lt 2 || -z "${2:-}" || "$2" == --* ]]; then
@@ -186,7 +195,7 @@ print_diagnose() {
   d="$(p2b_dir)"
   logf="${BRINGUP_LOG:-${PHASE2_BRINGUP_LOG_DEFAULT}}"
   echo "--- LIFECYCLE_FILES ---"
-  ls -la "$d" 2>/dev/null || echo "LIFECYCLE_DIR_MISSING"
+  ls -la "$d" 2>/dev/null | grep -v 'worker-password' || echo "LIFECYCLE_DIR_MISSING"
   echo "--- RESULT_ENV ---"
   if [[ -f "${d}/result.env" ]]; then
     cat "${d}/result.env"
@@ -262,6 +271,7 @@ start_or_monitor() {
   if p2b_current_run_completion_coherent; then
     echo "BRINGUP_ALREADY_COMPLETED=YES"
     p2b_print_status
+    p2b_cleanup_lifecycle_owned_worker_password
     if p2b_discover_aella_cli; then
       echo "AELLA_CLI_AVAILABLE=YES"
       echo "AELLA_CLI_PATH=${AELLA_CLI_PATH}"

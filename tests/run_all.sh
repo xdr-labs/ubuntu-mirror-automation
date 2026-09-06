@@ -110,6 +110,11 @@ TEST_LIST=(
   test_phase2_bundle_reuse_disk.sh
   test_phase2_stale_bringup_bundle.sh
   test_phase2_stale_bringup_no_acps_redownload.sh
+  test_phase2_private_upstream_storage.sh
+  test_http_raw_upstream_deny.sh
+  test_lifecycle_password_cleanup.sh
+  test_r2_publisher_trust.sh
+  test_phase2_stale_target_state.sh
   test_mirror_long_step_progress.sh
   test_mirror_manager_menu_status.sh
   test_bringup_image_import_heartbeat.sh

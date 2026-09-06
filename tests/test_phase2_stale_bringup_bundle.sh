@@ -166,7 +166,24 @@ export MM_KEEP_PHASE2_SOURCES=1
 BRINGUP_UPSTREAM_SHA1="$(sha1sum "${NEW_WORK}.upstream/bringup_py3_dp_after_os_upgrade.sh" | awk '{print $1}')"
 BRINGUP_PATCH_GENERATION="$(python3 "${ROOT}/scripts/lib/patch_dp_phase2_bringup.py" --print-generation | awk -F= '$1=="BRINGUP_PATCH_GENERATION"{print $2; exit}')"
 BRINGUP_PATCHED_SHA1="$CURRENT_SHA"
+# TEST-LOCAL allowlist: synthetic fixture bytes must never enter production.
+SHADOW="${TMP}/proj"
+mkdir -p "${SHADOW}/vendor"
+cp -a "${ROOT}/vendor/dp-phase2" "${SHADOW}/vendor/dp-phase2"
+SYNTH_SHA256="$(sha256sum "${NEW_WORK}.upstream/bringup_py3_dp_after_os_upgrade.sh" | awk '{print $1}')"
+cat >"${SHADOW}/vendor/dp-phase2/approved-upstream-bringup.sha256" <<EOF
+${SYNTH_SHA256}  upstream_bringup_unpatched
+EOF
+ln -sfn "${ROOT}/scripts" "${SHADOW}/scripts"
+export MM_PROJECT_ROOT="$SHADOW"
 engine_place_dp_phase2_final "$NEW_WORK" 6.6.0 >/dev/null
+export MM_PROJECT_ROOT="$ROOT"
+[[ ! -e "${MM_DP_PHASE2_ROOT}/6.6.0/bringup_py3_dp_after_os_upgrade.sh.upstream" ]] \
+  || fail "new Phase 2 publication still contains raw .upstream"
+[[ ! -e "${MM_DP_PHASE2_ROOT}/6.6.0/bringup_py3_dp_after_os_upgrade.sh.upstream.sha1" ]] \
+  || fail "new Phase 2 publication still contains raw .upstream.sha1"
+[[ -f "${MM_CACHE_ROOT}/private/acps-upstream/6.6.0/bringup_py3_dp_after_os_upgrade.sh" ]] \
+  || fail "private upstream missing after place"
 NEW_ENV="${MM_DP_PHASE2_ROOT}/6.6.0/release.env"
 NEW_BUNDLE="${MM_DP_PHASE2_ROOT}/6.6.0/dp_bundle_6.6.0-current.tar"
 grep -q "^BRINGUP_PATCHED_SHA1=${CURRENT_SHA}$" "$NEW_ENV" \

@@ -920,6 +920,9 @@ mm_save_gui_config() {
     mm_status_set CLIENT_COMMANDS_MODE ""
   fi
   # Single authoritative invalidation decision for this persistence.
+  if declare -F mm_wf_normalize_fixed_phase2_target >/dev/null 2>&1; then
+    mm_wf_normalize_fixed_phase2_target || true
+  fi
   if declare -F mm_wf_invalidate_after_config_change >/dev/null 2>&1; then
     mm_wf_invalidate_after_config_change
   elif declare -F mm_wf_mark_configured >/dev/null 2>&1; then
@@ -1461,6 +1464,24 @@ mm_http_probe_ok() {
   [[ "$code" == "200" ]]
 }
 
+# Sensitive resources must not be HTTP 200. 403/404 (or unreachable) is required.
+mm_http_probe_denied() {
+  local url="$1"
+  local code
+  code="$(curl -sS -o /dev/null -w '%{http_code}' \
+    --connect-timeout "${MM_MENU_HTTP_CONNECT_TIMEOUT:-2}" \
+    --max-time "${MM_MENU_HTTP_MAX_TIME:-3}" \
+    "$url" 2>/dev/null || echo 000)"
+  case "$code" in
+    200)
+      return 1
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+}
+
 # Fetch a small text URL body (empty on failure). Used for publication identity.
 mm_http_fetch_text() {
   local url="$1"
@@ -1519,6 +1540,22 @@ mm_http_required_urls_ok() {
     mm_http_probe_ok "${base}/offline/meta-release-lts" || return 1
   fi
   mm_http_publication_identity_ok || return 1
+  # Negative probes: a sensitive resource returning 200 makes readiness FAIL.
+  mm_http_probe_denied "${base}/dp-phase2/${ver}/bringup_py3_dp_after_os_upgrade.sh.upstream" || return 1
+  mm_http_probe_denied "${base}/dp-phase2/${ver}/bringup_py3_dp_after_os_upgrade.sh.upstream.sha1" || return 1
+  mm_http_probe_denied "${base}/client/private.gpg" || return 1
+  mm_http_probe_denied "${base}/config/dp-upgrade-mirror.conf" || return 1
+  mm_http_probe_denied "${base}/config/client-signing/private.gpg" || return 1
+  mm_http_probe_denied "${base}/.install-cache/" || return 1
+  mm_http_probe_denied "${base}/staging/" || return 1
+  mm_http_probe_denied "${base}/state/" || return 1
+  mm_http_probe_denied "${base}/cache/" || return 1
+  mm_http_probe_denied "${base}/private/" || return 1
+  mm_http_probe_denied "${base}/workflow.state" || return 1
+  mm_http_probe_denied "${base}/dp-upgrade-workflow.state" || return 1
+  mm_http_probe_denied "${base}/acps-credentials" || return 1
+  mm_http_probe_denied "${base}/r2-credentials" || return 1
+  mm_http_probe_denied "${base}/rclone.conf" || return 1
   return 0
 }
 

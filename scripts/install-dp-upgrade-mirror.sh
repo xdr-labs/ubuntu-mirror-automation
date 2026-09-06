@@ -47,15 +47,10 @@ load_mirror_defaults() {
   MM_SELECTIVE_ROOT="${MM_SELECTIVE_ROOT:-${SELECTIVE_MIRROR_ROOT:-${MM_MIRROR_ROOT}/selective}}"
   MM_DP_PHASE2_ROOT="${MM_DP_PHASE2_ROOT:-${DP_PHASE2_ROOT:-${MM_MIRROR_ROOT}/dp-phase2}}"
   MM_CLIENT_ROOT="${MM_CLIENT_ROOT:-${MM_MIRROR_ROOT}/client}"
-  if [[ -n "${CLIENT_SIGNING_PUBLIC_KEY:-}" ]]; then
-    OS_CORE_PUBLIC_KEY="$CLIENT_SIGNING_PUBLIC_KEY"
-  elif [[ -f "${LOCAL_CLIENT_SIGNING_DIR:-/etc/ubuntu-mirror/client-signing}/public.gpg" ]]; then
-    OS_CORE_PUBLIC_KEY="${LOCAL_CLIENT_SIGNING_DIR:-/etc/ubuntu-mirror/client-signing}/public.gpg"
-  elif [[ -f "${MM_CLIENT_ROOT}/public.gpg" ]]; then
-    OS_CORE_PUBLIC_KEY="${MM_CLIENT_ROOT}/public.gpg"
-  elif [[ -f "${PROJECT_ROOT}/config/client-signing/offline-client-manifest.gpg" ]]; then
-    OS_CORE_PUBLIC_KEY="${PROJECT_ROOT}/config/client-signing/offline-client-manifest.gpg"
-  fi
+  # Client signing keys are NOT an R2 publisher trust root. Production R2
+  # trust is HTTPS + mandatory SHA256 until R2_OS_CORE_PUBLISHER_PUBLIC_KEY
+  # is explicitly configured. Do not copy CLIENT_SIGNING_PUBLIC_KEY here.
+  R2_OS_CORE_PUBLISHER_PUBLIC_KEY="${R2_OS_CORE_PUBLISHER_PUBLIC_KEY:-}"
 }
 
 # ---------------------------------------------------------------------------

@@ -925,7 +925,10 @@ def cmd_verify(args):
     if os.path.isfile(asc_path):
         pub = args.public_key
         if not pub or not os.path.isfile(pub):
-            raise OsCoreError("SIGNATURE_PRESENT_BUT_NO_PUBLIC_KEY")
+            raise OsCoreError(
+                "R2_SIGNATURE_TRUST=FAIL reason=publisher_public_key_unconfigured "
+                "SIGNATURE_PRESENT_BUT_NO_PUBLIC_KEY"
+            )
         gpgv_verify(pub, asc_path, sha_path)
         print("SIGNATURE=PASS")
     else:
@@ -964,7 +967,10 @@ def cmd_extract_staging(args):
     asc_path = sha_path + ".asc"
     if os.path.isfile(asc_path):
         if not args.public_key or not os.path.isfile(args.public_key):
-            raise OsCoreError("SIGNATURE_PRESENT_BUT_NO_PUBLIC_KEY")
+            raise OsCoreError(
+                "R2_SIGNATURE_TRUST=FAIL reason=publisher_public_key_unconfigured "
+                "SIGNATURE_PRESENT_BUT_NO_PUBLIC_KEY"
+            )
         gpgv_verify(args.public_key, asc_path, sha_path)
 
     if os.path.exists(staging_dir):

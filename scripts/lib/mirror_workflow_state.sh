@@ -367,7 +367,51 @@ mm_wf_store_layer_identities() {
     "CONFIG_AUTH_SHA256=${auth}" \
     "PREPARATION_MODE=${PREPARATION_MODE:-FULL}" \
     "MIRROR_SERVER_IP=${MIRROR_SERVER_IP:-}" \
-    "MIRROR_HTTP_URL=${MIRROR_HTTP_URL:-}"
+    "MIRROR_HTTP_URL=${MIRROR_HTTP_URL:-}" \
+    "PHASE2_TARGET_VERSION=${PHASE2_TARGET_VERSION_FIXED:-${PHASE2_TARGET_VERSION:-6.6.0}}"
+}
+
+# Mutation boundary: rewrite a stale PHASE2_TARGET_VERSION key to the fixed
+# production target. Does not delete artifacts. Pure-read helpers must not
+# call this.
+mm_wf_normalize_fixed_phase2_target() {
+  local stored fixed state
+  fixed="${PHASE2_TARGET_VERSION_FIXED:-6.6.0}"
+  if declare -F mm_force_phase2_target >/dev/null 2>&1; then
+    mm_force_phase2_target
+  else
+    PHASE2_TARGET_VERSION="$fixed"
+    TARGET_DP_VERSION="$fixed"
+  fi
+  stored="$(mm_wf_get PHASE2_TARGET_VERSION)"
+  if [[ "$stored" == "$fixed" ]]; then
+    return 0
+  fi
+  if [[ -n "$stored" && "$stored" != "$fixed" ]]; then
+    mm_wf_set_many \
+      "PHASE2_TARGET_VERSION=${fixed}" \
+      "CONFIG_PREPARE_SHA256=$(mm_wf_prepare_identity_sha256)" \
+      "READINESS_VERIFIED_GENERATION_ID=" \
+      "COMMAND_FILE_GENERATION_ID=" \
+      || return 1
+    state="$(mm_wf_state)"
+    case "$state" in
+      COMMANDS_GENERATED)
+        mm_wf_set_many \
+          "WORKFLOW_STATE=READINESS_VERIFIED" \
+          "NEXT_REQUIRED_ACTION=Generate DP commands" \
+          || true
+        ;;
+    esac
+    if declare -F mm_status_set >/dev/null 2>&1; then
+      mm_status_set PHASE2_TARGET_VERSION "$fixed"
+      mm_status_set CLIENT_COMMANDS_MODE ""
+    fi
+    mm_wf_info "PHASE2_TARGET_VERSION_NORMALIZED old=${stored} new=${fixed}"
+  else
+    mm_wf_set_many "PHASE2_TARGET_VERSION=${fixed}" || true
+  fi
+  return 0
 }
 
 # Classify delta between stored layered hashes and current memory.
@@ -768,6 +812,7 @@ mm_wf_mark_prepared() {
     "PREPARATION_MODE=${PREPARATION_MODE:-FULL}" \
     "MIRROR_SERVER_IP=${MIRROR_SERVER_IP:-}" \
     "MIRROR_HTTP_URL=${MIRROR_HTTP_URL:-}" \
+    "PHASE2_TARGET_VERSION=${PHASE2_TARGET_VERSION_FIXED:-${PHASE2_TARGET_VERSION:-6.6.0}}" \
     "OS_CORE_GENERATION_ID=${os_gen}" \
     "PHASE2_GENERATION_ID=${p2_gen}" \
     "CLIENT_SET_GENERATION_ID=" \

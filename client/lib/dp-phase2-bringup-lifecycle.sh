@@ -46,6 +46,36 @@ p2b_atomic_write() {
   return 0
 }
 
+# Delete only the lifecycle-owned worker password copy. Never delete an
+# externally supplied --worker-password-file path. Idempotent if absent.
+p2b_cleanup_lifecycle_owned_worker_password() {
+  local d f marker marked
+  d="$(p2b_dir)"
+  f="${d}/worker-password"
+  marker="${d}/worker-password.owned"
+  marked="$(p2b_read_file "$marker" 2>/dev/null || true)"
+  if [[ "${WORKER_PASSWORD_FILE_OWNED:-NO}" == "YES" ]] || [[ -f "$marker" ]] \
+    || [[ "${WORKER_PASSWORD_FILE:-}" == "$f" ]]; then
+    if [[ -z "$marked" || "$marked" == "$f" ]]; then
+      rm -f "$f" 2>/dev/null || true
+    fi
+    rm -f "$marker" 2>/dev/null || true
+  fi
+  return 0
+}
+
+p2b_resolve_lifecycle_password_ownership() {
+  local d f marker marked
+  d="$(p2b_dir)"
+  f="${d}/worker-password"
+  marker="${d}/worker-password.owned"
+  marked="$(p2b_read_file "$marker" 2>/dev/null || true)"
+  if [[ "${WORKER_PASSWORD_FILE:-}" == "$f" ]] \
+    || [[ -f "$marker" && ( -z "$marked" || "$marked" == "$f" || "$marked" == "${WORKER_PASSWORD_FILE:-}" ) ]]; then
+    WORKER_PASSWORD_FILE_OWNED=YES
+  fi
+}
+
 p2b_read_file() {
   local f="$1"
   [[ -f "$f" ]] || { printf ''; return 0; }
@@ -152,6 +182,7 @@ p2b_fail_run() {
   } | p2b_atomic_write "${d}/completion.sentinel"
   p2b_write_result_env "$run_id" "$worker_pid" "$target" "$started" "$completed" "$rc" "FAIL" "FAILED" "$logf"
   p2b_write_state "FAILED"
+  p2b_cleanup_lifecycle_owned_worker_password
   exit "$rc"
 }
 
@@ -652,6 +683,8 @@ p2b_worker_main() {
   local marker_rc=0 current_log_rc=0 apt_log_rc=0 orch_fail_rc=0
   local orch_pass_rc=0 final_log_rc=0
   d="$(p2b_dir)"
+  p2b_resolve_lifecycle_password_ownership
+  trap 'p2b_cleanup_lifecycle_owned_worker_password' EXIT
   run_id="$(p2b_read_file "${d}/run-id")"
   target="$(p2b_read_file "${d}/target-version")"
   logf="$(p2b_read_file "${d}/log-path")"
@@ -720,6 +753,7 @@ p2b_worker_main() {
           } | p2b_atomic_write "${d}/completion.sentinel"
           p2b_write_result_env "$run_id" "$$" "$target" "$started" "$completed" "$rc" "FAIL" "FAILED" "$logf"
           p2b_write_state "FAILED"
+          p2b_cleanup_lifecycle_owned_worker_password
           exit "$rc"
         fi
       fi

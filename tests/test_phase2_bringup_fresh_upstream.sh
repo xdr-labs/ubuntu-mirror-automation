@@ -258,7 +258,17 @@ export MM_KEEP_PHASE2_SOURCES=1
 BRINGUP_UPSTREAM_SHA1="$(sha1sum "$FIXTURE" | awk '{print $1}')"
 BRINGUP_PATCH_GENERATION="$CURRENT_GEN"
 BRINGUP_PATCHED_SHA1="$(sha1sum "${WORKF}/bringup_py3_dp_after_os_upgrade.sh" | awk '{print $1}')"
+# TEST-LOCAL allowlist for the synthetic fixture; production list stays untouched.
+PROJ_F="${WORKDIR}/proj-f"
+mkdir -p "${PROJ_F}/vendor/dp-phase2"
+cp -a "${ROOT}/vendor/dp-phase2/." "${PROJ_F}/vendor/dp-phase2/"
+printf '%s  upstream_bringup_unpatched\n' "$(sha256sum "$FIXTURE" | awk '{print $1}')" \
+  >"${PROJ_F}/vendor/dp-phase2/approved-upstream-bringup.sha256"
+ln -sfn "${ROOT}/scripts" "${PROJ_F}/scripts"
+MM_PROJECT_ROOT_SAVE="$MM_PROJECT_ROOT"
+export MM_PROJECT_ROOT="$PROJ_F"
 engine_place_dp_phase2_final "$WORKF" 6.6.0 >/dev/null
+export MM_PROJECT_ROOT="$MM_PROJECT_ROOT_SAVE"
 grep -q "^BRINGUP_PATCH_GENERATION=${CURRENT_GEN}$" "${DESTF}/release.env" \
   && pass "F published patch generation" \
   || fail "F published patch generation"

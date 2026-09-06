@@ -778,11 +778,22 @@ ${listen_extra}
     server_name ${server_name};
 
     root ${sel_current};
-    autoindex on;
 
-    location / {
-        try_files \$uri \$uri/ =404;
-    }
+    location ^~ /staging/ { return 403; }
+    location = /staging { return 403; }
+    location ^~ /state/ { return 403; }
+    location = /state { return 403; }
+    location ^~ /.install-cache/ { return 403; }
+    location = /.install-cache { return 403; }
+    location ^~ /cache/ { return 403; }
+    location = /cache { return 403; }
+    location ^~ /tmp/ { return 403; }
+    location = /tmp { return 403; }
+    location ^~ /private/ { return 403; }
+    location ~* \\.tmp\$ { return 403; }
+    location ~ /\\. { return 403; }
+    location ~* ^/dp-phase2/.*\\.upstream(\\.sha1)?\$ { return 403; }
+    location ~* /(private\\.gpg|.*\\.private\\.gpg|secring\\.gpg|secret\\.gpg)\$ { return 403; }
 
     location /hops/ {
         alias ${sel_current}/hops/;
@@ -845,6 +856,10 @@ ${listen_extra}
 
     location ~ /\\.\\. {
         return 403;
+    }
+
+    location / {
+        return 404;
     }
 
     access_log ${NGINX_ACCESS_LOG};

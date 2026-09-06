@@ -26,6 +26,21 @@ assert_deny() {
 }
 
 for conf in "$TPL" "${TMP}/apt-mirror.conf"; do
+  grep -F 'dp-phase2/' "$conf" | grep -F '.upstream' | grep -q 'return 403' \
+    || fail "missing dp-phase2 raw-upstream deny in $(basename "$conf")"
+  grep -q 'location ^~ /private/' "$conf" || fail "missing /private/ deny in $(basename "$conf")"
+  # Host-based servers must not alias /dp-phase2 public trees.
+  if awk '
+    /server_name archive.ubuntu.com/ { in_host=1 }
+    /server_name security.ubuntu.com/ { in_host=1 }
+    /server_name old-releases.ubuntu.com/ { in_host=1 }
+    in_host && /server \{/ { next }
+    in_host && /^server \{/ { in_host=0 }
+    in_host && /location \/dp-phase2\// && /alias/ { found=1 }
+    END { exit found ? 0 : 1 }
+  ' "$conf"; then
+    fail "host-based server aliases /dp-phase2/ in $(basename "$conf")"
+  fi
   for path in /staging /state /.install-cache /cache /tmp; do
     assert_deny "$conf" "$path"
   done

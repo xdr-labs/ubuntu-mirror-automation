@@ -89,6 +89,16 @@ mm_http_is_forbidden_private_key_name() {
   return 1
 }
 
+# Raw ACPS upstream copies are private rebuild sources, never public members.
+mm_http_is_forbidden_raw_upstream_name() {
+  local base="${1:-}"
+  case "$base" in
+    *.upstream|*.upstream.sha1)
+      return 0 ;;
+  esac
+  return 1
+}
+
 # Classify a published file into expected mode: 0755 (script) or 0644 (data).
 mm_http_expected_file_mode() {
   local path="${1:-}" base
@@ -185,6 +195,11 @@ mm_normalize_http_public_tree_permissions() {
       _mm_http_perm_error "HTTP_PUBLIC_PRIVATE_KEY_FORBIDDEN=${path}"
       return 1
     fi
+    if [[ "$kind" == "phase2" || "$kind" == "client" ]] \
+      && mm_http_is_forbidden_raw_upstream_name "$base"; then
+      _mm_http_perm_error "HTTP_PUBLIC_RAW_UPSTREAM_FORBIDDEN=${path}"
+      return 1
+    fi
     # Never publish files named like private keys under any extension pattern.
     case "$base" in
       *private*)
@@ -244,9 +259,14 @@ mm_verify_http_public_tree_permissions() {
       _mm_http_perm_error "CLIENT_PUBLIC_PERMISSION_VERIFY=FAIL private_key=${path}"
       return 1
     fi
+    if [[ "$kind" == "phase2" || "$kind" == "client" ]] \
+      && mm_http_is_forbidden_raw_upstream_name "$base"; then
+      _mm_http_perm_error "CLIENT_PUBLIC_PERMISSION_VERIFY=FAIL raw_upstream=${path}"
+      return 1
+    fi
     case "$base" in
       private.gpg|private.key|*private.gpg|*private.key)
-        _mm_http_perm_error "CLIENT_PUBLIC_PERMISSION_VERIFY=FAIL private_key=${path}"
+        _mm_http_perm_error "CLIENT_PUBLIC_PERMISSION_VERIFY=FAIL forbidden_public_name=${path}"
         return 1
         ;;
     esac
