@@ -236,10 +236,10 @@ r2_download_package() {
       -H "Cache-Control: no-cache" \
       -H "Pragma: no-cache" \
       "$url" 2>"$err_head" \
-      | tr -d '\r' | awk -F': ' 'tolower($1)=="content-length"{print $2; exit}'
+      | tr -d '\r' | awk -F': ' 'tolower($1)=="content-length"{v=$2} END{print v}'
   )" || true
   rm -f "$err_head"
-  if [[ "$cl" =~ ^[0-9]+$ ]]; then
+  if [[ "$cl" =~ ^[1-9][0-9]*$ ]]; then
     expected="$cl"
   fi
 
