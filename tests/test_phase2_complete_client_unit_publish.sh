@@ -39,6 +39,12 @@ STABLE_BUNDLE_NAME=dp_bundle_${TARGET_DP_VERSION}-current.tar
 VERIFICATION_RESULT=PASS
 EOF
 chmod 0644 "${CURRENT}/release.env"
+(
+  cd "$CURRENT"
+  sha256sum "dp_bundle_${TARGET_DP_VERSION}-current.tar" \
+    >"dp_bundle_${TARGET_DP_VERSION}-current.tar.sha256"
+)
+export MM_DP_PHASE2_ROOT="$DP_PHASE2_ROOT"
 BUNDLE_STAT_BEFORE="$(stat -c '%i %s' "$(readlink -f "$BUNDLE")")"
 BUNDLE_HASH_BEFORE="$(sha256sum "$(readlink -f "$BUNDLE")" | awk '{print $1}')"
 CURRENT_BEFORE="$(readlink -f "$CURRENT")"

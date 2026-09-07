@@ -211,8 +211,8 @@ GATE_MIX="$(
   log() { echo "$*"; }
   MASTER_TOKEN_API_PORT=8003
   MASTER_TOKEN_API_WAIT_SECONDS=0
-  MASTER_IP=192.168.12.25
-  WORKER_IPS="192.168.12.26,192.168.12.27"
+  MASTER_IP=192.0.2.25
+  WORKER_IPS="192.0.2.26,192.0.2.27"
   # shellcheck disable=SC1090
   source "${WORKDIR}/wait_8003.sh"
   wait_for_master_token_api 0
@@ -240,8 +240,8 @@ GATE_BOTH="$(
   log() { echo "$*"; }
   MASTER_TOKEN_API_PORT=8003
   MASTER_TOKEN_API_WAIT_SECONDS=5
-  MASTER_IP=192.168.12.25
-  WORKER_IPS="192.168.12.26,192.168.12.27"
+  MASTER_IP=192.0.2.25
+  WORKER_IPS="192.0.2.26,192.0.2.27"
   # shellcheck disable=SC1090
   source "${WORKDIR}/wait_8003.sh"
   wait_for_master_token_api 5
@@ -256,8 +256,8 @@ echo "$GATE_BOTH" | grep -q 'MASTER_TOKEN_API_READY=YES' \
 
 # main() must call wait_for_master_token_api before orchestrate_workers
 if awk '
-  /wait_for_master_token_api/ && !w {w=NR}
-  /orchestrate_workers/ && !o {o=NR}
+  /wait_for_master_token_api \|\|/ && !w {w=NR}
+  /orchestrate_workers \|\|/ && !o {o=NR}
   END { exit((w>0 && o>w) ? 0 : 1) }
 ' "$BRINGUP"; then
   pass "D wait_for_master_token_api precedes orchestrate_workers"
@@ -297,13 +297,14 @@ set +e
 (
   PATH="${BINJOIN}:$PATH"
   DA_CONF="${WORKDIR}/da_conf.yml"
-  printf 'master_ip: 192.168.12.25\n' >"$DA_CONF"
+  printf 'master_ip: 192.0.2.25\n' >"$DA_CONF"
   LOG_FILE="${WORKDIR}/join.log"
   : >"$LOG_FILE"
   log() { echo "$*"; }
   log_phase() { echo "PHASE: $*"; }
   die() { echo "FATAL: $*" >&2; exit 1; }
   WORKER_MODE=true
+  ROLE=DL-worker
   # shellcheck disable=SC1090
   source "${WORKDIR}/join.sh"
   join_k8s_cluster
@@ -338,13 +339,13 @@ STANDBY_IPS=""
 [[ "$(count_remote_orchestration_nodes)" == "0" ]] \
   && pass "H no remote nodes => count 0 (single-node skip)" \
   || fail "H empty remote node count"
-WORKER_IPS='192.168.12.26,192.168.12.27'
+WORKER_IPS='192.0.2.26,192.0.2.27'
 STANDBY_IPS=""
 [[ "$(count_remote_orchestration_nodes)" == "2" ]] \
   && pass "G two workers => requested 2 (not master+workers exact size)" \
   || fail "G two workers count"
 WORKER_IPS=""
-STANDBY_IPS="192.168.12.30"
+STANDBY_IPS="192.0.2.30"
 [[ "$(count_remote_orchestration_nodes)" == "1" ]] \
   && pass "G standby only => requested 1" \
   || fail "G standby only count"
@@ -380,7 +381,7 @@ mkdir -p "$KBIN"
 write_kubectl_nodes "${KBIN}/kubectl" \
   '  printf "dl-master Ready  1d  v1.31.0\n"'
 set +e
-TOPO1="$(PATH="${KBIN}:$PATH" run_topo "192.168.12.26,192.168.12.27" 0 2>&1)"
+TOPO1="$(PATH="${KBIN}:$PATH" run_topo "192.0.2.26,192.0.2.27" 0 2>&1)"
 TOPO1_RC=$?
 set -e
 echo "$TOPO1" | grep -q 'CLUSTER_JOIN_STATE ready=1 requested=2 diagnostic=YES' \
@@ -394,7 +395,7 @@ write_kubectl_nodes "${KBIN}/kubectl" \
   '  printf "old-worker Ready 1d  v1.31.0\n"' \
   '  printf "dl-worker2 Ready 1d  v1.31.0\n"'
 set +e
-TOPO_EXTRA="$(PATH="${KBIN}:$PATH" run_topo "192.168.12.26" 5 2>&1)"
+TOPO_EXTRA="$(PATH="${KBIN}:$PATH" run_topo "192.0.2.26" 5 2>&1)"
 TOPO_EXTRA_RC=$?
 set -e
 echo "$TOPO_EXTRA" | grep -q 'CLUSTER_JOIN_STATE ready=4 requested=1 diagnostic=YES' \
@@ -418,16 +419,22 @@ SSHPASS_CMD="${WORKDIR}/sshpass.cmd"
 : >"$SSHPASS_CMD"
 cat >"${ORCH_BIN}/sshpass" <<EOF
 #!/usr/bin/env bash
-if [[ "\$1" == "-p" ]]; then
+if [[ "\$1" == "-f" ]]; then
+  shift 2
+elif [[ "\$1" == "-p" ]]; then
   shift 2
 fi
 printf '%s\\n' "\$*" >>"${SSHPASS_CMD}"
+if [[ "\$1" == "scp" ]]; then
+  exit 0
+fi
 if [[ "\$1" == "ssh" ]]; then
   remote="\${@: -1}"
   case "\$remote" in
     "echo ok") echo ok; exit 0 ;;
     hostname) echo worker1; exit 0 ;;
     sudo\ bash*) exit 17 ;;
+    *aella_role*) echo DL-worker; exit 0 ;;
   esac
   # mkdir/chmod etc.
   exit 0
@@ -436,28 +443,43 @@ exit 0
 EOF
 chmod +x "${ORCH_BIN}/sshpass"
 write_kubectl_nodes "${ORCH_BIN}/kubectl" \
-  '  printf "dl-master Ready 1d v1.31.0 192.168.12.25 192.168.12.25\n"'
+  '  printf "dl-master Ready 1d v1.31.0 192.0.2.25 192.0.2.25\n"' \
+  '  printf "worker1 Ready 1d v1.31.0 192.0.2.26 192.0.2.26\n"'
 STAGING="${WORKDIR}/staging"
 AELLADEB="${WORKDIR}/aelladeb"
 mkdir -p "$STAGING" "$AELLADEB"
 printf '#!/bin/bash\necho fake\n' >"${WORKDIR}/bringup_copy.sh"
 set +e
 ORCH_FAIL_OUT="$(
+  set +e
   PATH="${ORCH_BIN}:$PATH"
   VERSION=6.5.0
-  WORKER_IPS=192.168.12.26
-  WORKER_PASSWORD='secret-pass-not-for-logs'
+  WORKER_IPS=192.0.2.26
+  STANDBY_IPS=""
+  PHASE2_WORKER_PASSWORD_FILE="${WORKDIR}/orch-worker-password"
+  PHASE2_SSH_STATE_DIR="${WORKDIR}/ssh-state"
+  export PHASE2_SSH_STATE_DIR
+  mkdir -p "$PHASE2_SSH_STATE_DIR"
+  printf '%s' 'secret-pass-not-for-logs' >"$PHASE2_WORKER_PASSWORD_FILE"
+  chmod 0600 "$PHASE2_WORKER_PASSWORD_FILE"
   ROLE=DL-master
   WORKER_MODE=false
+  SKIP_DOWNLOAD=true
+  CLUSTER_TARGET_READY_ATTEMPTS=1
+  CLUSTER_TARGET_READY_SLEEP_SECONDS=0
   STAGING_DIR="$STAGING"
   AELLADEB_DIR="$AELLADEB"
   SCRIPT_PATH="${WORKDIR}/bringup_copy.sh"
   SCRIPT_NAME=bringup_py3_dp_after_os_upgrade.sh
-  SSH_OPTS="-o StrictHostKeyChecking=no"
-  SCP_OPTS="-o StrictHostKeyChecking=no"
+  SSH_OPTS="-o StrictHostKeyChecking=accept-new"
+  SCP_OPTS="-o StrictHostKeyChecking=accept-new"
   die() { echo "FATAL: $*" >&2; exit 1; }
   log() { echo "$*"; }
   log_phase() { echo "PHASE: $*"; }
+  # shellcheck disable=SC1090
+  source "${ROOT}/scripts/lib/phase2_bringup_patch/fragment_credential_ssh.sh"
+  # shellcheck disable=SC1090
+  source "${ROOT}/scripts/lib/phase2_bringup_patch/fragment_compat.sh"
   copy_phase2_prereq_contract_to_worker() { return 0; }
   normalize_remote_orchestration_nodes() { return 0; }
   # shellcheck disable=SC1090
@@ -468,7 +490,7 @@ ORCH_FAIL_OUT="$(
 )"
 ORCH_FAIL_RC=$?
 set -e
-echo "$ORCH_FAIL_OUT" | grep -q 'WORKER_RESULT ip=192.168.12.26 result=FAIL reason=remote_bringup' \
+echo "$ORCH_FAIL_OUT" | grep -qE 'WORKER_RESULT ip=192.0.2.26 result=FAIL' \
   && echo "$ORCH_FAIL_OUT" | grep -q 'WORKER_ORCHESTRATION=FAIL' \
   && pass "F remote worker nonzero => master orchestration FAIL" \
   || fail "F remote worker fail: ${ORCH_FAIL_OUT}"
@@ -480,8 +502,8 @@ fi
 
 # I. --worker-password still accepted
 if grep -q -- '--worker-password' "$BRINGUP" \
-  && grep -qE -- '--worker-ips(/--standby)? requires --worker-password' "$BRINGUP"; then
-  pass "I --worker-password still required with --worker-ips"
+  && grep -qE -- '--worker-ips(/--standby)? requires --worker-password-file' "$BRINGUP"; then
+  pass "I --worker-password-file contract present with --worker-ips"
 else
   fail "I --worker-password contract missing"
 fi

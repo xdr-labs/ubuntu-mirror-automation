@@ -63,6 +63,12 @@ mm_wf_file() {
   fi
 }
 
+# Stable lock inode for workflow mutations. Must NOT be replaced by state updates
+# (flock is inode-based; locking the state file itself races with atomic rename).
+mm_wf_lock_file() {
+  printf '%s.lock\n' "$(mm_wf_file)"
+}
+
 mm_wf_new_generation_id() {
   printf '%s-%s\n' "$(date -u +%Y%m%dT%H%M%SZ)" "${RANDOM}$$"
 }
@@ -85,7 +91,7 @@ mm_wf_atomic_write_file() {
 }
 
 mm_wf_ensure_file() {
-  local f
+  local f old_umask
   f="$(mm_wf_file)"
   if [[ -f "$f" && ! -r "$f" ]]; then
     # Existing root-owned state must not abort non-root callers under set -e.
@@ -94,6 +100,9 @@ mm_wf_ensure_file() {
   fi
   if [[ ! -f "$f" ]]; then
     mkdir -p "$(dirname "$f")" 2>/dev/null || return 1
+    # umask 077 is only for creating the private state file. Restore immediately
+    # so later public OS Core / HTTP trees are not created as 0700/0600.
+    old_umask="$(umask)"
     umask 077
     if ! cat >"$f" <<EOF
 WORKFLOW_STATE=UNCONFIGURED
@@ -127,8 +136,10 @@ VERIFIED_UTC=
 HTTP_REENABLE_REQUIRED=
 EOF
     then
+      umask "$old_umask"
       return 1
     fi
+    umask "$old_umask"
     chmod 600 "$f" 2>/dev/null || true
   fi
 }
@@ -145,13 +156,14 @@ mm_wf_get() {
 mm_wf_set_many() {
   # Usage: mm_wf_set_many KEY=VAL KEY=VAL ...
   # Atomic multi-key update of the workflow state file.
-  # Holds a short exclusive flock around the read-modify-write to prevent
-  # lost updates between concurrent Mirror Manager sessions.
-  local f tmp line key val k2 lockfd
+  # Exclusive flock is held on a dedicated stable lock file (not the state
+  # inode). Atomic rename of workflow.state must not replace the lock inode.
+  local f lockf tmp line key val k2 lockfd old_umask
   local -A updates=()
   local -A cur=()
   mm_wf_ensure_file || return 1
   f="$(mm_wf_file)"
+  lockf="$(mm_wf_lock_file)"
   [[ -r "$f" && -w "$f" ]] || {
     mm_wf_warn "WORKFLOW_STATE_NOT_WRITABLE path=${f}"
     return 1
@@ -162,11 +174,35 @@ mm_wf_set_many() {
     [[ -n "$key" ]] || continue
     updates["$key"]="$val"
   done
-  exec {lockfd}<"$f" || return 1
-  if ! flock -w 30 "$lockfd"; then
-    exec {lockfd}<&-
-    mm_wf_warn "WORKFLOW_STATE_LOCK=FAIL path=${f}"
+  mkdir -p "$(dirname "$lockf")" 2>/dev/null || {
+    mm_wf_warn "WORKFLOW_STATE_LOCK=FAIL path=${lockf} reason=mkdir"
     return 1
+  }
+  old_umask="$(umask)"
+  umask 077
+  # Create-or-open without truncating; keep mode private (not world-writable).
+  if ! : >>"$lockf"; then
+    umask "$old_umask"
+    mm_wf_warn "WORKFLOW_STATE_LOCK=FAIL path=${lockf} reason=create"
+    return 1
+  fi
+  umask "$old_umask"
+  chmod 600 "$lockf" 2>/dev/null || true
+  exec {lockfd}>"$lockf" || {
+    mm_wf_warn "WORKFLOW_STATE_LOCK=FAIL path=${lockf} reason=open"
+    return 1
+  }
+  if ! flock -w 30 "$lockfd"; then
+    exec {lockfd}>&-
+    mm_wf_warn "WORKFLOW_STATE_LOCK=FAIL path=${lockf}"
+    return 1
+  fi
+  # Optional test gate: hold lock while ${gate}.hold exists (deterministic races).
+  if [[ -n "${MM_WF_TEST_LOCK_HOLD_GATE:-}" ]]; then
+    : >"${MM_WF_TEST_LOCK_HOLD_GATE}.held"
+    while [[ -f "${MM_WF_TEST_LOCK_HOLD_GATE}.hold" ]]; do
+      sleep 0.01
+    done
   fi
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ "$line" == *=* ]] || continue
@@ -204,7 +240,7 @@ mm_wf_set_many() {
   mm_wf_atomic_write_file "$f" "$tmp"
   rm -f "$tmp"
   flock -u "$lockfd" 2>/dev/null || true
-  exec {lockfd}<&-
+  exec {lockfd}>&-
 }
 
 mm_wf_set() {
@@ -336,7 +372,51 @@ mm_wf_store_layer_identities() {
     "CONFIG_AUTH_SHA256=${auth}" \
     "PREPARATION_MODE=${PREPARATION_MODE:-FULL}" \
     "MIRROR_SERVER_IP=${MIRROR_SERVER_IP:-}" \
-    "MIRROR_HTTP_URL=${MIRROR_HTTP_URL:-}"
+    "MIRROR_HTTP_URL=${MIRROR_HTTP_URL:-}" \
+    "PHASE2_TARGET_VERSION=${PHASE2_TARGET_VERSION_FIXED:-${PHASE2_TARGET_VERSION:-6.6.0}}"
+}
+
+# Mutation boundary: rewrite a stale PHASE2_TARGET_VERSION key to the fixed
+# production target. Does not delete artifacts. Pure-read helpers must not
+# call this.
+mm_wf_normalize_fixed_phase2_target() {
+  local stored fixed state
+  fixed="${PHASE2_TARGET_VERSION_FIXED:-6.6.0}"
+  if declare -F mm_force_phase2_target >/dev/null 2>&1; then
+    mm_force_phase2_target
+  else
+    PHASE2_TARGET_VERSION="$fixed"
+    TARGET_DP_VERSION="$fixed"
+  fi
+  stored="$(mm_wf_get PHASE2_TARGET_VERSION)"
+  if [[ "$stored" == "$fixed" ]]; then
+    return 0
+  fi
+  if [[ -n "$stored" && "$stored" != "$fixed" ]]; then
+    mm_wf_set_many \
+      "PHASE2_TARGET_VERSION=${fixed}" \
+      "CONFIG_PREPARE_SHA256=$(mm_wf_prepare_identity_sha256)" \
+      "READINESS_VERIFIED_GENERATION_ID=" \
+      "COMMAND_FILE_GENERATION_ID=" \
+      || return 1
+    state="$(mm_wf_state)"
+    case "$state" in
+      COMMANDS_GENERATED)
+        mm_wf_set_many \
+          "WORKFLOW_STATE=READINESS_VERIFIED" \
+          "NEXT_REQUIRED_ACTION=Generate DP commands" \
+          || true
+        ;;
+    esac
+    if declare -F mm_status_set >/dev/null 2>&1; then
+      mm_status_set PHASE2_TARGET_VERSION "$fixed"
+      mm_status_set CLIENT_COMMANDS_MODE ""
+    fi
+    mm_wf_info "PHASE2_TARGET_VERSION_NORMALIZED old=${stored} new=${fixed}"
+  else
+    mm_wf_set_many "PHASE2_TARGET_VERSION=${fixed}" || true
+  fi
+  return 0
 }
 
 # Classify delta between stored layered hashes and current memory.
@@ -737,6 +817,7 @@ mm_wf_mark_prepared() {
     "PREPARATION_MODE=${PREPARATION_MODE:-FULL}" \
     "MIRROR_SERVER_IP=${MIRROR_SERVER_IP:-}" \
     "MIRROR_HTTP_URL=${MIRROR_HTTP_URL:-}" \
+    "PHASE2_TARGET_VERSION=${PHASE2_TARGET_VERSION_FIXED:-${PHASE2_TARGET_VERSION:-6.6.0}}" \
     "OS_CORE_GENERATION_ID=${os_gen}" \
     "PHASE2_GENERATION_ID=${p2_gen}" \
     "CLIENT_SET_GENERATION_ID=" \

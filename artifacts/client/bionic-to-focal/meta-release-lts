@@ -4,10 +4,10 @@ Version: 18.04.6 LTS
 Date: Thu, 26 April 2018 18:04:00 UTC
 Supported: 1
 Description: This is the 18.04.6 LTS release
-Release-File: http://221.139.249.111/hops/bionic-to-focal/ubuntu/dists/bionic/Release
-ReleaseNotes: http://221.139.249.111/client/bionic-to-focal/ReleaseAnnouncement
-UpgradeTool: http://221.139.249.111/offline/release-upgraders/focal/focal.tar.gz
-UpgradeToolSignature: http://221.139.249.111/offline/release-upgraders/focal/focal.tar.gz.gpg
+Release-File: http://192.0.2.10/hops/bionic-to-focal/ubuntu/dists/bionic/Release
+ReleaseNotes: http://192.0.2.10/client/bionic-to-focal/ReleaseAnnouncement
+UpgradeTool: http://192.0.2.10/offline/release-upgraders/focal/focal.tar.gz
+UpgradeToolSignature: http://192.0.2.10/offline/release-upgraders/focal/focal.tar.gz.gpg
 
 Dist: focal
 Name: Focal Fossa
@@ -15,8 +15,8 @@ Version: 20.04.6 LTS
 Date: Thu, 23 April 2020 20:04:00 UTC
 Supported: 1
 Description: This is the 20.04.6 LTS release
-Release-File: http://221.139.249.111/hops/bionic-to-focal/ubuntu/dists/focal/Release
-ReleaseNotes: http://221.139.249.111/client/bionic-to-focal/ReleaseAnnouncement
-ReleaseNotesHtml: http://221.139.249.111/client/bionic-to-focal/ReleaseAnnouncement.html
-UpgradeTool: http://221.139.249.111/offline/release-upgraders/focal/focal.tar.gz
-UpgradeToolSignature: http://221.139.249.111/offline/release-upgraders/focal/focal.tar.gz.gpg
+Release-File: http://192.0.2.10/hops/bionic-to-focal/ubuntu/dists/focal/Release
+ReleaseNotes: http://192.0.2.10/client/bionic-to-focal/ReleaseAnnouncement
+ReleaseNotesHtml: http://192.0.2.10/client/bionic-to-focal/ReleaseAnnouncement.html
+UpgradeTool: http://192.0.2.10/offline/release-upgraders/focal/focal.tar.gz
+UpgradeToolSignature: http://192.0.2.10/offline/release-upgraders/focal/focal.tar.gz.gpg

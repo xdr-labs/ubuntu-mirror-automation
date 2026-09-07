@@ -37,6 +37,10 @@ do
   install -m 0755 "$ROOT/client/lib/${hf}" "$MM_CLIENT_ROOT/lib/${hf}"
 done
 phase2_helper_generation_write "$MM_CLIENT_ROOT" >/dev/null
+# shellcheck source=lib/phase2_bundle_trust_fixture.sh
+source "${ROOT}/tests/lib/phase2_bundle_trust_fixture.sh"
+phase2_trust_fixture_export_dp_phase2_root "$TMP" >/dev/null
+phase2_trust_fixture_write_bundle_sidecar "$MM_DP_PHASE2_ROOT" "6.6.0" >/dev/null
 phase2_upgrade_wrapper_write "$MM_CLIENT_ROOT" "http://192.0.2.10" "6.6.0" >/dev/null
 
 # Load production command generators without running the program entrypoint.

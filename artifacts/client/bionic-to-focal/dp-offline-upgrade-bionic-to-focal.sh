@@ -12,7 +12,7 @@ SCRIPT_VERSION="1.0.0-bionic-to-focal"
 SCRIPT_PATH="$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || printf '%s' "$0")"
 
 # --- build-time pins (do not edit by hand; re-run build-client) ---
-PIN_MIRROR_BASE='http://221.139.249.111'
+PIN_MIRROR_BASE='http://192.0.2.10'
 PIN_HOP='bionic-to-focal'
 PIN_SOURCE_CODENAME='bionic'
 PIN_TARGET_CODENAME='focal'
@@ -31,7 +31,7 @@ PIN_UPGRADER_GPG_SHA256='cbad93ff76d0c4f1d811120b63da4fd89d9fb6d25433eb298ce69f2
 PIN_PLAN_CHECKSUM='8eb3d478e2d40e7a19510239fcbf6e2e6824b2587e6e7172d60ef01e8920b157'
 PIN_DISCOVERY_CHECKSUM='d08f76a4e87bbaabc82b2aea3f552d26b9ece53be83735a74dffdfd70a816b56'
 PIN_MANIFEST_SHA256='51554c932d3b9edc380ad2e8a1dc5a5b2cb67e6c26c69a33c7042515f4bfebc3'
-PIN_SAMPLE_DEB_URL='http://221.139.249.111/hops/bionic-to-focal/ubuntu/pool/main/a/acl/acl_2.2.53-6_amd64.deb'
+PIN_SAMPLE_DEB_URL='http://192.0.2.10/hops/bionic-to-focal/ubuntu/pool/main/a/acl/acl_2.2.53-6_amd64.deb'
 PIN_CONFIRM_PHRASE='UPGRADE-BIONIC-TO-FOCAL'
 PIN_GENERATED_AT='2026-08-26T15:17:18Z'
 PIN_PROFILE_NAME='offline-upgrade-selective'

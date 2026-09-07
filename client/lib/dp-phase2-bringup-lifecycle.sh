@@ -46,6 +46,90 @@ p2b_atomic_write() {
   return 0
 }
 
+# Canonical lifecycle-owned password path. External --worker-password-file
+# paths are never this file.
+p2b_lifecycle_owned_worker_password_path() {
+  printf '%s/worker-password' "$(p2b_dir)"
+}
+
+p2b_lifecycle_owned_worker_password_marker_path() {
+  printf '%s/worker-password.owned' "$(p2b_dir)"
+}
+
+# Delete only the lifecycle-owned worker password copy. Never delete an
+# externally supplied --worker-password-file path. Idempotent if absent.
+p2b_cleanup_lifecycle_owned_worker_password() {
+  local d f marker marked
+  d="$(p2b_dir)"
+  f="$(p2b_lifecycle_owned_worker_password_path)"
+  marker="$(p2b_lifecycle_owned_worker_password_marker_path)"
+  marked="$(p2b_read_file "$marker" 2>/dev/null || true)"
+  if [[ "${WORKER_PASSWORD_FILE_OWNED:-NO}" == "YES" ]] || [[ -f "$marker" ]] \
+    || [[ "${WORKER_PASSWORD_FILE:-}" == "$f" ]]; then
+    if [[ -z "$marked" || "$marked" == "$f" ]]; then
+      rm -f "$f" 2>/dev/null || true
+    fi
+    rm -f "$marker" 2>/dev/null || true
+  fi
+  return 0
+}
+
+# Parent/pre-start cleanup. After verified detached-worker handoff this is a
+# no-op so a foreground monitor Ctrl+C or parent exit cannot steal the
+# credential from a still-running worker. The worker EXIT trap remains the
+# post-handoff authority.
+p2b_cleanup_pre_handoff_lifecycle_password() {
+  if [[ "${P2B_PASSWORD_HANDOFF_VERIFIED:-NO}" == "YES" ]]; then
+    return 0
+  fi
+  p2b_cleanup_lifecycle_owned_worker_password
+}
+
+p2b_parent_exit_cleanup() {
+  p2b_cleanup_pre_handoff_lifecycle_password
+  p2b_release_lock
+}
+
+p2b_install_parent_pre_handoff_trap() {
+  if [[ "${P2B_PASSWORD_HANDOFF_VERIFIED:-NO}" == "YES" ]]; then
+    return 0
+  fi
+  # Sourced lib-only tests keep their own EXIT traps.
+  if [[ "${DP_PHASE2_BRINGUP_LIB_ONLY:-0}" == "1" ]]; then
+    return 0
+  fi
+  trap 'p2b_parent_exit_cleanup' EXIT
+}
+
+p2b_mark_password_handoff_verified() {
+  P2B_PASSWORD_HANDOFF_VERIFIED=YES
+  if [[ "${DP_PHASE2_BRINGUP_LIB_ONLY:-0}" != "1" ]]; then
+    trap - EXIT
+  fi
+}
+
+p2b_lifecycle_die() {
+  echo "ERROR: $*" >&2
+  p2b_cleanup_pre_handoff_lifecycle_password
+  p2b_release_lock
+  if [[ "${DP_PHASE2_BRINGUP_LIB_ONLY:-0}" != "1" ]]; then
+    trap - EXIT
+  fi
+  exit 1
+}
+
+p2b_resolve_lifecycle_password_ownership() {
+  local d f marker marked
+  d="$(p2b_dir)"
+  f="$(p2b_lifecycle_owned_worker_password_path)"
+  marker="$(p2b_lifecycle_owned_worker_password_marker_path)"
+  marked="$(p2b_read_file "$marker" 2>/dev/null || true)"
+  if [[ "${WORKER_PASSWORD_FILE:-}" == "$f" ]] \
+    || [[ -f "$marker" && ( -z "$marked" || "$marked" == "$f" || "$marked" == "${WORKER_PASSWORD_FILE:-}" ) ]]; then
+    WORKER_PASSWORD_FILE_OWNED=YES
+  fi
+}
+
 p2b_read_file() {
   local f="$1"
   [[ -f "$f" ]] || { printf ''; return 0; }
@@ -152,6 +236,7 @@ p2b_fail_run() {
   } | p2b_atomic_write "${d}/completion.sentinel"
   p2b_write_result_env "$run_id" "$worker_pid" "$target" "$started" "$completed" "$rc" "FAIL" "FAILED" "$logf"
   p2b_write_state "FAILED"
+  p2b_cleanup_lifecycle_owned_worker_password
   exit "$rc"
 }
 
@@ -652,6 +737,8 @@ p2b_worker_main() {
   local marker_rc=0 current_log_rc=0 apt_log_rc=0 orch_fail_rc=0
   local orch_pass_rc=0 final_log_rc=0
   d="$(p2b_dir)"
+  p2b_resolve_lifecycle_password_ownership
+  trap 'p2b_cleanup_lifecycle_owned_worker_password' EXIT
   run_id="$(p2b_read_file "${d}/run-id")"
   target="$(p2b_read_file "${d}/target-version")"
   logf="$(p2b_read_file "${d}/log-path")"
@@ -720,6 +807,7 @@ p2b_worker_main() {
           } | p2b_atomic_write "${d}/completion.sentinel"
           p2b_write_result_env "$run_id" "$$" "$target" "$started" "$completed" "$rc" "FAIL" "FAILED" "$logf"
           p2b_write_state "FAILED"
+          p2b_cleanup_lifecycle_owned_worker_password
           exit "$rc"
         fi
       fi

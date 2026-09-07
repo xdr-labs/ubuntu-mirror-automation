@@ -47,15 +47,10 @@ load_mirror_defaults() {
   MM_SELECTIVE_ROOT="${MM_SELECTIVE_ROOT:-${SELECTIVE_MIRROR_ROOT:-${MM_MIRROR_ROOT}/selective}}"
   MM_DP_PHASE2_ROOT="${MM_DP_PHASE2_ROOT:-${DP_PHASE2_ROOT:-${MM_MIRROR_ROOT}/dp-phase2}}"
   MM_CLIENT_ROOT="${MM_CLIENT_ROOT:-${MM_MIRROR_ROOT}/client}"
-  if [[ -n "${CLIENT_SIGNING_PUBLIC_KEY:-}" ]]; then
-    OS_CORE_PUBLIC_KEY="$CLIENT_SIGNING_PUBLIC_KEY"
-  elif [[ -f "${LOCAL_CLIENT_SIGNING_DIR:-/etc/ubuntu-mirror/client-signing}/public.gpg" ]]; then
-    OS_CORE_PUBLIC_KEY="${LOCAL_CLIENT_SIGNING_DIR:-/etc/ubuntu-mirror/client-signing}/public.gpg"
-  elif [[ -f "${MM_CLIENT_ROOT}/public.gpg" ]]; then
-    OS_CORE_PUBLIC_KEY="${MM_CLIENT_ROOT}/public.gpg"
-  elif [[ -f "${PROJECT_ROOT}/config/client-signing/offline-client-manifest.gpg" ]]; then
-    OS_CORE_PUBLIC_KEY="${PROJECT_ROOT}/config/client-signing/offline-client-manifest.gpg"
-  fi
+  # Client signing keys are NOT an R2 publisher trust root. Production R2
+  # trust is HTTPS + mandatory SHA256 until R2_OS_CORE_PUBLISHER_PUBLIC_KEY
+  # is explicitly configured. Do not copy CLIENT_SIGNING_PUBLIC_KEY here.
+  R2_OS_CORE_PUBLISHER_PUBLIC_KEY="${R2_OS_CORE_PUBLISHER_PUBLIC_KEY:-}"
 }
 
 # ---------------------------------------------------------------------------
@@ -488,7 +483,7 @@ Separate multiple IP addresses with commas.
 Leave empty if there are no DL workers.
 
 Example:
-192.168.124.23,192.168.124.24" \
+192.0.2.23,192.0.2.24" \
           "${DL_WORKER_IPS:-}")" || continue
         dl_clean="$(printf '%s' "$dl_in" | tr -d '[:space:]')"
         if [[ -n "$dl_clean" ]]; then
@@ -514,7 +509,7 @@ Separate multiple IP addresses with commas.
 Leave empty if there are no DA workers.
 
 Example:
-192.168.124.25,192.168.124.26" \
+192.0.2.25,192.0.2.26" \
           "${DA_WORKER_IPS:-}")" || continue
         da_clean="$(printf '%s' "$da_in" | tr -d '[:space:]')"
         if [[ -n "$da_clean" ]]; then
@@ -1196,8 +1191,8 @@ EOF
 # Cluster bringup one-liner that prompts for the worker SSH password at runtime.
 # The Mirror Manager config still requires WORKER_SSH_PASSWORD to be set (proves
 # credentials were configured), but the published command file must never contain
-# the plaintext password. Residual risk: vendor bringup still receives the
-# password via argv once the operator types it.
+# the plaintext password. Password is written to a mode-0600 file at runtime;
+# bringup receives --worker-password-file only (never argv password literals).
 gui_cluster_bringup_command_line() {
   local ver="$1"
   local worker_ips="$2"
@@ -1205,7 +1200,7 @@ gui_cluster_bringup_command_line() {
   # into a shell variable; it is never embedded in the saved command file.
   # worker_ips is embedded raw so the outer mm_shell_quote escapes it once.
   printf 'sudo bash -c %s\n' \
-    "$(mm_shell_quote "IFS= read -rsp 'Worker SSH password (aella): ' WP; printf '\\n'; exec bash /home/aella/bringup_py3_dp_after_os_upgrade.sh --version ${ver} --skip-download --worker-ips ${worker_ips} --worker-password \"\$WP\"")"
+    "$(mm_shell_quote "IFS= read -rsp 'Worker SSH password (aella): ' WP; printf '\\n'; install -d -m 700 /var/lib/dp-phase2-bringup; PWFILE=\$(mktemp /var/lib/dp-phase2-bringup/worker-password.XXXXXX); printf '%s' \"\$WP\" >\"\$PWFILE\"; chmod 600 \"\$PWFILE\"; unset WP; exec bash /home/aella/bringup_py3_dp_after_os_upgrade.sh --version ${ver} --skip-download --worker-ips ${worker_ips} --worker-password-file \"\$PWFILE\"")"
 }
 
 # STEP 7A/7B (FULL) and STEP 3A/3B (PHASE2_ONLY) master bringup section.

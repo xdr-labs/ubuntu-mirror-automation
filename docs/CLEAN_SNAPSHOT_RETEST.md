@@ -41,7 +41,7 @@ This is the original clean-room retest flow.
 **What Snapshot B preserves:**
 
 - `/var/spool/apt-mirror/selective/` including `state/READY`
-- `/var/spool/apt-mirror/dp-phase2/6.5.0/` final bundle + sidecar + `release.env`
+- `/var/spool/apt-mirror/dp-phase2/6.6.0/` final bundle + sidecar + `release.env`
 - `/etc/ubuntu-mirror/client-signing/` local signing keypair
 - `/etc/ubuntu-mirror/dp-upgrade-workflow.state` and related upgrade state
 
@@ -214,7 +214,7 @@ Menu **2 Download and Prepare Upgrade Files**.
 **Expected:**
 
 - OS Core (FULL) prepared
-- Phase 2 6.5.0 bundle verified
+- Phase 2 6.6.0 bundle verified
 - four hop clients built, signed, atomically published
 - `PRIVATE_KEY_HTTP_PUBLISHED=NO`
 

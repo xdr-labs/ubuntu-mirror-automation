@@ -36,6 +36,17 @@ MIRROR_ROOT="$CLIENT_FIXTURE_MIRROR_ROOT"
 CACHE="${MIRROR_ROOT}/.install-cache"
 FPR="$(tr -d '[:space:]' <"${SIGNING_DIR}/fingerprint" | tr '[:lower:]' '[:upper:]')"
 
+# Phase 2 wrapper publication binds a pre-trusted bundle SHA256 from the
+# published dp-phase2 tree. Provenance rebuild tests need a minimal bundle
+# sidecar even when OS Core is the focus of the case matrix.
+export MM_DP_PHASE2_ROOT="${MIRROR_ROOT}/dp-phase2"
+mkdir -p "${MM_DP_PHASE2_ROOT}/6.6.0"
+printf 'phase2-provenance-fixture\n' >"${MM_DP_PHASE2_ROOT}/6.6.0/dp_bundle_6.6.0-current.tar"
+(
+  cd "${MM_DP_PHASE2_ROOT}/6.6.0"
+  sha256sum dp_bundle_6.6.0-current.tar >dp_bundle_6.6.0-current.tar.sha256
+)
+
 run_rebuild() {
   local project_root="${1:-$ROOT}"
   local client_root="${2:-$CLIENT_ROOT}"
@@ -48,6 +59,7 @@ run_rebuild() {
     CLIENT_HTTP_ROOT="$client_root" \
     SELECTIVE_ROOT="$SEL" \
     BASE_PATH="$MIRROR_ROOT" \
+    MM_DP_PHASE2_ROOT="${MM_DP_PHASE2_ROOT:-${MIRROR_ROOT}/dp-phase2}" \
     CACHE_ROOT="$CACHE" \
     CONTENT_SOURCE=local-fs \
     CLIENT_BUILD_PIN_URL_ONLY=1 \
@@ -83,8 +95,27 @@ classify_client() {
 }
 
 make_scratch() {
+  # TEST-ONLY: copy provenance-bound inputs only. Blind rsync of $ROOT also
+  # copies developer-ignored multi-GB artifacts (e.g. aws-upgrade-discovery-*.tar.gz)
+  # and makes this suite scale with unrelated local files (~18 full-tree copies).
   SCRATCH="$(mktemp -d)"
-  rsync -a --exclude='.git' --exclude='artifacts' "$ROOT/" "$SCRATCH/"
+  python3 - "$ROOT" "$SCRATCH" "$PROV" <<'PY'
+import os
+import shutil
+import sys
+
+root, scratch, prov_path = sys.argv[1:4]
+sys.path.insert(0, os.path.dirname(prov_path))
+import client_build_provenance as prov  # noqa: E402
+
+for rel in prov.all_input_files():
+    src = os.path.join(root, rel)
+    dst = os.path.join(scratch, rel)
+    if not os.path.isfile(src):
+        raise SystemExit("make_scratch missing input: " + rel)
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    shutil.copy2(src, dst)
+PY
 }
 
 # --- Build baseline published client set ---

@@ -256,59 +256,12 @@ uom_phase2_bundle_completed() {
   return 0
 }
 
-# Replacement for the runtime's mm_download_completed(). The original accepted
-# only the literal value PASS for R2_OS_CORE_CHECKSUM, while successful reuse is
-# intentionally recorded as REUSED. That produced a false NOT READY dashboard
-# after snapshot restore/reinstall even though readiness and all generations
-# had passed. Preserve every other validation and fail-closed condition.
-uom_mm_download_completed() {
-  local stored_fp current_fp entries bundle_ck os_ready
-  mm_configuration_completed || return 1
-  engine_resolve_paths 2>/dev/null || true
-  mm_phase2_paths
-  [[ -f "${MM_WF_PHASE2_RELEASE}" ]] || return 1
-  [[ -f "${MM_WF_PHASE2_BUNDLE}" ]] || return 1
-  [[ -f "${MM_WF_PHASE2_SIDECAR}" ]] || return 1
-  bundle_ck="$(mm_status_get PHASE2_BUNDLE_CHECKSUM)"
-  entries="$(mm_status_get PHASE2_BUNDLE_ENTRY_COUNT)"
-  uom_status_success "$bundle_ck" || return 1
-  [[ "$entries" == "9" ]] || return 1
-  if mm_is_phase2_only; then
-    mm_client_files_ready_phase2 "${MM_CLIENT_ROOT}" || return 1
-  else
-    [[ -d "${MM_SELECTIVE_ROOT}/ubuntu" || -L "${MM_SELECTIVE_ROOT}/ubuntu" ]] || return 1
-    os_ready="$(mm_status_get OS_MIRROR_READY)"
-    uom_status_success "$os_ready" || return 1
-    uom_status_success "$(mm_status_get R2_OS_CORE_CHECKSUM)" || return 1
-    mm_client_files_ready "${MM_CLIENT_ROOT}" || return 1
-    mm_client_set_current_source "${MM_CLIENT_ROOT}" >/dev/null 2>&1 || return 1
-  fi
-  if ! uom_status_success "$(mm_status_get DOWNLOAD_PREPARE_RESULT)" \
-    && ! uom_status_success "$(mm_status_get LAST_EXECUTION_RESULT)" \
-    && ! uom_status_success "$(mm_status_get INSTALL_RESULT)"; then
-    return 1
-  fi
-  if mm_temps_present; then
-    return 1
-  fi
-  current_fp="$(mm_artifact_fingerprint)"
-  stored_fp="$(mm_status_get DOWNLOAD_ARTIFACT_FINGERPRINT)"
-  if [[ -z "$stored_fp" ]]; then
-    mm_status_set DOWNLOAD_ARTIFACT_FINGERPRINT "$current_fp"
-    mm_status_set DOWNLOAD_PREPARE_RESULT PASS
-    mm_status_set DOWNLOAD_VALIDATED_AT "$(mm_ts)"
-    mm_status_set PHASE2_BUNDLE_SIZE "$(mm_file_bytes "${MM_WF_PHASE2_BUNDLE}")"
-    mm_status_set PHASE2_BUNDLE_MTIME "$(stat -c '%Y' "${MM_WF_PHASE2_BUNDLE}" 2>/dev/null || echo 0)"
-    mm_status_set PHASE2_SIDECAR_MTIME "$(stat -c '%Y' "${MM_WF_PHASE2_SIDECAR}" 2>/dev/null || echo 0)"
-    return 0
-  fi
-  [[ "$stored_fp" == "$current_fp" ]] || return 1
-  return 0
-}
-
 # Replacement for gui_show_status(): compute OS Core and Phase 2 readiness
 # independently, while the overall progress/readiness still uses the generation-
 # bound workflow contract through mm_collect_workflow_status().
+# Download completion / fingerprint verification stays on the authoritative
+# core mm_download_completed() (fail-closed when DOWNLOAD_ARTIFACT_FINGERPRINT
+# is missing; never mint provenance from a read/status path).
 uom_gui_show_status() {
   load_mirror_defaults
   mm_load_gui_config
@@ -376,10 +329,8 @@ EOF_STATUS
 }
 
 uom_install_status_overrides() {
-  eval "$(
-    declare -f uom_mm_download_completed \
-      | sed '1s/^uom_mm_download_completed[[:space:]]*()/mm_download_completed ()/'
-  )"
+  # Intentionally do NOT override mm_download_completed: the core implementation
+  # is authoritative for generation-bound fingerprint verification.
   eval "$(
     declare -f uom_gui_show_status \
       | sed '1s/^uom_gui_show_status[[:space:]]*()/gui_show_status ()/'

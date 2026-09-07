@@ -215,7 +215,7 @@ PY
 # 19. DP 6.5.0 + 16.04 is NOT no-op
 run_pf "$WORKDIR/notnoop" \
   --collection "$FIX/xenial-aio-current-blocked" --package-source-mode mirror \
-  --package-source-url http://10.34.200.20 --bringup-mode offline || true
+  --package-source-url http://192.0.2.10 --bringup-mode offline || true
 python3 - "$RESDIR/preflight-summary.json" <<'PY' && pass "16.04+6.5.0 not no-op" || fail "false no-op"
 import json,sys
 d=json.load(open(sys.argv[1]))
@@ -336,7 +336,7 @@ run_pf "$WORKDIR/ex0" --collection "$FIX/noble-650-noop" --package-source-mode d
 [[ "$RC" -eq 0 ]] && pass "READY exit 0" || fail "exit 0 got $RC"
 run_pf "$WORKDIR/ex10" --collection "$FIX/xenial-aio-ready" --package-source-mode direct --bringup-mode offline --snapshot-reference snap-ok || true
 [[ "$RC" -eq 10 ]] && pass "READY_WITH_WARNINGS exit 10" || fail "exit 10 got $RC"
-run_pf "$WORKDIR/ex20" --collection "$FIX/xenial-aio-current-blocked" --package-source-mode mirror --package-source-url http://10.34.200.20 --bringup-mode offline || true
+run_pf "$WORKDIR/ex20" --collection "$FIX/xenial-aio-current-blocked" --package-source-mode mirror --package-source-url http://192.0.2.10 --bringup-mode offline || true
 [[ "$RC" -eq 20 ]] && pass "BLOCKED exit 20" || fail "exit 20 got $RC"
 
 # 48. checks.tsv vs JSON count
@@ -368,7 +368,7 @@ fi
 
 # 53. collector original hash unchanged
 H1="$(sha256sum "$FIX/xenial-aio-current-blocked/summary.json" | awk '{print $1}')"
-run_pf "$WORKDIR/hash" --collection "$FIX/xenial-aio-current-blocked" --package-source-mode mirror --package-source-url http://10.34.200.20 --bringup-mode offline || true
+run_pf "$WORKDIR/hash" --collection "$FIX/xenial-aio-current-blocked" --package-source-mode mirror --package-source-url http://192.0.2.10 --bringup-mode offline || true
 H2="$(sha256sum "$FIX/xenial-aio-current-blocked/summary.json" | awk '{print $1}')"
 [[ "$H1" == "$H2" ]] && pass "collector original hash unchanged" || fail "collector mutated"
 
@@ -397,7 +397,7 @@ PF_JSON_PARSER=jq
 # 57. without live-check, no network mutation / no curl to package-source by default
 # (script may still not call curl) — assert live-check off path doesn't require curl success
 run_pf "$WORKDIR/nolive" --collection "$FIX/xenial-aio-current-blocked" --package-source-mode mirror \
-  --package-source-url http://10.34.200.20 --bringup-mode offline || true
+  --package-source-url http://192.0.2.10 --bringup-mode offline || true
 [[ "$RC" -eq 20 ]] && pass "live-check off mirror still verdicts without network change" || fail "nolive"
 
 # 58. registered in run_all — checked by presence
@@ -405,7 +405,7 @@ grep -q test_dp_upgrade_preflight.sh "$ROOT/tests/run_all.sh" && pass "registere
 
 # 59. profile expectation for current blocked fixture
 run_pf "$WORKDIR/profile" --collection "$FIX/xenial-aio-current-blocked" \
-  --package-source-mode mirror --package-source-url http://10.34.200.20 --bringup-mode offline || true
+  --package-source-mode mirror --package-source-url http://192.0.2.10 --bringup-mode offline || true
 python3 - "$RESDIR/preflight-summary.json" <<'PY' && pass "current profile expected BLOCKED verdict" || fail "profile mismatch"
 import json,sys
 d=json.load(open(sys.argv[1]))

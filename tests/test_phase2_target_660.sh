@@ -21,8 +21,8 @@ DP2="${ROOT}/scripts/lib/dp-phase2-common.sh"
 INSTALLER="${ROOT}/scripts/install-dp-upgrade-mirror.sh"
 FX_3AF369="${ROOT}/tests/fixtures/dp-phase2/production-3af369/bringup_py3_dp_after_os_upgrade.sh"
 FX_F1A73="${ROOT}/tests/fixtures/dp-phase2/production-f1a73/bringup_py3_dp_after_os_upgrade.sh"
-EXPECTED_3AF369="3af369660c3e0dfb0b7421ab455dee1ced365b1d"
-EXPECTED_F1A73="f1a73c1d4502e2efcf55197865d2ade345d9c82f"
+EXPECTED_3AF369="0695bd17c6a3e9fca910526779e7b595f79b188c"
+EXPECTED_F1A73="f57ea3964582322e0dc401fa8dd731c7443622fd"
 
 echo "======== TEST A — Fixed production target ========"
 grep -q 'PHASE2_TARGET_VERSION_FIXED="6.6.0"' "$COMMON" \

@@ -4,10 +4,10 @@ Version: 16.04.7 LTS
 Date: Thu, 21 April 2016 16:04:00 UTC
 Supported: 1
 Description: This is the 16.04.7 LTS release
-Release-File: http://221.139.249.111/hops/xenial-to-bionic/ubuntu/dists/xenial/Release
-ReleaseNotes: http://221.139.249.111/client/xenial-to-bionic/ReleaseAnnouncement
-UpgradeTool: http://221.139.249.111/offline/release-upgraders/bionic/bionic.tar.gz
-UpgradeToolSignature: http://221.139.249.111/offline/release-upgraders/bionic/bionic.tar.gz.gpg
+Release-File: http://192.0.2.10/hops/xenial-to-bionic/ubuntu/dists/xenial/Release
+ReleaseNotes: http://192.0.2.10/client/xenial-to-bionic/ReleaseAnnouncement
+UpgradeTool: http://192.0.2.10/offline/release-upgraders/bionic/bionic.tar.gz
+UpgradeToolSignature: http://192.0.2.10/offline/release-upgraders/bionic/bionic.tar.gz.gpg
 
 Dist: bionic
 Name: Bionic Beaver
@@ -15,8 +15,8 @@ Version: 18.04.6 LTS
 Date: Thu, 26 April 2018 18:04:00 UTC
 Supported: 1
 Description: This is the 18.04.6 LTS release
-Release-File: http://221.139.249.111/hops/xenial-to-bionic/ubuntu/dists/bionic/Release
-ReleaseNotes: http://221.139.249.111/client/xenial-to-bionic/ReleaseAnnouncement
-ReleaseNotesHtml: http://221.139.249.111/client/xenial-to-bionic/ReleaseAnnouncement.html
-UpgradeTool: http://221.139.249.111/offline/release-upgraders/bionic/bionic.tar.gz
-UpgradeToolSignature: http://221.139.249.111/offline/release-upgraders/bionic/bionic.tar.gz.gpg
+Release-File: http://192.0.2.10/hops/xenial-to-bionic/ubuntu/dists/bionic/Release
+ReleaseNotes: http://192.0.2.10/client/xenial-to-bionic/ReleaseAnnouncement
+ReleaseNotesHtml: http://192.0.2.10/client/xenial-to-bionic/ReleaseAnnouncement.html
+UpgradeTool: http://192.0.2.10/offline/release-upgraders/bionic/bionic.tar.gz
+UpgradeToolSignature: http://192.0.2.10/offline/release-upgraders/bionic/bionic.tar.gz.gpg

@@ -238,6 +238,7 @@ mm_run_id() { date -u +%Y%m%dT%H%M%SZ; }
 mm_redact() {
   sed -E \
     -e 's/(ACPS_PASSWORD|ACPS_PASS|ACPS_TOKEN|PASSWORD|TOKEN|PASSWD|WORKER_SSH_PASSWORD)=[^[:space:]]+/\1=***/Ig' \
+    -e 's/(--worker-password-file(=|[[:space:]]+))([^[:space:]]+)/\1***/g' \
     -e 's/(--worker-password(=|[[:space:]]+))([^[:space:]]+)/\1***/g' \
     -e 's/(-u[[:space:]]+)[^[:space:]]+/\1***/g' \
     -e 's#(://[^:/@]+:)[^@/]+@#\1***@#g' \
@@ -647,24 +648,60 @@ mm_verify_sha1_pair_logged() {
   return 0
 }
 
+# Invalidate a payload final that failed authoritative checksum verification.
+# Removes only the bad data file so a subsequent acquire can redownload it;
+# sidecars and unrelated finals are left untouched.
+mm_acps_invalidate_corrupt_final() {
+  local data_file="$1"
+  [[ -e "$data_file" ]] || return 0
+  mm_warn "ACPS_CORRUPT_FINAL_INVALIDATE file=$(basename "$data_file")"
+  rm -f "$data_file"
+}
+
 # ACPS payload checksums with correct SHA1/SHA256 labels and heartbeat on images tar.
+# Optional second arg invalidate_corrupt=1: when a payload fails verification,
+# remove only that final before returning failure (retry self-heal). Default 0
+# preserves pure verify for work-dir / hardlink trust paths.
 mm_acps_verify_payload_checksums() {
   local files_dir="$1"
+  local invalidate_corrupt="${2:-0}"
   local ver="${DP_PHASE2_VERSION}"
   local img bytes img_h
+  local failed=0
   mm_set_phase "Verifying ACPS Checksums"
-  mm_verify_sha1_pair_logged \
+
+  if ! mm_verify_sha1_pair_logged \
     "${files_dir}/aelladeb_py3_common.tar.gz" \
-    "${files_dir}/aelladeb_py3_common.tar.gz.sha1" \
-    || return 1
-  mm_verify_sha1_pair_logged \
+    "${files_dir}/aelladeb_py3_common.tar.gz.sha1"; then
+    [[ "$invalidate_corrupt" == "1" ]] \
+      && mm_acps_invalidate_corrupt_final "${files_dir}/aelladeb_py3_common.tar.gz"
+    if [[ "$invalidate_corrupt" != "1" ]]; then
+      return 1
+    fi
+    failed=1
+  fi
+  if ! mm_verify_sha1_pair_logged \
     "${files_dir}/aella-uvp-2404_${ver}ubuntu1_amd64.deb" \
-    "${files_dir}/aella-uvp-2404_${ver}ubuntu1_amd64.deb.sha1" \
-    || return 1
-  mm_verify_sha1_pair_logged \
+    "${files_dir}/aella-uvp-2404_${ver}ubuntu1_amd64.deb.sha1"; then
+    [[ "$invalidate_corrupt" == "1" ]] \
+      && mm_acps_invalidate_corrupt_final \
+        "${files_dir}/aella-uvp-2404_${ver}ubuntu1_amd64.deb"
+    if [[ "$invalidate_corrupt" != "1" ]]; then
+      return 1
+    fi
+    failed=1
+  fi
+  if ! mm_verify_sha1_pair_logged \
     "${files_dir}/bringup_py3_dp_after_os_upgrade.sh" \
-    "${files_dir}/bringup_py3_dp_after_os_upgrade.sh.sha1" \
-    || return 1
+    "${files_dir}/bringup_py3_dp_after_os_upgrade.sh.sha1"; then
+    [[ "$invalidate_corrupt" == "1" ]] \
+      && mm_acps_invalidate_corrupt_final \
+        "${files_dir}/bringup_py3_dp_after_os_upgrade.sh"
+    if [[ "$invalidate_corrupt" != "1" ]]; then
+      return 1
+    fi
+    failed=1
+  fi
   img="${files_dir}/images-${ver}.tar"
   bytes="$(stat -c%s "$img" 2>/dev/null || echo 0)"
   img_h="$(mm_format_bytes "$bytes")"
@@ -674,12 +711,16 @@ mm_acps_verify_payload_checksums() {
     "Verification may take 5–10 minutes depending on disk performance." \
     "The program is still running normally." \
     "Please wait and do not interrupt the process."
-  mm_verify_sha256_pair_logged \
+  if ! mm_verify_sha256_pair_logged \
     "$img" \
     "${img}.sha256" \
     "ACPS_CHECKSUM_VERIFY" \
-    "Still verifying images-${ver}.tar SHA256..." \
-    || return 1
+    "Still verifying images-${ver}.tar SHA256..."; then
+    [[ "$invalidate_corrupt" == "1" ]] \
+      && mm_acps_invalidate_corrupt_final "$img"
+    failed=1
+  fi
+  [[ "$failed" -eq 0 ]] || return 1
   return 0
 }
 
@@ -879,6 +920,9 @@ mm_save_gui_config() {
     mm_status_set CLIENT_COMMANDS_MODE ""
   fi
   # Single authoritative invalidation decision for this persistence.
+  if declare -F mm_wf_normalize_fixed_phase2_target >/dev/null 2>&1; then
+    mm_wf_normalize_fixed_phase2_target || true
+  fi
   if declare -F mm_wf_invalidate_after_config_change >/dev/null 2>&1; then
     mm_wf_invalidate_after_config_change
   elif declare -F mm_wf_mark_configured >/dev/null 2>&1; then
@@ -1420,6 +1464,24 @@ mm_http_probe_ok() {
   [[ "$code" == "200" ]]
 }
 
+# Sensitive resources must not be HTTP 200. 403/404 (or unreachable) is required.
+mm_http_probe_denied() {
+  local url="$1"
+  local code
+  code="$(curl -sS -o /dev/null -w '%{http_code}' \
+    --connect-timeout "${MM_MENU_HTTP_CONNECT_TIMEOUT:-2}" \
+    --max-time "${MM_MENU_HTTP_MAX_TIME:-3}" \
+    "$url" 2>/dev/null || echo 000)"
+  case "$code" in
+    200)
+      return 1
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+}
+
 # Fetch a small text URL body (empty on failure). Used for publication identity.
 mm_http_fetch_text() {
   local url="$1"
@@ -1478,6 +1540,22 @@ mm_http_required_urls_ok() {
     mm_http_probe_ok "${base}/offline/meta-release-lts" || return 1
   fi
   mm_http_publication_identity_ok || return 1
+  # Negative probes: a sensitive resource returning 200 makes readiness FAIL.
+  mm_http_probe_denied "${base}/dp-phase2/${ver}/bringup_py3_dp_after_os_upgrade.sh.upstream" || return 1
+  mm_http_probe_denied "${base}/dp-phase2/${ver}/bringup_py3_dp_after_os_upgrade.sh.upstream.sha1" || return 1
+  mm_http_probe_denied "${base}/client/private.gpg" || return 1
+  mm_http_probe_denied "${base}/config/dp-upgrade-mirror.conf" || return 1
+  mm_http_probe_denied "${base}/config/client-signing/private.gpg" || return 1
+  mm_http_probe_denied "${base}/.install-cache/" || return 1
+  mm_http_probe_denied "${base}/staging/" || return 1
+  mm_http_probe_denied "${base}/state/" || return 1
+  mm_http_probe_denied "${base}/cache/" || return 1
+  mm_http_probe_denied "${base}/private/" || return 1
+  mm_http_probe_denied "${base}/workflow.state" || return 1
+  mm_http_probe_denied "${base}/dp-upgrade-workflow.state" || return 1
+  mm_http_probe_denied "${base}/acps-credentials" || return 1
+  mm_http_probe_denied "${base}/r2-credentials" || return 1
+  mm_http_probe_denied "${base}/rclone.conf" || return 1
   return 0
 }
 

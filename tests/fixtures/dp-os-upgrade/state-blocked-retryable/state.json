@@ -20,7 +20,7 @@
   "snapshot_reference": "esxi-lab-snapshot-20260716",
   "backup_reference": null,
   "package_source_mode": "mirror",
-  "package_source_url": "http://10.34.200.20",
+  "package_source_url": "http://192.0.2.10",
   "warning_acceptances": [],
   "last_successful_step": "init",
   "last_error": null,

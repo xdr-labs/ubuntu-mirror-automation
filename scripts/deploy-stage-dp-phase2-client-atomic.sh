@@ -188,8 +188,14 @@ if [[ -z "$MIRROR_BASE" ]]; then
   echo "PHASE2_UPGRADE_WRAPPER=FAIL reason=mirror_missing" >&2
   exit 1
 fi
+MM_DP_PHASE2_ROOT="${MM_DP_PHASE2_ROOT:-}"
+if [[ -z "$MM_DP_PHASE2_ROOT" && "$DEST_ROOT" == */client ]]; then
+  MM_DP_PHASE2_ROOT="${DEST_ROOT%/client}/dp-phase2"
+fi
+export MM_DP_PHASE2_ROOT
+bundle_sha="$(phase2_published_bundle_sha256 "${TARGET_DP_VERSION:-6.6.0}" 2>/dev/null || true)"
 phase2_upgrade_wrapper_write "$DEST_ROOT" "$MIRROR_BASE" \
-  "${TARGET_DP_VERSION:-6.6.0}" >/dev/null
+  "${TARGET_DP_VERSION:-6.6.0}" "$bundle_sha" >/dev/null
 echo "ARTIFACT_SHA256=$(sha256sum "${DEST_ROOT}/upgrade-phase2.sh" | awk '{print $1}') name=upgrade-phase2.sh"
 
 # Leave no partial temp files behind.

@@ -13,17 +13,26 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # shellcheck source=lib/dp-phase2-common.sh
 source "${SCRIPT_DIR}/lib/dp-phase2-common.sh"
+# Shared ACPS TLS/netrc policy (same as Mirror Manager acps_acquire.sh).
+# shellcheck source=lib/acps_auth.sh
+source "${SCRIPT_DIR}/lib/acps_auth.sh"
 
 # ---------------------------------------------------------------------------
 # ACPS credentials — loaded from Mirror Manager GUI config or environment.
 # Never hardcode username/password in this repository.
 # Never enable set -x; never print ACPS_PASS / ACPS_PASSWORD.
+# Auth uses mode-0600 netrc (never curl -u). TLS verify ON unless
+# ACPS_INSECURE_TLS=1 explicitly opts into -k.
 # ---------------------------------------------------------------------------
 ACPS_HOST="${ACPS_HOST:-acps.stellarcyber.ai}"
 ACPS_PATH="${ACPS_PATH:-/provision/aelladeb_py3}"
 ACPS_BASE_URL="${ACPS_BASE_URL:-https://${ACPS_HOST}${ACPS_PATH}}"
+ACPS_BASE_URL_FIXED="${ACPS_BASE_URL_FIXED:-$ACPS_BASE_URL}"
 ACPS_USER="${ACPS_USER:-${ACPS_USERNAME:-}}"
 ACPS_PASS="${ACPS_PASS:-${ACPS_PASSWORD:-}}"
+ACPS_USERNAME="${ACPS_USERNAME:-${ACPS_USER:-}}"
+ACPS_PASSWORD="${ACPS_PASSWORD:-${ACPS_PASS:-}}"
+ACPS_INSECURE_TLS="${ACPS_INSECURE_TLS:-0}"
 
 _load_acps_credentials_from_gui_config() {
   local cfg="${DP_UPGRADE_MIRROR_CONFIG:-/etc/ubuntu-mirror/dp-upgrade-mirror.conf}"
@@ -37,6 +46,8 @@ _load_acps_credentials_from_gui_config() {
     set +a
     ACPS_USER="${ACPS_USER:-${ACPS_USERNAME:-}}"
     ACPS_PASS="${ACPS_PASS:-${ACPS_PASSWORD:-}}"
+    ACPS_USERNAME="${ACPS_USERNAME:-${ACPS_USER:-}}"
+    ACPS_PASSWORD="${ACPS_PASSWORD:-${ACPS_PASS:-}}"
   fi
 }
 _load_acps_credentials_from_gui_config
@@ -62,9 +73,14 @@ LOCK_HELD=0
 STAGING_DIR=""
 PUBLISHED=0
 CLI_VERSION=""
+ACPS_AUTH_ACTIVE=0
 
 cleanup() {
   local rc=$?
+  if [[ "$ACPS_AUTH_ACTIVE" -eq 1 ]]; then
+    acps_cleanup_curl_auth
+    ACPS_AUTH_ACTIVE=0
+  fi
   if [[ "$LOCK_HELD" -eq 1 && -n "$LOCK_FD" ]]; then
     flock -u "$LOCK_FD" 2>/dev/null || true
     eval "exec ${LOCK_FD}>&-" 2>/dev/null || true
@@ -120,6 +136,7 @@ download_one() {
     --retry "$CURL_RETRIES"
     --retry-delay "$CURL_RETRY_DELAY"
     --retry-all-errors
+    --continue-at -
     -o "$part"
   )
   if [[ "$CURL_MAX_TIME" != "0" ]]; then
@@ -128,14 +145,11 @@ download_one() {
 
   if [[ -n "$DP_PHASE2_SOURCE_BASE" ]]; then
     url="${DP_PHASE2_SOURCE_BASE%/}/${name}"
-    # Internal/fixture HTTP — no -k, no ACPS userinfo
-    curl_args+=(--continue-at -)
+    # Internal/fixture HTTP — no -k, no ACPS auth
   else
-    url="${ACPS_BASE_URL}/${name}"
-    [[ -n "$ACPS_USER" && -n "$ACPS_PASS" ]] || \
-      dp2_die "ACPS_CREDENTIALS=FAIL set via Mirror Manager Configuration or ACPS_USERNAME/ACPS_PASSWORD env"
-    # ACPS only: -k and -u (never put password in URL)
-    curl_args+=(-k -u "${ACPS_USER}:${ACPS_PASS}" --continue-at -)
+    url="${ACPS_EFFECTIVE_BASE%/}/${name}"
+    curl_args+=(${ACPS_CURL_TLS_ARGS[@]+"${ACPS_CURL_TLS_ARGS[@]}"})
+    curl_args+=(${ACPS_CURL_AUTH_ARGS[@]+"${ACPS_CURL_AUTH_ARGS[@]}"})
   fi
 
   dp2_info "DOWNLOAD_START file=${name}"
@@ -326,12 +340,26 @@ cmd_sync() {
   mkdir -p "${STAGING_DIR}/files"
   dp2_info "STAGING_DIR=${STAGING_DIR}"
 
+  # ACPS path: TLS verify + netrc (same policy as Mirror Manager).
+  # Fixture path (DP_PHASE2_SOURCE_BASE): no auth setup.
+  if [[ -z "${DP_PHASE2_SOURCE_BASE:-}" ]]; then
+    acps_setup_curl_auth
+    ACPS_AUTH_ACTIVE=1
+  else
+    ACPS_EFFECTIVE_BASE="${DP_PHASE2_SOURCE_BASE}"
+  fi
+
   local name
   for name in "${DP_PHASE2_REQUIRED_FILES[@]}"; do
     download_one "$name" "${STAGING_DIR}/files"
     # Re-check reserve space during large downloads
     dp2_require_free_gib "$DP_PHASE2_ROOT" "$DP_PHASE2_MIN_FREE_GIB"
   done
+
+  if [[ "$ACPS_AUTH_ACTIVE" -eq 1 ]]; then
+    acps_cleanup_curl_auth
+    ACPS_AUTH_ACTIVE=0
+  fi
 
   dp2_assert_exact_files_dir "${STAGING_DIR}/files"
   dp2_verify_payload_checksums "${STAGING_DIR}/files"

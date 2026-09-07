@@ -101,9 +101,10 @@ s=socket.socket(); s.bind(('127.0.0.1',0)); print(s.getsockname()[1]); s.close()
 PY
 )"
   python3 - "$root" "$HTTP_PORT" "$auth_mode" "${WORKDIR}/http-counts" <<'PY' &
-import base64, http.server, os, sys, pathlib
+import base64, http.server, os, sys, pathlib, threading
 root, port, auth_mode, count_dir = sys.argv[1], int(sys.argv[2]), sys.argv[3], pathlib.Path(sys.argv[4])
 count_dir.mkdir(parents=True, exist_ok=True)
+_get_lock = threading.Lock()
 class H(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *a, **k):
         super().__init__(*a, directory=root, **k)
@@ -125,7 +126,8 @@ class H(http.server.SimpleHTTPRequestHandler):
         if not self._auth_ok():
             self.send_response(401); self.send_header('WWW-Authenticate','Basic realm=t'); self.end_headers(); return
         p = count_dir / 'gets'
-        p.write_text(str(int(p.read_text())+1 if p.exists() else 1))
+        with _get_lock:
+            p.write_text(str(int(p.read_text())+1 if p.exists() else 1))
         path = self.translate_path(self.path)
         if not os.path.isfile(path):
             self.send_error(404); return
@@ -164,9 +166,10 @@ s=socket.socket(); s.bind(('127.0.0.1',0)); print(s.getsockname()[1]); s.close()
 PY
 )"
   python3 - "$root" "$R2_PORT" "${WORKDIR}/http-counts-r2" "$mode" <<'PY' &
-import http.server, os, sys, pathlib
+import http.server, os, sys, pathlib, threading
 root, port, count_dir, mode = sys.argv[1], int(sys.argv[2]), pathlib.Path(sys.argv[3]), sys.argv[4]
 count_dir.mkdir(parents=True, exist_ok=True)
+_get_lock = threading.Lock()
 class H(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *a, **k):
         super().__init__(*a, directory=root, **k)
@@ -182,7 +185,8 @@ class H(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
     def do_GET(self):
         p = count_dir / 'gets'
-        p.write_text(str(int(p.read_text())+1 if p.exists() else 1))
+        with _get_lock:
+            p.write_text(str(int(p.read_text())+1 if p.exists() else 1))
         path = self.translate_path(self.path)
         if not os.path.isfile(path):
             self.send_error(404); return
@@ -260,12 +264,27 @@ setup_project_shadow_if_needed() {
     return 0
   fi
   SHADOW_ROOT="${WORKDIR}/shadow-project"
-  mkdir -p "$SHADOW_ROOT/vendor"
+  mkdir -p "$SHADOW_ROOT/vendor" "${WORKDIR}/vendor"
+  # Seed vendor from production, then replace allowlist with TEST-LOCAL digests.
+  if [[ ! -d "${WORKDIR}/vendor/dp-phase2" ]]; then
+    cp -a "${ROOT}/vendor/dp-phase2" "${WORKDIR}/vendor/dp-phase2"
+  fi
+  local synth
+  synth="$(sha256sum "${ROOT}/tests/fixtures/dp-phase2/upstream_bringup_unpatched.sh" | awk '{print $1}')"
+  cat >"${WORKDIR}/vendor/dp-phase2/approved-upstream-bringup.sha256" <<EOF
+# TEST-LOCAL allowlist for mirror-manager synthetic ACPS payloads
+${synth}  upstream_bringup_unpatched
+EOF
+  # Preserve real reviewed digests too (optional; synthetic is what prepare uses).
+  awk '/^[0-9a-fA-F]{64}([[:space:]]|$)/ {print}' \
+    "${ROOT}/vendor/dp-phase2/approved-upstream-bringup.sha256" \
+    >>"${WORKDIR}/vendor/dp-phase2/approved-upstream-bringup.sha256"
   ln -sfn "${ROOT}/scripts" "${SHADOW_ROOT}/scripts"
   ln -sfn "${ROOT}/client" "${SHADOW_ROOT}/client"
   ln -sfn "${ROOT}/lib" "${SHADOW_ROOT}/lib"
   ln -sfn "${ROOT}/config" "${SHADOW_ROOT}/config"
   ln -sfn "${ROOT}/mirror.conf" "${SHADOW_ROOT}/mirror.conf" 2>/dev/null || true
+  rm -rf "${SHADOW_ROOT}/vendor/dp-phase2"
   cp -a "${WORKDIR}/vendor/dp-phase2" "${SHADOW_ROOT}/vendor/dp-phase2"
 }
 
@@ -439,7 +458,8 @@ python3 "$OS_CORE_PY" verify --package "$PKG_BAD" 2>/dev/null && fail "E outer s
 
 echo "======== Prepare fixtures for install flow ========"
 common_env
-USE_WORKDIR_VENDOR=0
+# Isolate synthetic ACPS fixture digests in a TEST-LOCAL project allowlist.
+USE_WORKDIR_VENDOR=1
 ACPS_ROOT="${WORKDIR}/acps-http"
 make_acps_payload "$ACPS_ROOT" 6.6.0
 setup_project_shadow_if_needed
@@ -513,8 +533,13 @@ find "${WORKDIR}/mirror/dp-phase2" -maxdepth 1 -name '6.6.0.old.*' | grep -q . \
 
 echo "======== N. readiness ========"
 MM_PROJECT_ROOT="$SHADOW_ROOT" bash "${SHADOW_ROOT}/scripts/install-dp-upgrade-mirror.sh" enable-http >/dev/null
-MM_PROJECT_ROOT="$SHADOW_ROOT" bash "${SHADOW_ROOT}/scripts/install-dp-upgrade-mirror.sh" verify-readiness \
-  | grep -q 'UPGRADE_READINESS=PASS' && pass "N readiness PASS" || fail "N readiness"
+ready_out="$(MM_PROJECT_ROOT="$SHADOW_ROOT" bash "${SHADOW_ROOT}/scripts/install-dp-upgrade-mirror.sh" verify-readiness 2>&1)" || true
+if printf '%s\n' "$ready_out" | grep -q 'UPGRADE_READINESS=PASS'; then
+  pass "N readiness PASS"
+else
+  printf '%s\n' "$ready_out" >&2
+  fail "N readiness"
+fi
 
 echo "======== D/G R2 HTML + ACPS failures ========"
 kill "$HTTP_PID" 2>/dev/null || true; wait "$HTTP_PID" 2>/dev/null || true; HTTP_PID=""
@@ -579,19 +604,19 @@ set -e
 [[ "$rc_auth" -ne 0 ]] && pass "G ACPS auth fail" || fail "G auth"
 echo "$out_auth" | grep -qi 'testpass' && fail "F secret leaked" || pass "F no secret in output"
 
-echo "======== I. legitimate upstream SHA change is non-blocking ========"
+echo "======== I. unknown upstream SHA256 fails closed (not NON_BLOCKING) ========"
 kill "$HTTP_PID" 2>/dev/null || true; wait "$HTTP_PID" 2>/dev/null || true; HTTP_PID=""
 kill "$R2_PID" 2>/dev/null || true; wait "$R2_PID" 2>/dev/null || true; R2_PID=""
 ACPS_DRIFT="${WORKDIR}/acps-drift"; cp -a "$ACPS_ROOT" "$ACPS_DRIFT"
-# Valid unpatched ACPS bringup whose SHA differs from the last-known
-# reference. Do not use the frozen vendor full copy as "upstream".
+# Mutate an otherwise valid unpatched ACPS bringup so sidecar can be refreshed
+# but repository SHA256 allowlist rejects it.
 python3 - "${ROOT}/tests/fixtures/dp-phase2/upstream_bringup_unpatched.sh" \
   "${ACPS_DRIFT}/bringup_py3_dp_after_os_upgrade.sh" <<'PY'
 import sys
 src = open(sys.argv[1]).read()
 src = src.replace(
     'log "download_artifacts placeholder"',
-    'log "download_artifacts placeholder"\n    # LEGITIMATE_UPSTREAM_SHA_DRIFT',
+    'log "download_artifacts placeholder"\n    # UNAPPROVED_UPSTREAM_SHA_DRIFT',
 )
 open(sys.argv[2], 'w').write(src)
 PY
@@ -611,14 +636,14 @@ seed_client_files "$MM_CLIENT_ROOT"
 set +e
 out_drift="$(run_prepare 2>&1)"; rc_drift=$?
 set -e
-[[ "$rc_drift" -eq 0 ]] && echo "$out_drift" | grep -q 'UPSTREAM_BRINGUP_DRIFT=NON_BLOCKING' \
-  && pass "I legitimate upstream change continues" || fail "I drift should be non-blocking"
-echo "$out_drift" | grep -q 'INSTALL_RESULT=FAIL' && fail "I INSTALL_RESULT=FAIL on SHA change" \
-  || pass "I no INSTALL_RESULT=FAIL on SHA change"
-echo "$out_drift" | grep -q 'UPSTREAM_BRINGUP_DRIFT=YES' && fail "I blocking DRIFT=YES" \
-  || pass "I no blocking DRIFT=YES"
-[[ -f "${WORKDIR}/mirror-drift/dp-phase2/6.6.0/dp_bundle_6.6.0-current.tar" ]] \
-  && pass "I final bundle published after SHA change" || fail "I bundle missing after SHA change"
+[[ "$rc_drift" -ne 0 ]] && echo "$out_drift" | grep -q 'UPSTREAM_BRINGUP_PROVENANCE=FAIL' \
+  && pass "I unknown upstream provenance FAIL" || fail "I unknown upstream should fail provenance"
+echo "$out_drift" | grep -q 'UPSTREAM_BRINGUP_APPROVAL_REQUIRED=YES' \
+  && pass "I approval required" || fail "I approval required missing"
+echo "$out_drift" | grep -q 'UPSTREAM_BRINGUP_DRIFT=NON_BLOCKING' \
+  && fail "I unknown became NON_BLOCKING" || pass "I unknown not NON_BLOCKING"
+[[ ! -f "${WORKDIR}/mirror-drift/dp-phase2/6.6.0/dp_bundle_6.6.0-current.tar" ]] \
+  && pass "I no final bundle after provenance fail" || fail "I bundle published after provenance fail"
 
 echo "======== G resume ========"
 kill "$HTTP_PID" 2>/dev/null || true; wait "$HTTP_PID" 2>/dev/null || true; HTTP_PID=""
@@ -786,8 +811,8 @@ bash "${ROOT}/scripts/ubuntu-offline-mirror.sh" --help 2>&1 | grep -q 'mirror-ma
 bash "${ROOT}/scripts/ubuntu-offline-mirror.sh" --help 2>&1 | grep -qE 'install-standard|install-menu|Mode 2' \
   && fail "entrypoint obsolete cmds" || pass "entrypoint no obsolete cmds"
 
-# Hardcoded credential absence in new manager scripts
-grep -RInE 'AellaMeta|WroTQfm' "${ROOT}/scripts/lib/mirror_manager_common.sh" \
+# Hardcoded credential absence in new manager scripts (no historical password literals).
+grep -RInE 'AellaMeta' "${ROOT}/scripts/lib/mirror_manager_common.sh" \
   "${ROOT}/scripts/lib/mirror_install_engine.sh" "${ROOT}/scripts/lib/acps_acquire.sh" \
   "${ROOT}/scripts/install-dp-upgrade-mirror.sh" 2>/dev/null \
   && fail "F hardcoded creds in manager" || pass "F no hardcoded manager creds"
@@ -1233,6 +1258,18 @@ if awk '
   pass "T UMASK_RESTORED after config save"
 else
   fail "T umask not restored after mm_save_gui_config"
+fi
+
+# umask restored after workflow.state create (both success and failure paths)
+if awk '
+  /^mm_wf_ensure_file\(\)/ { in_fn=1 }
+  in_fn && /old_umask=/ { save=1 }
+  in_fn && /umask "\$old_umask"/ { restore++ }
+  in_fn && /^}/ { exit((save && restore >= 2) ? 0 : 1) }
+' "${ROOT}/scripts/lib/mirror_workflow_state.sh"; then
+  pass "T UMASK_RESTORED after workflow.state create"
+else
+  fail "T umask not restored after mm_wf_ensure_file"
 fi
 
 # Credential config remains 600

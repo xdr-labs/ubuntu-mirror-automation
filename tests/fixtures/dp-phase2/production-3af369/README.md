@@ -1,14 +1,21 @@
-# Production ACPS bringup fixture: 3af369
+# SANITIZED COMPATIBILITY FIXTURE: production-3af369
 
-Exact ACPS `bringup_py3_dp_after_os_upgrade.sh` used in the DP 6.6.0 dark-site
-validation.
+**SANITIZED COMPATIBILITY FIXTURE** — not byte-exact ACPS upstream.
 
-SHA1:
+This tree holds an environment-IP / credential-scrubbed derivative of the
+reviewed ACPS `bringup_py3_dp_after_os_upgrade.sh` generation whose historical
+SHA1 was:
 
     3af369660c3e0dfb0b7421ab455dee1ced365b1d
 
-This is an immutable upstream copy. Production still downloads the current
-ACPS file; this fixture exists so the deterministic patcher can be regression
-tested against that known generation. The SHA is not a forever pin: a newer
-ACPS generation must be analyzed the same way and supported only if proven
-safe.
+Current on-disk fixture SHA1 (sanitized bytes):
+
+    0695bd17c6a3e9fca910526779e7b595f79b188c
+
+Use this file for deterministic **patch compatibility** regression only.
+Its SHA256 is **NOT** a production provenance pin and must not appear in
+`vendor/dp-phase2/approved-upstream-bringup.sha256`.
+
+Production approval digests are SHA256 of the real reviewed ACPS upstream
+bytes (see that allowlist). Unknown ACPS generations fail closed until an
+engineer intentionally adds their SHA256 after review.

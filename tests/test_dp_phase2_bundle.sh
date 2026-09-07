@@ -105,6 +105,43 @@ else
   pass "nested tar path rejected"
 fi
 
+echo "[test] tar symlink member reject"
+SYMLINK_BAD="${WORKDIR}/symlink.tar"
+python3 - "$FIXTURE" "$SYMLINK_BAD" <<'PY'
+import io
+import os
+import sys
+import tarfile
+
+fixture, dest = sys.argv[1:3]
+names = [
+    "aelladeb_py3_common.tar.gz",
+    "aelladeb_py3_common.tar.gz.sha1",
+    "aella-uvp-2404_6.6.0ubuntu1_amd64.deb",
+    "aella-uvp-2404_6.6.0ubuntu1_amd64.deb.sha1",
+    "bringup_py3_dp_after_os_upgrade.sh",
+    "bringup_py3_dp_after_os_upgrade.sh.sha1",
+    "images-6.6.0.list",
+    "images-6.6.0.tar",
+    "images-6.6.0.tar.sha256",
+]
+with tarfile.open(dest, "w") as tf:
+    for name in names:
+        if name == "bringup_py3_dp_after_os_upgrade.sh":
+            info = tarfile.TarInfo(name=name)
+            info.type = tarfile.SYMTYPE
+            info.linkname = "/etc/passwd"
+            tf.addfile(info)
+            continue
+        src = os.path.join(fixture, name)
+        tf.add(src, arcname=name)
+PY
+if ( dp2_assert_safe_tar_list "$SYMLINK_BAD" ) 2>/dev/null; then
+  fail "symlink tar member should reject"
+else
+  pass "symlink tar member rejected"
+fi
+
 echo "[test] image list line count warning vs pass"
 lines="$(dp2_check_image_list "${FIXTURE}/images-6.6.0.list" | tail -n1)"
 [[ "$lines" == "156" ]] && pass "image list 156" || fail "image list count got=${lines}"

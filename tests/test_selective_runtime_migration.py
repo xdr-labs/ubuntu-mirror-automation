@@ -174,7 +174,8 @@ um_migrate_selective_runtime "%s"
         self.assertIn('BASE_PATH="%s"' % os.path.join(self.tmp, 'var/spool/apt-mirror'), conf)
         self.assertIn('MIRROR_MODE="selective"', conf)
         self.assertIn('SELECTIVE_MIRROR_ROOT=', conf)
-        self.assertIn('SELECTIVE_NGINX_ROOT=', conf)
+        self.assertIn('SELECTIVE_NGINX_ROOT="%s"' % self.selective, conf)
+        self.assertNotIn('SELECTIVE_NGINX_ROOT="%s/current"' % self.selective, conf)
         self.assertIn('FULL_MIRROR_SEED_ROOT=', conf)
 
         svc = open(os.path.join(self.systemd, 'apt-mirror.service'), encoding='utf-8').read()

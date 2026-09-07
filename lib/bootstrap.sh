@@ -389,6 +389,41 @@ um_bootstrap_selective_ready() {
   return 0
 }
 
+# True when a published hop/client set already exists under the HTTP root.
+# Bootstrap must not merge helpers into such a set (mixed-generation risk).
+um_bootstrap_published_client_set_present() {
+  local root="${1:-${BASE_PATH:-/var/spool/apt-mirror}/client}"
+  local f
+  [[ -f "${root}/client-set.env" ]] && return 0
+  [[ -f "${root}/upgrade-phase2.sh" ]] && return 0
+  for f in "${UM_CLIENT_HOP_SCRIPTS[@]}"; do
+    [[ -f "${root}/${f}" ]] && return 0
+  done
+  return 1
+}
+
+# Target Phase 2 published-bundle readiness for bootstrap gating.
+# Reuses phase2_published_bundle_sha256 (same helper rebuild/finalization uses).
+# Prints the trusted SHA on success; returns non-zero when absent/invalid.
+um_bootstrap_target_phase2_bundle_sha256() {
+  local ver="${1:-${PHASE2_TARGET_VERSION:-${TARGET_DP_VERSION:-6.6.0}}}"
+  local base="${BASE_PATH:-/var/spool/apt-mirror}"
+  local src_root="${UM_PROJECT_ROOT}"
+  local sha=""
+  [[ "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+  MM_DP_PHASE2_ROOT="${MM_DP_PHASE2_ROOT:-${base}/dp-phase2}"
+  export MM_DP_PHASE2_ROOT
+  if [[ -f "${src_root}/scripts/lib/phase2_helper_generation.sh" ]]; then
+    # shellcheck source=/dev/null
+    source "${src_root}/scripts/lib/phase2_helper_generation.sh"
+  elif ! declare -F phase2_published_bundle_sha256 >/dev/null 2>&1; then
+    return 1
+  fi
+  sha="$(phase2_published_bundle_sha256 "$ver" 2>/dev/null || true)"
+  [[ -n "$sha" && "$sha" =~ ^[0-9a-fA-F]{64}$ ]] || return 1
+  printf '%s\n' "$sha"
+}
+
 # Publish Phase 2 helpers + local public key without hop clients (pre-OS-Core).
 um_bootstrap_publish_phase2_helpers_only() {
   local dest="${1:-${BASE_PATH:-/var/spool/apt-mirror}/client}"
@@ -558,6 +593,35 @@ um_bootstrap_deploy_client_http_artifacts() {
     return 0
   fi
 
+  # Full client rebuild requires the target Phase 2 published bundle SHA so
+  # upgrade-phase2.sh can embed --expected-bundle-sha256. Install must succeed
+  # before Download and Prepare creates that bundle (OS Core READY alone is not
+  # enough). Explicit finalization/rebuild remains fail-closed.
+  local target_ver="${PHASE2_TARGET_VERSION:-${TARGET_DP_VERSION:-6.6.0}}"
+  local target_bundle_sha=""
+  target_bundle_sha="$(um_bootstrap_target_phase2_bundle_sha256 "$target_ver" 2>/dev/null || true)"
+  if [[ -z "$target_bundle_sha" ]]; then
+    um_info "TARGET_PHASE2_BUNDLE_READY=NO target=${target_ver}"
+    um_info "CLIENT_SET_BUILD=DEFERRED_UNTIL_PHASE2_BUNDLE"
+    um_info "PHASE2_UPGRADE_WRAPPER=DEFERRED"
+    um_info "STALE_PREBUILT_CLIENT_PUBLISH=PROHIBITED"
+    um_info "PARTIAL_CLIENT_DEPLOY_ALLOWED=NO"
+    if um_bootstrap_published_client_set_present "$dest"; then
+      # Preserve atomic-set semantics: do not merge helpers into a live set.
+      um_info "EXISTING_CLIENT_SET=PRESERVED"
+      um_info "CLIENT_SET_ATOMIC_PRESERVE=YES"
+    else
+      # Empty/fresh client root: helpers-only publish remains safe.
+      um_bootstrap_publish_phase2_helpers_only "$dest" || true
+    fi
+    local_signing_assert_private_not_published "$dest" \
+      || um_die "PRIVATE_KEY_HTTP_PUBLISHED=YES"
+    um_info "PRIVATE_KEY_HTTP_PUBLISHED=NO"
+    um_info "CLIENT_FILES_READY=NOT_REQUIRED_DURING_BOOTSTRAP"
+    return 0
+  fi
+  um_info "TARGET_PHASE2_BUNDLE_READY=YES target=${target_ver}"
+
   [[ -x "$rebuild" || -f "$rebuild" ]] \
     || um_die "CLIENT_ARTIFACT=FAIL missing ${rebuild}"
 
@@ -575,6 +639,8 @@ um_bootstrap_deploy_client_http_artifacts() {
     SELECTIVE_ROOT="${SELECTIVE_MIRROR_ROOT:-${BASE_PATH:-/var/spool/apt-mirror}/selective}" \
     BASE_PATH="${BASE_PATH:-/var/spool/apt-mirror}" \
     CACHE_ROOT="${BASE_PATH:-/var/spool/apt-mirror}/.install-cache" \
+    MM_DP_PHASE2_ROOT="${MM_DP_PHASE2_ROOT:-${BASE_PATH:-/var/spool/apt-mirror}/dp-phase2}" \
+    PHASE2_TARGET_VERSION="$target_ver" \
     CONTENT_SOURCE=local-fs \
     SKIP_HTTP_VERIFY="${UM_BOOTSTRAP_SKIP_HTTP_VERIFY:-1}" \
     bash "$rebuild"

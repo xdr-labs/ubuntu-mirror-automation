@@ -134,12 +134,12 @@ Targeted regression scripts are:
 
 | Constant | Value | Notes |
 |----------|-------|-------|
-| DEVELOPMENT_MIRROR_URL | `http://221.139.249.111` | Cursor development mirror — **not deprecated** |
-| STELLAR_TEST_MIRROR_URL | `http://221.139.249.112` | Current Stellar field-test mirror |
+| DEVELOPMENT_MIRROR_URL | `http://192.0.2.10` | RFC 5737 documentation example (not a live host) |
+| STELLAR_TEST_MIRROR_URL | `http://198.51.100.10` | RFC 5737 documentation example (not a live host) |
 
-Reusable product source must not hardcode either IP. Environments sign and
-publish independent client generations. Never reuse a `.111` signed Menu 7
-command on `.112`.
+Reusable product source must not hardcode environment-specific mirror IPs or
+hostnames. Each environment signs and publishes independent client generations.
+Never reuse a Menu 7 command signed on one Mirror Server against another.
 
 ## Root causes (production observations)
 

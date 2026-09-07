@@ -125,7 +125,7 @@ assert_grep 'DP_RESUME_CHECK_REQUIRED=YES' "$LOG_FILE" "C notice also appended t
 
 # Call site after Bringup complete marker.
 if awk '
-  /echo "  Bringup complete:/ && !c {c=NR}
+  /(echo|log) "  Bringup complete:/ && !c {c=NR}
   /emit_dp_resume_post_complete_notice$/ && !p {p=NR}
   END { exit((c>0 && p>0 && p>c) ? 0 : 1) }
 ' "$BRINGUP"; then

@@ -23,7 +23,24 @@ TMP="$(mktemp -d)"
 cleanup() { rm -rf "$TMP"; }
 trap cleanup EXIT
 
-export MM_PROJECT_ROOT="$ROOT"
+# TEST-LOCAL project trust-root: synthetic fixture digests must never enter
+# the repository production allowlist. Mirror scripts from ROOT; replace only
+# the allowlist under this temporary MM_PROJECT_ROOT.
+SHADOW_ROOT="${TMP}/proj"
+mkdir -p "${SHADOW_ROOT}/vendor"
+cp -a "${ROOT}/vendor/dp-phase2" "${SHADOW_ROOT}/vendor/dp-phase2"
+SYNTH_SHA256="$(sha256sum "$UPSTREAM_FIXTURE" | awk '{print $1}')"
+cat >"${SHADOW_ROOT}/vendor/dp-phase2/approved-upstream-bringup.sha256" <<EOF
+# TEST-LOCAL allowlist — not production provenance
+${SYNTH_SHA256}  upstream_bringup_unpatched
+EOF
+ln -sfn "${ROOT}/scripts" "${SHADOW_ROOT}/scripts"
+ln -sfn "${ROOT}/client" "${SHADOW_ROOT}/client"
+ln -sfn "${ROOT}/lib" "${SHADOW_ROOT}/lib"
+ln -sfn "${ROOT}/config" "${SHADOW_ROOT}/config"
+ln -sfn "${ROOT}/templates" "${SHADOW_ROOT}/templates" 2>/dev/null || true
+
+export MM_PROJECT_ROOT="$SHADOW_ROOT"
 export MM_SKIP_ROOT_CHECK=1
 export MM_MIRROR_ROOT="${TMP}/mirror"
 export MM_CACHE_ROOT="${MM_MIRROR_ROOT}/.install-cache"

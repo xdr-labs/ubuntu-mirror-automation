@@ -28,6 +28,11 @@ cp -a "${ROOT}/client/lib/"*.sh "$CLIENT/lib/"
   } >phase2-helper-generation.manifest
 )
 
+# shellcheck source=lib/phase2_bundle_trust_fixture.sh
+source "${ROOT}/tests/lib/phase2_bundle_trust_fixture.sh"
+phase2_trust_fixture_export_dp_phase2_root "$TMP" >/dev/null
+phase2_trust_fixture_write_bundle_sidecar "$MM_DP_PHASE2_ROOT" "6.6.0" >/dev/null
+
 phase2_upgrade_wrapper_write "$CLIENT" "http://192.0.2.50" "6.6.0" \
   >/dev/null
 
@@ -35,7 +40,7 @@ wrap="${CLIENT}/upgrade-phase2.sh"
 rec="${CLIENT}/upgrade-phase2-same-version-recovery.sh"
 [[ -f "$wrap" && -f "$rec" ]] || { echo "FAIL wrappers missing"; exit 1; }
 
-grep -Fq 'sudo bash "./$SCRIPT" --target-version "$VER" --mirror-url "$MIRROR"' "$wrap" \
+grep -Fq 'sudo bash "./$SCRIPT" --target-version "$VER" --mirror-url "$MIRROR" --expected-bundle-sha256 "$B"' "$wrap" \
   || { echo "FAIL normal invocation missing"; exit 1; }
 if grep -E 'sudo bash.*"\$SCRIPT".*--same-version-recovery' "$wrap" >/dev/null 2>&1; then
   echo "FAIL normal wrapper forces recovery"

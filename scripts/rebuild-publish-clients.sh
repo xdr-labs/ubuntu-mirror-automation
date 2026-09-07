@@ -506,8 +506,10 @@ if ! phase2_helper_generation_write "$STAGE_DIR" >/dev/null; then
   fail_build "" "phase2_helper_generation" "PHASE2_HELPER_GENERATION=FAIL" 1
 fi
 evidence_echo "PHASE2_HELPER_GENERATION=PASS"
+MM_DP_PHASE2_ROOT="${MM_DP_PHASE2_ROOT:-${BASE_PATH}/dp-phase2}"
+bundle_sha="$(phase2_published_bundle_sha256 "${PHASE2_TARGET_VERSION:-6.6.0}" 2>/dev/null || true)"
 if ! phase2_upgrade_wrapper_write "$STAGE_DIR" "$MIRROR_BASE" \
-  "${PHASE2_TARGET_VERSION:-6.6.0}" >/dev/null
+  "${PHASE2_TARGET_VERSION:-6.6.0}" "$bundle_sha" >/dev/null
 then
   fail_build "" "phase2_upgrade_wrapper" "PHASE2_UPGRADE_WRAPPER=FAIL" 1
 fi

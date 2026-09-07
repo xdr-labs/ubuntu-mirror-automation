@@ -190,8 +190,10 @@ engine_ensure_phase2_helpers() {
     rm -rf "$stage"
     return 1
   fi
+  local bundle_sha=""
+  bundle_sha="$(phase2_published_bundle_sha256 "${PHASE2_TARGET_VERSION:-6.6.0}" 2>/dev/null || true)"
   if ! phase2_upgrade_wrapper_write "$stage" "$mirror" \
-    "${PHASE2_TARGET_VERSION:-6.6.0}" >/dev/null
+    "${PHASE2_TARGET_VERSION:-6.6.0}" "$bundle_sha" >/dev/null
   then
     rm -rf "$stage"
     return 1
@@ -674,13 +676,39 @@ engine_cleanup_phase2_sources() {
   rm -rf "${MM_CACHE_ROOT}/acps-work" "${MM_CACHE_ROOT}/dp-build" 2>/dev/null || true
 }
 
+# Explicit R2 publisher trust root only. Never the per-Mirror client signing key.
+engine_r2_publisher_public_key() {
+  local pub client_pub
+  pub="${R2_OS_CORE_PUBLISHER_PUBLIC_KEY:-}"
+  [[ -n "$pub" && -f "$pub" ]] || return 1
+  for client_pub in \
+    "${CLIENT_SIGNING_PUBLIC_KEY:-}" \
+    "${LOCAL_SIGNING_PUBLIC_KEY:-}" \
+    "${LOCAL_CLIENT_SIGNING_DIR:-/etc/ubuntu-mirror/client-signing}/public.gpg" \
+    "${MM_CLIENT_ROOT:-}/public.gpg" \
+    "${MM_PROJECT_ROOT:-}/config/client-signing/offline-client-manifest.gpg"
+  do
+    [[ -n "$client_pub" && -e "$client_pub" ]] || continue
+    if [[ "$(readlink -f "$pub" 2>/dev/null || true)" == "$(readlink -f "$client_pub" 2>/dev/null || true)" ]]; then
+      mm_error "R2_PUBLISHER_KEY=FAIL reason=client_signing_key_not_publisher_trust_root"
+      return 1
+    fi
+  done
+  printf '%s\n' "$pub"
+  return 0
+}
+
 engine_verify_os_core_package() {
   local package="$1"
   mm_assert_regular_file "$package" "os-core-package"
   OS_CORE_PACKAGE_BYTES="$(mm_file_bytes "$package")"
   local py="${MM_PROJECT_ROOT}/scripts/lib/os_core_package.py"
-  local out
-  out="$(python3 "$py" verify --package "$package" ${OS_CORE_PUBLIC_KEY:+--public-key "$OS_CORE_PUBLIC_KEY"} )"
+  local out pub=""
+  local -a verify_args=(verify --package "$package")
+  if pub="$(engine_r2_publisher_public_key)"; then
+    verify_args+=(--public-key "$pub")
+  fi
+  out="$(python3 "$py" "${verify_args[@]}")"
   printf '%s\n' "$out"
   OS_CORE_PAYLOAD_BYTES="$(printf '%s\n' "$out" | awk -F= '/^PAYLOAD_BYTES=/{print $2; exit}')"
   OS_CORE_RELEASE_ID="$(printf '%s\n' "$out" | awk -F= '/^RELEASE_ID=/{print $2; exit}')"
@@ -801,10 +829,16 @@ engine_materialize_os_mirror() {
   fi
 
   rm -rf "$staging_extract" "$final_tmp"
-  python3 "${MM_PROJECT_ROOT}/scripts/lib/os_core_package.py" extract-staging \
-    --package "$package" \
-    --staging-dir "$staging_extract" \
-    ${OS_CORE_PUBLIC_KEY:+--public-key "$OS_CORE_PUBLIC_KEY"} \
+  local extract_pub=""
+  local -a extract_args=(
+    extract-staging
+    --package "$package"
+    --staging-dir "$staging_extract"
+  )
+  if extract_pub="$(engine_r2_publisher_public_key)"; then
+    extract_args+=(--public-key "$extract_pub")
+  fi
+  python3 "${MM_PROJECT_ROOT}/scripts/lib/os_core_package.py" "${extract_args[@]}" \
     || mm_die "OS_CORE_EXTRACT=FAIL"
 
   pkg_root="${staging_extract}/ubuntu-os-core"
@@ -875,6 +909,13 @@ engine_materialize_os_mirror() {
     "${MM_SELECTIVE_ROOT}/published.previous" \
     "${MM_SELECTIVE_ROOT}/os-core-releases" \
     "${MM_SELECTIVE_ROOT}/releases" 2>/dev/null || true
+
+  # Public HTTP modes must not inherit a leaked umask 077 from private state
+  # file creation. Directories 0755, payload files 0644.
+  if declare -F mm_normalize_http_public_tree_permissions >/dev/null 2>&1; then
+    mm_normalize_http_public_tree_permissions "${MM_SELECTIVE_ROOT}" selective \
+      || mm_die "OS_MIRROR_PUBLIC_PERMISSION_NORMALIZE=FAIL"
+  fi
 
   # Post-rename provenance gate — OS_MIRROR_READY only after READY verifies.
   engine_verify_selective_ready_provenance \
@@ -952,11 +993,51 @@ engine_bringup_sha1_of() {
 }
 
 # Previously known unmodified ACPS bringup SHA1. Observability / change
-# detection only — never a production blocking gate.
+# detection only — never a production blocking gate. Blocking approval is the
+# repository-controlled SHA256 allowlist (approved-upstream-bringup.sha256).
 engine_bringup_reference_sha1() {
   local baseline="${MM_PROJECT_ROOT}/vendor/dp-phase2/bringup_py3_dp_after_os_upgrade.sh.upstream.sha1"
   [[ -f "$baseline" ]] || mm_die "UPSTREAM_BASELINE_MISSING path=${baseline}"
   awk '{print $1; exit}' "$baseline"
+}
+
+engine_bringup_approved_sha256_list_path() {
+  printf '%s\n' "${MM_PROJECT_ROOT}/vendor/dp-phase2/approved-upstream-bringup.sha256"
+}
+
+engine_bringup_sha256_of() {
+  sha256sum "$1" | awk '{print $1}'
+}
+
+# Repository-controlled cryptographic provenance: SHA256(upstream) must match
+# an intentionally approved digest. Same-channel ACPS sidecars are NOT enough.
+engine_verify_upstream_bringup_provenance() {
+  local upstream_file="$1"
+  local list actual
+  list="$(engine_bringup_approved_sha256_list_path)"
+  [[ -f "$list" ]] || {
+    mm_error "UPSTREAM_BRINGUP_PROVENANCE=FAIL"
+    mm_error "UPSTREAM_BRINGUP_APPROVAL_REQUIRED=YES"
+    mm_error "UPSTREAM_BRINGUP_APPROVAL_LIST_MISSING path=${list}"
+    mm_state_set HTTP_DISTRIBUTION_READY NO
+    mm_die "UPSTREAM_BRINGUP_PROVENANCE=FAIL"
+  }
+  engine_bringup_require_nonempty "$upstream_file"
+  if ! engine_phase2_upstream_allowlisted "$upstream_file"; then
+    actual="${BRINGUP_UPSTREAM_SHA256:-$(engine_bringup_sha256_of "$upstream_file")}"
+    mm_error "UPSTREAM_BRINGUP_PROVENANCE=FAIL"
+    mm_error "UPSTREAM_BRINGUP_APPROVAL_REQUIRED=YES"
+    mm_error "UPSTREAM_BRINGUP_SHA256=${actual}"
+    mm_error "INSTALL_RESULT=FAIL"
+    mm_state_set HTTP_DISTRIBUTION_READY NO
+    mm_state_set UPSTREAM_BRINGUP_PROVENANCE FAIL
+    mm_status_set UPSTREAM_BRINGUP_PROVENANCE FAIL
+    mm_die "UPSTREAM_BRINGUP_PROVENANCE=FAIL"
+  fi
+  actual="${BRINGUP_UPSTREAM_SHA256}"
+  mm_state_set UPSTREAM_BRINGUP_PROVENANCE PASS
+  mm_status_set UPSTREAM_BRINGUP_PROVENANCE PASS
+  mm_ok "UPSTREAM_BRINGUP_PROVENANCE=PASS sha256=${actual}"
 }
 
 # Coarse layout checks before the deterministic patcher runs. Missing =>
@@ -1014,10 +1095,272 @@ engine_current_bringup_patch_generation() {
   python3 "$py" --print-generation | awk -F= '$1=="BRINGUP_PATCH_GENERATION"{print $2; exit}'
 }
 
+# Canonical immutable ACPS upstream lives under the private install-cache
+# hierarchy (nginx denies /.install-cache/). Never under the public Phase 2
+# final that HTTP aliases as /dp-phase2/<ver>/.
+engine_phase2_private_upstream_dir() {
+  local ver="${1:-${TARGET_DP_VERSION:-${PHASE2_TARGET_VERSION}}}"
+  printf '%s/private/acps-upstream/%s\n' "${MM_CACHE_ROOT}" "$ver"
+}
+
 engine_phase2_saved_upstream_path() {
+  local ver="${1:-${TARGET_DP_VERSION:-${PHASE2_TARGET_VERSION}}}"
+  printf '%s/bringup_py3_dp_after_os_upgrade.sh\n' \
+    "$(engine_phase2_private_upstream_dir "$ver")"
+}
+
+# Legacy public copy (pre-hardening). Used only as a migration source.
+engine_phase2_legacy_public_upstream_path() {
   local ver="${1:-${TARGET_DP_VERSION:-${PHASE2_TARGET_VERSION}}}"
   printf '%s/%s/bringup_py3_dp_after_os_upgrade.sh.upstream\n' \
     "${MM_DP_PHASE2_ROOT}" "$ver"
+}
+
+# Prefer the private canonical file; fall back to a still-present legacy
+# public copy so a layout change does not force ACPS redownload.
+engine_phase2_resolved_upstream_path() {
+  local ver="${1:-${TARGET_DP_VERSION:-${PHASE2_TARGET_VERSION}}}"
+  local private legacy
+  private="$(engine_phase2_saved_upstream_path "$ver")"
+  legacy="$(engine_phase2_legacy_public_upstream_path "$ver")"
+  if [[ -f "$private" && -s "$private" ]]; then
+    printf '%s\n' "$private"
+    return 0
+  fi
+  if [[ -f "$legacy" && -s "$legacy" ]]; then
+    printf '%s\n' "$legacy"
+    return 0
+  fi
+  printf '%s\n' "$private"
+}
+
+engine_phase2_upstream_allowlisted() {
+  local upstream_file="$1"
+  local list actual matched=0 line digest
+  list="$(engine_bringup_approved_sha256_list_path)"
+  [[ -f "$list" && -f "$upstream_file" && -s "$upstream_file" ]] || return 1
+  actual="$(engine_bringup_sha256_of "$upstream_file")"
+  BRINGUP_UPSTREAM_SHA256="$actual"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -n "$line" && "$line" != \#* ]] || continue
+    digest="$(printf '%s\n' "$line" | awk '{print $1; exit}')"
+    [[ "$digest" =~ ^[0-9a-fA-F]{64}$ ]] || continue
+    if [[ "${digest,,}" == "${actual,,}" ]]; then
+      matched=1
+      break
+    fi
+  done <"$list"
+  [[ "$matched" -eq 1 ]]
+}
+
+engine_phase2_private_file_mode() {
+  printf '%s' "${MM_PRIVATE_FILE_MODE:-0600}"
+}
+
+engine_phase2_private_dir_mode() {
+  printf '%s' "${MM_PRIVATE_DIR_MODE:-0700}"
+}
+
+# stat(1) %a is unpadded (700); config modes may be 0700.
+engine_phase2_mode_matches() {
+  local actual="$1"
+  local want="$2"
+  local actual_n want_n
+  actual_n="${actual#"${actual%%[!0]*}"}"
+  want_n="${want#"${want%%[!0]*}"}"
+  [[ -n "$actual_n" ]] || actual_n=0
+  [[ -n "$want_n" ]] || want_n=0
+  [[ "$actual_n" == "$want_n" ]]
+}
+
+engine_phase2_chmod_private_dir() {
+  local path="$1"
+  local want
+  want="$(engine_phase2_private_dir_mode)"
+  if [[ "${MM_TEST_FAIL_PRIVATE_MODE:-0}" == "1" ]]; then
+    chmod 0755 "$path" 2>/dev/null || true
+    return 1
+  fi
+  chmod "$want" "$path" || return 1
+  engine_phase2_mode_matches "$(stat -c '%a' "$path")" "$want" || return 1
+}
+
+engine_phase2_chmod_private_file() {
+  local path="$1"
+  local want
+  want="$(engine_phase2_private_file_mode)"
+  if [[ "${MM_TEST_FAIL_PRIVATE_MODE:-0}" == "1" ]]; then
+    chmod 0644 "$path" 2>/dev/null || true
+    return 1
+  fi
+  chmod "$want" "$path" || return 1
+  engine_phase2_mode_matches "$(stat -c '%a' "$path")" "$want" || return 1
+}
+
+engine_phase2_sha1_digest_of_file() {
+  local sidecar="$1"
+  local digest
+  [[ -f "$sidecar" && -s "$sidecar" ]] || return 1
+  digest="$(awk '{print $1; exit}' "$sidecar")"
+  [[ "$digest" =~ ^[0-9a-fA-F]{40}$ ]] || return 1
+  printf '%s' "${digest,,}"
+}
+
+engine_phase2_private_provenance_path() {
+  local ver="${1:-${TARGET_DP_VERSION:-${PHASE2_TARGET_VERSION}}}"
+  printf '%s/provenance.env\n' "$(engine_phase2_private_upstream_dir "$ver")"
+}
+
+# Complete private preservation set: raw + matching .sha1 + provenance.env,
+# SHA256-allowlisted, modes 0700/0600. Missing/wrong sidecar is not complete.
+engine_phase2_private_upstream_complete() {
+  local ver="${1:-${TARGET_DP_VERSION:-${PHASE2_TARGET_VERSION}}}"
+  local dir dest dest_sha prov expected actual p_ver p_sha1 p_sha256
+  dir="$(engine_phase2_private_upstream_dir "$ver")"
+  dest="$(engine_phase2_saved_upstream_path "$ver")"
+  dest_sha="${dest}.sha1"
+  prov="$(engine_phase2_private_provenance_path "$ver")"
+  [[ -d "$dir" ]] || return 1
+  engine_phase2_mode_matches "$(stat -c '%a' "$dir")" "$(engine_phase2_private_dir_mode)" || return 1
+  [[ -f "$dest" && -s "$dest" ]] || return 1
+  [[ -f "$dest_sha" && -s "$dest_sha" ]] || return 1
+  [[ -f "$prov" && -s "$prov" ]] || return 1
+  engine_phase2_mode_matches "$(stat -c '%a' "$dest")" "$(engine_phase2_private_file_mode)" || return 1
+  engine_phase2_mode_matches "$(stat -c '%a' "$dest_sha")" "$(engine_phase2_private_file_mode)" || return 1
+  engine_phase2_mode_matches "$(stat -c '%a' "$prov")" "$(engine_phase2_private_file_mode)" || return 1
+  engine_phase2_upstream_allowlisted "$dest" || return 1
+  expected="$(engine_phase2_sha1_digest_of_file "$dest_sha")" || return 1
+  actual="$(engine_bringup_sha1_of "$dest")"
+  [[ "${expected,,}" == "${actual,,}" ]] || return 1
+  p_ver="$(grep -E '^TARGET_DP_VERSION=' "$prov" 2>/dev/null | head -1 | cut -d= -f2- || true)"
+  p_sha1="$(grep -E '^BRINGUP_UPSTREAM_SHA1=' "$prov" 2>/dev/null | head -1 | cut -d= -f2- || true)"
+  p_sha256="$(grep -E '^BRINGUP_UPSTREAM_SHA256=' "$prov" 2>/dev/null | head -1 | cut -d= -f2- || true)"
+  [[ "$p_ver" == "$ver" ]] || return 1
+  [[ "${p_sha1,,}" == "${actual,,}" ]] || return 1
+  [[ "${p_sha256,,}" == "$(engine_bringup_sha256_of "$dest")" ]] || return 1
+  return 0
+}
+
+engine_phase2_install_private_upstream() {
+  local src="$1"
+  local ver="${2:-${TARGET_DP_VERSION:-${PHASE2_TARGET_VERSION}}}"
+  local dir dest dest_sha prov tmp tmp_sha tmp_prov sidecar_src sidecar_digest actual_sha1
+  [[ -f "$src" && -s "$src" ]] || return 1
+  engine_phase2_upstream_allowlisted "$src" || return 1
+  dir="$(engine_phase2_private_upstream_dir "$ver")"
+  dest="$(engine_phase2_saved_upstream_path "$ver")"
+  dest_sha="${dest}.sha1"
+  prov="$(engine_phase2_private_provenance_path "$ver")"
+  mkdir -p "$dir" || return 1
+  engine_phase2_chmod_private_dir "$dir" || return 1
+  if [[ -d "$(dirname "$dir")" ]]; then
+    engine_phase2_chmod_private_dir "$(dirname "$dir")" || return 1
+  fi
+  tmp="${dest}.new.$$"
+  tmp_sha="${dest_sha}.new.$$"
+  tmp_prov="${prov}.new.$$"
+  cp -f "$src" "$tmp" || { rm -f "$tmp" "$tmp_sha" "$tmp_prov"; return 1; }
+  engine_phase2_chmod_private_file "$tmp" || { rm -f "$tmp" "$tmp_sha" "$tmp_prov"; return 1; }
+  if [[ "$(engine_bringup_sha256_of "$tmp")" != "$(engine_bringup_sha256_of "$src")" ]]; then
+    rm -f "$tmp" "$tmp_sha" "$tmp_prov"
+    return 1
+  fi
+  actual_sha1="$(engine_bringup_sha1_of "$tmp")"
+  sidecar_src=""
+  if [[ -f "${src}.sha1" ]]; then
+    sidecar_src="${src}.sha1"
+  elif [[ -f "${src}.upstream.sha1" ]]; then
+    sidecar_src="${src}.upstream.sha1"
+  fi
+  if [[ -n "$sidecar_src" && -f "$sidecar_src" ]]; then
+    sidecar_digest="$(engine_phase2_sha1_digest_of_file "$sidecar_src" 2>/dev/null || true)"
+    if [[ -n "$sidecar_digest" && "${sidecar_digest,,}" == "${actual_sha1,,}" ]]; then
+      cp -f "$sidecar_src" "$tmp_sha" || { rm -f "$tmp" "$tmp_sha" "$tmp_prov"; return 1; }
+    else
+      sha1sum "$tmp" | awk '{print $1"  bringup_py3_dp_after_os_upgrade.sh"}' >"$tmp_sha" \
+        || { rm -f "$tmp" "$tmp_sha" "$tmp_prov"; return 1; }
+    fi
+  else
+    sha1sum "$tmp" | awk '{print $1"  bringup_py3_dp_after_os_upgrade.sh"}' >"$tmp_sha" \
+      || { rm -f "$tmp" "$tmp_sha" "$tmp_prov"; return 1; }
+  fi
+  engine_phase2_chmod_private_file "$tmp_sha" || { rm -f "$tmp" "$tmp_sha" "$tmp_prov"; return 1; }
+  sidecar_digest="$(engine_phase2_sha1_digest_of_file "$tmp_sha")" || {
+    rm -f "$tmp" "$tmp_sha" "$tmp_prov"
+    return 1
+  }
+  if [[ "${sidecar_digest,,}" != "${actual_sha1,,}" ]]; then
+    rm -f "$tmp" "$tmp_sha" "$tmp_prov"
+    return 1
+  fi
+  {
+    printf 'TARGET_DP_VERSION=%s\n' "$ver"
+    printf 'BRINGUP_UPSTREAM_SHA1=%s\n' "$actual_sha1"
+    printf 'BRINGUP_UPSTREAM_SHA256=%s\n' "$(engine_bringup_sha256_of "$tmp")"
+  } >"$tmp_prov" || { rm -f "$tmp" "$tmp_sha" "$tmp_prov"; return 1; }
+  engine_phase2_chmod_private_file "$tmp_prov" || { rm -f "$tmp" "$tmp_sha" "$tmp_prov"; return 1; }
+
+  mv -f "$tmp" "$dest" || { rm -f "$tmp" "$tmp_sha" "$tmp_prov"; return 1; }
+  if [[ "${MM_TEST_FAIL_PRIVATE_SIDECAR_MOVE:-0}" == "1" ]]; then
+    rm -f "$tmp_sha" "$tmp_prov"
+    return 1
+  fi
+  mv -f "$tmp_sha" "$dest_sha" || { rm -f "$tmp_sha" "$tmp_prov"; return 1; }
+  if [[ "${MM_TEST_FAIL_PRIVATE_PROVENANCE_MOVE:-0}" == "1" ]]; then
+    rm -f "$tmp_prov"
+    return 1
+  fi
+  mv -f "$tmp_prov" "$prov" || { rm -f "$tmp_prov"; return 1; }
+
+  engine_phase2_chmod_private_file "$dest" || return 1
+  engine_phase2_chmod_private_file "$dest_sha" || return 1
+  engine_phase2_chmod_private_file "$prov" || return 1
+  engine_phase2_chmod_private_dir "$dir" || return 1
+
+  engine_phase2_private_upstream_complete "$ver" || return 1
+  return 0
+}
+
+# Move a legacy public *.upstream copy into private storage. Never deletes
+# the public raw or authentic public .sha1 until the complete private set is
+# verified. Never destroys the Phase 2 final directory.
+engine_phase2_migrate_legacy_public_upstream() {
+  local ver="${1:-${TARGET_DP_VERSION:-${PHASE2_TARGET_VERSION}}}"
+  local public public_sha private src
+  public="$(engine_phase2_legacy_public_upstream_path "$ver")"
+  public_sha="${public}.sha1"
+  private="$(engine_phase2_saved_upstream_path "$ver")"
+  if [[ ! -f "$public" ]]; then
+    return 0
+  fi
+  if engine_phase2_private_upstream_complete "$ver"; then
+    rm -f "$public" "$public_sha"
+    mm_info "PHASE2_PUBLIC_UPSTREAM_REMOVED=YES reason=private_canonical_present"
+    return 0
+  fi
+  # Private raw may already exist with a missing/wrong sidecar. Repair from
+  # the allowlisted private raw when possible; otherwise from the public copy.
+  # Never delete the public pair until repair/preserve succeeds.
+  src=""
+  if [[ -f "$private" && -s "$private" ]] && engine_phase2_upstream_allowlisted "$private"; then
+    src="$private"
+  elif engine_phase2_upstream_allowlisted "$public"; then
+    src="$public"
+  else
+    mm_error "PHASE2_UPSTREAM_MIGRATE=FAIL reason=public_not_allowlisted"
+    return 1
+  fi
+  if ! engine_phase2_install_private_upstream "$src" "$ver"; then
+    mm_error "PHASE2_UPSTREAM_MIGRATE=FAIL reason=private_preserve"
+    return 1
+  fi
+  if ! engine_phase2_private_upstream_complete "$ver"; then
+    mm_error "PHASE2_UPSTREAM_MIGRATE=FAIL reason=private_incomplete"
+    return 1
+  fi
+  rm -f "$public" "$public_sha"
+  mm_ok "PHASE2_UPSTREAM_MIGRATE=PASS dest=${private}"
+  return 0
 }
 
 # Immutable ACPS copy lives beside the 9-file work set, never inside it
@@ -1101,6 +1444,8 @@ engine_verify_acps_upstream_bringup() {
   local anchors=()
 
   engine_verify_acps_bringup_sidecar "$files_dir"
+  # Cryptographic pre-authorization (repository allowlist) BEFORE patching.
+  engine_verify_upstream_bringup_provenance "$upstream_file"
   actual="${BRINGUP_UPSTREAM_SHA1}"
   reference="$(engine_bringup_reference_sha1)"
 
@@ -1108,7 +1453,9 @@ engine_verify_acps_upstream_bringup() {
     mm_warn "UPSTREAM_BRINGUP_CHANGED=YES"
     mm_info "PREVIOUS_KNOWN_SHA1=${reference}"
     mm_info "CURRENT_UPSTREAM_SHA1=${actual}"
-    mm_warn "UPSTREAM_BRINGUP_DRIFT=NON_BLOCKING"
+    mm_info "CURRENT_UPSTREAM_SHA256=${BRINGUP_UPSTREAM_SHA256:-}"
+    # Reference mismatch is observability only once SHA256 allowlist passes.
+    mm_warn "UPSTREAM_BRINGUP_REFERENCE_MISMATCH=YES"
     mm_state_set UPSTREAM_BRINGUP_DRIFT NON_BLOCKING
   else
     mm_state_set UPSTREAM_BRINGUP_DRIFT NO
@@ -1320,7 +1667,7 @@ engine_phase2_mark_existing() {
 # or upstream-content failures must not.
 engine_phase2_existing_final_reusable() {
   local saved
-  saved="$(engine_phase2_saved_upstream_path "${TARGET_DP_VERSION:-${PHASE2_TARGET_VERSION}}")"
+  saved="$(engine_phase2_resolved_upstream_path "${TARGET_DP_VERSION:-${PHASE2_TARGET_VERSION}}")"
   case "${PHASE2_EXISTING_INVALID_REASON:-}" in
     patched_bringup_changed|patched_bringup_sha_missing|patch_generation_changed|patch_generation_missing)
       [[ "${PHASE2_EXISTING_FINAL_INTEGRITY:-}" == "PASS" ]] || return 1
@@ -1661,6 +2008,7 @@ engine_mark_phase2_reused() {
   mm_status_set ACPS_CONNECTION REUSED
   mm_status_set ACPS_PHASE2_DOWNLOADED REUSED
   mm_status_set ACPS_CHECKSUM REUSED
+  mm_status_set UPSTREAM_BRINGUP_PROVENANCE PASS
   mm_status_set UPSTREAM_BRINGUP_DRIFT NO
   mm_status_set PATCHED_BRINGUP_APPLIED YES
   mm_status_set PHASE2_BUNDLE_ENTRY_COUNT 9
@@ -1668,6 +2016,7 @@ engine_mark_phase2_reused() {
   mm_state_set ACPS_CONNECTION REUSED
   mm_state_set ACPS_PHASE2_DOWNLOADED REUSED
   mm_state_set ACPS_CHECKSUM REUSED
+  mm_state_set UPSTREAM_BRINGUP_PROVENANCE PASS
   mm_state_set PHASE2_BUNDLE_ENTRY_COUNT 9
   mm_state_set PHASE2_BUNDLE_CHECKSUM PASS
   mm_state_set PHASE2_BUNDLE_ACTION REUSE
@@ -1771,19 +2120,12 @@ engine_place_dp_phase2_final() {
   if [[ -z "${BRINGUP_UPSTREAM_SHA1:-}" && -f "$work_upstream" ]]; then
     BRINGUP_UPSTREAM_SHA1="$(engine_bringup_sha1_of "$work_upstream")"
   fi
+  # Raw ACPS upstream is a private rebuild source, never a public Phase 2
+  # publication member. Preserve it under the private cache hierarchy.
   if [[ -f "$work_upstream" ]]; then
-    cp -f "$work_upstream" \
-      "${dest_tmp}/bringup_py3_dp_after_os_upgrade.sh.upstream" || {
+    if ! engine_phase2_install_private_upstream "$work_upstream" "$ver"; then
       rm -rf "$dest_tmp"
       mm_die "BRINGUP_UPSTREAM_PRESERVE=FAIL"
-    }
-    if [[ -f "${work_upstream}.sha1" ]]; then
-      cp -f "${work_upstream}.sha1" \
-        "${dest_tmp}/bringup_py3_dp_after_os_upgrade.sh.upstream.sha1" || true
-    else
-      sha1sum "${dest_tmp}/bringup_py3_dp_after_os_upgrade.sh.upstream" \
-        | awk '{print $1"  bringup_py3_dp_after_os_upgrade.sh.upstream"}' \
-        >"${dest_tmp}/bringup_py3_dp_after_os_upgrade.sh.upstream.sha1"
     fi
   fi
 
@@ -1874,6 +2216,8 @@ EOF
   # Ensure obsolete generation paths are absent under this version root
   rm -rf "${dest}/releases" "${dest}/current" "${dest}/previous" \
     "${dest}/.staging" "${dest}/files" 2>/dev/null || true
+  rm -f "${dest}/bringup_py3_dp_after_os_upgrade.sh.upstream" \
+    "${dest}/bringup_py3_dp_after_os_upgrade.sh.upstream.sha1" 2>/dev/null || true
   find "${MM_DP_PHASE2_ROOT}" -maxdepth 1 -name "${ver}.old.*" -exec rm -rf {} + 2>/dev/null || true
 
   PHASE2_BUNDLE_ENTRY_COUNT="${DP_PHASE2_FILE_COUNT}"
@@ -2085,6 +2429,57 @@ engine_http_smoke_urls() {
   done
 }
 
+# Sensitive paths that must never return HTTP 200. 403 or 404 is required.
+engine_http_negative_smoke_urls() {
+  local base="${1%/}"
+  local ver="$2"
+  printf '%s\n' \
+    "${base}/dp-phase2/${ver}/bringup_py3_dp_after_os_upgrade.sh.upstream" \
+    "${base}/dp-phase2/${ver}/bringup_py3_dp_after_os_upgrade.sh.upstream.sha1" \
+    "${base}/client/private.gpg" \
+    "${base}/client/offline-client-manifest.private.gpg" \
+    "${base}/config/dp-upgrade-mirror.conf" \
+    "${base}/config/client-signing/private.gpg" \
+    "${base}/etc/ubuntu-mirror/dp-upgrade-mirror.conf" \
+    "${base}/etc/ubuntu-mirror/dp-upgrade-workflow.state" \
+    "${base}/dp-upgrade-workflow.state" \
+    "${base}/workflow.state" \
+    "${base}/.install-cache/" \
+    "${base}/cache/" \
+    "${base}/staging/" \
+    "${base}/state/" \
+    "${base}/private/" \
+    "${base}/tmp/" \
+    "${base}/acps-credentials" \
+    "${base}/r2-credentials" \
+    "${base}/rclone.conf"
+}
+
+engine_http_probe_must_not_be_public() {
+  local u="$1"
+  local body code
+  body="$(mktemp)"
+  code="$(curl -sS -o "$body" -w '%{http_code}' --connect-timeout 5 --max-time 15 "$u" 2>/dev/null || echo 000)"
+  rm -f "$body"
+  case "$code" in
+    403|404)
+      printf '%s\n' "$code"
+      return 0
+      ;;
+    200)
+      mm_error "HTTP_NEGATIVE_PROBE=FAIL reason=public_sensitive url=${u} code=200"
+      printf '%s\n' "$code"
+      return 1
+      ;;
+    *)
+      # Connection failures during smoke are not "exposed". Treat non-200
+      # (including 000) as not-public.
+      printf '%s\n' "$code"
+      return 0
+      ;;
+  esac
+}
+
 engine_http_probe_url() {
   local u="$1"
   local body code bytes
@@ -2133,6 +2528,17 @@ engine_http_local_smoke() {
     fi
     mm_info "HTTP_LOCAL_CHECK url=${u} code=${code}"
   done < <(engine_http_smoke_urls "$base" "$ver" "$stable")
+  while IFS= read -r u; do
+    [[ -n "$u" ]] || continue
+    if ! code="$(engine_http_probe_must_not_be_public "$u")"; then
+      mm_error "HTTP_LOCAL_SMOKE=FAIL"
+      mm_error "HTTP_FAILURE_CLASS=SENSITIVE_RESOURCE_PUBLIC"
+      mm_error "HTTP_STATUS_CODE=${code}"
+      mm_error "url=${u}"
+      return 1
+    fi
+    mm_info "HTTP_LOCAL_NEGATIVE url=${u} code=${code}"
+  done < <(engine_http_negative_smoke_urls "$base" "$ver")
   mm_ok "HTTP_LOCAL_SMOKE=PASS"
   return 0
 }
@@ -2185,6 +2591,17 @@ engine_http_advertised_smoke() {
     fi
     mm_info "HTTP_ADVERTISED_CHECK url=${u} code=${code}"
   done < <(engine_http_smoke_urls "$base" "$ver" "$stable")
+  while IFS= read -r u; do
+    [[ -n "$u" ]] || continue
+    if ! code="$(engine_http_probe_must_not_be_public "$u")"; then
+      mm_error "HTTP_ADVERTISED_SMOKE=FAIL"
+      mm_error "HTTP_FAILURE_CLASS=SENSITIVE_RESOURCE_PUBLIC"
+      mm_error "HTTP_STATUS_CODE=${code}"
+      mm_error "url=${u}"
+      return 1
+    fi
+    mm_info "HTTP_ADVERTISED_NEGATIVE url=${u} code=${code}"
+  done < <(engine_http_negative_smoke_urls "$base" "$ver")
   mm_ok "HTTP_ADVERTISED_SMOKE=PASS"
   return 0
 }
@@ -2209,6 +2626,7 @@ engine_compute_readiness() {
     ACPS_CONNECTION
     ACPS_PHASE2_DOWNLOADED
     ACPS_CHECKSUM
+    UPSTREAM_BRINGUP_PROVENANCE
     UPSTREAM_BRINGUP_DRIFT
     PATCHED_BRINGUP_APPLIED
     PHASE2_BUNDLE_ENTRY_COUNT
@@ -2232,8 +2650,12 @@ engine_compute_readiness() {
   for k in "${keys[@]}"; do
     v="$(mm_status_get "$k")"
     case "$k" in
+      UPSTREAM_BRINGUP_PROVENANCE)
+        [[ "$v" == "PASS" ]] || all=FAIL
+        ;;
       UPSTREAM_BRINGUP_DRIFT)
-        # NO = unchanged vs reference; NON_BLOCKING = changed but ACPS sidecar OK.
+        # NO = unchanged vs reference; NON_BLOCKING = reference mismatch after
+        # SHA256 allowlist provenance already passed.
         [[ "$v" == "NO" || "$v" == "NON_BLOCKING" ]] || all=FAIL
         ;;
       PHASE2_BUNDLE_ENTRY_COUNT)
@@ -2282,6 +2704,9 @@ engine_download_and_prepare() {
   mm_load_gui_config
   mm_normalize_preparation_mode
   mm_force_phase2_target
+  if declare -F mm_wf_normalize_fixed_phase2_target >/dev/null 2>&1; then
+    mm_wf_normalize_fixed_phase2_target || true
+  fi
   engine_resolve_paths
   mm_state_init
   mm_state_set PREPARATION_MODE "${PREPARATION_MODE}"
@@ -2319,6 +2744,11 @@ engine_download_and_prepare() {
     mm_wf_set OPERATION_START_CONFIG_SHA256 "$(mm_wf_config_sha256 || true)" || true
   fi
   engine_assert_same_filesystem_layout
+
+  # Move any legacy public raw-upstream copy into private storage before
+  # assess/reuse so HTTP publication cannot observe it.
+  engine_phase2_migrate_legacy_public_upstream "$TARGET_DP_VERSION" \
+    || mm_warn "PHASE2_UPSTREAM_MIGRATE=FAIL public_copy_retained=YES"
 
   # Build tooling must exist before preparation. Generated hop clients are NOT
   # required yet — they are produced after OS Core is READY (avoids circular gate).
@@ -2510,8 +2940,10 @@ engine_download_and_prepare() {
   work="${MM_CACHE_ROOT}/acps-work/${TARGET_DP_VERSION}/$(mm_run_id)"
   if [[ "${PHASE2_REBUILD_SOURCE}" == "EXISTING_FINAL" ]]; then
     engine_stage_work_from_existing_final "$TARGET_DP_VERSION" "$work"
-    saved_upstream="$(engine_phase2_saved_upstream_path "$TARGET_DP_VERSION")"
+    saved_upstream="$(engine_phase2_resolved_upstream_path "$TARGET_DP_VERSION")"
     [[ -f "$saved_upstream" ]] || mm_die "BRINGUP_UPSTREAM_COPY_MISSING path=${saved_upstream}"
+    # Re-check repository-controlled provenance before re-patching saved bytes.
+    engine_verify_upstream_bringup_provenance "$saved_upstream"
     # Patch from the saved immutable upstream before deleting the old final.
     engine_apply_local_bringup_patch "$work" "$saved_upstream"
     # Release the old final before writing .new (peak = work + new tar).
@@ -2520,9 +2952,11 @@ engine_download_and_prepare() {
     engine_prepare_phase2_ubuntu_prerequisites "$work"
     mm_status_set ACPS_PHASE2_DOWNLOADED REUSED
     mm_status_set ACPS_CHECKSUM REUSED
+    mm_status_set UPSTREAM_BRINGUP_PROVENANCE PASS
     mm_status_set UPSTREAM_BRINGUP_DRIFT NO
     mm_state_set ACPS_PHASE2_DOWNLOADED REUSED
     mm_state_set ACPS_CHECKSUM REUSED
+    mm_state_set UPSTREAM_BRINGUP_PROVENANCE PASS
   else
     acps_acquire_all "$TARGET_DP_VERSION"
     cache="$(acps_cache_dir "$TARGET_DP_VERSION")"
@@ -2596,6 +3030,11 @@ engine_enable_http_distribution() {
   mm_load_gui_config
   engine_resolve_paths
   dp2_set_version "$TARGET_DP_VERSION"
+  engine_phase2_migrate_legacy_public_upstream "$TARGET_DP_VERSION" \
+    || mm_warn "PHASE2_UPSTREAM_MIGRATE=FAIL public_copy_retained=YES"
+  if [[ -f "$(engine_phase2_legacy_public_upstream_path "$TARGET_DP_VERSION")" ]]; then
+    mm_die "HTTP_DISTRIBUTION=FAIL reason=public_raw_upstream_present"
+  fi
   # Heartbeat-labeled SHA256 during Enable HTTP (once per run via DONE_FP).
   export MM_SHA256_OPERATION="${MM_SHA256_OPERATION:-enable-http}"
   MM_BUNDLE_SHA256_DONE_FP=""
@@ -2666,15 +3105,10 @@ engine_enable_http_distribution() {
       || mm_die "HTTP_DISTRIBUTION=FAIL PHASE2_PUBLIC_PERMISSION_NORMALIZE"
   fi
   if [[ -d "${MM_SELECTIVE_ROOT}" ]]; then
-    # Ensure nginx can traverse the selective root (avoid chmod -R / full-tree walk).
-    chmod 0755 "${MM_SELECTIVE_ROOT}" 2>/dev/null || true
-    for _sel_sub in ubuntu shared offline keys hops; do
-      [[ -d "${MM_SELECTIVE_ROOT}/${_sel_sub}" ]] || continue
-      chmod 0755 "${MM_SELECTIVE_ROOT}/${_sel_sub}" 2>/dev/null || true
-    done
-    if [[ -d "${MM_SELECTIVE_ROOT}/shared/offline" ]]; then
-      chmod 0755 "${MM_SELECTIVE_ROOT}/shared" "${MM_SELECTIVE_ROOT}/shared/offline" 2>/dev/null || true
-    fi
+    # First-level chmod is not enough: /ubuntu/ aliases hops/<hop>/ubuntu, and a
+    # leaked umask 077 leaves hop dirs 0700 and indexes 0600 (HTTP 403).
+    mm_normalize_http_public_tree_permissions "${MM_SELECTIVE_ROOT}" selective \
+      || mm_die "HTTP_DISTRIBUTION=FAIL SELECTIVE_PUBLIC_PERMISSION_NORMALIZE"
   fi
   if ! mm_verify_http_publication_permission_closure \
     "${MM_MIRROR_ROOT}" "${MM_CLIENT_ROOT}" "${MM_DP_PHASE2_ROOT}" "$TARGET_DP_VERSION"

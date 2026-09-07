@@ -46,6 +46,7 @@ fi
 # 2) Install scripts into lib dir (lightweight; does not full reinstall)
 mkdir -p /usr/local/lib/ubuntu-mirror/lib /usr/local/lib/ubuntu-mirror/templates
 install -m 0644 "${ROOT}/scripts/lib/dp-phase2-common.sh" /usr/local/lib/ubuntu-mirror/lib/dp-phase2-common.sh
+install -m 0644 "${ROOT}/scripts/lib/acps_auth.sh" /usr/local/lib/ubuntu-mirror/lib/acps_auth.sh
 install -m 0755 "${ROOT}/scripts/download-dp-phase2.sh" /usr/local/lib/ubuntu-mirror/download-dp-phase2.sh
 install -m 0755 "${ROOT}/scripts/download-dp-phase2-6.6.0.sh" /usr/local/lib/ubuntu-mirror/download-dp-phase2-6.6.0.sh
 install -m 0755 "${ROOT}/scripts/deploy-stage-dp-phase2-client-atomic.sh" /usr/local/lib/ubuntu-mirror/deploy-stage-dp-phase2-client-atomic.sh

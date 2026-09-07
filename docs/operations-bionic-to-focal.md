@@ -11,7 +11,8 @@ evidence VM for integration testing — deploy or snapshot-restore a clean Bioni
 ## Prerequisites
 
 - Selective mirror READY with hop gates for `bionic-to-focal` PASS
-- Published repository: `http://221.139.249.111/hops/bionic-to-focal/ubuntu`
+- Published repository: `http://<MIRROR>/hops/bionic-to-focal/ubuntu`
+  (examples below use RFC 5737 `http://192.0.2.10` — substitute the operator Mirror)
 - Mirror signer fingerprint: `D1FF722556ED95F5E779BAE66B1BA1673A997CA5`
 - Client manifest signer: per-mirror local key (published as /client/public.gpg)
 - Suites registered: `bionic`, `bionic-updates`, `bionic-security`, `bionic-backports`,
@@ -53,11 +54,11 @@ Never edit generated artifacts by hand.
 ```bash
 # Unsigned test only (artifacts/client-unsigned-test/)
 ./scripts/ubuntu-offline-mirror.sh build-client-bionic-to-focal \
-  --mirror-base http://221.139.249.111 --skip-sign
+  --mirror-base http://192.0.2.10 --skip-sign
 
 # Production signed
 ./scripts/ubuntu-offline-mirror.sh build-client-bionic-to-focal \
-  --mirror-base http://221.139.249.111
+  --mirror-base http://192.0.2.10
 ```
 
 - Source template: `client/dp-offline-upgrade-bionic-to-focal.sh.in`
@@ -78,8 +79,8 @@ sudo ./scripts/deploy-client-bionic-to-focal-atomic.sh
 
 HTTP endpoints:
 
-- `http://221.139.249.111/client/dp-offline-upgrade-bionic-to-focal.sh`
-- `http://221.139.249.111/client/dp-offline-upgrade-bionic-to-focal.sh.sha256`
+- `http://192.0.2.10/client/dp-offline-upgrade-bionic-to-focal.sh`
+- `http://192.0.2.10/client/dp-offline-upgrade-bionic-to-focal.sh.sha256`
 
 Deploy must leave selective READY unchanged and verify HTTP SHA + signature.
 
@@ -92,8 +93,8 @@ Deploy must leave selective READY unchanged and verify HTTP SHA + signature.
 5. Run as root:
 
 ```bash
-curl -fsSO http://221.139.249.111/client/dp-offline-upgrade-bionic-to-focal.sh
-curl -fsSO http://221.139.249.111/client/dp-offline-upgrade-bionic-to-focal.sh.sha256
+curl -fsSO http://192.0.2.10/client/dp-offline-upgrade-bionic-to-focal.sh
+curl -fsSO http://192.0.2.10/client/dp-offline-upgrade-bionic-to-focal.sh.sha256
 sha256sum -c dp-offline-upgrade-bionic-to-focal.sh.sha256
 sudo bash ./dp-offline-upgrade-bionic-to-focal.sh
 # confirmation phrase:

@@ -118,19 +118,19 @@ HOPS2='["20.04->22.04","22.04->24.04"]'
 HOPS1='["22.04->24.04"]'
 HOPS0='[]'
 
-write_preflight preflight-ready-xenial READY ready-aio 16.04 xenial mirror http://10.34.200.20 "$FRESH" RUN_OS_UPGRADE "$HOPS4" "" "esxi-lab-snapshot-20260716" "6.5.0"
+write_preflight preflight-ready-xenial READY ready-aio 16.04 xenial mirror http://192.0.2.10 "$FRESH" RUN_OS_UPGRADE "$HOPS4" "" "esxi-lab-snapshot-20260716" "6.5.0"
 write_preflight preflight-warning-xenial READY_WITH_WARNINGS ready-aio 16.04 xenial direct "" "$FRESH" RUN_OS_UPGRADE "$HOPS4" "AELLADATA_SEPARATE_MOUNT POST_OS_DP_REVALIDATION" "esxi-lab-snapshot-20260716" "6.5.0"
-write_preflight preflight-blocked BLOCKED ready-aio 16.04 xenial mirror http://10.34.200.20 "$FRESH" RUN_OS_UPGRADE "$HOPS4" "" "esxi-lab-snapshot-20260716" "6.5.0"
-write_preflight stale-preflight READY ready-aio 16.04 xenial mirror http://10.34.200.20 "$STALE" RUN_OS_UPGRADE "$HOPS4"
-write_preflight future-preflight READY ready-aio 16.04 xenial mirror http://10.34.200.20 "$FUTURE" RUN_OS_UPGRADE "$HOPS4"
-write_preflight hostname-mismatch READY other-host 16.04 xenial mirror http://10.34.200.20 "$FRESH" RUN_OS_UPGRADE "$HOPS4"
-write_preflight preflight-ready-bionic READY ready-aio 18.04 bionic mirror http://10.34.200.20 "$FRESH" RUN_OS_UPGRADE "$HOPS3"
-write_preflight preflight-ready-focal READY ready-aio 20.04 focal mirror http://10.34.200.20 "$FRESH" RUN_OS_UPGRADE "$HOPS2"
-write_preflight preflight-ready-jammy READY ready-aio 22.04 jammy mirror http://10.34.200.20 "$FRESH" RUN_OS_UPGRADE "$HOPS1"
-write_preflight preflight-ready-noble READY ready-aio 24.04 noble mirror http://10.34.200.20 "$FRESH" NO_OS_UPGRADE_REQUIRED "$HOPS0"
-write_preflight preflight-phase1-and-phase2 READY ready-aio 16.04 xenial mirror http://10.34.200.20 "$FRESH" RUN_PHASE1_AND_PHASE2 "$HOPS4" "" "esxi-lab-snapshot-20260716" "6.4.0"
-write_preflight preflight-dp650-xenial READY ready-aio 16.04 xenial mirror http://10.34.200.20 "$FRESH" RUN_OS_UPGRADE "$HOPS4" "" "esxi-lab-snapshot-20260716" "6.5.0"
-write_preflight source-mode-mismatch READY ready-aio 16.04 xenial cache http://10.34.200.20:3142 "$FRESH" RUN_OS_UPGRADE "$HOPS4"
+write_preflight preflight-blocked BLOCKED ready-aio 16.04 xenial mirror http://192.0.2.10 "$FRESH" RUN_OS_UPGRADE "$HOPS4" "" "esxi-lab-snapshot-20260716" "6.5.0"
+write_preflight stale-preflight READY ready-aio 16.04 xenial mirror http://192.0.2.10 "$STALE" RUN_OS_UPGRADE "$HOPS4"
+write_preflight future-preflight READY ready-aio 16.04 xenial mirror http://192.0.2.10 "$FUTURE" RUN_OS_UPGRADE "$HOPS4"
+write_preflight hostname-mismatch READY other-host 16.04 xenial mirror http://192.0.2.10 "$FRESH" RUN_OS_UPGRADE "$HOPS4"
+write_preflight preflight-ready-bionic READY ready-aio 18.04 bionic mirror http://192.0.2.10 "$FRESH" RUN_OS_UPGRADE "$HOPS3"
+write_preflight preflight-ready-focal READY ready-aio 20.04 focal mirror http://192.0.2.10 "$FRESH" RUN_OS_UPGRADE "$HOPS2"
+write_preflight preflight-ready-jammy READY ready-aio 22.04 jammy mirror http://192.0.2.10 "$FRESH" RUN_OS_UPGRADE "$HOPS1"
+write_preflight preflight-ready-noble READY ready-aio 24.04 noble mirror http://192.0.2.10 "$FRESH" NO_OS_UPGRADE_REQUIRED "$HOPS0"
+write_preflight preflight-phase1-and-phase2 READY ready-aio 16.04 xenial mirror http://192.0.2.10 "$FRESH" RUN_PHASE1_AND_PHASE2 "$HOPS4" "" "esxi-lab-snapshot-20260716" "6.4.0"
+write_preflight preflight-dp650-xenial READY ready-aio 16.04 xenial mirror http://192.0.2.10 "$FRESH" RUN_OS_UPGRADE "$HOPS4" "" "esxi-lab-snapshot-20260716" "6.5.0"
+write_preflight source-mode-mismatch READY ready-aio 16.04 xenial cache http://192.0.2.10:3142 "$FRESH" RUN_OS_UPGRADE "$HOPS4"
 
 # OS root snapshots
 for pair in xenial-before:16.04:xenial bionic-after:18.04:bionic focal-after:20.04:focal jammy-after:22.04:jammy noble-after:24.04:noble; do
@@ -210,7 +210,7 @@ write_state() {
   "snapshot_reference": "esxi-lab-snapshot-20260716",
   "backup_reference": null,
   "package_source_mode": "mirror",
-  "package_source_url": "http://10.34.200.20",
+  "package_source_url": "http://192.0.2.10",
   "warning_acceptances": [],
   "last_successful_step": "init",
   "last_error": null,
@@ -276,7 +276,7 @@ PY
 echo "fixtures generated under $ROOT"
 
 # Discovery profile fixture (no snapshot)
-write_preflight preflight-discovery-xenial READY ready-aio 16.04 xenial mirror http://10.34.200.20 "$FRESH" RUN_OS_UPGRADE "$HOPS4" "" "" "6.5.0"
+write_preflight preflight-discovery-xenial READY ready-aio 16.04 xenial mirror http://192.0.2.10 "$FRESH" RUN_OS_UPGRADE "$HOPS4" "" "" "6.5.0"
 python3 - <<'PY'
 import json, pathlib
 p=pathlib.Path("preflight-discovery-xenial/preflight-summary.json")

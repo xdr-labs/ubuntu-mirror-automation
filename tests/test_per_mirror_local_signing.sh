@@ -7,6 +7,9 @@ FAIL=0
 pass() { echo "  PASS: $*"; }
 fail() { echo "  FAIL: $*"; FAIL=1; }
 
+# shellcheck source=lib/portable_ip_policy.sh
+source "${ROOT}/tests/lib/portable_ip_policy.sh"
+
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
 
@@ -215,28 +218,24 @@ fi
   && pass "GUI hop command does not use armored public.gpg as keyring" \
   || fail "GUI hop command still uses public.gpg as gpgv keyring"
 
-# --- source hardcode gate ---
-count="$(rg -n '221\.139\.249\.(111|112)' \
-  --glob '!client/dp-offline-upgrade-*.sh' \
-  --glob '!artifacts/**' \
-  --glob '!.git/**' \
-  "${ROOT}/scripts" "${ROOT}/lib" "${ROOT}/client" "${ROOT}/tests" "${ROOT}/docs" 2>/dev/null \
-  | rg -v 'RFC|example|fixture|192\.0\.2|TEST_|comment|#' \
-  | wc -l || true)"
-# Soft check: count real hardcodes in source (builders help text already cleaned)
-src_count="$(rg -n '221\.139\.249\.(111|112)' \
-  "${ROOT}/scripts/lib/build_client_"*.py \
-  "${ROOT}/lib" \
-  "${ROOT}/scripts/lib/mirror_host_ip.sh" \
-  "${ROOT}/scripts/lib/local_client_signing.sh" \
-  "${ROOT}/scripts/rebuild-publish-clients.sh" \
-  "${ROOT}/scripts/lib/client_mirror_gates.sh" \
-  "${ROOT}/client/"*.in \
-  "${ROOT}/client/"*.inc \
-  2>/dev/null | wc -l || true)"
-[[ "${src_count// /}" == "0" ]] \
-  && pass "SOURCE_REAL_SERVER_IP_HARDCODE_COUNT=0 (core paths)" \
-  || fail "SOURCE_REAL_SERVER_IP_HARDCODE_COUNT=${src_count}"
+# --- portable IP policy on core builder/signing/gate sources ---
+CORE_POLICY_FILES=(
+  "${ROOT}/scripts/lib/mirror_host_ip.sh"
+  "${ROOT}/scripts/lib/local_client_signing.sh"
+  "${ROOT}/scripts/rebuild-publish-clients.sh"
+  "${ROOT}/scripts/lib/client_mirror_gates.sh"
+)
+shopt -s nullglob
+CORE_POLICY_FILES+=("${ROOT}/scripts/lib/build_client_"*.py)
+CORE_POLICY_FILES+=("${ROOT}/client/"*.in)
+CORE_POLICY_FILES+=("${ROOT}/client/"*.inc)
+CORE_POLICY_FILES+=("${ROOT}/lib/"*.sh)
+shopt -u nullglob
+if portable_ip_policy_assert_files "signing-core" "${CORE_POLICY_FILES[@]}"; then
+  pass "SOURCE_REAL_SERVER_IP_HARDCODE_COUNT=0 (core paths; portable IP policy)"
+else
+  fail "non-portable IP literals in core builder/signing sources"
+fi
 
 # --- private key not git-tracked pattern ---
 if git -C "$ROOT" check-ignore -q /etc/ubuntu-mirror/client-signing/private.gpg 2>/dev/null \

@@ -215,7 +215,7 @@ PROVISION_STAGING_DIR="/opt/aelladata/work/metarepo/root/provision/aelladeb_py3"
 # Support server (default download source -- no key needed)
 ACPS_HOST="acps.stellarcyber.ai"
 ACPS_USER="AellaMeta"
-ACPS_PASS='WroTQfm/W6x10'
+ACPS_PASS='fixture-acps-pass-placeholder'
 ACPS_PROVISION_URL="https://${ACPS_HOST}/provision/aelladeb_py3"
 ACPS_COMMON_TARBALL="aelladeb_py3_common.tar.gz"
 
@@ -354,9 +354,9 @@ check_version_guard() {
 #   sudo bash bringup_py3_dp_after_os_upgrade.sh --pre-upgrade-cleanup
 #
 # Dead repos commonly found on 16.04/18.04 DPs:
-#   1. dl.aelladata.com:8080 (10.38.1.46) -- internal build mirror, not reachable
+#   1. dl.aelladata.com:8080 -- internal build mirror, not reachable
 #   2. deb.nodesource.com/node_8.x -- EOL, GPG key 1655A0AB68576280 expired
-#   3. 129.146.74.109:32081/repository/dataprocessor -- internal Nexus repo
+#   3. internal Nexus :32081/repository/dataprocessor -- not reachable off-network
 #   4. dl.stellarcyber.ai -- may be unreachable depending on network
 #   5. kubernetes.io/apt repos -- may have expired GPG keys or wrong codename
 #   6. docker.com repos -- may reference old release codenames
@@ -411,7 +411,7 @@ pre_upgrade_cleanup() {
     # but the file is still dead config that confuses operators.
     for f in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
         [[ -f "$f" ]] || continue
-        if grep -qE 'aelladata|nodesource|129\.146\.74\.109|dl\.stellarcyber' "$f" 2>/dev/null; then
+        if grep -qE 'aelladata|nodesource|repository/dataprocessor|dl\.stellarcyber' "$f" 2>/dev/null; then
             log "  Removing dead repo file: $f"
             rm -f "$f"
             ((removed++)) || true
@@ -458,10 +458,10 @@ pre_upgrade_cleanup() {
         ((removed++)) || true
     fi
 
-    # Remove internal Nexus repo entries (129.146.74.109)
-    if grep -q '129\.146\.74\.109' /etc/apt/sources.list 2>/dev/null; then
-        log "  Removing 129.146.74.109 (Nexus) entries"
-        sed -i '/129\.146\.74\.109/d' /etc/apt/sources.list
+    # Remove internal Nexus dataprocessor repo entries (path match; host-agnostic)
+    if grep -q 'repository/dataprocessor' /etc/apt/sources.list 2>/dev/null; then
+        log "  Removing repository/dataprocessor (internal Nexus) entries"
+        sed -i '/repository\/dataprocessor/d' /etc/apt/sources.list
         ((removed++)) || true
     fi
 
@@ -567,7 +567,7 @@ pre_upgrade_cleanup() {
     log "--- Step 4: Clean stale /etc/hosts entries ---"
 
     if grep -q 'dl\.aelladata\.com' /etc/hosts 2>/dev/null; then
-        log "  Removing dl.aelladata.com from /etc/hosts (stale 10.38.1.46 mapping)"
+        log "  Removing dl.aelladata.com from /etc/hosts (stale internal mapping)"
         sed -i '/dl\.aelladata\.com/d' /etc/hosts
         ((removed++)) || true
     fi
@@ -3196,7 +3196,7 @@ init_k8s_master() {
 
     # AELDEV-70735 Fix #17: for AIO/master roles, master_ip MUST be the LOCAL ip,
     # not whatever was preserved from a prior usage. Stale master_ip pointing to
-    # a different DP (seen on .11 with master_ip=10.39.200.7 left over from a
+    # a different DP (seen on lab hosts with a stale master_ip left over from a
     # prior cluster role) causes hostPath-mounted containers like spark-slave's
     # meta-sync to download from the wrong host and CrashLoop indefinitely.
     # TWO files hold this IP and BOTH must be updated:
@@ -5391,7 +5391,7 @@ export UCF_FORCE_CONFFOLD=YES
 # "do not install package maintainer's version, keep my local mods" --
 # the same outcome as --force-confold for native dpkg conffiles, applied
 # to ucf-managed conffiles too (e.g. /etc/apt/apt.conf.d/50unattended-
-# upgrades, which broke 10.36.11.20's recovery test 2026-05-07).
+# upgrades, which broke a QA DP recovery test 2026-05-07).
 sudo tee /etc/ucf.conf >/dev/null <<'UCF_EOF'
 # AELDEV-70680 #14: keep local conffile mods during automated OS upgrade
 conf_force_install=NO
@@ -5411,7 +5411,7 @@ libc6 libraries/restart-without-asking boolean true
 DEBCONF_PRE_EOF
 
 # ---- AELDEV-70504 + AELDEV-70680: Purge legacy packages that don't transition cleanly ----
-# Observed on QA DP 10.36.11.20 (2026-05-01): xenial-era packages survive
+# Observed on a QA DP (2026-05-01): xenial-era packages survive
 # multi-hop upgrades and trigger unmet-dependency errors that wedge
 # do-release-upgrade with rc=1 ("Please install all available updates").
 # Concrete cases:
@@ -5668,7 +5668,7 @@ fi
 # updating a package which requires a reboot. Please reboot before
 # upgrading.") whenever apt has installed a kernel/glibc/libc6/etc. without
 # a subsequent boot. The kernel install can be from a pre-existing host
-# state (QA's 10.36.11.20: linux-image-5.4.0-216-generic mtime predates the
+# state (QA lab DP: linux-image-5.4.0-216-generic mtime predates the
 # auto-upgrade chain) OR from the dist-upgrade we just ran. Either way,
 # without rebooting first, do-release-upgrade exits 1 in 3s and the script
 # previously declared FATAL and disabled the service. Instead: detect the

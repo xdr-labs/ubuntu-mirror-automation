@@ -8,11 +8,13 @@ COMPAT="${ROOT}/scripts/lib/phase2_bringup_patch/fragment_compat.sh"
 WRAPPER="${ROOT}/client/bringup_py3_dp_lifecycle.sh"
 PREV="${ROOT}/tests/fixtures/dp-phase2/upstream_bringup_unpatched.sh"
 F1="${ROOT}/tests/fixtures/dp-phase2/production-f1a73/bringup_py3_dp_after_os_upgrade.sh"
-F1_SHA="f1a73c1d4502e2efcf55197865d2ade345d9c82f"
+F1_SHA="f57ea3964582322e0dc401fa8dd731c7443622fd"
 
 PASS=0
 FAIL=0
 TMP="$(mktemp -d)"
+export PHASE2_BRINGUP_DIR="${TMP}/lifecycle"
+mkdir -p "$PHASE2_BRINGUP_DIR"
 trap 'rm -rf "$TMP"' EXIT
 pass() { echo "PASS: $*"; PASS=$((PASS + 1)); }
 fail() { echo "FAIL: $*"; FAIL=$((FAIL + 1)); }
@@ -205,11 +207,12 @@ WRAP_EQ_RC=0
   source "$WRAPPER"
   parse_args --version 6.6.0 --worker-password=--dashpass --detach
   [[ "$ATTACH_MONITOR" -eq 0 ]]
-  [[ "${PASSTHRU[2]}" == --worker-password ]]
-  [[ "${PASSTHRU[3]}" == --dashpass ]]
+  [[ "${PASSTHRU[2]}" == --worker-password-file ]]
+  [[ -f "${PASSTHRU[3]}" ]]
+  [[ "$(<"${PASSTHRU[3]}")" == --dashpass ]]
 ) || WRAP_EQ_RC=$?
 set -e
-[[ "$WRAP_EQ_RC" -eq 0 ]] && pass "lifecycle equals-form password preserves detach" \
+[[ "$WRAP_EQ_RC" -eq 0 ]] && pass "lifecycle equals-form password preserves detach via password file" \
   || fail "lifecycle equals-form rc=$WRAP_EQ_RC"
 
 bash -n "$COMPAT" && bash -n "$WRAPPER" && bash -n "$0" \

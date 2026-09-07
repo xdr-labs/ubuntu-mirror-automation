@@ -89,6 +89,16 @@ mm_http_is_forbidden_private_key_name() {
   return 1
 }
 
+# Raw ACPS upstream copies are private rebuild sources, never public members.
+mm_http_is_forbidden_raw_upstream_name() {
+  local base="${1:-}"
+  case "$base" in
+    *.upstream|*.upstream.sha1)
+      return 0 ;;
+  esac
+  return 1
+}
+
 # Classify a published file into expected mode: 0755 (script) or 0644 (data).
 mm_http_expected_file_mode() {
   local path="${1:-}" base
@@ -185,6 +195,11 @@ mm_normalize_http_public_tree_permissions() {
       _mm_http_perm_error "HTTP_PUBLIC_PRIVATE_KEY_FORBIDDEN=${path}"
       return 1
     fi
+    if [[ "$kind" == "phase2" || "$kind" == "client" ]] \
+      && mm_http_is_forbidden_raw_upstream_name "$base"; then
+      _mm_http_perm_error "HTTP_PUBLIC_RAW_UPSTREAM_FORBIDDEN=${path}"
+      return 1
+    fi
     # Never publish files named like private keys under any extension pattern.
     case "$base" in
       *private*)
@@ -244,9 +259,14 @@ mm_verify_http_public_tree_permissions() {
       _mm_http_perm_error "CLIENT_PUBLIC_PERMISSION_VERIFY=FAIL private_key=${path}"
       return 1
     fi
+    if [[ "$kind" == "phase2" || "$kind" == "client" ]] \
+      && mm_http_is_forbidden_raw_upstream_name "$base"; then
+      _mm_http_perm_error "CLIENT_PUBLIC_PERMISSION_VERIFY=FAIL raw_upstream=${path}"
+      return 1
+    fi
     case "$base" in
       private.gpg|private.key|*private.gpg|*private.key)
-        _mm_http_perm_error "CLIENT_PUBLIC_PERMISSION_VERIFY=FAIL private_key=${path}"
+        _mm_http_perm_error "CLIENT_PUBLIC_PERMISSION_VERIFY=FAIL forbidden_public_name=${path}"
         return 1
         ;;
     esac
@@ -369,6 +389,29 @@ mm_verify_http_publication_permission_closure() {
       "${dp_root}/${ver}/release.env"
       "${dp_root}/${ver}/${stable}.sha256"
     )
+  fi
+
+  # /ubuntu/ is a symlink into hops/<hop>/ubuntu. First-level 0755 on selective
+  # is not enough: a leaked umask 077 leaves hop dirs 0700 → HTTP 403.
+  local selective="${MM_SELECTIVE_ROOT:-${base}/selective}"
+  local hop_root="${selective}/hops"
+  local tight hop_file ubuntu_file
+  if [[ -d "$hop_root" ]]; then
+    tight="$(find "$hop_root" -type d ! -perm -o=x -print -quit 2>/dev/null || true)"
+    if [[ -n "$tight" ]]; then
+      _mm_http_perm_error "HTTP_PUBLICATION_PERMISSION_CLOSURE=FAIL hop_dir_not_world_traversable=${tight}"
+      return 1
+    fi
+    hop_file="$(find "$hop_root" -type f \( -name Release -o -name InRelease -o -name Packages \) -print -quit 2>/dev/null || true)"
+    if [[ -n "$hop_file" ]]; then
+      paths+=("$hop_file")
+    fi
+  fi
+  if [[ -e "${selective}/ubuntu" ]]; then
+    ubuntu_file="$(find -L "${selective}/ubuntu" -maxdepth 6 -type f \( -name Release -o -name InRelease \) -print -quit 2>/dev/null || true)"
+    if [[ -n "$ubuntu_file" ]]; then
+      paths+=("$ubuntu_file")
+    fi
   fi
 
   for f in "${paths[@]}"; do

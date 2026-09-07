@@ -160,7 +160,7 @@ Plus `dp-upgrade-preflight-<hostname>-<UTC>.tar.gz`.
 sudo ./scripts/dp-upgrade-preflight.sh \
   --collection /var/tmp/dp-upgrade-readiness-dp01-20260716T011742Z.tar.gz \
   --package-source-mode mirror \
-  --package-source-url http://10.34.200.20 \
+  --package-source-url http://192.0.2.10 \
   --bringup-mode offline \
   --snapshot-reference "esxi-dp01-before-ubuntu-upgrade-20260716" \
   --output-dir /var/tmp \
@@ -173,7 +173,7 @@ sudo ./scripts/dp-upgrade-preflight.sh \
 sudo ./scripts/dp-upgrade-preflight.sh \
   --collection /var/tmp/dp-upgrade-readiness-dp01-20260716T011742Z.tar.gz \
   --package-source-mode cache \
-  --package-source-url http://10.34.200.20:3142 \
+  --package-source-url http://192.0.2.10:3142 \
   --bringup-mode online \
   --snapshot-reference "change-ticket-CHG-12345" \
   --output-dir /var/tmp
@@ -185,7 +185,7 @@ sudo ./scripts/dp-upgrade-preflight.sh \
 sudo ./scripts/dp-upgrade-preflight.sh \
   --collection /var/tmp/dp-upgrade-readiness-dp01-20260716T011742Z.tar.gz \
   --package-source-mode mirror \
-  --package-source-url http://10.34.200.20 \
+  --package-source-url http://192.0.2.10 \
   --bringup-mode offline \
   --snapshot-reference "snapshot-id" \
   --live-check \

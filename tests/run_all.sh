@@ -15,6 +15,11 @@ LONG_TIMEOUT_SECS="${TEST_LONG_TIMEOUT_SECS:-900}"
 FAIL=0
 INTEGRATION_RAN=0
 INTEGRATION_PASS=0
+SCHEDULED=0
+RAN=0
+PASS_COUNT=0
+FAIL_COUNT=0
+TIMEOUT_COUNT=0
 
 TEST_LIST=(
   test_install.sh
@@ -25,6 +30,7 @@ TEST_LIST=(
   test_systemd.sh
   test_simplified_install.sh
   test_fresh_bootstrap.sh
+  test_bootstrap_phase2_bundle_deferral.sh
   test_dashboard.sh
   test_offline_mirror.sh
   test_upgrade_profile.py
@@ -73,6 +79,9 @@ TEST_LIST=(
   test_phase2_wrapper_source_override.sh
   test_workflow_negative_contracts.sh
   test_workflow_pure_reads_and_legacy.sh
+  test_download_fingerprint_fail_closed.sh
+  test_os_core_safe_tar_extract.py
+  test_workflow_state_concurrent_writers.sh
   test_phase2_same_version_recovery_default.sh
   test_selective_readiness_content_identity.sh
   test_phase2_prerequisite_archive_safety.sh
@@ -86,7 +95,11 @@ TEST_LIST=(
   test_bringup_completion_contract.sh
   test_http_publication_identity.sh
   test_acps_auth_tls_hardening.sh
+  test_download_dp_phase2_acps_auth.sh
   test_bringup_worker_password.sh
+  test_bringup_acps_fail_closed.sh
+  test_bringup_ssh_host_keys.sh
+  test_bringup_ssh_known_hosts_persistent.sh
   test_bringup_acps_sha_policy.sh
   test_patch_dp_phase2_bringup.py
   test_phase2_bringup_fresh_upstream.sh
@@ -97,6 +110,11 @@ TEST_LIST=(
   test_phase2_bundle_reuse_disk.sh
   test_phase2_stale_bringup_bundle.sh
   test_phase2_stale_bringup_no_acps_redownload.sh
+  test_phase2_private_upstream_storage.sh
+  test_http_raw_upstream_deny.sh
+  test_lifecycle_password_cleanup.sh
+  test_r2_publisher_trust.sh
+  test_phase2_stale_target_state.sh
   test_mirror_long_step_progress.sh
   test_mirror_manager_menu_status.sh
   test_bringup_image_import_heartbeat.sh
@@ -135,7 +153,9 @@ TEST_LIST=(
   test_phase2_extract_progress_separator.sh
   test_phase2_controller_dependency_fetch.sh
   test_phase2_helper_generation_trust.sh
+  test_phase2_bundle_http_trust.sh
   test_acps_verified_cache_metadata.sh
+  test_acps_corrupt_final_retry.sh
   test_reused_artifact_status.sh
   test_mirror_workflow_state_without_logger.sh
   test_current_hop_env_path_runner.sh
@@ -249,14 +269,19 @@ run_one() {
       fi
     fi
   done
+  RAN=$((RAN + 1))
   if [[ "$rc" -eq 0 ]]; then
+    PASS_COUNT=$((PASS_COUNT + 1))
     echo "OK $t"
   elif [[ "$rc" -eq 124 || "$rc" -eq 137 ]]; then
+    TIMEOUT_COUNT=$((TIMEOUT_COUNT + 1))
+    FAIL_COUNT=$((FAIL_COUNT + 1))
     echo "FAIL $t (TIMEOUT)"
     FAIL=1
     echo "---- process tree snapshot ----"
     ps -efH || true
   else
+    FAIL_COUNT=$((FAIL_COUNT + 1))
     echo "FAIL $t (exit=${rc})"
     FAIL=1
   fi
@@ -264,6 +289,8 @@ run_one() {
   check_contamination_after "$t" || true
   echo
 }
+
+SCHEDULED=${#TEST_LIST[@]}
 
 for t in "${TEST_LIST[@]}"; do
   run_one "$t"
@@ -330,6 +357,17 @@ if [[ "${#INTEGRATION_REQUIRED[@]}" -gt 0 ]]; then
   fi
 fi
 
+ACCOUNTING_VALID=NO
+if [[ "$((PASS_COUNT + FAIL_COUNT))" -eq "$RAN" && "$RAN" -eq "$SCHEDULED" ]]; then
+  ACCOUNTING_VALID=YES
+fi
+echo "SCHEDULED=${SCHEDULED}"
+echo "RAN=${RAN}"
+echo "PASS=${PASS_COUNT}"
+echo "FAIL=${FAIL_COUNT}"
+echo "TIMEOUT=${TIMEOUT_COUNT}"
+echo "ACCOUNTING_VALID=${ACCOUNTING_VALID}"
+
 if [[ "$FAIL" -eq 0 ]]; then
   echo "RUN_ALL_ADDITIONAL_TRACKED_DIFF=0"
   echo "RUN_ALL_ADDITIONAL_UNTRACKED_FILES=0"
@@ -342,6 +380,10 @@ if [[ "$FAIL" -eq 0 ]]; then
   echo "FAILURE_ATOMICITY_TEST=PASS"
   echo "FULL_SUITE_RESULT=PASS"
   echo "ALL TESTS PASSED"
+  if [[ "$ACCOUNTING_VALID" != YES ]]; then
+    echo "FULL_SUITE_RESULT=FAIL (accounting invalid)"
+    exit 1
+  fi
   exit 0
 fi
 echo "FULL_SUITE_RESULT=FAIL"

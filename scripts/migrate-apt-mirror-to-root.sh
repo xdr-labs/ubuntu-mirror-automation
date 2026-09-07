@@ -94,6 +94,7 @@ Environment overrides (tests/fixtures):
   MIGRATE_FAKE_MOUNT_TABLE  MIGRATE_SKIP_GIT  MIGRATE_SKIP_HTTP
   MIGRATE_CONFIRM_CUTOVER=CUTOVER_TO_ROOT  MIGRATE_ROOT_AVAIL_BYTES
   MIGRATE_FAKE_SS_FILE  MIGRATE_FAKE_SS_RC (fixture ss established lines)
+  MIGRATE_TEST_NGINX_T_FAIL_ON_CALL=N (fail nginx_test on the Nth TEST_MODE call)
 EOF
 }
 
@@ -728,9 +729,17 @@ nginx_test() {
     return 0
   fi
   if [[ "$TEST_MODE" == "1" ]]; then
+    # Deterministic fixture control: optional 1-based call index that must FAIL.
+    # Avoids racy background watchers that poll the fake mount table.
+    MIGRATE_TEST_NGINX_T_CALL_COUNT="${MIGRATE_TEST_NGINX_T_CALL_COUNT:-0}"
+    MIGRATE_TEST_NGINX_T_CALL_COUNT=$((MIGRATE_TEST_NGINX_T_CALL_COUNT + 1))
     local nt="${MIGRATE_TEST_NGINX_T:-PASS}"
     if [[ -n "${MIGRATE_TEST_NGINX_T_FILE:-}" && -f "${MIGRATE_TEST_NGINX_T_FILE}" ]]; then
       nt="$(tr -d '[:space:]' <"${MIGRATE_TEST_NGINX_T_FILE}")"
+    fi
+    if [[ -n "${MIGRATE_TEST_NGINX_T_FAIL_ON_CALL:-}" \
+      && "${MIGRATE_TEST_NGINX_T_FAIL_ON_CALL}" == "${MIGRATE_TEST_NGINX_T_CALL_COUNT}" ]]; then
+      nt="FAIL"
     fi
     if [[ "$nt" != "PASS" ]]; then
       fail_rc "nginx -t failed (fixture)"

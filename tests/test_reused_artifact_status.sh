@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Regression coverage for snapshot/reinstall status reconciliation:
 # PASS and REUSED are both success, and OS/Phase2 status is independent.
+# Download completion uses the authoritative core mm_download_completed().
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -65,14 +66,50 @@ uom_status_success REUSED
 ! uom_status_success FAIL
 ! uom_status_success ""
 
-# Core regression: a reused, previously verified R2 package is download-complete.
-uom_mm_download_completed
+# Core accepts REUSED the same as PASS for R2 checksum (no entrypoint override).
+# shellcheck source=/dev/null
+source "${ROOT}/scripts/lib/mirror_manager_common.sh"
+# Re-apply stubs after sourcing common (common may redefine helpers).
+mm_configuration_completed() { return 0; }
+engine_resolve_paths() { return 0; }
+mm_phase2_paths() { return 0; }
+mm_is_phase2_only() { [[ "$PREPARATION_MODE" == "PHASE2_ONLY" ]]; }
+mm_client_files_ready() { return 0; }
+mm_client_files_ready_phase2() { return 0; }
+mm_client_set_current_source() { return 0; }
+mm_temps_present() { return 1; }
+mm_artifact_fingerprint() { printf '%s\n' "$STATUS_FP"; }
+mm_status_get() {
+  case "$1" in
+    PHASE2_BUNDLE_CHECKSUM) printf '%s\n' "$STATUS_BUNDLE" ;;
+    PHASE2_BUNDLE_ENTRY_COUNT) printf '%s\n' "$STATUS_ENTRIES" ;;
+    OS_MIRROR_READY) printf '%s\n' "$STATUS_OS" ;;
+    R2_OS_CORE_CHECKSUM) printf '%s\n' "$STATUS_R2" ;;
+    DOWNLOAD_PREPARE_RESULT|LAST_EXECUTION_RESULT|INSTALL_RESULT) printf '%s\n' "$STATUS_LAST" ;;
+    DOWNLOAD_ARTIFACT_FINGERPRINT) printf '%s\n' "$STATUS_FP" ;;
+    HTTP_DISTRIBUTION) printf 'ENABLED\n' ;;
+    LOG_PATH) printf '/tmp/test.log\n' ;;
+    *) printf '\n' ;;
+  esac
+}
+
+mm_download_completed
 echo "REUSED_OS_CORE_DOWNLOAD_COMPLETED=PASS"
 
 # Unknown/non-success checksum still fails closed.
 STATUS_R2=UNKNOWN
-! uom_mm_download_completed
+! mm_download_completed
 STATUS_R2=REUSED
+
+# Missing fingerprint must fail closed and must not mint via status writes.
+STATUS_FP=""
+: >"$WRITES"
+! mm_download_completed
+if grep -q 'DOWNLOAD_ARTIFACT_FINGERPRINT=' "$WRITES"; then
+  echo "FAIL: core mm_download_completed minted fingerprint on read" >&2
+  exit 1
+fi
+STATUS_FP=fp-current
 
 # Independent status: a bad OS status must not hide a valid Phase 2 bundle.
 STATUS_R2=FAIL

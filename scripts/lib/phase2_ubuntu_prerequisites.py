@@ -21,6 +21,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tarfile
@@ -226,6 +227,174 @@ def extra_debs_from_args(args):
     return [p for p in raw if p]
 
 
+_TAR_SPECIAL_MEMBER_TYPES = frozenset([
+    tarfile.BLKTYPE,
+    tarfile.CHRTYPE,
+    tarfile.FIFOTYPE,
+])
+if hasattr(tarfile, 'SOCKTYPE'):
+    _TAR_SPECIAL_MEMBER_TYPES = _TAR_SPECIAL_MEMBER_TYPES | {tarfile.SOCKTYPE}
+
+
+def _normalized_tar_member_path(name):
+    """Return cleaned member path or raise ValueError for unsafe names."""
+    cleaned = name.rstrip('/')
+    if cleaned.startswith('/'):
+        raise ValueError('absolute_path=%s' % name)
+    if cleaned.startswith('./'):
+        cleaned = cleaned[2:]
+        if cleaned.startswith('/'):
+            raise ValueError('absolute_path=%s' % name)
+    parts = [p for p in cleaned.split('/') if p not in ('', '.')]
+    if any(p == '..' for p in parts):
+        raise ValueError('path_traversal=%s' % name)
+    return cleaned
+
+
+def _reject_unsafe_tar_member(member):
+    if member.issym() or member.islnk():
+        raise ValueError('link_member=%s' % member.name)
+    if member.type in _TAR_SPECIAL_MEMBER_TYPES:
+        raise ValueError(
+            'special_member=%s type=%s' % (member.name, member.type),
+        )
+    mode = member.mode or 0
+    if mode & (stat.S_ISUID | stat.S_ISGID):
+        raise ValueError('setuid_setgid=%s' % member.name)
+
+
+def _is_allowed_acps_sidecar_member(cleaned):
+    """Allow top-level <pkg>.deb.control metadata sidecars in ACPS bundles."""
+    return (
+        '/' not in cleaned
+        and cleaned.endswith('.deb.control')
+        and not cleaned.startswith('.')
+    )
+
+
+def _is_allowed_acps_nested_archive_member(cleaned):
+    """Allow the nested py3-apt archive inside aelladeb_py3_common.tar.gz."""
+    return cleaned == 'py3-apt-packages.tar.gz'
+
+
+def _is_allowed_py3_apt_deb_member(cleaned):
+    """Allow debs/<base>.deb (prereq artifact) or top-level <base>.deb (ACPS)."""
+    if cleaned.startswith('debs/') and cleaned.count('/') == 1 and cleaned.endswith('.deb'):
+        base = cleaned.split('/', 1)[1]
+        return bool(base) and '/' not in base and not base.startswith('.')
+    if '/' not in cleaned and cleaned.endswith('.deb'):
+        return bool(cleaned) and not cleaned.startswith('.')
+    return False
+
+
+def _safe_tar_extract_target(extract_dir, cleaned):
+    dest_real = os.path.realpath(extract_dir)
+    target = os.path.join(extract_dir, cleaned)
+    parent = os.path.dirname(target)
+    os.makedirs(parent, exist_ok=True)
+    parent_real = os.path.realpath(parent)
+    if not (parent_real == dest_real or parent_real.startswith(dest_real + os.sep)):
+        raise ValueError('extract_escape=%s' % cleaned)
+    return target
+
+
+def _safe_tar_extract_file_member(tf, member, extract_dir):
+    cleaned = _normalized_tar_member_path(member.name)
+    _reject_unsafe_tar_member(member)
+    if not member.isreg() and not member.isfile():
+        raise ValueError('unexpected_type=%s' % member.name)
+    target = _safe_tar_extract_target(extract_dir, cleaned)
+    src = tf.extractfile(member)
+    if src is None:
+        raise ValueError('extract_missing=%s' % member.name)
+    with open(target, 'wb') as out:
+        shutil.copyfileobj(src, out)
+    return cleaned
+
+
+def safe_extract_py3_apt_archive(tf, extract_dir, ignore_members=None, strict=True):
+    """Extract only validated .deb members from a tar archive.
+
+    Allows regular files under debs/*.deb (phase2 artifact layout) and
+    top-level *.deb (ACPS py3-apt-packages layout). Rejects ../, absolute
+    paths, symlinks, hardlinks, devices, FIFOs, sockets, setuid/setgid,
+    duplicate names, and path escapes. Optional ignore_members skips
+    non-deb file entries (e.g. manifest sidecars in verify_built_artifact).
+    When strict is False, non-deb regular files are skipped instead of
+    rejected (ACPS bundles may include harmless sidecar metadata).
+    """
+    ignore = set(ignore_members or ())
+    os.makedirs(extract_dir, exist_ok=True)
+    seen = set()
+    extracted = []
+    for member in tf.getmembers():
+        name = member.name
+        if name in seen:
+            raise ValueError('duplicate_member=%s' % name)
+        seen.add(name)
+        cleaned = _normalized_tar_member_path(name)
+        _reject_unsafe_tar_member(member)
+        if member.isdir():
+            if cleaned in ('', '.') or not cleaned:
+                continue
+            if cleaned == 'debs':
+                os.makedirs(os.path.join(extract_dir, 'debs'), exist_ok=True)
+            else:
+                raise ValueError('unexpected_dir=%s' % name)
+            continue
+        if cleaned in ignore:
+            continue
+        allowed = _is_allowed_py3_apt_deb_member(cleaned)
+        if not strict:
+            allowed = (
+                allowed
+                or _is_allowed_acps_sidecar_member(cleaned)
+                or _is_allowed_acps_nested_archive_member(cleaned)
+            )
+        if not allowed:
+            if not strict and (member.isreg() or member.isfile()):
+                continue
+            raise ValueError('unexpected_member=%s' % name)
+        extracted.append(_safe_tar_extract_file_member(tf, member, extract_dir))
+    return extracted
+
+
+def _validate_prereq_artifact_members(members):
+    allowed_files = {MANIFEST_NAME, INSTALL_ORDER_NAME}
+    seen = set()
+    for member in members:
+        name = member.name
+        if name in seen:
+            raise ValueError('duplicate_member=%s' % name)
+        seen.add(name)
+        cleaned = _normalized_tar_member_path(name)
+        _reject_unsafe_tar_member(member)
+        if member.isdir():
+            if cleaned != 'debs':
+                raise ValueError('unexpected_dir=%s' % name)
+            continue
+        if not member.isreg() and not member.isfile():
+            raise ValueError('unexpected_type=%s' % name)
+        if cleaned in allowed_files:
+            continue
+        if not _is_allowed_py3_apt_deb_member(cleaned):
+            raise ValueError('unexpected_member=%s' % name)
+
+
+def _safe_extract_prereq_non_deb_files(tf, extract_dir, names):
+    wanted = set(names)
+    extracted = []
+    for member in tf.getmembers():
+        cleaned = _normalized_tar_member_path(member.name)
+        if cleaned not in wanted:
+            continue
+        extracted.append(_safe_tar_extract_file_member(tf, member, extract_dir))
+    missing = wanted - set(extracted)
+    if missing:
+        raise ValueError('missing_members=%s' % ','.join(sorted(missing)))
+    return extracted
+
+
 def inspect_acps_py3_apt_packages(source, work_dir=None):
     """Return root package metadata from an ACPS py3-apt-packages payload.
 
@@ -240,8 +409,11 @@ def inspect_acps_py3_apt_packages(source, work_dir=None):
             if work_dir is None:
                 cleanup = extract_dir
             with tarfile.open(source, 'r:*') as tf:
-                tf.extractall(extract_dir)
+                safe_extract_py3_apt_archive(tf, extract_dir, strict=False)
             source = extract_dir
+            inner = os.path.join(source, 'py3-apt-packages.tar.gz')
+            if os.path.isfile(inner):
+                return inspect_acps_py3_apt_packages(inner, work_dir=work_dir)
         elif os.path.isdir(source):
             inner = os.path.join(source, 'py3-apt-packages.tar.gz')
             if os.path.isfile(inner):
@@ -1863,11 +2035,19 @@ def verify_built_artifact(dest_dir, manifest, required_names=None):
     extract = tempfile.mkdtemp(prefix='phase2-prereq-verify-')
     try:
         with tarfile.open(artifact_path, 'r:gz') as tf:
-            members = tf.getnames()
-            tf.extractall(extract)
-        deb_members = [n for n in members if n.startswith('debs/') and n.endswith('.deb')]
+            members = tf.getmembers()
+            member_names = [m.name for m in members]
+            _validate_prereq_artifact_members(members)
+            safe_extract_py3_apt_archive(
+                tf, extract,
+                ignore_members=(MANIFEST_NAME, INSTALL_ORDER_NAME),
+            )
+            _safe_extract_prereq_non_deb_files(
+                tf, extract, (MANIFEST_NAME, INSTALL_ORDER_NAME),
+            )
+        deb_members = [n for n in member_names if n.startswith('debs/') and n.endswith('.deb')]
         unexpected = [
-            n for n in members
+            n for n in member_names
             if n not in (MANIFEST_NAME, INSTALL_ORDER_NAME)
             and not n.startswith('debs/')
         ]
