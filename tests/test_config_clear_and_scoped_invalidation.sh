@@ -298,7 +298,7 @@ expect "I06 class COMMAND_ROUTING" test "$(mm_wf_get CONFIG_CHANGE_CLASS)" = "CO
 gui_build_client_commands "$MIRROR_HTTP_URL" cluster "192.0.2.21" "" 'Clu$ter!Pass' >"$cmd_file"
 grep -q -- '--worker-ips' "$cmd_file" || fail "G02 --worker-ips missing"
 grep -Fq '192.0.2.21' "$cmd_file" || fail "G02 DL worker ips missing"
-grep -q -- '--worker-password' "$cmd_file" || fail "G02 worker password missing"
+grep -q -- '--prompt-worker-password' "$cmd_file" || fail "G02 worker password prompt missing"
 pass "G02 DL master worker command correct"
 
 # --- I07 ACPS credential only ---
@@ -395,7 +395,7 @@ pass "G04 DL+DA independent lists"
 # --- G05/G06 special chars: flag present, plaintext absent from command file/status ---
 special='a b$c`d!"e'
 gui_build_client_commands "$MIRROR_HTTP_URL" cluster "192.0.2.21" "" "$special" >"$cmd_file"
-grep -q -- '--worker-password' "$cmd_file" || fail "G05 password flag missing"
+grep -q -- '--prompt-worker-password' "$cmd_file" || fail "G05 password prompt flag missing"
 if grep -Fqs -- "$special" "$cmd_file"; then
   fail "G05 plaintext special-char password embedded in command file"
 else

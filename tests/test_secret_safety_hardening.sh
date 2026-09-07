@@ -67,12 +67,16 @@ assert_no_plaintext_password() {
 assert_cluster_prompt_shape() {
   local file="$1" worker_ips="$2"
   local ip
-  grep -q -- '--worker-password-file' "$file" \
-    || fail "cluster command missing --worker-password-file flag"
+  grep -q -- '--prompt-worker-password' "$file" \
+    || fail "cluster command missing --prompt-worker-password flag"
   grep -q -- '--worker-ips' "$file" \
     || fail "cluster command missing --worker-ips"
   grep -q -- '--worker-password ' "$file" \
     && fail "cluster command still passes --worker-password on argv" || true
+  grep -q -- '--worker-password-file' "$file" \
+    && fail "cluster command still uses orphan --worker-password-file" || true
+  grep -Eq 'mktemp|worker-password\\.XXXXXX' "$file" \
+    && fail "cluster command still creates mktemp password orphan" || true
   # IPs may be shell-escaped (e.g. 192.0.2.1\\\,192.0.2.2); require each token.
   IFS=',' read -r -a ips <<<"$worker_ips"
   for ip in "${ips[@]}"; do
@@ -80,12 +84,8 @@ assert_cluster_prompt_shape() {
     [[ -n "$ip" ]] || continue
     grep -Fq "$ip" "$file" || fail "cluster command missing worker ip ${ip}"
   done
-  grep -Eq 'read(\\[[:space:]]|[[:space:]])+-rsp|Worker(\\[[:space:]]|[[:space:]])+SSH' "$file" \
-    || fail "cluster command missing runtime password prompt"
-  grep -Eq 'mktemp|worker-password\\.XXXXXX|/var/lib/dp-phase2-bringup' "$file" \
-    || fail "cluster command missing private password file pattern"
-  grep -Eq '(\\\$PWFILE|\$PWFILE|"\$PWFILE")' "$file" \
-    || fail "cluster command missing password file placeholder"
+  grep -q 'The command prompts for the worker SSH password at runtime' "$file" \
+    || fail "cluster command missing runtime password prompt guidance"
 }
 
 # --- Cluster: flag present, plaintext absent ---

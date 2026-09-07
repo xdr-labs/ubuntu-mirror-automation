@@ -384,16 +384,16 @@ gui_build_client_commands "http://192.0.2.10" "cluster" "192.0.2.23,192.0.2.25" 
 grep -q -- '--worker-ips' "$CLUSTER_OUT" || fail "DL --worker-ips missing"
 grep -Fq '192.0.2.23' "$CLUSTER_OUT" && grep -Fq '192.0.2.25' "$CLUSTER_OUT" \
   || fail "DL worker ips missing"
-grep -q -- '--worker-password-file' "$CLUSTER_OUT" || fail "DL --worker-password-file missing"
+grep -q -- '--prompt-worker-password' "$CLUSTER_OUT" || fail "DL --prompt-worker-password missing"
 grep -Fq 'customer-password' "$CLUSTER_OUT" && fail "DL plaintext password embedded" || true
-grep -Eq 'read(\\[[:space:]]|[[:space:]])+-rsp|Worker(\\[[:space:]]|[[:space:]])+SSH' "$CLUSTER_OUT" \
-  || fail "DL runtime password prompt missing"
+grep -q 'The command prompts for the worker SSH password at runtime' "$CLUSTER_OUT" \
+  || fail "DL runtime password prompt guidance missing"
 grep -q 'Cluster IP addresses are recommended' "$CLUSTER_OUT" || fail "cluster IP recommendation missing"
 grep -q 'Management IP addresses or cluster IP addresses can be used' "$CLUSTER_OUT" || fail "mgmt/cluster IP support missing"
 pass "DL cluster bringup command"
 
 assert_cluster_bringup_prompt() {
-  # Interactive prompt model: password never embedded; flag + worker-ips present.
+  # Interactive prompt model: password never embedded; lifecycle owns prompt.
   local file="$1" expect_ips="$2" password="${3:-}"
   local ip
   grep -q -- '--worker-ips' "$file" || fail "missing --worker-ips in cluster output"
@@ -403,8 +403,9 @@ assert_cluster_bringup_prompt() {
     [[ -n "$ip" ]] || continue
     grep -Fq "$ip" "$file" || fail "worker ip missing: ${ip}"
   done
-  grep -q -- '--worker-password-file' "$file" || fail "missing --worker-password-file flag"
-  grep -Eq 'read(\\[[:space:]]|[[:space:]])+-rsp|Worker(\\[[:space:]]|[[:space:]])+SSH' "$file" || fail "missing runtime password prompt"
+  grep -q -- '--prompt-worker-password' "$file" || fail "missing --prompt-worker-password flag"
+  grep -q -- '--worker-password-file' "$file" && fail "unexpected --worker-password-file in Menu 7" || true
+  grep -q -- 'mktemp' "$file" && fail "unexpected mktemp password orphan in Menu 7" || true
   grep -q -- '--worker-password ' "$file" && fail "unexpected --worker-password argv in cluster command" || true
   if [[ -n "$password" ]]; then
     grep -Fq -- "$password" "$file" && fail "plaintext password present in command output" || true
@@ -438,7 +439,7 @@ DUAL_OUT="$TMP/cluster-dual.txt"
 gui_build_client_commands "http://192.0.2.10" "cluster" \
   "192.0.2.23,192.0.2.25" "192.0.2.24,192.0.2.26" \
   "customer-password" >"$DUAL_OUT"
-[[ "$(grep -cE 'bringup_py3_dp_after_os_upgrade\.sh|read(\\[[:space:]]|[[:space:]])+-rsp' "$DUAL_OUT" || true)" -ge 2 ]] \
+[[ "$(grep -cE 'bringup_py3_dp_after_os_upgrade\.sh|--prompt-worker-password' "$DUAL_OUT" || true)" -ge 2 ]] \
   || fail "dual cluster output must contain DL and DA bringup prompts"
 grep -q 'STEP 7A — DL CLUSTER MASTER' "$DUAL_OUT" || fail "STEP 7A missing"
 grep -q 'STEP 7B — DA CLUSTER MASTER' "$DUAL_OUT" || fail "STEP 7B missing"
@@ -753,8 +754,8 @@ grep -q 'Do not run STEP 7 manually on workers' "$REG_DUAL" \
   || fail "cluster rule missing worker STEP 7 prohibition"
 echo "MENU7_WORKER_MANUAL_STEP7_PROHIBITED=PASS"
 
-reg_dl_line="$(grep -E 'bringup_py3_dp_after_os_upgrade\.sh|read(\\ |-rsp)' "$REG_DL_SEC" | head -1)"
-reg_da_line="$(grep -E 'bringup_py3_dp_after_os_upgrade\.sh|read(\\ |-rsp)' "$REG_DA_SEC" | head -1)"
+reg_dl_line="$(grep -E 'bringup_py3_dp_after_os_upgrade\.sh|--prompt-worker-password' "$REG_DL_SEC" | head -1)"
+reg_da_line="$(grep -E 'bringup_py3_dp_after_os_upgrade\.sh|--prompt-worker-password' "$REG_DA_SEC" | head -1)"
 [[ -n "$reg_dl_line" ]] || fail "DL section missing bringup/prompt"
 [[ -n "$reg_da_line" ]] || fail "DA section missing bringup/prompt"
 assert_cluster_bringup_prompt "$REG_DL_SEC" "$REG_DL_IPS" "$REG_PW"

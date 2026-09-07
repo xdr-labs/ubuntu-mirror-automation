@@ -75,6 +75,27 @@ p2b_store_worker_password() {
   return 0
 }
 
+# Lifecycle-owned interactive prompt. Creates the canonical owned password file
+# (0600) and never leaves Menu 7 mktemp orphans under /var/lib/dp-phase2-bringup.
+p2b_prompt_worker_password() {
+  local pw=""
+  if [[ ! -t 0 ]]; then
+    echo "ERROR: --prompt-worker-password requires an interactive terminal" >&2
+    return 1
+  fi
+  IFS= read -rsp 'Worker SSH password (aella): ' pw || return 1
+  printf '\n' >&2
+  if [[ -z "$pw" ]]; then
+    echo "ERROR: empty worker password" >&2
+    unset pw
+    return 1
+  fi
+  p2b_store_worker_password "$pw"
+  local rc=$?
+  unset pw
+  return "$rc"
+}
+
 p2b_append_worker_password_file_passthru() {
   [[ -n "${WORKER_PASSWORD_FILE:-}" ]] || return 0
   local i
@@ -102,7 +123,12 @@ Options:
                       --worker-password=PW so it cannot be parsed as a
                       lifecycle control option.
   --worker-password-file PATH
-                      Mode-0600 password file (production path; passed through)
+                      Mode-0600 password file (production path; passed through).
+                      Truly external paths are preserved by lifecycle cleanup.
+  --prompt-worker-password
+                      Lifecycle-owned interactive prompt; creates the canonical
+                      owned password file and cleans it up after COMPLETED/FAILED
+                      (or after verified worker exit). Preferred for Menu 7.
   --standby IPS       Passed through to vendor bringup
   --detach            Return immediately after verified worker handoff
   --status            Read-only lifecycle status
@@ -162,6 +188,11 @@ parse_args() {
           echo "ERROR: --worker-password-file requires a path" >&2
           exit 1
         fi
+        shift
+        ;;
+      --prompt-worker-password)
+        p2b_prompt_worker_password \
+          || { echo "ERROR: could not prompt/store worker password" >&2; exit 1; }
         shift
         ;;
       --skip-download|--worker-ips|--worker-password|--worker-password-file|--dry-run|--standby)
