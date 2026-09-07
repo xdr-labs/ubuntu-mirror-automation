@@ -113,6 +113,12 @@ TEST_LIST=(
   test_phase2_private_upstream_storage.sh
   test_http_raw_upstream_deny.sh
   test_lifecycle_password_cleanup.sh
+  test_publication_crash_recovery.sh
+  test_verified_acps_offline_reuse.sh
+  test_acps_remote_size_fail_closed.sh
+  test_acps_private_cache_permissions.sh
+  test_uninstall_current_paths.sh
+  test_http_public_symlink_boundary.sh
   test_r2_publisher_trust.sh
   test_phase2_stale_target_state.sh
   test_mirror_long_step_progress.sh
