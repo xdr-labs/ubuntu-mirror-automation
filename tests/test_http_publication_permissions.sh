@@ -143,6 +143,46 @@ fi
   || fail "live set changed after failed permission verify"
 rm -rf "$BAD"
 
+# 11. Selective hop tree leaked as 0700/0600 must normalize to 0755/0644
+# and fail permission closure until hop dirs are world-traversable.
+SELECTIVE="${SPOOL}/selective"
+HOP_UBUNTU="${SELECTIVE}/hops/jammy-to-noble/ubuntu/dists/noble"
+mkdir -p "$HOP_UBUNTU"
+printf 'Release-body\n' >"${HOP_UBUNTU}/Release"
+ln -sfn "hops/jammy-to-noble/ubuntu" "${SELECTIVE}/ubuntu"
+chmod 0700 "${SELECTIVE}" \
+  "${SELECTIVE}/hops" \
+  "${SELECTIVE}/hops/jammy-to-noble" \
+  "${SELECTIVE}/hops/jammy-to-noble/ubuntu" \
+  "${SELECTIVE}/hops/jammy-to-noble/ubuntu/dists" \
+  "${HOP_UBUNTU}"
+chmod 0600 "${HOP_UBUNTU}/Release"
+export MM_SELECTIVE_ROOT="$SELECTIVE"
+set +e
+mm_verify_http_publication_permission_closure "$SPOOL" "$LIVE" "${SPOOL}/dp-phase2" "6.6.0" \
+  >/tmp/sel-close-before.out 2>/tmp/sel-close-before.err
+close_before=$?
+set -e
+if [[ "$close_before" -ne 0 ]]; then
+  pass "0700 hop dirs fail permission closure (expected)"
+else
+  fail "0700 hop dirs should fail permission closure"
+fi
+if mm_normalize_http_public_tree_permissions "$SELECTIVE" selective; then
+  pass "selective 0700/0600 tree normalized"
+else
+  fail "selective normalize failed"
+fi
+[[ "$(stat -c '%a' "${SELECTIVE}/hops/jammy-to-noble")" == "755" ]] \
+  && pass "hop dir 0755 after normalize" || fail "hop dir still tight"
+[[ "$(stat -c '%a' "${HOP_UBUNTU}/Release")" == "644" ]] \
+  && pass "Release 0644 after normalize" || fail "Release still 0600"
+if mm_verify_http_publication_permission_closure "$SPOOL" "$LIVE" "${SPOOL}/dp-phase2" "6.6.0"; then
+  pass "permission closure probes /ubuntu hop path"
+else
+  fail "permission closure after selective normalize"
+fi
+
 # Explicit NOT_STARTED contract when prepare fails before swap (simulate by
 # forcing verify failure without normalize via a read-only injection helper).
 echo "CLIENT_SET_ATOMIC_SWAP=NOT_STARTED" >/tmp/not-started.marker

@@ -1260,6 +1260,18 @@ else
   fail "T umask not restored after mm_save_gui_config"
 fi
 
+# umask restored after workflow.state create (both success and failure paths)
+if awk '
+  /^mm_wf_ensure_file\(\)/ { in_fn=1 }
+  in_fn && /old_umask=/ { save=1 }
+  in_fn && /umask "\$old_umask"/ { restore++ }
+  in_fn && /^}/ { exit((save && restore >= 2) ? 0 : 1) }
+' "${ROOT}/scripts/lib/mirror_workflow_state.sh"; then
+  pass "T UMASK_RESTORED after workflow.state create"
+else
+  fail "T umask not restored after mm_wf_ensure_file"
+fi
+
 # Credential config remains 600
 grep -A120 '^mm_save_gui_config' "${ROOT}/scripts/lib/mirror_manager_common.sh" | grep -q 'chmod 600' \
   && pass "T CREDENTIAL_CONFIG_MODE=600" || fail "T credential chmod 600 missing"

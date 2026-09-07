@@ -88,7 +88,44 @@ def main():
         with tarfile.open(legit_tar, "r:") as tf:
             if any(m.issym() or m.islnk() for m in tf.getmembers()):
                 fail("safe_tar_create must omit symlink/hardlink members")
+        hello_dir = os.path.dirname(hello)
+        hop_dir = os.path.dirname(hello_dir)
+        if oct(os.stat(hello).st_mode & 0o777) != "0o644":
+            fail("normal archive: file mode %s expected 0644" % oct(os.stat(hello).st_mode & 0o777))
+        if oct(os.stat(hop_dir).st_mode & 0o777) != "0o755":
+            fail("normal archive: hop dir mode %s expected 0755" % oct(os.stat(hop_dir).st_mode & 0o777))
         pass_("normal directory/regular-file archive accepted")
+
+        # --- Extract under umask 077 must still yield public HTTP modes ---
+        umask_src = os.path.join(tmp, "umask-src")
+        os.makedirs(umask_src)
+        _write_legit_tree(umask_src)
+        umask_tar = os.path.join(tmp, "umask.tar")
+        oc.safe_tar_create(umask_src, umask_tar)
+        umask_dest = os.path.join(tmp, "umask-out")
+        old_umask = os.umask(0o077)
+        try:
+            oc.safe_tar_extract(umask_tar, umask_dest)
+        finally:
+            os.umask(old_umask)
+        umask_hello = os.path.join(
+            umask_dest, oc.PACKAGE_ROOT_NAME, "payload", "hops", "jammy-to-noble", "hello.txt"
+        )
+        umask_hop = os.path.join(
+            umask_dest, oc.PACKAGE_ROOT_NAME, "payload", "hops", "jammy-to-noble"
+        )
+        if not os.path.isfile(umask_hello):
+            fail("umask 077 extract: expected file missing")
+        hello_mode = os.stat(umask_hello).st_mode & 0o777
+        hop_mode = os.stat(umask_hop).st_mode & 0o777
+        dest_mode = os.stat(umask_dest).st_mode & 0o777
+        if hello_mode != 0o644:
+            fail("umask 077 extract: file mode %s expected 0644" % oct(hello_mode))
+        if hop_mode != 0o755:
+            fail("umask 077 extract: hop dir mode %s expected 0755" % oct(hop_mode))
+        if dest_mode != 0o755:
+            fail("umask 077 extract: dest dir mode %s expected 0755" % oct(dest_mode))
+        pass_("extract under umask 077 yields 0755 dirs / 0644 files")
 
         # --- Exact package-root namespace (directory-only member) ---
         root_only = os.path.join(tmp, "root-only.tar")

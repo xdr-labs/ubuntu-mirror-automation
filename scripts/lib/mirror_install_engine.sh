@@ -910,6 +910,13 @@ engine_materialize_os_mirror() {
     "${MM_SELECTIVE_ROOT}/os-core-releases" \
     "${MM_SELECTIVE_ROOT}/releases" 2>/dev/null || true
 
+  # Public HTTP modes must not inherit a leaked umask 077 from private state
+  # file creation. Directories 0755, payload files 0644.
+  if declare -F mm_normalize_http_public_tree_permissions >/dev/null 2>&1; then
+    mm_normalize_http_public_tree_permissions "${MM_SELECTIVE_ROOT}" selective \
+      || mm_die "OS_MIRROR_PUBLIC_PERMISSION_NORMALIZE=FAIL"
+  fi
+
   # Post-rename provenance gate — OS_MIRROR_READY only after READY verifies.
   engine_verify_selective_ready_provenance \
     || mm_die "SELECTIVE_READY_VERIFY=FAIL after materialize"
@@ -3098,15 +3105,10 @@ engine_enable_http_distribution() {
       || mm_die "HTTP_DISTRIBUTION=FAIL PHASE2_PUBLIC_PERMISSION_NORMALIZE"
   fi
   if [[ -d "${MM_SELECTIVE_ROOT}" ]]; then
-    # Ensure nginx can traverse the selective root (avoid chmod -R / full-tree walk).
-    chmod 0755 "${MM_SELECTIVE_ROOT}" 2>/dev/null || true
-    for _sel_sub in ubuntu shared offline keys hops; do
-      [[ -d "${MM_SELECTIVE_ROOT}/${_sel_sub}" ]] || continue
-      chmod 0755 "${MM_SELECTIVE_ROOT}/${_sel_sub}" 2>/dev/null || true
-    done
-    if [[ -d "${MM_SELECTIVE_ROOT}/shared/offline" ]]; then
-      chmod 0755 "${MM_SELECTIVE_ROOT}/shared" "${MM_SELECTIVE_ROOT}/shared/offline" 2>/dev/null || true
-    fi
+    # First-level chmod is not enough: /ubuntu/ aliases hops/<hop>/ubuntu, and a
+    # leaked umask 077 leaves hop dirs 0700 and indexes 0600 (HTTP 403).
+    mm_normalize_http_public_tree_permissions "${MM_SELECTIVE_ROOT}" selective \
+      || mm_die "HTTP_DISTRIBUTION=FAIL SELECTIVE_PUBLIC_PERMISSION_NORMALIZE"
   fi
   if ! mm_verify_http_publication_permission_closure \
     "${MM_MIRROR_ROOT}" "${MM_CLIENT_ROOT}" "${MM_DP_PHASE2_ROOT}" "$TARGET_DP_VERSION"

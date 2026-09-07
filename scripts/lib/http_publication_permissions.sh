@@ -391,6 +391,29 @@ mm_verify_http_publication_permission_closure() {
     )
   fi
 
+  # /ubuntu/ is a symlink into hops/<hop>/ubuntu. First-level 0755 on selective
+  # is not enough: a leaked umask 077 leaves hop dirs 0700 → HTTP 403.
+  local selective="${MM_SELECTIVE_ROOT:-${base}/selective}"
+  local hop_root="${selective}/hops"
+  local tight hop_file ubuntu_file
+  if [[ -d "$hop_root" ]]; then
+    tight="$(find "$hop_root" -type d ! -perm -o=x -print -quit 2>/dev/null || true)"
+    if [[ -n "$tight" ]]; then
+      _mm_http_perm_error "HTTP_PUBLICATION_PERMISSION_CLOSURE=FAIL hop_dir_not_world_traversable=${tight}"
+      return 1
+    fi
+    hop_file="$(find "$hop_root" -type f \( -name Release -o -name InRelease -o -name Packages \) -print -quit 2>/dev/null || true)"
+    if [[ -n "$hop_file" ]]; then
+      paths+=("$hop_file")
+    fi
+  fi
+  if [[ -e "${selective}/ubuntu" ]]; then
+    ubuntu_file="$(find -L "${selective}/ubuntu" -maxdepth 6 -type f \( -name Release -o -name InRelease \) -print -quit 2>/dev/null || true)"
+    if [[ -n "$ubuntu_file" ]]; then
+      paths+=("$ubuntu_file")
+    fi
+  fi
+
   for f in "${paths[@]}"; do
     [[ -e "$f" ]] || continue
     mm_verify_http_access_as_nginx_user "$f" || return 1

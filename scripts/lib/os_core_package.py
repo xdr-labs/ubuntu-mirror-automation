@@ -764,6 +764,8 @@ def safe_tar_extract(tar_path, dest_dir):
     """
     os.makedirs(dest_dir, exist_ok=True)
     dest_real = os.path.realpath(dest_dir)
+    # Public HTTP payload: never inherit a leaked umask 077 (0700/0600).
+    os.chmod(dest_dir, 0o755)
 
     with tarfile.open(tar_path, "r:*") as tf:
         members = tf.getmembers()
@@ -780,9 +782,11 @@ def safe_tar_extract(tar_path, dest_dir):
             target = _tar_extract_target(dest_dir, cleaned)
             if member.isdir():
                 os.makedirs(target, exist_ok=True)
+                os.chmod(target, 0o755)
                 continue
             parent = os.path.dirname(target)
             os.makedirs(parent, exist_ok=True)
+            os.chmod(parent, 0o755)
             parent_real = os.path.realpath(parent)
             if parent_real != dest_real and not parent_real.startswith(dest_real + os.sep):
                 raise OsCoreError("TAR_UNSAFE_MEMBER member=%s" % member.name)
@@ -791,6 +795,7 @@ def safe_tar_extract(tar_path, dest_dir):
                 raise OsCoreError("TAR_EXTRACT_MISSING member=%s" % member.name)
             with open(target, "wb") as out:
                 shutil.copyfileobj(src, out)
+            os.chmod(target, 0o644)
 
 
 def cmd_build(args):

@@ -91,7 +91,7 @@ mm_wf_atomic_write_file() {
 }
 
 mm_wf_ensure_file() {
-  local f
+  local f old_umask
   f="$(mm_wf_file)"
   if [[ -f "$f" && ! -r "$f" ]]; then
     # Existing root-owned state must not abort non-root callers under set -e.
@@ -100,6 +100,9 @@ mm_wf_ensure_file() {
   fi
   if [[ ! -f "$f" ]]; then
     mkdir -p "$(dirname "$f")" 2>/dev/null || return 1
+    # umask 077 is only for creating the private state file. Restore immediately
+    # so later public OS Core / HTTP trees are not created as 0700/0600.
+    old_umask="$(umask)"
     umask 077
     if ! cat >"$f" <<EOF
 WORKFLOW_STATE=UNCONFIGURED
@@ -133,8 +136,10 @@ VERIFIED_UTC=
 HTTP_REENABLE_REQUIRED=
 EOF
     then
+      umask "$old_umask"
       return 1
     fi
+    umask "$old_umask"
     chmod 600 "$f" 2>/dev/null || true
   fi
 }
