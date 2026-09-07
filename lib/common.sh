@@ -67,12 +67,24 @@ um_ensure_log_dir() {
   if [[ ! -d "$dir" ]]; then
     mkdir -p "$dir" 2>/dev/null || true
   fi
-  # Fall back to /tmp if system log dir is not writable
+  # Fall back to a private log directory if the system log dir is not writable.
+  # Avoid the shared predictable path /tmp/ubuntu-mirror-logs.
   if [[ -n "${um_log_file:-}" ]] && [[ ! -w "$dir" ]]; then
-    local base
+    local base fallback_dir
     base="$(basename "$um_log_file")"
-    um_log_file="/tmp/ubuntu-mirror-logs/${base}"
-    mkdir -p /tmp/ubuntu-mirror-logs 2>/dev/null || true
+    if [[ "$(id -u)" -eq 0 ]]; then
+      fallback_dir="/run/ubuntu-mirror-logs"
+      mkdir -p "$fallback_dir" 2>/dev/null || true
+      chmod 0700 "$fallback_dir" 2>/dev/null || true
+    else
+      fallback_dir="$(mktemp -d "${TMPDIR:-/tmp}/ubuntu-mirror-logs.XXXXXX" 2>/dev/null || true)"
+      if [[ -n "$fallback_dir" ]]; then
+        chmod 0700 "$fallback_dir" 2>/dev/null || true
+      fi
+    fi
+    if [[ -n "${fallback_dir:-}" && -d "$fallback_dir" ]]; then
+      um_log_file="${fallback_dir}/${base}"
+    fi
   fi
 }
 

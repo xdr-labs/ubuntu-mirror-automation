@@ -436,19 +436,36 @@ um_menu_delete_data() {
   fi
 
   if ! um_whiptail_yesno "Delete data" \
-    "DANGER: Delete existing mirror data?\n\nPath: ${BASE_PATH}\nSize: ~${data_gib} GiB\n\nRemoves mirror/, skel/, var/.\nConfig and nginx are kept." 1; then
+    "DANGER: Delete existing mirror data?\n\nPath: ${BASE_PATH}\nSize: ~${data_gib} GiB\n\nRemoves selective/, dp-phase2/, client/, .install-cache/, offline/, and legacy mirror/skel/var.\nConfig and nginx are kept." 1; then
     return 0
   fi
 
   confirm="$(um_whiptail_input "Confirm delete" \
-    "Type DELETE to permanently remove:\n${BASE_PATH}" "")" || return 0
+    "Type DELETE to permanently remove product-owned data under:\n${BASE_PATH}" "")" || return 0
   if [[ "$confirm" != "DELETE" ]]; then
     um_whiptail_msg "Delete data" "Cancelled — data not deleted."
     return 0
   fi
 
   mkdir -p "$BASE_PATH"
-  rm -rf "${MIRROR_PATH}" "${SKEL_PATH}" "${VAR_PATH}"
+  local -a del_targets=(
+    "${BASE_PATH}/selective"
+    "${BASE_PATH}/dp-phase2"
+    "${BASE_PATH}/client"
+    "${BASE_PATH}/.install-cache"
+    "${BASE_PATH}/offline"
+    "${MIRROR_PATH}"
+    "${SKEL_PATH}"
+    "${VAR_PATH}"
+  )
+  local t
+  for t in "${del_targets[@]}"; do
+    [[ -n "$t" ]] || continue
+    case "$t" in
+      /|"") continue ;;
+    esac
+    rm -rf "$t"
+  done
   um_clear_marker "sync-started" 2>/dev/null || true
   um_clear_marker "sync-failed" 2>/dev/null || true
   um_clear_marker "initial-sync-complete" 2>/dev/null || true

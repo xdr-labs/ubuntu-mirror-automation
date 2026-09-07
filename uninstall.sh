@@ -8,6 +8,8 @@ UM_PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${UM_PROJECT_ROOT}/lib/common.sh"
 # shellcheck source=lib/config.sh
 source "${UM_PROJECT_ROOT}/lib/config.sh"
+# shellcheck source=lib/runtime_manifest.sh
+source "${UM_PROJECT_ROOT}/lib/runtime_manifest.sh"
 
 UM_DRY_RUN=0
 UM_FORCE=0
@@ -27,7 +29,7 @@ Options:
   --config PATH      Config path
   --dry-run          Show actions only
   --force            Required for destructive options
-  --purge-data       Delete BASE_PATH mirror data (DANGEROUS)
+  --purge-data       Delete product-owned mirror data under BASE_PATH (DANGEROUS)
   --purge-packages   apt-get remove apt-mirror (nginx left installed)
   -h, --help         Show help
 EOF
@@ -97,16 +99,26 @@ remove_nginx_site() {
   fi
 }
 
+# Symmetric with bootstrap install: remove runtime tree + current entrypoints.
 remove_bins() {
   local bins=(
     mirrorctl mirror-status.sh mirror-recovery.sh validate.sh
     client-setup.sh client-validate.sh
+    ubuntu-offline-mirror
   )
   local b
   for b in "${bins[@]}"; do
     um_run rm -f "${INSTALL_BIN_DIR}/${b}"
   done
   um_run rm -f /usr/local/sbin/mirrorctl
+  local sbin_link="${UM_UOM_INSTALL_PATH:-/usr/local/sbin/ubuntu-offline-mirror.sh}"
+  um_run rm -f "$sbin_link"
+  # Drop other installed script entrypoint names if present as direct bins.
+  local ep
+  for ep in "${UM_RUNTIME_SCRIPT_ENTRYPOINTS[@]}"; do
+    um_run rm -f "${INSTALL_BIN_DIR}/${ep}"
+    um_run rm -f "/usr/local/sbin/${ep}"
+  done
   um_run rm -rf "${INSTALL_LIB_DIR}"
   # Keep INSTALL_CONF_DIR unless force — operator may want mirror.conf
   if [[ "$UM_FORCE" == "1" ]]; then
@@ -123,6 +135,53 @@ restore_mirror_list_note() {
   fi
 }
 
+# Validate a product-owned path before rm -rf. Rejects /, empty, shallow,
+# symlink escape outside BASE_PATH, and unexpected parents.
+um_assert_purge_path() {
+  local path="$1"
+  local approved="${2:-$BASE_PATH}"
+  local resolved approved_resolved parent depth
+  [[ -n "$path" ]] || um_die "PURGE_PATH=FAIL reason=empty"
+  [[ -n "$approved" ]] || um_die "PURGE_PATH=FAIL reason=empty_base"
+  if [[ -L "$path" ]]; then
+    um_die "PURGE_PATH=FAIL reason=symlink path=${path}"
+  fi
+  if [[ -e "$path" ]]; then
+    resolved="$(realpath -m "$path" 2>/dev/null || readlink -f "$path" 2>/dev/null || printf '%s' "$path")"
+  else
+    parent="$(dirname "$path")"
+    if [[ -d "$parent" ]]; then
+      resolved="$(realpath -m "$parent" 2>/dev/null || printf '%s' "$parent")/$(basename "$path")"
+    else
+      resolved="$path"
+    fi
+  fi
+  resolved="${resolved%/}"
+  [[ -n "$resolved" ]] || resolved="/"
+  case "$resolved" in
+    /|/bin|/boot|/dev|/etc|/home|/lib|/lib64|/media|/mnt|/opt|/proc|/root|/run|/sbin|/srv|/sys|/tmp|/usr|/var)
+      um_die "PURGE_PATH=FAIL reason=forbidden_root path=${resolved}"
+      ;;
+  esac
+  if [[ -e "$approved" ]]; then
+    approved_resolved="$(realpath -m "$approved" 2>/dev/null || printf '%s' "$approved")"
+  else
+    approved_resolved="${approved%/}"
+  fi
+  approved_resolved="${approved_resolved%/}"
+  case "$resolved" in
+    "$approved_resolved"|"$approved_resolved"/*) ;;
+    *)
+      um_die "PURGE_PATH=FAIL reason=outside_base path=${resolved} base=${approved_resolved}"
+      ;;
+  esac
+  depth="$(awk -F/ '{print NF-1}' <<<"$resolved")"
+  if [[ "$depth" -lt 3 ]]; then
+    um_die "PURGE_PATH=FAIL reason=insufficient_depth path=${resolved}"
+  fi
+  return 0
+}
+
 purge_data() {
   if [[ "$UM_PURGE_DATA" != "1" ]]; then
     return 0
@@ -130,11 +189,40 @@ purge_data() {
   if [[ "$UM_FORCE" != "1" ]]; then
     um_die "--purge-data requires --force"
   fi
-  um_warn "DELETING mirror data under $BASE_PATH"
+  local base="${BASE_PATH}"
+  [[ -n "$base" ]] || um_die "PURGE_DATA=FAIL reason=empty_BASE_PATH"
+  um_assert_purge_path "$base" "$base"
+
+  # Current-generation product-owned large-data roots (plus legacy apt-mirror).
+  local -a targets=(
+    "${base}/selective"
+    "${base}/dp-phase2"
+    "${base}/client"
+    "${base}/.install-cache"
+    "${base}/offline"
+    "${MIRROR_PATH}"
+    "${SKEL_PATH}"
+    "${VAR_PATH}"
+  )
+  local t
+  um_warn "DESTRUCTIVE purge authorized for product-owned paths under ${base}"
+  for t in "${targets[@]}"; do
+    um_info "PURGE_CANDIDATE=${t}"
+  done
   if [[ "$UM_NON_INTERACTIVE" != "1" ]]; then
-    um_confirm "Confirm deletion of $BASE_PATH ?" || um_die "Aborted"
+    um_confirm "Confirm deletion of listed product-owned paths under ${base} ?" \
+      || um_die "Aborted"
   fi
-  um_run rm -rf "${MIRROR_PATH}" "${SKEL_PATH}" "${VAR_PATH}"
+  for t in "${targets[@]}"; do
+    [[ -n "$t" ]] || continue
+    um_assert_purge_path "$t" "$base"
+    if [[ -e "$t" || -L "$t" ]]; then
+      um_info "PURGE_DELETE=${t}"
+      um_run rm -rf "$t"
+    else
+      um_info "PURGE_SKIP_MISSING=${t}"
+    fi
+  done
   um_ok "Mirror data removed"
 }
 
