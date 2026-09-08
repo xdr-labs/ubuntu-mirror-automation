@@ -261,7 +261,7 @@ class GenericAwsUnionPlanTests(unittest.TestCase):
 
 
 class ClientTemplateAwsKernelTests(unittest.TestCase):
-    def test_templates_support_aws_flavor_and_bash_hard_gate(self):
+    def test_templates_support_aws_flavor_and_login_shell_preflight(self):
         series = [
             ('xenial', '4.4.0-1128-aws'),
             ('bionic', '5.4.0-1103-aws'),
@@ -275,10 +275,14 @@ class ClientTemplateAwsKernelTests(unittest.TestCase):
             self.assertIn('KERNEL_FLAVOR_AWS=SUPPORTED', text, rel)
             self.assertIn('linux-image-aws', text, rel)
             self.assertIn('linux-aws', text, rel)
+            self.assertIn('assert_aella_login_shell_preflight', text, rel)
+            self.assertIn('AELLA_LOGIN_SHELL_PREFLIGHT=PASS', text, rel)
+            self.assertIn('EXPECTED_STELLAR_DP_SHELL', text, rel)
+            self.assertIn('AELLA_LOGIN_SHELL_CHANGE_REQUIRED=YES', text, rel)
+            self.assertIn('FAIL_AELLA_SHELL_UNSUPPORTED', text, rel)
+            self.assertIn('SHELL_MUTATION_DURING_PREFLIGHT=NO', text, rel)
+            # Alias retained for older references
             self.assertIn('assert_aella_login_shell_bash_hard_gate', text, rel)
-            self.assertIn('AELLA_BASH_HARD_GATE=FAIL', text, rel)
-            self.assertIn('FAIL_AELLA_SHELL_NOT_BASH', text, rel)
-            self.assertIn('chsh -s /bin/bash aella', text, rel)
             # generic path must remain
             self.assertIn('linux-image-generic', text, rel)
 

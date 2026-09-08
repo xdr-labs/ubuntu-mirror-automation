@@ -14,6 +14,13 @@ MIRROR_INSTALL_ENGINE_LOADED=1
 engine_preflight_host() {
   mm_require_root
   mm_require_cmds bash curl tar sha1sum sha256sum awk flock stat df readlink mv ln find mkdir chmod python3 mktemp sed grep gpg
+  # Fail before multi-GB R2/ACPS/Phase2 work when nginx cannot traverse publication
+  # ancestry (field: /var mode 700 → postpublish CLIENT_PUBLIC_NGINX_USER_READ=FAIL).
+  # Detect-only: never chmod system ancestors such as /var from this product.
+  if declare -F mm_assert_nginx_publication_ancestors >/dev/null 2>&1; then
+    mm_assert_nginx_publication_ancestors "${MM_MIRROR_ROOT:-/var/spool/apt-mirror}" \
+      || mm_die "PUBLICATION_PREFLIGHT=FAIL HEAVY_DOWNLOAD_STARTED=NO"
+  fi
   mm_ok "PREFLIGHT_HOST=PASS"
 }
 
@@ -1250,6 +1257,7 @@ engine_phase2_install_private_upstream() {
   local src="$1"
   local ver="${2:-${TARGET_DP_VERSION:-${PHASE2_TARGET_VERSION}}}"
   local dir dest dest_sha prov tmp tmp_sha tmp_prov sidecar_src sidecar_digest actual_sha1
+  local parent
   [[ -f "$src" && -s "$src" ]] || return 1
   engine_phase2_upstream_allowlisted "$src" || return 1
   dir="$(engine_phase2_private_upstream_dir "$ver")"
@@ -1258,8 +1266,12 @@ engine_phase2_install_private_upstream() {
   prov="$(engine_phase2_private_provenance_path "$ver")"
   mkdir -p "$dir" || return 1
   engine_phase2_chmod_private_dir "$dir" || return 1
-  if [[ -d "$(dirname "$dir")" ]]; then
-    engine_phase2_chmod_private_dir "$(dirname "$dir")" || return 1
+  # Only harden parents inside the private cache tree — never chmod host
+  # ancestors outside MM_CACHE_ROOT (e.g. fixture /tmp/tmp.* or /var).
+  parent="$(dirname "$dir")"
+  if [[ -d "$parent" && -n "${MM_CACHE_ROOT:-}" \
+    && ( "$parent" == "$MM_CACHE_ROOT" || "$parent" == "$MM_CACHE_ROOT"/* ) ]]; then
+    engine_phase2_chmod_private_dir "$parent" || return 1
   fi
   tmp="${dest}.new.$$"
   tmp_sha="${dest_sha}.new.$$"
@@ -2407,6 +2419,12 @@ EOF
   if ! mv -f "$dest_tmp" "$dest"; then
     rm -rf "$dest_tmp"
     mm_die "DP_PHASE2_PUBLISH_MOVE=FAIL"
+  fi
+  # Public Phase2 tree must not inherit a leaked umask 077 (0700/0600 → HTTP 403).
+  # Explicit normalize here so artifacts are HTTP-readable before enable-http.
+  if declare -F mm_normalize_http_public_tree_permissions >/dev/null 2>&1; then
+    mm_normalize_http_public_tree_permissions "$dest" phase2 \
+      || mm_die "DP_PHASE2_PUBLIC_PERMS=FAIL dest=${dest}"
   fi
   publish_elapsed=$(( $(date +%s) - publish_start ))
   mm_ok "DP_PHASE2_ATOMIC_PUBLISH=PASS dest=${dest} bundle=${stable} elapsed=${publish_elapsed}s"

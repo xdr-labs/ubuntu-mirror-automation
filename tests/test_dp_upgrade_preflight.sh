@@ -235,11 +235,11 @@ run_pf "$WORKDIR/phsnap" \
   --snapshot-reference "n/a" || true
 [[ "$RC" -eq 20 ]] && grep SNAPSHOT_OR_BACKUP_CONFIRMED "$RESDIR/checks.tsv" | grep -q FAIL && pass "placeholder snapshot rejected" || fail "placeholder"
 
-# 22. aella aella_cli → BLOCKED
+# 22. aella aella_cli → PASS (expected Stellar shell; OS hop auto-converts)
 run_pf "$WORKDIR/aellashell" \
   --collection "$FIX/xenial-aio-current-blocked" --package-source-mode direct --bringup-mode offline \
   --snapshot-reference "snap-ok" || true
-grep LOGIN_SHELL_AELLA "$RESDIR/checks.tsv" | grep -q FAIL && pass "aella_cli blocked" || fail "aella shell"
+grep LOGIN_SHELL_AELLA "$RESDIR/checks.tsv" | grep -q PASS && pass "aella_cli accepted as expected Stellar shell" || fail "aella shell"
 
 # 23. root aella_cli → BLOCKED
 run_pf "$WORKDIR/rootshell" \
@@ -415,7 +415,7 @@ assert d["upgrade_plan"]["phase2_required"] is False
 assert d["upgrade_plan"]["phase2_evaluated"] is False
 assert d["upgrade_plan"]["recommended_action"]=="RUN_OS_UPGRADE"
 ids={c["check_id"]:c for c in d["checks"]}
-assert ids["LOGIN_SHELL_AELLA"]["status"]=="FAIL"
+assert ids["LOGIN_SHELL_AELLA"]["status"]=="PASS"
 assert ids["SNAPSHOT_OR_BACKUP_CONFIRMED"]["status"]=="FAIL"
 assert ids["CRITICAL_HELD_PACKAGES"]["status"]=="FAIL"
 assert ids["PACKAGE_SOURCE_SELECTED"]["status"]=="FAIL"

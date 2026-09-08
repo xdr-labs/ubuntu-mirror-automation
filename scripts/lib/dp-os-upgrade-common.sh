@@ -2943,8 +2943,11 @@ osu_live_precheck() {
   if [[ "$POLICY_REQUIRE_ROOT_BASH" == "true" && "$root_shell" != *bash* ]]; then
     reasons+=("root_shell"); rc=1
   fi
-  if [[ "$POLICY_REQUIRE_AELLA_BASH" == "true" && -n "$aella_shell" && "$aella_shell" != *bash* ]]; then
-    reasons+=("aella_shell"); rc=1
+  if [[ "$POLICY_REQUIRE_AELLA_BASH" == "true" && -n "$aella_shell" ]]; then
+    case "$aella_shell" in
+      /bin/bash|/usr/bin/bash|/usr/bin/aella_cli) ;;
+      *) reasons+=("aella_shell"); rc=1 ;;
+    esac
   fi
 
   local status="PASS"

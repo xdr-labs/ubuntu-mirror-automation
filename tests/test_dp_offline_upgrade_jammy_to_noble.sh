@@ -632,17 +632,19 @@ else
   pass "preflight-only: no confirmation / no reboot path"
 fi
 
-# aella_cli login shell → AELLA_BASH_HARD_GATE fails closed
+# aella_cli login shell → expected Stellar DP shell: preflight PASS, no mutation
 rm -rf "$fx2/opt/aelladata/os-upgrade"
 printf 'root:x:0:0:root:/root:/bin/bash\naella:x:1000:1000:aella:/home/aella:/usr/bin/aella_cli\n' >"$fx2/etc/passwd"
+cp -a "$fx2/etc/passwd" "$fx2/passwd.before-aella-cli"
 rc="$(run_preflight_fixture "$fx2")"
-if [[ "$rc" -ne 0 ]] \
-   && grep -q 'AELLA_BASH_HARD_GATE=FAIL' "$fx2/out.txt" \
-   && grep -q 'FAIL_AELLA_SHELL_NOT_BASH' "$fx2/out.txt" \
-   && grep -q 'chsh -s /bin/bash aella' "$fx2/out.txt"; then
-  pass "aella_cli shell: preflight hard-gated"
+if [[ "$rc" -eq 0 ]] \
+   && grep -q 'AELLA_LOGIN_SHELL_PREFLIGHT=PASS' "$fx2/out.txt" \
+   && grep -q 'AELLA_LOGIN_SHELL_SOURCE=/usr/bin/aella_cli' "$fx2/out.txt" \
+   && grep -q 'SHELL_MUTATION_DURING_PREFLIGHT=NO' "$fx2/out.txt" \
+   && cmp -s "$fx2/passwd.before-aella-cli" "$fx2/etc/passwd"; then
+  pass "aella_cli shell: preflight PASS non-mutating"
 else
-  fail "aella_cli shell: preflight hard-gated"
+  fail "aella_cli shell: preflight PASS non-mutating"
   tail -30 "$fx2/out.txt" || true
 fi
 printf 'root:x:0:0:root:/root:/bin/bash\naella:x:1000:1000:aella:/home/aella:/bin/bash\n' >"$fx2/etc/passwd"

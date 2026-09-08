@@ -630,17 +630,58 @@ else
   pass "preflight-only: no confirmation / no reboot path"
 fi
 
-# aella_cli login shell → AELLA_BASH_HARD_GATE fails closed
+# CASE 7 / field contract: SOURCE_OS=16.04 + aws kernel + aella_cli → preflight PASS, no mutation
 rm -rf "$fx2/opt/aelladata/os-upgrade"
+mkdir -p "$fx2/boot"
+touch "$fx2/boot/vmlinuz-4.4.0-1128-aws"
 printf 'root:x:0:0:root:/root:/bin/bash\naella:x:1000:1000:aella:/home/aella:/usr/bin/aella_cli\n' >"$fx2/etc/passwd"
+cp -a "$fx2/etc/passwd" "$fx2/passwd.before-aella-cli"
+rc="$(run_preflight_fixture "$fx2" DP_OFFLINE_FAKE_KERNEL=4.4.0-1128-aws)"
+if [[ "$rc" -eq 0 ]] \
+   && grep -q 'KERNEL_FLAVOR_AWS=SUPPORTED' "$fx2/out.txt" \
+   && grep -q 'AELLA_LOGIN_SHELL_PREFLIGHT=PASS' "$fx2/out.txt" \
+   && grep -q 'AELLA_LOGIN_SHELL_SOURCE=/usr/bin/aella_cli' "$fx2/out.txt" \
+   && grep -q 'AELLA_LOGIN_SHELL_CLASS=EXPECTED_STELLAR_DP_SHELL' "$fx2/out.txt" \
+   && grep -q 'AELLA_LOGIN_SHELL_CHANGE_REQUIRED=YES' "$fx2/out.txt" \
+   && grep -q 'SHELL_MUTATION_DURING_PREFLIGHT=NO' "$fx2/out.txt" \
+   && ! grep -q 'AELLA_BASH_HARD_GATE=FAIL' "$fx2/out.txt" \
+   && ! grep -q 'FAIL_AELLA_SHELL_NOT_BASH' "$fx2/out.txt" \
+   && cmp -s "$fx2/passwd.before-aella-cli" "$fx2/etc/passwd"; then
+  pass "field contract: 16.04/aws/aella_cli preflight PASS non-mutating"
+else
+  fail "field contract: 16.04/aws/aella_cli preflight PASS non-mutating"
+  tail -40 "$fx2/out.txt" || true
+fi
+rm -f "$fx2/boot/vmlinuz-4.4.0-1128-aws"
+
+# CASE 2: already /bin/bash → ALREADY_READY, no mutation
+rm -rf "$fx2/opt/aelladata/os-upgrade"
+printf 'root:x:0:0:root:/root:/bin/bash\naella:x:1000:1000:aella:/home/aella:/bin/bash\n' >"$fx2/etc/passwd"
+cp -a "$fx2/etc/passwd" "$fx2/passwd.before-bash"
+rc="$(run_preflight_fixture "$fx2")"
+if [[ "$rc" -eq 0 ]] \
+   && grep -q 'AELLA_LOGIN_SHELL_PREFLIGHT=PASS' "$fx2/out.txt" \
+   && grep -q 'AELLA_LOGIN_SHELL_CLASS=ALREADY_READY' "$fx2/out.txt" \
+   && grep -q 'SHELL_MUTATION_DURING_PREFLIGHT=NO' "$fx2/out.txt" \
+   && cmp -s "$fx2/passwd.before-bash" "$fx2/etc/passwd"; then
+  pass "already bash: preflight PASS non-mutating"
+else
+  fail "already bash: preflight PASS non-mutating"
+  tail -30 "$fx2/out.txt" || true
+fi
+
+# CASE 3: unsupported aella shell → FAIL CLOSED, no mutation
+rm -rf "$fx2/opt/aelladata/os-upgrade"
+printf 'root:x:0:0:root:/root:/bin/bash\naella:x:1000:1000:aella:/home/aella:/bin/false\n' >"$fx2/etc/passwd"
+cp -a "$fx2/etc/passwd" "$fx2/passwd.before-false"
 rc="$(run_preflight_fixture "$fx2")"
 if [[ "$rc" -ne 0 ]] \
-   && grep -q 'AELLA_BASH_HARD_GATE=FAIL' "$fx2/out.txt" \
-   && grep -q 'FAIL_AELLA_SHELL_NOT_BASH' "$fx2/out.txt" \
-   && grep -q 'chsh -s /bin/bash aella' "$fx2/out.txt"; then
-  pass "aella_cli shell: preflight hard-gated"
+   && grep -q 'AELLA_LOGIN_SHELL_PREFLIGHT=FAIL' "$fx2/out.txt" \
+   && grep -q 'FAIL_AELLA_SHELL_UNSUPPORTED' "$fx2/out.txt" \
+   && cmp -s "$fx2/passwd.before-false" "$fx2/etc/passwd"; then
+  pass "unsupported aella shell: preflight FAIL CLOSED"
 else
-  fail "aella_cli shell: preflight hard-gated"
+  fail "unsupported aella shell: preflight FAIL CLOSED"
   tail -30 "$fx2/out.txt" || true
 fi
 printf 'root:x:0:0:root:/root:/bin/bash\naella:x:1000:1000:aella:/home/aella:/bin/bash\n' >"$fx2/etc/passwd"
@@ -917,43 +958,53 @@ else
   tail -40 "$fx2/out-commit.txt" || true
 fi
 
-# root bash, aella aella_cli → hard gate blocks commit before change_login_shells
+# CASE 1 field contract: normal Stellar aella_cli → CHANGED to /bin/bash
 printf 'root:x:0:0:root:/root:/bin/bash\naella:x:1000:1000:aella:/home/aella:/usr/bin/aella_cli\n' >"$fx2/etc/passwd"
 printf 'systemd\nudev\n' >"$fx2/tmp/held-packages.txt"
 rc="$(run_commit_fixture "$fx2")"
-if [[ "$rc" -ne 0 ]] \
-   && grep -q 'AELLA_BASH_HARD_GATE=FAIL' "$fx2/out-commit.txt" \
-   && grep -q 'FAIL_AELLA_SHELL_NOT_BASH' "$fx2/out-commit.txt"; then
-  pass "aella_cli shell blocked by hard gate before commit"
+shell_tsv="$(find "$fx2/opt/aelladata/os-upgrade/offline/backups" -name shell-changes.tsv 2>/dev/null | head -1 || true)"
+if [[ "$rc" -eq 0 ]] \
+   && grep -q 'AELLA_LOGIN_SHELL_PREFLIGHT=PASS' "$fx2/out-commit.txt" \
+   && grep -q 'AELLA_LOGIN_SHELL_SOURCE=/usr/bin/aella_cli' "$fx2/out-commit.txt" \
+   && grep -q 'SHELL_MUTATION_DURING_PREFLIGHT=NO' "$fx2/out-commit.txt" \
+   && grep -q 'LOGIN_SHELL_AELLA_BEFORE=/usr/bin/aella_cli' "$fx2/out-commit.txt" \
+   && grep -q 'LOGIN_SHELL_AELLA_ACTION=CHANGED' "$fx2/out-commit.txt" \
+   && grep -q 'LOGIN_SHELL_AELLA_AFTER=/bin/bash' "$fx2/out-commit.txt" \
+   && grep -q 'LOGIN_SHELL_AUTOMATION=PASS' "$fx2/out-commit.txt" \
+   && grep -q '^aella:.*:/bin/bash$' "$fx2/etc/passwd" \
+   && [[ -n "$shell_tsv" ]] && grep -q $'aella\t/usr/bin/aella_cli' "$shell_tsv"; then
+  pass "aella_cli → auto CHANGED to /bin/bash (field contract)"
 else
-  fail "aella_cli shell should hard-gate before commit (rc=${rc})"
+  fail "aella_cli should auto-change during commit (rc=${rc})"
   tail -40 "$fx2/out-commit.txt" || true
 fi
-printf 'root:x:0:0:root:/root:/bin/bash\naella:x:1000:1000:aella:/home/aella:/bin/bash\n' >"$fx2/etc/passwd"
 
-# unexpected root shell + aella_cli → hard gate blocks (aella is aella_cli)
+# unexpected root shell + aella_cli → root converted, aella CHANGED
 printf 'root:x:0:0:root:/root:/bin/sh\naella:x:1000:1000:aella:/home/aella:/usr/bin/aella_cli\n' >"$fx2/etc/passwd"
 printf 'systemd\nudev\n' >"$fx2/tmp/held-packages.txt"
 rc="$(run_commit_fixture "$fx2")"
-if [[ "$rc" -ne 0 ]] \
-   && grep -q 'AELLA_BASH_HARD_GATE=FAIL' "$fx2/out-commit.txt" \
-   && grep -q 'FAIL_AELLA_SHELL_NOT_BASH' "$fx2/out-commit.txt"; then
-  pass "unexpected shells blocked by hard gate before commit"
+if [[ "$rc" -eq 0 ]] \
+   && grep -q 'LOGIN_SHELL_ROOT_ACTION=CHANGED' "$fx2/out-commit.txt" \
+   && grep -q 'LOGIN_SHELL_AELLA_ACTION=CHANGED' "$fx2/out-commit.txt" \
+   && grep -q 'LOGIN_SHELL_AUTOMATION=PASS' "$fx2/out-commit.txt" \
+   && grep -q '^root:.*:/bin/bash$' "$fx2/etc/passwd" \
+   && grep -q '^aella:.*:/bin/bash$' "$fx2/etc/passwd"; then
+  pass "root /bin/sh + aella_cli → both CHANGED"
 else
-  fail "unexpected shells should hard-gate before commit (rc=${rc})"
+  fail "root/aella_cli commit automation (rc=${rc})"
   tail -40 "$fx2/out-commit.txt" || true
 fi
 printf 'root:x:0:0:root:/root:/bin/bash\naella:x:1000:1000:aella:/home/aella:/bin/bash\n' >"$fx2/etc/passwd"
 
-# aella missing → FAIL before hold/APT mutation (account FAIL or hard gate with shell=unknown)
+# aella missing → FAIL before hold/APT mutation
 printf 'root:x:0:0:root:/root:/bin/bash\n' >"$fx2/etc/passwd"
 printf 'systemd\nudev\n' >"$fx2/tmp/held-packages.txt"
 cp -a "$fx2/tmp/held-packages.txt" "$fx2/tmp/held-packages.before-shell"
 rc="$(run_commit_fixture "$fx2")"
 if [[ "$rc" -ne 0 ]] \
-   && { grep -q 'LOGIN_SHELL_AELLA_ACCOUNT=FAIL' "$fx2/out-commit.txt" \
-        || grep -q 'AELLA_BASH_HARD_GATE=FAIL' "$fx2/out-commit.txt" \
-        || grep -q 'FAIL_AELLA_SHELL_NOT_BASH' "$fx2/out-commit.txt"; } \
+   && { grep -q 'FAIL_AELLA_ACCOUNT_MISSING' "$fx2/out-commit.txt" \
+        || grep -q 'LOGIN_SHELL_AELLA_ACCOUNT=FAIL' "$fx2/out-commit.txt" \
+        || grep -q 'AELLA_LOGIN_SHELL_PREFLIGHT=FAIL' "$fx2/out-commit.txt"; } \
    && ! grep -q 'CRITICAL_OS_UNHOLD_BEGIN' "$fx2/out-commit.txt" \
    && ! grep -q 'apply_local_sources\|TARGET_POCKET_REGISTRATION_PREFLIGHT=PASS' "$fx2/out-commit.txt" \
    && cmp -s "$fx2/tmp/held-packages.before-shell" "$fx2/tmp/held-packages.txt"; then
@@ -964,7 +1015,7 @@ else
 fi
 printf 'root:x:0:0:root:/root:/bin/bash\naella:x:1000:1000:aella:/home/aella:/bin/bash\n' >"$fx2/etc/passwd"
 
-# root missing → FAIL before hold/APT mutation (aella bash so hard gate PASS)
+# root missing → FAIL before hold/APT mutation (aella bash so preflight PASS)
 printf 'aella:x:1000:1000:aella:/home/aella:/bin/bash\n' >"$fx2/etc/passwd"
 printf 'systemd\nudev\n' >"$fx2/tmp/held-packages.txt"
 cp -a "$fx2/tmp/held-packages.txt" "$fx2/tmp/held-packages.before-shell"
@@ -981,20 +1032,60 @@ else
 fi
 printf 'root:x:0:0:root:/root:/bin/bash\naella:x:1000:1000:aella:/home/aella:/bin/bash\n' >"$fx2/etc/passwd"
 
-# aella_cli passwd → hard gate blocks before noop/post-change verify path
-printf 'root:x:0:0:root:/root:/usr/bin/aella_cli\naella:x:1000:1000:aella:/home/aella:/usr/bin/aella_cli\n' >"$fx2/etc/passwd"
+# CASE 4: shell mutation command failure → no unhold / no release-upgrade path
+printf 'root:x:0:0:root:/root:/bin/bash\naella:x:1000:1000:aella:/home/aella:/usr/bin/aella_cli\n' >"$fx2/etc/passwd"
+printf 'systemd\nudev\n' >"$fx2/tmp/held-packages.txt"
+cp -a "$fx2/tmp/held-packages.txt" "$fx2/tmp/held-packages.before-shell"
+rc="$(run_commit_fixture "$fx2" DP_OFFLINE_FAKE_SHELL_CHANGE_FAIL=1)"
+if [[ "$rc" -ne 0 ]] \
+   && grep -q 'LOGIN_SHELL_AUTOMATION=FAIL' "$fx2/out-commit.txt" \
+   && grep -q 'FAIL_LOGIN_SHELL_CHANGE_aella\|FAIL_LOGIN_SHELL_CHANGE_root' "$fx2/out-commit.txt" \
+   && ! grep -q 'CRITICAL_OS_UNHOLD_BEGIN' "$fx2/out-commit.txt" \
+   && ! grep -q 'do-release-upgrade\|DRO_BEGIN\|RELEASE_UPGRADE_BEGIN' "$fx2/out-commit.txt" \
+   && cmp -s "$fx2/tmp/held-packages.before-shell" "$fx2/tmp/held-packages.txt"; then
+  pass "shell mutation failure fails before unhold/DRO"
+else
+  fail "shell mutation failure should abort before unhold (rc=${rc})"
+  tail -40 "$fx2/out-commit.txt" || true
+fi
+printf 'root:x:0:0:root:/root:/bin/bash\naella:x:1000:1000:aella:/home/aella:/bin/bash\n' >"$fx2/etc/passwd"
+
+# CASE 5: command reports success but shell did not change → verify FAIL, no DRO
+printf 'root:x:0:0:root:/root:/bin/bash\naella:x:1000:1000:aella:/home/aella:/usr/bin/aella_cli\n' >"$fx2/etc/passwd"
 printf 'systemd\nudev\n' >"$fx2/tmp/held-packages.txt"
 cp -a "$fx2/tmp/held-packages.txt" "$fx2/tmp/held-packages.before-shell"
 rc="$(run_commit_fixture "$fx2" DP_OFFLINE_FAKE_SHELL_NOOP_SUCCESS=1)"
 if [[ "$rc" -ne 0 ]] \
-   && grep -q 'AELLA_BASH_HARD_GATE=FAIL' "$fx2/out-commit.txt" \
-   && grep -q 'FAIL_AELLA_SHELL_NOT_BASH' "$fx2/out-commit.txt" \
+   && grep -q 'LOGIN_SHELL_AUTOMATION=FAIL' "$fx2/out-commit.txt" \
+   && grep -q 'FAIL_LOGIN_SHELL_VERIFY_aella\|FAIL_LOGIN_SHELL_VERIFY_root' "$fx2/out-commit.txt" \
    && ! grep -q 'CRITICAL_OS_UNHOLD_BEGIN' "$fx2/out-commit.txt" \
-   && cmp -s "$fx2/tmp/held-packages.before-shell" "$fx2/tmp/held-packages.txt"; then
-  pass "post-change noop path blocked by hard gate before commit"
+   && ! grep -q 'do-release-upgrade\|DRO_BEGIN\|RELEASE_UPGRADE_BEGIN' "$fx2/out-commit.txt" \
+   && cmp -s "$fx2/tmp/held-packages.before-shell" "$fx2/tmp/held-packages.txt" \
+   && grep -q '^aella:.*:/usr/bin/aella_cli$' "$fx2/etc/passwd"; then
+  pass "post-change verify FAIL when shell unchanged"
 else
-  fail "noop shell path should hard-gate before commit (rc=${rc})"
+  fail "noop shell success should fail verify before unhold (rc=${rc})"
   tail -40 "$fx2/out-commit.txt" || true
+fi
+printf 'root:x:0:0:root:/root:/bin/bash\naella:x:1000:1000:aella:/home/aella:/bin/bash\n' >"$fx2/etc/passwd"
+
+# CASE 6: aella_cli → changed to bash → injected pre-DRO failure → restore aella_cli
+printf 'root:x:0:0:root:/root:/bin/bash\naella:x:1000:1000:aella:/home/aella:/usr/bin/aella_cli\n' >"$fx2/etc/passwd"
+printf 'systemd\nudev\n' >"$fx2/tmp/held-packages.txt"
+rc="$(run_commit_fixture "$fx2" DP_OFFLINE_FAKE_FAIL_AFTER_UNHOLD=1)"
+if [[ "$rc" -ne 0 ]] \
+   && grep -q 'LOGIN_SHELL_AELLA_BEFORE=/usr/bin/aella_cli' "$fx2/out-commit.txt" \
+   && grep -q 'LOGIN_SHELL_AELLA_ACTION=CHANGED' "$fx2/out-commit.txt" \
+   && grep -q 'LOGIN_SHELL_AELLA_AFTER=/bin/bash' "$fx2/out-commit.txt" \
+   && grep -q 'LOGIN_SHELL_RESTORED user=aella shell=/usr/bin/aella_cli' "$fx2/out-commit.txt" \
+   && grep -q 'LOGIN_SHELL_RESTORE_RESULT=PASS' "$fx2/out-commit.txt" \
+   && grep -q '^aella:.*:/usr/bin/aella_cli$' "$fx2/etc/passwd" \
+   && ! grep -q 'do-release-upgrade\|DRO_BEGIN\|RELEASE_UPGRADE_BEGIN' "$fx2/out-commit.txt"; then
+  pass "CASE6 pre-DRO fail restores aella_cli after auto bash change"
+else
+  fail "CASE6 pre-DRO shell rollback (rc=${rc})"
+  grep -E 'LOGIN_SHELL_|FAIL_INJECTED|aella:' "$fx2/out-commit.txt" | tail -40 || true
+  grep aella "$fx2/etc/passwd" || true
 fi
 printf 'root:x:0:0:root:/root:/bin/bash\naella:x:1000:1000:aella:/home/aella:/bin/bash\n' >"$fx2/etc/passwd"
 
@@ -1033,7 +1124,7 @@ else
   grep -E 'backup written|LOGIN_SHELL_AUTOMATION|CRITICAL_OS_UNHOLD_BEGIN|TARGET_POCKET' "$fx2/out-commit.txt" || true
 fi
 
-# Restore dual-account bash passwd for subsequent fixtures (hard gate must PASS)
+# Restore dual-account bash passwd for subsequent fixtures (preflight must PASS)
 printf 'root:x:0:0:root:/root:/bin/bash\naella:x:1000:1000:aella:/home/aella:/bin/bash\n' >"$fx2/etc/passwd"
 
 # Obsolete Phase 2 hold-restore claim must be gone

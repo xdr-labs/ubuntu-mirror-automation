@@ -232,7 +232,10 @@ Menu **3 Enable HTTP Distribution**.
 
 - `nginx -t` PASS
 - local + advertised HTTP smoke PASS
-- public tree modes `0755` / `0644`
+- public tree modes `0755` / `0644` (directories / ordinary files; executable
+  public scripts `0755`). Workflow state / credentials / signing material remain
+  private (`0700`/`0600`) and are never published. Publication normalizes public
+  trees explicitly so a prior private-state `umask 077` cannot leave HTTP 403.
 - `HTTP_DISTRIBUTION=ENABLED`
 
 **Failure:** smoke FAIL → nginx rolled back; artifacts preserved. Fix and retry Menu 3.

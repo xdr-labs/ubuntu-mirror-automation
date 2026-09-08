@@ -1039,18 +1039,24 @@ check_shells() {
       add_check LOGIN_SHELL_AELLA safety FAIL BLOCKER \
         "unknown" "/bin/bash" \
         "aella login shell unknown" \
-        "Inspect getent passwd aella; set shell to /bin/bash before upgrade" \
+        "Inspect getent passwd aella; expected /usr/bin/aella_cli or /bin/bash" \
         "summary.json" "shells.aella"
     elif [[ "$aella_shell" == "/bin/bash" || "$aella_shell" == "/usr/bin/bash" ]]; then
       add_check LOGIN_SHELL_AELLA safety PASS INFO \
         "$aella_shell" "/bin/bash" \
-        "aella shell is bash" \
+        "aella shell is bash (upgrade-ready)" \
         "none" "summary.json" "shells.aella"
+    elif [[ "$aella_shell" == "/usr/bin/aella_cli" ]]; then
+      add_check LOGIN_SHELL_AELLA safety PASS INFO \
+        "$aella_shell" "/bin/bash" \
+        "aella shell is expected Stellar aella_cli; OS hop client auto-converts to /bin/bash during commit" \
+        "none (do not manually chsh unless recovering a broken host)" \
+        "summary.json" "shells.aella"
     else
       add_check LOGIN_SHELL_AELLA safety FAIL BLOCKER \
         "$aella_shell" "/bin/bash" \
-        "aella login shell must be /bin/bash before upgrade (aella_cli is not allowed)" \
-        "Suggested: sudo chsh -s /bin/bash aella ; validate with getent passwd aella ; re-collect evidence" \
+        "aella login shell is unsupported (recognized: /usr/bin/aella_cli /bin/bash /usr/bin/bash)" \
+        "Fail-closed: investigate unexpected shell before upgrade; do not chsh unless documented recovery" \
         "summary.json" "shells.aella"
     fi
   fi

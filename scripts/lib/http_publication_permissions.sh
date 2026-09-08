@@ -124,29 +124,137 @@ mm_http_expected_file_mode() {
   esac
 }
 
-# Ensure every ancestor of path (including path if directory) has "other" execute
-# so nginx can traverse. Does not widen file modes.
+# Ensure product-controlled parents under apt-mirror are world-traversable.
+# Never chmods system ancestors outside the product spool (e.g. /var, /var/spool).
 mm_http_ensure_parent_traversal() {
-  local path="${1:-}" cur mode
+  local path="${1:-}" cur mode base
   [[ -n "$path" ]] || return 1
+  base="${MM_MIRROR_ROOT:-/var/spool/apt-mirror}"
   cur="$(cd "$(dirname "$path")" 2>/dev/null && pwd)" || return 1
   while [[ -n "$cur" && "$cur" != "/" ]]; do
-    if [[ -d "$cur" ]]; then
-      mode="$(mm_http_stat_mode "$cur" || true)"
-      # Need at least ---x--x--x on the "other" or group bit for www-data when
-      # not the owner. Prefer 0755 when currently too tight (0700/0750 without o+x).
-      if [[ -n "$mode" ]]; then
-        # If other lacks x (mode % 2 == 0 for last octal digit), open traversal.
+    # Only normalize product-owned publication paths.
+    if [[ "$cur" == "$base" || "$cur" == "$base"/* ]]; then
+      if [[ -d "$cur" ]]; then
+        mode="$(mm_http_stat_mode "$cur" || true)"
         case "$mode" in
           *1|*5|*7) ;;
           *)
-            chmod o+x "$cur" 2>/dev/null || chmod 0755 "$cur" 2>/dev/null || true
+            chmod 0755 "$cur" 2>/dev/null || true
             ;;
         esac
       fi
     fi
+    [[ "$cur" == "$base" ]] && break
     cur="$(dirname "$cur")"
   done
+  return 0
+}
+
+# Early host/publication preflight: nginx must be able to traverse host ancestors
+# of the public document root (field class: /var mode 700).
+# Product-controlled paths under MM_MIRROR_ROOT are skipped here — they may not
+# exist yet and are explicitly normalized before HTTP publication.
+# Detect-only — never chmods system directories. Fail before expensive downloads.
+mm_assert_nginx_publication_ancestors() {
+  local pub_root="${1:-${MM_MIRROR_ROOT:-/var/spool/apt-mirror}}"
+  local product_root="${MM_MIRROR_ROOT:-$pub_root}"
+  local user mode owner cur probe_ok=0
+  local -a ancestors=()
+
+  [[ -n "$pub_root" ]] || {
+    _mm_http_perm_error "PUBLICATION_PREFLIGHT=FAIL reason=empty_pub_root"
+    return 1
+  }
+  # Normalize to absolute paths when possible (best-effort).
+  if [[ -d "$pub_root" ]]; then
+    pub_root="$(cd "$pub_root" && pwd)"
+  fi
+  if [[ -d "$product_root" ]]; then
+    product_root="$(cd "$product_root" && pwd)"
+  fi
+  user="$(mm_http_detect_nginx_user)"
+  _mm_http_perm_info "PUBLICATION_PREFLIGHT_BEGIN path=${pub_root} user=${user}"
+
+  cur="$pub_root"
+  while true; do
+    ancestors+=("$cur")
+    [[ "$cur" == "/" ]] && break
+    cur="$(dirname "$cur")"
+  done
+
+  # Walk root → leaf so the first failure is the true blocking host ancestor
+  # (e.g. /var mode 700), not a deeper path that is merely unreachable.
+  local i
+  for ((i=${#ancestors[@]}-1; i>=0; i--)); do
+    cur="${ancestors[$i]}"
+
+    # Product spool + children: created/normalized by this product later.
+    if [[ "$cur" == "$product_root" || "$cur" == "$product_root"/* ]]; then
+      continue
+    fi
+
+    if [[ ! -e "$cur" ]]; then
+      # System ancestors required for the default Ubuntu publication layout.
+      case "$cur" in
+        /|/var|/var/spool)
+          _mm_http_perm_error "NGINX_TRAVERSAL=FAIL path=${cur} mode=missing user=${user}"
+          _mm_http_perm_error "PUBLICATION_PREFLIGHT=FAIL"
+          _mm_http_perm_info "REMEDIATION=fix host ancestor permissions for nginx traversal (do not chmod system dirs from this product blindly); typical Ubuntu: chmod 755 /var"
+          return 1
+          ;;
+        *)
+          continue
+          ;;
+      esac
+    fi
+    if [[ ! -d "$cur" ]]; then
+      _mm_http_perm_error "NGINX_TRAVERSAL=FAIL path=${cur} mode=not_a_directory user=${user}"
+      _mm_http_perm_error "PUBLICATION_PREFLIGHT=FAIL"
+      return 1
+    fi
+
+    mode="$(mm_http_stat_mode "$cur" || echo unknown)"
+    owner="$(stat -c '%U' "$cur" 2>/dev/null || echo unknown)"
+    probe_ok=0
+
+    # Live nginx-user probe only when we can actually switch users (root).
+    # Hermetic non-root tests fall through to deterministic mode checks.
+    if [[ "${EUID:-$(id -u)}" -eq 0 ]] && id -u "$user" >/dev/null 2>&1; then
+      if command -v runuser >/dev/null 2>&1; then
+        if runuser -u "$user" -- test -x "$cur" 2>/dev/null \
+          || runuser -u "$user" test -x "$cur" 2>/dev/null; then
+          probe_ok=1
+        fi
+      fi
+      if [[ "$probe_ok" -eq 0 ]] \
+        && su -s /bin/sh "$user" -c "test -x $(printf '%q' "$cur")" 2>/dev/null; then
+        probe_ok=1
+      fi
+      if [[ "$probe_ok" -eq 0 ]]; then
+        _mm_http_perm_error "NGINX_TRAVERSAL=FAIL path=${cur} mode=${mode} user=${user}"
+        _mm_http_perm_error "PUBLICATION_PREFLIGHT=FAIL"
+        _mm_http_perm_info "REMEDIATION=host ancestor '${cur}' is not traversable by ${user}; restore normal Ubuntu semantics (e.g. chmod 755 /var) — product will not chmod system ancestors"
+        return 1
+      fi
+      continue
+    fi
+
+    # Hermetic / non-root fallback: require other-+x unless owned by nginx user.
+    if [[ "$owner" == "$user" ]]; then
+      continue
+    fi
+    case "$mode" in
+      *1|*5|*7) ;;
+      *)
+        _mm_http_perm_error "NGINX_TRAVERSAL=FAIL path=${cur} mode=${mode} user=${user}"
+        _mm_http_perm_error "PUBLICATION_PREFLIGHT=FAIL"
+        _mm_http_perm_info "REMEDIATION=host ancestor '${cur}' lacks other-execute (mode=${mode}); fix host permissions before Download and Prepare"
+        return 1
+        ;;
+    esac
+  done
+
+  _mm_http_perm_ok "PUBLICATION_PREFLIGHT=PASS path=${pub_root} user=${user}"
   return 0
 }
 

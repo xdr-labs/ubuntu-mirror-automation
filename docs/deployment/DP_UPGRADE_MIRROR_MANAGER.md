@@ -217,8 +217,11 @@ Menu 7 asks topology only (Single / Cluster). It never asks for Starting or Targ
 1. Hypervisor snapshot
 2. `aella_cli` → `pause` on Ubuntu 16.04
 3. OS hops 16.04 → 18.04 → 20.04 → 22.04 → 24.04
-   (Xenial→Bionic client sets aella/root login shells to `/bin/bash` after
-   confirmation and re-verifies with `getent`; no manual `chsh`/`usermod`)
+   (Xenial→Bionic client detects the normal Stellar `aella` shell
+   `/usr/bin/aella_cli` during preflight without mutating it, then after
+   confirmation records the original shell and sets aella/root to `/bin/bash`
+   before OS mutation; safe pre-DRO rollback restores the original shell.
+   Do not manually `chsh`/`usermod` as a prerequisite.)
 4. Stage DP 6.6.0 (`--target-version 6.6.0 --same-version-recovery`; source auto-detected)
 5. Bringup (`--worker-ips` optional)
 6. `aella_cli` → `resume`
