@@ -19,6 +19,9 @@ fail() { echo "  FAIL: $*"; FAIL=1; }
 skip() { echo "  SKIP: $*"; }
 
 WORKDIR="$(mktemp -d)"
+# mktemp defaults to 0700; nginx publication ancestry preflight requires
+# traversable parents outside the product spool (same contract as /var=755).
+chmod 0755 "$WORKDIR"
 export PHASE2_PREREQ_INDEX_ROOT="${WORKDIR}/noble-index"
 phase2_prereq_write_empty_noble_index "$PHASE2_PREREQ_INDEX_ROOT"
 HTTP_PID=""
@@ -325,6 +328,9 @@ common_env() {
 }
 
 run_prepare() {
+  # Publication ancestry preflight requires traversable parents outside the
+  # product spool. Keep the fixture root HTTP-safe across prepare cycles.
+  chmod 0755 "$WORKDIR" 2>/dev/null || true
   setup_project_shadow_if_needed
   MM_PROJECT_ROOT="$SHADOW_ROOT" bash "${SHADOW_ROOT}/scripts/install-dp-upgrade-mirror.sh" \
     download-and-prepare --mirror-root "${MM_MIRROR_ROOT}" "$@"

@@ -206,7 +206,8 @@ sudo ./scripts/dp-upgrade-preflight.sh \
 ## Typical blockers
 
 - Missing snapshot/backup reference (when upgrade is required)
-- `aella` or `root` shell is `/usr/bin/aella_cli` (must be `/bin/bash`)
+- `aella` login shell is unsupported (recognized sources: `/usr/bin/aella_cli`, `/bin/bash`, `/usr/bin/bash`; the OS hop client auto-converts `aella_cli`→`/bin/bash` during commit — do not manually `chsh` as a prerequisite)
+- `root` login shell is not bash when policy requires it
 - Critical APT holds (`systemd`, `udev`, …) without project unhold/restore logic
 - Insufficient `/`, `/boot`, or inode headroom
 - Active APT/dpkg lock or dirty dpkg state

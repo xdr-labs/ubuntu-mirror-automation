@@ -1563,7 +1563,12 @@ run_product_post_upgrade() {
 
 kernel_flavor() {
   local k
-  k="$(uname -r 2>/dev/null || true)"
+  # Fixture-only override for field reproduction (SOURCE_OS + KERNEL_FLAVOR=aws).
+  if [[ -n "${TEST_ROOT:-}" && -n "${DP_OFFLINE_FAKE_KERNEL:-}" ]]; then
+    k="$DP_OFFLINE_FAKE_KERNEL"
+  else
+    k="$(uname -r 2>/dev/null || true)"
+  fi
   # e.g. 4.4.0-210-generic → generic
   case "$k" in
     *-generic) printf 'generic' ;;
@@ -1797,29 +1802,82 @@ check_baseline() {
   check_os_baseline "$@"
 }
 
-assert_aella_login_shell_bash_hard_gate() {
-  # Preflight hard gate: aella login shell must already be bash before upgrade start.
-  # change_login_shells still runs during commit to auto-fix aella_cli→bash when reached.
+assert_aella_login_shell_preflight() {
+  # Non-mutating preflight: aella must exist with a recognized shell.
+  # Mutation to /bin/bash happens only in change_login_shells after confirmation+backup.
   local shell="" passwd_file line
   passwd_file="$(hostpath /etc/passwd)"
   if [[ -n "$TEST_ROOT" ]]; then
     line="$(grep -E '^aella:' "$passwd_file" 2>/dev/null || true)"
+    if [[ -z "$line" ]]; then
+      log ERROR "AELLA_LOGIN_SHELL_PREFLIGHT=FAIL"
+      log ERROR "FAIL_AELLA_ACCOUNT_MISSING"
+      die "$EC_BASELINE" "FAIL_AELLA_ACCOUNT_MISSING"
+    fi
     shell="$(printf '%s' "$line" | cut -d: -f7)"
   else
+    if ! getent passwd aella >/dev/null 2>&1; then
+      log ERROR "AELLA_LOGIN_SHELL_PREFLIGHT=FAIL"
+      log ERROR "FAIL_AELLA_ACCOUNT_MISSING"
+      die "$EC_BASELINE" "FAIL_AELLA_ACCOUNT_MISSING"
+    fi
     shell="$(getent passwd aella 2>/dev/null | cut -d: -f7 || true)"
   fi
+  if [[ -z "$shell" ]]; then
+    log ERROR "AELLA_LOGIN_SHELL_PREFLIGHT=FAIL shell=empty"
+    log ERROR "FAIL_AELLA_SHELL_UNSUPPORTED"
+    die "$EC_BASELINE" "FAIL_AELLA_SHELL_UNSUPPORTED"
+  fi
+  # /bin/bash must be available for the later commit-phase mutation/normalization.
+  if [[ -n "$TEST_ROOT" ]]; then
+    if [[ ! -x "$(hostpath /bin/bash)" && ! -x /bin/bash ]]; then
+      log ERROR "AELLA_LOGIN_SHELL_PREFLIGHT=FAIL"
+      log ERROR "FAIL_LOGIN_SHELL_BASH_MISSING"
+      die "$EC_BASELINE" "FAIL_LOGIN_SHELL_BASH_MISSING"
+    fi
+  else
+    if [[ ! -f /bin/bash || ! -x /bin/bash ]]; then
+      log ERROR "AELLA_LOGIN_SHELL_PREFLIGHT=FAIL"
+      log ERROR "FAIL_LOGIN_SHELL_BASH_MISSING"
+      die "$EC_BASELINE" "FAIL_LOGIN_SHELL_BASH_MISSING"
+    fi
+  fi
   case "$shell" in
-    /bin/bash|/usr/bin/bash)
-      log INFO "AELLA_BASH_HARD_GATE=PASS"
+    /bin/bash)
+      log INFO "AELLA_LOGIN_SHELL_PREFLIGHT=PASS"
+      log INFO "AELLA_LOGIN_SHELL_SOURCE=/bin/bash"
+      log INFO "AELLA_LOGIN_SHELL_CLASS=ALREADY_READY"
+      log INFO "AELLA_LOGIN_SHELL_CHANGE_REQUIRED=NO"
+      log INFO "SHELL_MUTATION_DURING_PREFLIGHT=NO"
+      return 0
+      ;;
+    /usr/bin/bash)
+      log INFO "AELLA_LOGIN_SHELL_PREFLIGHT=PASS"
+      log INFO "AELLA_LOGIN_SHELL_SOURCE=/usr/bin/bash"
+      log INFO "AELLA_LOGIN_SHELL_CLASS=COMPATIBLE_BASH"
+      log INFO "AELLA_LOGIN_SHELL_CHANGE_REQUIRED=NO"
+      log INFO "SHELL_MUTATION_DURING_PREFLIGHT=NO"
+      return 0
+      ;;
+    /usr/bin/aella_cli)
+      log INFO "AELLA_LOGIN_SHELL_PREFLIGHT=PASS"
+      log INFO "AELLA_LOGIN_SHELL_SOURCE=/usr/bin/aella_cli"
+      log INFO "AELLA_LOGIN_SHELL_CLASS=EXPECTED_STELLAR_DP_SHELL"
+      log INFO "AELLA_LOGIN_SHELL_CHANGE_REQUIRED=YES"
+      log INFO "SHELL_MUTATION_DURING_PREFLIGHT=NO"
       return 0
       ;;
   esac
-  log ERROR "AELLA_BASH_HARD_GATE=FAIL shell=${shell:-unknown}"
-  log ERROR "FAIL_AELLA_SHELL_NOT_BASH"
-  log ERROR "Remediation: sudo chsh -s /bin/bash aella"
-  log ERROR "Validate: getent passwd aella"
-  log ERROR "Note: /usr/bin/aella_cli must be changed to /bin/bash before OS upgrade (official requirement)"
-  die "$EC_BASELINE" "FAIL_AELLA_SHELL_NOT_BASH"
+  log ERROR "AELLA_LOGIN_SHELL_PREFLIGHT=FAIL shell=${shell}"
+  log ERROR "FAIL_AELLA_SHELL_UNSUPPORTED"
+  log ERROR "Recognized aella shells: /usr/bin/aella_cli /bin/bash /usr/bin/bash"
+  log ERROR "Unsupported shells are fail-closed; do not chsh manually unless recovering a broken host"
+  die "$EC_BASELINE" "FAIL_AELLA_SHELL_UNSUPPORTED"
+}
+
+# Backward-compatible alias (older docs/tests may still reference the hard-gate name).
+assert_aella_login_shell_bash_hard_gate() {
+  assert_aella_login_shell_preflight
 }
 
 check_dpkg_health() {
@@ -2123,7 +2181,7 @@ run_os_preflight() {
   [[ "$arch" == "x86_64" ]] || die "$EC_ARCH" "architecture must be amd64/x86_64 (got ${arch})"
 
   check_os_baseline || die "$EC_BASELINE" "OS baseline validation failed"
-  assert_aella_login_shell_bash_hard_gate
+  assert_aella_login_shell_preflight
 
   # Product diagnostics only - never hard-fail Phase 1 on DP install/topology/version.
   if is_stellar_dp; then
@@ -2488,6 +2546,45 @@ restore_apt_sources_from_backup() {
   log INFO "LEGACY_APT_KEYRING_RETAINED=YES"
   log INFO "LEGACY_APT_KEYRING_RETAIN_POLICY=additive_trusted_gpg_d_on_pre_upgrade_failure"
   log INFO "APT_SOURCES_RESTORE_RESULT=PASS"
+  return 0
+}
+
+restore_login_shells_from_backup() {
+  # Commit-path restore: reverse change_login_shells using shell-changes.tsv.
+  # Safe only before package/release transition (same boundary as APT/hold restore).
+  local stamp="$1"
+  local reason="${2:-pre_upgrade_failure}"
+  local rec user shell passwd_file
+  rec="$(hostpath "${BACKUP_ROOT}/${stamp}/passwd/shell-changes.tsv")"
+  if [[ ! -f "$rec" ]]; then
+    log WARN "LOGIN_SHELL_RESTORE=SKIPPED reason=no_shell_changes stamp=${stamp}"
+    return 0
+  fi
+  log INFO "LOGIN_SHELL_RESTORE_BEGIN reason=${reason} backup=${rec}"
+  passwd_file="$(hostpath /etc/passwd)"
+  while IFS=$'\t' read -r user shell; do
+    [[ -n "$user" && -n "$shell" ]] || continue
+    if [[ -n "$TEST_ROOT" ]]; then
+      if grep -qE "^${user}:" "$passwd_file" 2>/dev/null; then
+        awk -F: -v u="$user" -v s="$shell" 'BEGIN{OFS=":"} $1==u {$7=s} {print}' \
+          "$passwd_file" >"${passwd_file}.new"
+        mv -f "${passwd_file}.new" "$passwd_file"
+        log INFO "LOGIN_SHELL_RESTORED user=${user} shell=${shell}"
+      fi
+      continue
+    fi
+    if ! getent passwd "$user" >/dev/null 2>&1; then
+      continue
+    fi
+    if command -v chsh >/dev/null 2>&1; then
+      chsh -s "$shell" "$user" 2>/dev/null || usermod -s "$shell" "$user"
+    else
+      usermod -s "$shell" "$user"
+    fi
+    log INFO "LOGIN_SHELL_RESTORED user=${user} shell=${shell}"
+  done <"$rec"
+  log INFO "LOGIN_SHELL_RESTORE_RESULT=PASS"
+  log INFO "AELLA_SHELL_RESTORE_RESULT=PASS"
   return 0
 }
 
@@ -4025,7 +4122,18 @@ change_login_shells() {
       action="UNCHANGED"
       log INFO "LOGIN_SHELL_${user^^}_ACTION=UNCHANGED"
     else
-      if [[ "$shell" != "/usr/bin/aella_cli" && "$shell" != *aella_cli* ]]; then
+      # aella: only recognized Stellar/bash forms may be auto-converted (fail closed).
+      # root: convert non-bash to /bin/bash for upgrade safety (warn on unexpected).
+      if [[ "$user" == "aella" ]]; then
+        case "$shell" in
+          /usr/bin/aella_cli|/usr/bin/bash) ;;
+          *)
+            log ERROR "LOGIN_SHELL_AELLA_UNSUPPORTED=${shell}"
+            log ERROR "LOGIN_SHELL_AUTOMATION=FAIL"
+            die "$EC_INTERNAL" "FAIL_LOGIN_SHELL_UNSUPPORTED_aella"
+            ;;
+        esac
+      elif [[ "$shell" != "/usr/bin/aella_cli" && "$shell" != *aella_cli* && "$shell" != "/usr/bin/bash" ]]; then
         log WARN "unexpected ${user} shell ${shell}; setting /bin/bash for upgrade safety"
       fi
       if [[ -n "$TEST_ROOT" && "${DP_OFFLINE_FAKE_SHELL_CHANGE_FAIL:-}" == "1" ]]; then
@@ -7150,11 +7258,12 @@ commit_and_start() {
   if [[ -n "$TEST_ROOT" && "${DP_OFFLINE_FAKE_FAIL_AFTER_UNHOLD:-}" == "1" ]]; then
     log ERROR "TEST: injected failure after unhold (before APT metadata / release upgrade)"
     restore_critical_os_holds_if_safe "injected_pre_upgrade_failure" || true
+    restore_login_shells_from_backup "$stamp" "injected_pre_upgrade_failure" || true
     die "$EC_INTERNAL" "FAIL_INJECTED_AFTER_UNHOLD"
   fi
 
   # APT metadata + runner install. On any failure before release upgrade starts,
-  # restore APT sources + critical holds (legacy keyring retained by policy).
+  # restore APT sources + critical holds + login shells (legacy keyring retained).
   set +e
   (
     set -euo pipefail
@@ -7194,6 +7303,7 @@ commit_and_start() {
   if [[ "$rc" -ne 0 ]]; then
     restore_apt_sources_from_backup "$stamp" "pre_upgrade_failure" || true
     restore_critical_os_holds_if_safe "pre_upgrade_failure" || true
+    restore_login_shells_from_backup "$stamp" "pre_upgrade_failure" || true
     case "$rc" in
       "$EC_DISTUPGRADE_SOURCE"|"$EC_DISTUPGRADE_SOURCE_DECODE"|"$EC_TARGET_POCKET"|"$EC_TRUST"|"$EC_META"|"$EC_META_ASCII")
         exit "$rc"

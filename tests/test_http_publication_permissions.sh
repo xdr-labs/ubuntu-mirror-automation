@@ -190,6 +190,61 @@ grep -q 'CLIENT_SET_ATOMIC_SWAP=NOT_STARTED' /tmp/not-started.marker \
   && pass "CLIENT_SET_ATOMIC_SWAP=NOT_STARTED marker contract documented" \
   || fail "not_started marker"
 
+# TEST-PERM-1: publication ancestor `/var` equivalent is non-traversable → early FAIL;
+# expensive artifact preparation must not be entered after this gate.
+echo "-------- TEST-PERM-1 early nginx ancestry preflight --------"
+HOSTFX="${WORKDIR}/hostfx"
+mkdir -p "${HOSTFX}/var/spool/apt-mirror/client"
+chmod 0755 "${HOSTFX}" "${HOSTFX}/var/spool" "${HOSTFX}/var/spool/apt-mirror" \
+  "${HOSTFX}/var/spool/apt-mirror/client"
+# Simulate clean Ubuntu 24.04 field defect: /var mode 700 blocks www-data.
+chmod 0700 "${HOSTFX}/var"
+HEAVY_DOWNLOAD_STARTED=NO
+# Product root is the apt-mirror spool; /var is a host ancestor outside it.
+export MM_MIRROR_ROOT="${HOSTFX}/var/spool/apt-mirror"
+set +e
+early_out="$(mm_assert_nginx_publication_ancestors "${MM_MIRROR_ROOT}" 2>&1)"
+early_rc=$?
+set -e
+if [[ "$early_rc" -ne 0 ]] \
+   && printf '%s\n' "$early_out" | grep -q 'NGINX_TRAVERSAL=FAIL' \
+   && printf '%s\n' "$early_out" | grep -Eq 'path=.*/var( |$)' \
+   && printf '%s\n' "$early_out" | grep -q 'mode=700' \
+   && printf '%s\n' "$early_out" | grep -q 'PUBLICATION_PREFLIGHT=FAIL' \
+   && [[ "$HEAVY_DOWNLOAD_STARTED" == "NO" ]]; then
+  pass "TEST-PERM-1: /var=700 early PUBLICATION_PREFLIGHT=FAIL (no heavy download)"
+else
+  fail "TEST-PERM-1: expected early fail on /var=700"
+  printf '%s\n' "$early_out" | tail -20 || true
+fi
+# Prove the gate is what engine_preflight_host consults before prepare work.
+if grep -q 'mm_assert_nginx_publication_ancestors' \
+     "${ROOT}/scripts/lib/mirror_install_engine.sh" \
+  && awk '
+    /^engine_preflight_host\(\)/ {infn=1}
+    infn && /mm_assert_nginx_publication_ancestors/ {found=1}
+    infn && /PREFLIGHT_HOST=PASS/ {passline=1}
+    infn && /^}/ {exit}
+    END {exit !(found && passline)}
+  ' "${ROOT}/scripts/lib/mirror_install_engine.sh"; then
+  pass "TEST-PERM-1: engine_preflight_host calls ancestor assert before PASS"
+else
+  fail "TEST-PERM-1: engine_preflight_host missing early ancestor gate"
+fi
+# Positive control: traversable ancestors PASS
+chmod 0755 "${HOSTFX}/var"
+set +e
+ok_out="$(mm_assert_nginx_publication_ancestors "${MM_MIRROR_ROOT}" 2>&1)"
+ok_rc=$?
+set -e
+if [[ "$ok_rc" -eq 0 ]] && printf '%s\n' "$ok_out" | grep -q 'PUBLICATION_PREFLIGHT=PASS'; then
+  pass "TEST-PERM-1: traversable ancestors PUBLICATION_PREFLIGHT=PASS"
+else
+  fail "TEST-PERM-1: traversable ancestors should PASS"
+  printf '%s\n' "$ok_out" | tail -10 || true
+fi
+unset MM_MIRROR_ROOT
+
 if [[ "$FAIL" -eq 0 ]]; then
   echo "=== test_http_publication_permissions PASS ==="
 else

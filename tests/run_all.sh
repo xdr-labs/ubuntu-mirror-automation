@@ -144,6 +144,7 @@ TEST_LIST=(
   test_mirror_host_ip_resolution.sh
   test_mirror_manager_ip_configuration.sh
   test_http_publication_permissions.sh
+  test_umask_public_publication_regression.sh
   test_http_enable_local_smoke.sh
   test_http_enable_nginx_transaction.sh
   test_workflow_kv_getters.sh
