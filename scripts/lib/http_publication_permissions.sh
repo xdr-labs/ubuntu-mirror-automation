@@ -150,6 +150,70 @@ mm_http_ensure_parent_traversal() {
   return 0
 }
 
+# Fail closed on unexpected special entries in public HTTP trees.
+# Selective may intentionally contain the ubuntu → hops/... alias symlink.
+# client/ and phase2 version trees must not contain symlinks, hardlinks to
+# outside inodes beyond normal files, or device/FIFO/socket nodes.
+mm_http_verify_public_entry_types() {
+  local root="${1:-}"
+  local kind="${2:-client}"
+  local path base target count=0
+  local -a bad=()
+
+  [[ -n "$root" && -d "$root" ]] || return 1
+
+  while IFS= read -r -d '' path; do
+    base="$(basename "$path")"
+    if [[ "$kind" == "selective" && "$base" == "ubuntu" && "$(dirname "$path")" == "$root" ]]; then
+      # Documented alias: selective/ubuntu → hops/<hop>/ubuntu
+      if [[ -L "$path" ]]; then
+        target="$(readlink -n "$path" 2>/dev/null || true)"
+        case "$target" in
+          hops/*/ubuntu|hops/*/*/ubuntu) continue ;;
+          *)
+            bad+=("unexpected_ubuntu_symlink_target:${path}->${target}")
+            continue
+            ;;
+        esac
+      fi
+      continue
+    fi
+    if [[ "$kind" == "selective" ]]; then
+      # Other selective symlinks are not part of the current publication contract.
+      bad+=("unexpected_symlink:${path}")
+      continue
+    fi
+    bad+=("unexpected_symlink:${path}")
+  done < <(find "$root" -type l -print0 2>/dev/null)
+
+  while IFS= read -r -d '' path; do
+    bad+=("unexpected_special:${path}")
+  done < <(find "$root" \( -type b -o -type c -o -type p -o -type s \) -print0 2>/dev/null)
+
+  # Hardlinks: reject nlink>1 for regular files under client/phase2 (publication
+  # contract prefers discrete inode copies; private rebuild sources must not
+  # share inodes into the HTTP tree).
+  if [[ "$kind" == "client" || "$kind" == "phase2" ]]; then
+    while IFS= read -r -d '' path; do
+      bad+=("unexpected_hardlink:${path}")
+    done < <(find "$root" -type f -links +1 -print0 2>/dev/null)
+  fi
+
+  count="${#bad[@]}"
+  if [[ "$count" -gt 0 ]]; then
+    local b
+    for b in "${bad[@]}"; do
+      _mm_http_perm_error "HTTP_PUBLIC_ENTRY_TYPE=FAIL ${b}"
+    done
+    _mm_http_perm_error "HTTP_PUBLIC_UNEXPECTED_SYMLINK_COUNT=${count}"
+    return 1
+  fi
+  if [[ "$kind" == "client" || "$kind" == "phase2" ]]; then
+    printf 'HTTP_PUBLIC_UNEXPECTED_SYMLINK_COUNT=0\n'
+  fi
+  return 0
+}
+
 # Normalize a client or phase2 HTTP public tree under $1.
 # Optional $2 = kind: client|phase2|selective|auto (default auto).
 mm_normalize_http_public_tree_permissions() {
@@ -182,6 +246,8 @@ mm_normalize_http_public_tree_permissions() {
       *) kind=client ;;
     esac
   fi
+
+  mm_http_verify_public_entry_types "$root" "$kind" || return 1
 
   # Directories: exact 0755 (find + chmod per-dir, not chmod -R 755).
   while IFS= read -r -d '' path; do
@@ -244,6 +310,8 @@ mm_verify_http_public_tree_permissions() {
       return 1
     fi
   fi
+
+  mm_http_verify_public_entry_types "$root" "$kind" || return 1
 
   while IFS= read -r -d '' path; do
     have="$(mm_http_stat_mode "$path" || true)"

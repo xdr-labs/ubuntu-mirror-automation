@@ -533,6 +533,11 @@ engine_stage_acps_work_from_cache() {
   fi
   rm -rf "$work"
   mkdir -p "$work" || mm_die "ACPS_WORK_STAGE=FAIL mkdir"
+  if declare -F acps_ensure_private_cache_dir >/dev/null 2>&1; then
+    acps_ensure_private_cache_dir "$work" || mm_die "ACPS_WORK_PERMS=FAIL"
+  elif declare -F engine_phase2_chmod_private_dir >/dev/null 2>&1; then
+    engine_phase2_chmod_private_dir "$work" || mm_die "ACPS_WORK_PERMS=FAIL"
+  fi
   for f in "${DP_PHASE2_REQUIRED_FILES[@]}"; do
     case "$f" in
       bringup_py3_dp_after_os_upgrade.sh|bringup_py3_dp_after_os_upgrade.sh.sha1)
@@ -1966,6 +1971,217 @@ engine_disable_http_and_readiness() {
   mm_status_set READINESS_ARTIFACT_FINGERPRINT ""
 }
 
+# True when a PID from a .new.<pid> / .old.<pid> name still appears alive.
+engine_publication_txn_pid_alive() {
+  local pid="$1"
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  [[ -d "/proc/${pid}" ]] || return 1
+  return 0
+}
+
+# Integrity-only validation for a Phase 2 publication candidate directory.
+# Does not require current patch-generation match so a complete .new left after
+# source cleanup can be promoted; assess decides REUSE vs local rebuild after.
+engine_phase2_txn_candidate_integrity_ok() {
+  local cand="$1"
+  local ver="$2"
+  local stable envf bundle sidecar
+  local target_field artifact_field stable_field
+  dp2_set_version "$ver"
+  stable="$(dp2_stable_bundle_name)"
+  envf="${cand}/release.env"
+  bundle="${cand}/${stable}"
+  sidecar="${cand}/${stable}.sha256"
+  [[ -d "$cand" ]] || return 1
+  [[ -f "$envf" && ! -L "$envf" ]] || return 1
+  [[ -f "$bundle" && ! -L "$bundle" ]] || return 1
+  [[ -f "$sidecar" && ! -L "$sidecar" ]] || return 1
+  target_field="$(grep -E '^TARGET_DP_VERSION=' "$envf" | head -1 | cut -d= -f2- || true)"
+  artifact_field="$(grep -E '^PHASE2_ARTIFACT_VERSION=' "$envf" | head -1 | cut -d= -f2- || true)"
+  stable_field="$(grep -E '^STABLE_BUNDLE_NAME=' "$envf" | head -1 | cut -d= -f2- || true)"
+  [[ "$target_field" == "$ver" && "$artifact_field" == "$ver" ]] || return 1
+  [[ "$stable_field" == "$stable" ]] || return 1
+  if dp2_release_has_secret "$envf"; then
+    return 1
+  fi
+  if ! engine_phase2_verify_existing_final_integrity "$ver" "$bundle" "$sidecar" "$envf" 0; then
+    return 1
+  fi
+  return 0
+}
+
+engine_classify_phase2_txn_dir() {
+  # Sets PHASE2_STALE_TRANSACTION_CLASS for one ${ver}.new.<pid> candidate.
+  local cand="$1"
+  local ver="$2"
+  local base pid
+  PHASE2_STALE_TRANSACTION_CLASS=INVALID
+  base="$(basename "$cand")"
+  [[ "$base" == "${ver}.new."* ]] || {
+    PHASE2_STALE_TRANSACTION_CLASS=INVALID
+    return 0
+  }
+  pid="${base#${ver}.new.}"
+  if engine_publication_txn_pid_alive "$pid"; then
+    PHASE2_STALE_TRANSACTION_CLASS=ACTIVE_CURRENT_OPERATION
+    return 0
+  fi
+  if [[ ! -d "$cand" ]]; then
+    PHASE2_STALE_TRANSACTION_CLASS=INVALID
+    return 0
+  fi
+  if engine_phase2_txn_candidate_integrity_ok "$cand" "$ver"; then
+    PHASE2_STALE_TRANSACTION_CLASS=COMPLETE_RECOVERABLE
+  else
+    PHASE2_STALE_TRANSACTION_CLASS=INCOMPLETE_STALE
+  fi
+  return 0
+}
+
+# Promote a validated .new candidate into the canonical final without a third copy.
+engine_phase2_promote_txn_candidate() {
+  local cand="$1"
+  local ver="$2"
+  local dest
+  dest="$(engine_phase2_final_dir "$ver")"
+  if [[ -e "$dest" ]]; then
+    # Prefer keeping an already-present final; drop duplicate abandoned .new.
+    mm_info "PHASE2_STALE_TRANSACTION_ACTION=DELETE reason=final_already_present"
+    rm -rf "$cand"
+    return 0
+  fi
+  mkdir -p "$(dirname "$dest")" || return 1
+  sync -f "$cand" 2>/dev/null || sync
+  mv -f "$cand" "$dest" || return 1
+  mm_info "PHASE2_STALE_TRANSACTION_ACTION=RECOVER dest=${dest}"
+  mm_ok "PHASE2_TRANSACTION_RECOVERY=PASS path=${dest}"
+  return 0
+}
+
+engine_recover_phase2_publication_transactions() {
+  local ver="${1:-${TARGET_DP_VERSION:-${PHASE2_TARGET_VERSION}}}"
+  local cand base found=NO
+  mm_info "PHASE2_RECOVERY_SCAN=START ver=${ver}"
+  [[ -d "${MM_DP_PHASE2_ROOT}" ]] || {
+    mm_info "PHASE2_RECOVERY_SCAN=PASS"
+    mm_info "PHASE2_STALE_TRANSACTION_FOUND=NO"
+    return 0
+  }
+  # Drop abandoned .old.* first (never a publish target in current workflow).
+  while IFS= read -r -d '' cand; do
+    base="$(basename "$cand")"
+    local opid="${base#${ver}.old.}"
+    if engine_publication_txn_pid_alive "$opid"; then
+      mm_info "PHASE2_STALE_TRANSACTION_FOUND=YES"
+      mm_info "PHASE2_STALE_TRANSACTION_CLASS=ACTIVE_CURRENT_OPERATION"
+      mm_info "PHASE2_STALE_TRANSACTION_ACTION=IGNORE_ACTIVE path=${cand}"
+      found=YES
+      continue
+    fi
+    found=YES
+    mm_info "PHASE2_STALE_TRANSACTION_FOUND=YES"
+    mm_info "PHASE2_STALE_TRANSACTION_CLASS=INCOMPLETE_STALE"
+    mm_info "PHASE2_STALE_TRANSACTION_ACTION=DELETE path=${cand} reason=stale_old"
+    rm -rf "$cand"
+  done < <(find "${MM_DP_PHASE2_ROOT}" -maxdepth 1 -name "${ver}.old.*" -print0 2>/dev/null)
+
+  while IFS= read -r -d '' cand; do
+    found=YES
+    engine_classify_phase2_txn_dir "$cand" "$ver"
+    mm_info "PHASE2_STALE_TRANSACTION_FOUND=YES"
+    mm_info "PHASE2_STALE_TRANSACTION_CLASS=${PHASE2_STALE_TRANSACTION_CLASS}"
+    case "${PHASE2_STALE_TRANSACTION_CLASS}" in
+      ACTIVE_CURRENT_OPERATION)
+        mm_info "PHASE2_STALE_TRANSACTION_ACTION=IGNORE_ACTIVE path=${cand}"
+        ;;
+      COMPLETE_RECOVERABLE)
+        if ! engine_phase2_promote_txn_candidate "$cand" "$ver"; then
+          mm_error "PHASE2_TRANSACTION_RECOVERY=FAIL path=${cand}"
+          mm_die "PHASE2_TRANSACTION_RECOVERY=FAIL"
+        fi
+        ;;
+      INCOMPLETE_STALE|INVALID|*)
+        mm_info "PHASE2_STALE_TRANSACTION_ACTION=DELETE path=${cand} reason=${PHASE2_STALE_TRANSACTION_CLASS}"
+        rm -rf "$cand"
+        ;;
+    esac
+  done < <(find "${MM_DP_PHASE2_ROOT}" -maxdepth 1 -name "${ver}.new.*" -print0 2>/dev/null)
+
+  if [[ "$found" == "NO" ]]; then
+    mm_info "PHASE2_STALE_TRANSACTION_FOUND=NO"
+  fi
+  mm_ok "PHASE2_RECOVERY_SCAN=PASS"
+  mm_ok "PHASE2_TRANSACTION_RECOVERY=PASS"
+  return 0
+}
+
+engine_recover_selective_publication_transactions() {
+  local parent base_name new_cand old_cand pid class action
+  parent="$(dirname "${MM_SELECTIVE_ROOT}")"
+  base_name="$(basename "${MM_SELECTIVE_ROOT}")"
+  [[ -d "$parent" ]] || {
+    mm_ok "OS_CORE_TRANSACTION_RECOVERY=PASS"
+    return 0
+  }
+  mm_info "OS_CORE_TRANSACTION_RECOVERY=START"
+
+  # Interrupted new→live with live missing and both sides present: prefer
+  # restoring .old (known prior tree) unless .new has READY provenance.
+  while IFS= read -r -d '' new_cand; do
+    pid="$(basename "$new_cand")"
+    pid="${pid#${base_name}.new.}"
+    if engine_publication_txn_pid_alive "$pid"; then
+      mm_info "SELECTIVE_STALE_TRANSACTION_ACTION=IGNORE_ACTIVE path=${new_cand}"
+      continue
+    fi
+    old_cand="${parent}/${base_name}.old.${pid}"
+    if [[ ! -e "${MM_SELECTIVE_ROOT}" && -d "$old_cand" \
+      && ! -f "${new_cand}/state/READY" ]]; then
+      mm_info "SELECTIVE_STALE_TRANSACTION_ACTION=RESTORE_OLD path=${old_cand}"
+      mv -f "$old_cand" "${MM_SELECTIVE_ROOT}" || mm_die "SELECTIVE_RESTORE_OLD=FAIL"
+      rm -rf "$new_cand"
+      continue
+    fi
+    if [[ ! -e "${MM_SELECTIVE_ROOT}" && -f "${new_cand}/state/READY" ]]; then
+      mm_info "SELECTIVE_STALE_TRANSACTION_ACTION=RECOVER path=${new_cand}"
+      mv -f "$new_cand" "${MM_SELECTIVE_ROOT}" || mm_die "SELECTIVE_RECOVER_NEW=FAIL"
+      [[ -e "$old_cand" ]] && rm -rf "$old_cand"
+      continue
+    fi
+    # Live exists (publish likely completed) or incomplete new: drop debris.
+    class=INCOMPLETE_STALE
+    [[ -f "${new_cand}/state/READY" ]] && class=COMPLETE_ORPHAN
+    mm_info "SELECTIVE_STALE_TRANSACTION_ACTION=DELETE path=${new_cand} class=${class}"
+    rm -rf "$new_cand"
+  done < <(find "$parent" -maxdepth 1 -name "${base_name}.new.*" -print0 2>/dev/null)
+
+  while IFS= read -r -d '' old_cand; do
+    pid="$(basename "$old_cand")"
+    pid="${pid#${base_name}.old.}"
+    if engine_publication_txn_pid_alive "$pid"; then
+      mm_info "SELECTIVE_STALE_TRANSACTION_ACTION=IGNORE_ACTIVE path=${old_cand}"
+      continue
+    fi
+    if [[ ! -e "${MM_SELECTIVE_ROOT}" ]]; then
+      mm_info "SELECTIVE_STALE_TRANSACTION_ACTION=RESTORE_OLD path=${old_cand}"
+      mv -f "$old_cand" "${MM_SELECTIVE_ROOT}" || mm_die "SELECTIVE_RESTORE_OLD=FAIL"
+      continue
+    fi
+    mm_info "SELECTIVE_STALE_TRANSACTION_ACTION=DELETE path=${old_cand} reason=stale_old"
+    rm -rf "$old_cand"
+  done < <(find "$parent" -maxdepth 1 -name "${base_name}.old.*" -print0 2>/dev/null)
+
+  mm_ok "OS_CORE_TRANSACTION_RECOVERY=PASS"
+  return 0
+}
+
+engine_recover_publication_transactions() {
+  # Must run before disk preflight and before deciding network downloads.
+  local ver="${1:-${TARGET_DP_VERSION:-${PHASE2_TARGET_VERSION}}}"
+  engine_recover_phase2_publication_transactions "$ver"
+  engine_recover_selective_publication_transactions
+}
+
 engine_remove_invalid_phase2_final() {
   local ver="${1:-${TARGET_DP_VERSION:-${PHASE2_TARGET_VERSION}}}"
   local dest
@@ -2722,12 +2938,9 @@ engine_download_and_prepare() {
     mm_state_set CONFIGURATION_READY FAIL
     mm_die "CONFIGURATION_READY=FAIL"
   fi
-  if ! mm_acquisition_auth_ready; then
-    mm_state_set ACPS_AUTH_READY FAIL
-    mm_die "ACQUISITION_AUTH_READY=FAIL reason=missing_acps_credentials"
-  fi
+  # ACPS credentials/network are deferred until local reuse/recovery planning
+  # proves a new ACPS acquisition is required.
   mm_state_set CONFIGURATION_READY PASS
-  mm_state_set ACPS_AUTH_READY PASS
   if ! mm_require_configured_mirror_server_ip; then
     mm_die "MIRROR_SERVER_IP_REQUIRED=YES"
   fi
@@ -2744,6 +2957,10 @@ engine_download_and_prepare() {
     mm_wf_set OPERATION_START_CONFIG_SHA256 "$(mm_wf_config_sha256 || true)" || true
   fi
   engine_assert_same_filesystem_layout
+
+  # Crash recovery for interrupted publications MUST run before disk preflight
+  # and before deciding whether network downloads are required.
+  engine_recover_publication_transactions "$TARGET_DP_VERSION"
 
   # Move any legacy public raw-upstream copy into private storage before
   # assess/reuse so HTTP publication cannot observe it.
@@ -2826,10 +3043,17 @@ engine_download_and_prepare() {
     *)
       PHASE2_BUNDLE_ACTION=CREATE
       PHASE2_REBUILD_REQUIRED=YES
-      ACPS_DOWNLOAD_REQUIRED=YES
       PHASE2_REBUILD_SOURCE=ACPS
       ACPS_REDOWNLOAD_AVOIDED=NO
       PHASE2_EXISTING_BUNDLE=ABSENT
+      if declare -F acps_is_verified_cache >/dev/null 2>&1 \
+        && acps_is_verified_cache "$(acps_cache_dir "$TARGET_DP_VERSION")" 2>/dev/null; then
+        ACPS_DOWNLOAD_REQUIRED=NO
+        mm_info "ACPS_DOWNLOAD_REQUIRED=NO reason=verified_cache_reuse"
+      else
+        ACPS_DOWNLOAD_REQUIRED=YES
+        mm_info "ACPS_DOWNLOAD_REQUIRED=YES"
+      fi
       mm_info "PHASE2_EXISTING_BUNDLE=ABSENT"
       mm_info "PHASE2_BUNDLE_ACTION=CREATE"
       mm_info "PHASE2_REBUILD_SOURCE=ACPS"
@@ -2871,12 +3095,28 @@ engine_download_and_prepare() {
 
   if [[ "${PHASE2_BUNDLE_ACTION}" == "REUSE" ]]; then
     ACPS_EXPECTED_BYTES=0
+    mm_state_set ACPS_AUTH_READY NOT_REQUIRED
   elif [[ "${PHASE2_REBUILD_SOURCE}" == "EXISTING_FINAL" ]]; then
     ACPS_EXPECTED_BYTES=0
     mm_info "ACPS_CONNECTION=NOT_REQUIRED reason=existing_final_reuse"
     mm_status_set ACPS_CONNECTION REUSED
     mm_state_set ACPS_CONNECTION REUSED
+    mm_state_set ACPS_AUTH_READY NOT_REQUIRED
+  elif [[ "${ACPS_DOWNLOAD_REQUIRED}" == "NO" ]]; then
+    # Verified local ACPS cache is sufficient — no credentials/network.
+    mm_info "ACPS_CONNECTION=NOT_REQUIRED reason=verified_cache_reuse"
+    mm_status_set ACPS_CONNECTION REUSED
+    mm_state_set ACPS_CONNECTION REUSED
+    mm_state_set ACPS_AUTH_READY NOT_REQUIRED
+    if ! ACPS_EXPECTED_BYTES="$(acps_local_verified_cache_bytes "$TARGET_DP_VERSION")"; then
+      mm_die "ACPS_VERIFIED_CACHE=FAIL reason=local_size"
+    fi
   else
+    if ! mm_acquisition_auth_ready; then
+      mm_state_set ACPS_AUTH_READY FAIL
+      mm_die "ACQUISITION_AUTH_READY=FAIL reason=missing_acps_credentials"
+    fi
+    mm_state_set ACPS_AUTH_READY PASS
     if [[ -z "${DP_PHASE2_SOURCE_BASE:-}" ]]; then
       ACPS_BASE_URL="$ACPS_BASE_URL_FIXED"
     fi
@@ -2888,8 +3128,16 @@ engine_download_and_prepare() {
       acps_cleanup_curl_auth
       mm_die "ACPS_CONNECTION=FAIL"
     fi
-    ACPS_EXPECTED_BYTES="$(acps_expected_bytes_hint "${ACPS_EFFECTIVE_BASE:-}")"
-    ACPS_EXPECTED_BYTES="${ACPS_EXPECTED_BYTES:-0}"
+    if ! ACPS_EXPECTED_BYTES="$(acps_expected_bytes_hint "${ACPS_EFFECTIVE_BASE:-}")"; then
+      acps_cleanup_curl_auth
+      mm_error "ACPS_REMOTE_SIZE_UNKNOWN=YES"
+      mm_die "DISK_PREFLIGHT=FAIL reason=acps_remote_size_unknown"
+    fi
+    if [[ ! "$ACPS_EXPECTED_BYTES" =~ ^[1-9][0-9]*$ ]]; then
+      acps_cleanup_curl_auth
+      mm_error "ACPS_REMOTE_SIZE_UNKNOWN=YES"
+      mm_die "DISK_PREFLIGHT=FAIL reason=acps_remote_size_unknown"
+    fi
     # Drop netrc before long OS/materialize work; acps_acquire_all reinstalls.
     acps_cleanup_curl_auth
   fi

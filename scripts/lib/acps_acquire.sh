@@ -25,6 +25,74 @@ acps_cache_dir() {
   printf '%s/acps/%s\n' "${MM_CACHE_ROOT}" "$ver"
 }
 
+acps_work_dir_root() {
+  printf '%s/acps-work\n' "${MM_CACHE_ROOT}"
+}
+
+# Private ACPS cache/work trees: directories 0700, files 0600.
+# Public HTTP artifacts must never use these helpers.
+acps_chmod_private_dir() {
+  local path="$1"
+  local want="${MM_PRIVATE_DIR_MODE:-0700}"
+  chmod "$want" "$path" || return 1
+  local actual
+  actual="$(stat -c '%a' "$path" 2>/dev/null || true)"
+  actual="${actual#"${actual%%[!0]*}"}"
+  local want_n="${want#"${want%%[!0]*}"}"
+  [[ -n "$actual" ]] || actual=0
+  [[ -n "$want_n" ]] || want_n=0
+  [[ "$actual" == "$want_n" ]]
+}
+
+acps_chmod_private_file() {
+  local path="$1"
+  local want="${MM_PRIVATE_FILE_MODE:-0600}"
+  chmod "$want" "$path" || return 1
+  local actual
+  actual="$(stat -c '%a' "$path" 2>/dev/null || true)"
+  actual="${actual#"${actual%%[!0]*}"}"
+  local want_n="${want#"${want%%[!0]*}"}"
+  [[ -n "$actual" ]] || actual=0
+  [[ -n "$want_n" ]] || want_n=0
+  [[ "$actual" == "$want_n" ]]
+}
+
+acps_ensure_private_cache_dir() {
+  local dir="$1"
+  mkdir -p "$dir" || return 1
+  # Harden parents under .install-cache/acps and acps-work.
+  local cur="$dir"
+  local cache_root="${MM_CACHE_ROOT}"
+  while [[ -n "$cur" && "$cur" != "/" && "$cur" != "$cache_root" ]]; do
+    acps_chmod_private_dir "$cur" || return 1
+    case "$(basename "$cur")" in
+      acps|acps-work) break ;;
+    esac
+    cur="$(dirname "$cur")"
+  done
+  if [[ -d "${cache_root}/acps" ]]; then
+    acps_chmod_private_dir "${cache_root}/acps" || true
+  fi
+  if [[ -d "${cache_root}/acps-work" ]]; then
+    acps_chmod_private_dir "${cache_root}/acps-work" || true
+  fi
+  return 0
+}
+
+acps_enforce_private_tree_permissions() {
+  local root="$1"
+  local path
+  [[ -d "$root" ]] || return 0
+  acps_chmod_private_dir "$root" || return 1
+  while IFS= read -r -d '' path; do
+    acps_chmod_private_dir "$path" || return 1
+  done < <(find "$root" -mindepth 1 -type d -print0 2>/dev/null)
+  while IFS= read -r -d '' path; do
+    acps_chmod_private_file "$path" || return 1
+  done < <(find "$root" -type f -print0 2>/dev/null)
+  return 0
+}
+
 # Metadata-bound verified-cache contract.
 # Fast reuse trusts .VERIFIED only when every required file's mutation-sensitive
 # identity still matches the marker written after a successful checksum pass.
@@ -83,8 +151,9 @@ acps_write_verified_marker() {
       printf 'FILE path=%s fp=%s checksum_id=%s\n' "$f" "$fp" "$cid"
     done
   } >"$tmp" || { rm -f "$tmp"; return 1; }
-  chmod 0644 "$tmp" 2>/dev/null || true
+  acps_chmod_private_file "$tmp" 2>/dev/null || chmod 0600 "$tmp" 2>/dev/null || true
   mv -f "$tmp" "${dir}/.VERIFIED"
+  acps_chmod_private_file "${dir}/.VERIFIED" 2>/dev/null || true
 }
 
 acps_is_verified_cache() {
@@ -147,25 +216,83 @@ acps_disk_preflight_state_file() {
   fi
 }
 
+# Resolve remote size for a required ACPS artifact. Never treat unknown as 0.
+# 1) HEAD/GET -I -L → final response Content-Length
+# 2) Range: bytes=0-0 → Content-Range TOTAL
+# Returns 0 and prints a positive integer, or 1 with empty stdout on failure.
 acps_remote_content_length() {
   local base="$1"
   local name="$2"
-  local url cl err
+  local url cl err headers cr total
   url="${base%/}/${name}"
   err="$(mktemp)"
-  cl="$(
+  headers="$(
     curl -sS -I -L --connect-timeout "$ACPS_CURL_CONNECT_TIMEOUT" \
       ${ACPS_CURL_AUTH_ARGS[@]+"${ACPS_CURL_AUTH_ARGS[@]}"} \
       ${ACPS_CURL_TLS_ARGS[@]+"${ACPS_CURL_TLS_ARGS[@]}"} \
-      "$url" 2>"$err" | tr -d '\r' \
-      | awk -F': ' 'tolower($1)=="content-length"{v=$2} END{print v}'
+      "$url" 2>"$err" | tr -d '\r'
   )" || true
-  rm -f "$err"
-  if [[ "$cl" =~ ^[0-9]+$ ]]; then
+  cl="$(
+    printf '%s\n' "$headers" \
+      | awk -F': ' 'BEGIN{IGNORECASE=1} tolower($1)=="content-length"{v=$2} END{print v}'
+  )"
+  if [[ "$cl" =~ ^[1-9][0-9]*$ ]]; then
+    rm -f "$err"
     printf '%s\n' "$cl"
-  else
-    printf '0\n'
+    return 0
   fi
+
+  # Fallback: Range probe for Content-Range: bytes 0-0/TOTAL
+  headers="$(
+    curl -sS -I -L --connect-timeout "$ACPS_CURL_CONNECT_TIMEOUT" \
+      -H 'Range: bytes=0-0' \
+      ${ACPS_CURL_AUTH_ARGS[@]+"${ACPS_CURL_AUTH_ARGS[@]}"} \
+      ${ACPS_CURL_TLS_ARGS[@]+"${ACPS_CURL_TLS_ARGS[@]}"} \
+      "$url" 2>"$err" | tr -d '\r'
+  )" || true
+  cr="$(
+    printf '%s\n' "$headers" \
+      | awk -F': ' 'BEGIN{IGNORECASE=1} tolower($1)=="content-range"{v=$2} END{print v}'
+  )"
+  # Also try a 1-byte GET if HEAD omitted Content-Range.
+  if [[ -z "$cr" ]]; then
+    headers="$(
+      curl -sS -L --connect-timeout "$ACPS_CURL_CONNECT_TIMEOUT" \
+        -H 'Range: bytes=0-0' -D - -o /dev/null \
+        ${ACPS_CURL_AUTH_ARGS[@]+"${ACPS_CURL_AUTH_ARGS[@]}"} \
+        ${ACPS_CURL_TLS_ARGS[@]+"${ACPS_CURL_TLS_ARGS[@]}"} \
+        "$url" 2>"$err" | tr -d '\r'
+    )" || true
+    cr="$(
+      printf '%s\n' "$headers" \
+        | awk -F': ' 'BEGIN{IGNORECASE=1} tolower($1)=="content-range"{v=$2} END{print v}'
+    )"
+  fi
+  rm -f "$err"
+  total="$(
+    printf '%s\n' "$cr" \
+      | sed -nE 's/^[Bb][Yy][Tt][Ee][Ss][[:space:]]+[0-9]+-[0-9]+\/([0-9]+).*$/\1/p'
+  )"
+  if [[ "$total" =~ ^[1-9][0-9]*$ ]]; then
+    printf '%s\n' "$total"
+    return 0
+  fi
+  return 1
+}
+
+# Sum sizes of a verified local ACPS cache (no network). Fail closed if incomplete.
+acps_local_verified_cache_bytes() {
+  local ver="${1:-${DP_PHASE2_VERSION:-${TARGET_DP_VERSION:-6.6.0}}}"
+  local cache name sz total=0
+  cache="$(acps_cache_dir "$ver")"
+  acps_is_verified_cache "$cache" || return 1
+  for name in "${DP_PHASE2_REQUIRED_FILES[@]}"; do
+    [[ -f "${cache}/${name}" ]] || return 1
+    sz="$(stat -c%s "${cache}/${name}" 2>/dev/null || echo 0)"
+    [[ "$sz" =~ ^[0-9]+$ ]] || return 1
+    total=$((total + sz))
+  done
+  printf '%s\n' "$total"
 }
 
 acps_collect_disk_preflight_state() {
@@ -179,11 +306,30 @@ acps_collect_disk_preflight_state() {
 
   cache="$(acps_cache_dir "$ver")"
   state="$(acps_disk_preflight_state_file "$ver")"
-  mkdir -p "$(dirname "$state")"
+  mkdir -p "$(dirname "$state")" 2>/dev/null || true
+  acps_ensure_private_cache_dir "$(dirname "$state")" 2>/dev/null || true
 
   for name in "${DP_PHASE2_REQUIRED_FILES[@]}"; do
-    expected="$(acps_remote_content_length "$base" "$name")"
-    [[ "$expected" =~ ^[0-9]+$ ]] || expected=0
+    if ! expected="$(acps_remote_content_length "$base" "$name")"; then
+      if declare -F mm_error >/dev/null 2>&1; then
+        mm_error "ACPS_REMOTE_SIZE_UNKNOWN=YES file=${name}"
+        mm_error "DISK_PREFLIGHT=FAIL"
+      else
+        printf 'ACPS_REMOTE_SIZE_UNKNOWN=YES file=%s\n' "$name" >&2
+        printf 'DISK_PREFLIGHT=FAIL\n' >&2
+      fi
+      return 1
+    fi
+    if [[ ! "$expected" =~ ^[1-9][0-9]*$ ]]; then
+      if declare -F mm_error >/dev/null 2>&1; then
+        mm_error "ACPS_REMOTE_SIZE_UNKNOWN=YES file=${name} value=${expected:-}"
+        mm_error "DISK_PREFLIGHT=FAIL"
+      else
+        printf 'ACPS_REMOTE_SIZE_UNKNOWN=YES file=%s\n' "$name" >&2
+        printf 'DISK_PREFLIGHT=FAIL\n' >&2
+      fi
+      return 1
+    fi
     total=$((total + expected))
 
     # Credit only bytes that curl will actually reuse. Final files take
@@ -220,7 +366,7 @@ acps_collect_disk_preflight_state() {
   fi
   remaining=$((total - reusable))
 
-  tmp="$(mktemp "${state}.tmp.XXXXXX")"
+  tmp="$(mktemp "${state}.tmp.XXXXXX" 2>/dev/null || mktemp "${TMPDIR:-/tmp}/acps-preflight.XXXXXX")"
   {
     printf 'ACPS_PREFLIGHT_VERSION=%s\n' "$ver"
     printf 'ACPS_EXPECTED_BYTES=%s\n' "$total"
@@ -230,7 +376,11 @@ acps_collect_disk_preflight_state() {
     printf 'ACPS_REMAINING_DOWNLOAD_BYTES=%s\n' "$remaining"
   } >"$tmp"
   chmod 0600 "$tmp" 2>/dev/null || true
-  mv -f "$tmp" "$state"
+  if [[ -d "$(dirname "$state")" && -w "$(dirname "$state")" ]]; then
+    mv -f "$tmp" "$state"
+  else
+    rm -f "$tmp"
+  fi
 
   printf '%s\n' "$total"
 }
@@ -530,8 +680,10 @@ acps_download_one() {
   curl_args+=(${ACPS_CURL_AUTH_ARGS[@]+"${ACPS_CURL_AUTH_ARGS[@]}"})
 
   mkdir -p "$dest_dir"
+  acps_ensure_private_cache_dir "$dest_dir" 2>/dev/null || true
   if [[ -f "$final" ]]; then
     mm_info "ACPS_DOWNLOAD_SKIP_EXISTING file=${name}"
+    acps_chmod_private_file "$final" 2>/dev/null || true
     return 0
   fi
 
@@ -544,10 +696,11 @@ acps_download_one() {
     curl -sS -I -L --connect-timeout "$ACPS_CURL_CONNECT_TIMEOUT" \
       ${ACPS_CURL_TLS_ARGS[@]+"${ACPS_CURL_TLS_ARGS[@]}"} \
       ${ACPS_CURL_AUTH_ARGS[@]+"${ACPS_CURL_AUTH_ARGS[@]}"} \
-      "$url" 2>"$err_head" | tr -d '\r' | awk -F': ' 'tolower($1)=="content-length"{print $2; exit}'
+      "$url" 2>"$err_head" | tr -d '\r' \
+      | awk -F': ' 'tolower($1)=="content-length"{v=$2} END{print v}'
   )" || true
   rm -f "$err_head"
-  if [[ "$cl" =~ ^[0-9]+$ ]]; then
+  if [[ "$cl" =~ ^[1-9][0-9]*$ ]]; then
     expected="$cl"
   fi
 
@@ -603,6 +756,7 @@ acps_download_one() {
     mm_error "ACPS_DOWNLOAD_FAILED file=${name} reason=finalize"
     return 1
   }
+  acps_chmod_private_file "$final" 2>/dev/null || true
   now="$(date +%s)"
   elapsed=$((now - start_ts))
   downloaded="$(stat -c%s "$final")"
@@ -624,12 +778,15 @@ acps_acquire_all() {
   local ver="$1"
   local cache
   cache="$(acps_cache_dir "$ver")"
-  mkdir -p "$cache"
+  acps_ensure_private_cache_dir "$cache" || mm_die "ACPS_CACHE_PERMS=FAIL path=${cache}"
 
   mm_set_phase "Downloading ACPS Artifacts"
   # Verified unchanged cache must reuse without contacting ACPS or requiring
   # credentials. Auth is only needed when a download is about to start.
   if acps_is_verified_cache "$cache"; then
+    # Do not chmod payload files on the reuse path — that updates ctime and
+    # would invalidate the metadata-bound .VERIFIED marker.
+    acps_chmod_private_dir "$cache" 2>/dev/null || true
     mm_ok "ACPS_DOWNLOAD=REUSED cache=${cache}"
     mm_state_set ACPS_PHASE2_DOWNLOADED REUSED
     mm_state_set ACPS_CHECKSUM PASS
@@ -647,6 +804,7 @@ acps_acquire_all() {
       acps_cleanup_curl_auth
       mm_die "ACPS_DOWNLOAD=FAIL file=${name}"
     fi
+    acps_chmod_private_file "${cache}/${name}" 2>/dev/null || true
   done
 
   dp2_assert_exact_files_dir "$cache"
@@ -660,6 +818,8 @@ acps_acquire_all() {
     mm_die "ACPS_CHECKSUM=FAIL"
   fi
   mm_state_set ACPS_CHECKSUM PASS
+  # Permissions before the metadata-bound marker so ctime is stable afterward.
+  acps_enforce_private_tree_permissions "$cache" || mm_die "ACPS_CACHE_PERMS=FAIL"
   if ! acps_write_verified_marker "$cache"; then
     rm -f "${cache}/.VERIFIED"
     acps_cleanup_curl_auth

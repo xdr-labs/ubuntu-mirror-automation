@@ -423,4 +423,29 @@ assert_no_secret 'external-all-paths-secret' \
   "$PHASE2_BRINGUP_DIR" "$PHASE2_BRINGUP_LOG_DEFAULT"
 pass "external_password_file_preserved_on_all_failure_paths"
 
+# --prompt-worker-password creates lifecycle-owned secret (non-interactive reject)
+reset_lifecycle_dir
+set +e
+env -u DP_PHASE2_BRINGUP_LIB_ONLY \
+  PHASE2_BRINGUP_DIR="$PHASE2_BRINGUP_DIR" \
+  PHASE2_BRINGUP_ALLOW_NONROOT=1 \
+  bash "$WRAPPER" --prompt-worker-password --version \
+  >"${TMP}/prompt-parse.out" 2>&1
+prompt_rc=$?
+set -e
+[[ "$prompt_rc" -ne 0 ]] || fail "prompt without tty should fail"
+[[ ! -f "$(p2b_dir)/worker-password" ]] \
+  || fail "prompt failure left owned password"
+grep -q 'interactive terminal\|could not prompt' "${TMP}/prompt-parse.out" \
+  || fail "missing prompt failure reason"
+pass "prompt-worker-password fails closed without tty and leaves no secret"
+
+# Direct owned store via p2b_prompt path equivalent
+p2b_store_worker_password 'prompt-owned-secret'
+[[ "$(stat -c '%a' "$(p2b_dir)/worker-password")" == "600" ]] \
+  || fail "prompt-owned mode"
+p2b_cleanup_lifecycle_owned_worker_password
+[[ ! -f "$(p2b_dir)/worker-password" ]] || fail "prompt-owned not cleaned"
+pass "prompt-owned lifecycle password cleanup"
+
 echo "ALL test_lifecycle_password_cleanup checks passed"
