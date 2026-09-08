@@ -3126,9 +3126,16 @@ engine_download_and_prepare() {
     mm_status_set ACPS_CONNECTION REUSED
     mm_state_set ACPS_CONNECTION REUSED
     mm_state_set ACPS_AUTH_READY NOT_REQUIRED
-    if ! ACPS_EXPECTED_BYTES="$(acps_local_verified_cache_bytes "$TARGET_DP_VERSION")"; then
+    # Record authoritative disk-preflight state from the verified cache so
+    # mm_calc_disk_requirements credits reusable bytes (remaining download=0)
+    # instead of reinitializing them to zero / full expected size.
+    # Call in-process (not $()) so ACPS_* globals persist; state file is the
+    # durable handoff into mm_calc_disk_requirements.
+    if ! acps_record_verified_cache_disk_state "$TARGET_DP_VERSION" >/dev/null; then
       mm_die "ACPS_VERIFIED_CACHE=FAIL reason=local_size"
     fi
+    [[ "${ACPS_EXPECTED_BYTES:-}" =~ ^[1-9][0-9]*$ ]] \
+      || mm_die "ACPS_VERIFIED_CACHE=FAIL reason=local_size"
   else
     if ! mm_acquisition_auth_ready; then
       mm_state_set ACPS_AUTH_READY FAIL
