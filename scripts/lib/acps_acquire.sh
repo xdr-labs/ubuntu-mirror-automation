@@ -295,6 +295,48 @@ acps_local_verified_cache_bytes() {
   printf '%s\n' "$total"
 }
 
+# Authoritative disk-preflight snapshot for verified local ACPS reuse.
+# Only cache accepted by acps_is_verified_cache may reduce remaining download.
+# Sets ACPS_* accounting globals in the current shell and writes the same state
+# file consumed by acps_load_disk_preflight_state / mm_calc_disk_requirements.
+# Call directly (not inside $()) so globals persist; stdout echoes the total.
+acps_record_verified_cache_disk_state() {
+  local ver="${1:-${DP_PHASE2_VERSION:-${TARGET_DP_VERSION:-6.6.0}}}"
+  local total state tmp
+
+  if ! total="$(acps_local_verified_cache_bytes "$ver")"; then
+    return 1
+  fi
+  [[ "$total" =~ ^[1-9][0-9]*$ ]] || return 1
+
+  state="$(acps_disk_preflight_state_file "$ver")"
+  mkdir -p "$(dirname "$state")" 2>/dev/null || true
+  acps_ensure_private_cache_dir "$(dirname "$state")" 2>/dev/null || true
+  tmp="$(mktemp "${state}.tmp.XXXXXX" 2>/dev/null || mktemp "${TMPDIR:-/tmp}/acps-preflight.XXXXXX")"
+  {
+    printf 'ACPS_PREFLIGHT_VERSION=%s\n' "$ver"
+    printf 'ACPS_EXPECTED_BYTES=%s\n' "$total"
+    printf 'ACPS_COMPLETED_CACHE_BYTES=%s\n' "$total"
+    printf 'ACPS_PARTIAL_BYTES=0\n'
+    printf 'ACPS_REUSABLE_ON_DISK_BYTES=%s\n' "$total"
+    printf 'ACPS_REMAINING_DOWNLOAD_BYTES=0\n'
+  } >"$tmp"
+  chmod 0600 "$tmp" 2>/dev/null || true
+  if [[ -d "$(dirname "$state")" && -w "$(dirname "$state")" ]]; then
+    mv -f "$tmp" "$state"
+  else
+    rm -f "$tmp"
+    return 1
+  fi
+
+  ACPS_EXPECTED_BYTES="$total"
+  ACPS_COMPLETED_CACHE_BYTES="$total"
+  ACPS_PARTIAL_BYTES=0
+  ACPS_REUSABLE_ON_DISK_BYTES="$total"
+  ACPS_REMAINING_DOWNLOAD_BYTES=0
+  printf '%s\n' "$total"
+}
+
 acps_collect_disk_preflight_state() {
   # Build a per-file, remote-size-bounded resume snapshot. This function is
   # called inside command substitution by acps_expected_bytes_hint(), so stdout
@@ -439,7 +481,7 @@ mm_calc_disk_requirements() {
   local os_pkg_bytes payload_bytes acps_bytes acps_remaining_bytes ver existing_bundle
   local reserve_floor_bytes reserve_pct_bytes fs_size_bytes metadata_oh
   local stage_peak_bytes current_used_bytes existing_final_bytes
-  local reuse_phase2=0 one_copy=0
+  local reuse_phase2=0 one_copy=0 total_verified
 
   os_pkg_bytes="${OS_CORE_PACKAGE_BYTES:-0}"
   payload_bytes="${OS_CORE_PAYLOAD_BYTES:-0}"
@@ -462,6 +504,29 @@ mm_calc_disk_requirements() {
   elif [[ "${PHASE2_REBUILD_SOURCE:-}" == "EXISTING_FINAL" ]]; then
     acps_bytes=0
     ACPS_REMAINING_DOWNLOAD_BYTES=0
+  elif [[ "${ACPS_DOWNLOAD_REQUIRED:-}" == "NO" && "${PHASE2_REBUILD_SOURCE:-}" == "ACPS" ]]; then
+    # Field path: verified_cache_reuse already decided download/network are not
+    # required. Prefer the authoritative snapshot recorded at that decision;
+    # if missing, re-derive only from a still-verified local cache (never from
+    # unverified on-disk bytes).
+    acps_load_disk_preflight_state "$acps_bytes" "$ver"
+    if [[ "${ACPS_REMAINING_DOWNLOAD_BYTES:-$acps_bytes}" -ne 0 \
+      || "${ACPS_COMPLETED_CACHE_BYTES:-0}" -eq 0 ]]; then
+      if [[ "$acps_bytes" =~ ^[1-9][0-9]*$ ]] \
+        && total_verified="$(acps_local_verified_cache_bytes "$ver" 2>/dev/null)" \
+        && [[ "$total_verified" == "$acps_bytes" ]]; then
+        ACPS_COMPLETED_CACHE_BYTES="$acps_bytes"
+        ACPS_PARTIAL_BYTES=0
+        ACPS_REUSABLE_ON_DISK_BYTES="$acps_bytes"
+        ACPS_REMAINING_DOWNLOAD_BYTES=0
+      else
+        # Fail closed: cannot credit unverified/corrupt local cache.
+        ACPS_COMPLETED_CACHE_BYTES=0
+        ACPS_PARTIAL_BYTES=0
+        ACPS_REUSABLE_ON_DISK_BYTES=0
+        ACPS_REMAINING_DOWNLOAD_BYTES="$acps_bytes"
+      fi
+    fi
   else
     acps_load_disk_preflight_state "$acps_bytes" "$ver"
   fi

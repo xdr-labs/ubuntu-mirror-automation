@@ -115,6 +115,7 @@ TEST_LIST=(
   test_lifecycle_password_cleanup.sh
   test_publication_crash_recovery.sh
   test_verified_acps_offline_reuse.sh
+  test_verified_cache_disk_accounting.sh
   test_acps_remote_size_fail_closed.sh
   test_acps_private_cache_permissions.sh
   test_uninstall_current_paths.sh
