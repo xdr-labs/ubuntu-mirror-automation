@@ -4,6 +4,12 @@ Used by plan generation, selective-mirror validation, and OS Core verify to
 fail closed when an artifact claims (or is required to provide) AWS DP upgrade
 coverage but lacks the linux-aws package family on one or more hops.
 
+Authoritative AWS kernel contract (aligned with client postboot gate):
+  each AWS hop must include BOTH:
+    - linux-aws
+    - linux-image-aws
+  xenial-to-bionic additionally requires snapd when aws coverage is required.
+
 Python 3.5+; standard library only.
 """
 from __future__ import print_function, unicode_literals
@@ -17,14 +23,16 @@ try:
 except ImportError:  # pragma: no cover
     from scripts.lib.discovery_profiles import HOPS, aws_kernel_package_name  # type: ignore
 
-# Hermetic/unit-test escape only. Production builders must never set this.
+# Hermetic/unit-test escape only. Production builders must never set these.
 ALLOW_GENERIC_ONLY_ENV = 'UM_ALLOW_GENERIC_ONLY_DISCOVERY'
+HERMETIC_TEST_ENV = 'MM_HERMETIC_TEST_MODE'
 
-# Target-series metapackage names that must appear for AWS hops.
-AWS_METAPACKAGE_NAMES = frozenset((
+# Authoritative metapackage contract shared with postboot validation.
+REQUIRED_AWS_METAPACKAGES = (
     'linux-aws',
     'linux-image-aws',
-))
+)
+AWS_METAPACKAGE_NAMES = frozenset(REQUIRED_AWS_METAPACKAGES)
 
 # Filename / relative-pool markers for physical tree scans (not version pins).
 AWS_DEB_NAME_RE = re.compile(
@@ -37,13 +45,16 @@ AWS_DEB_NAME_RE = re.compile(
 SNAPD_REQUIRED_HOPS = frozenset(('xenial-to-bionic',))
 
 
+def _env_truthy(name):
+    return os.environ.get(name, '') in ('1', 'true', 'yes', 'on')
+
+
 def allow_generic_only_discovery():
-    if os.environ.get(ALLOW_GENERIC_ONLY_ENV, '') in ('1', 'true', 'yes', 'on'):
-        return True
-    # Existing hermetic test harnesses set MM_HERMETIC_TEST_MODE=1.
-    if os.environ.get('MM_HERMETIC_TEST_MODE', '') in ('1', 'true', 'yes', 'on'):
-        return True
-    return False
+    """True only when BOTH hermetic test mode and explicit escape are set.
+
+    Production with only UM_ALLOW_GENERIC_ONLY_DISCOVERY=1 must NOT bypass.
+    """
+    return _env_truthy(HERMETIC_TEST_ENV) and _env_truthy(ALLOW_GENERIC_ONLY_ENV)
 
 
 def plan_requires_aws_coverage(plan, require_aws_profile=None):
@@ -94,11 +105,15 @@ def collect_aws_packages_by_hop(rows):
     return by_hop
 
 
-def hop_has_aws_metapackage(rows_for_hop):
+def hop_required_aws_metapackages_present(rows_for_hop):
+    """True iff BOTH linux-aws and linux-image-aws are present (postboot contract)."""
     names = {_package_name(r) for r in rows_for_hop or []}
-    return bool(names & AWS_METAPACKAGE_NAMES) or any(
-        n.startswith('linux-image-') and n.endswith('-aws') for n in names
-    )
+    return all(m in names for m in REQUIRED_AWS_METAPACKAGES)
+
+
+# Back-compat alias used by older call sites/tests.
+def hop_has_aws_metapackage(rows_for_hop):
+    return hop_required_aws_metapackages_present(rows_for_hop)
 
 
 def hop_has_snapd(rows, hop):
@@ -122,6 +137,7 @@ def validate_plan_aws_completeness(plan, package_rows=None, require_aws_profile=
         ('requires_aws_coverage', requires),
         ('discovery_profiles', profiles),
         ('allow_generic_only', allow_generic_only_discovery()),
+        ('required_aws_metapackages', list(REQUIRED_AWS_METAPACKAGES)),
         ('hops', OrderedDict()),
     ])
 
@@ -138,7 +154,6 @@ def validate_plan_aws_completeness(plan, package_rows=None, require_aws_profile=
     rows = package_rows
     if rows is None:
         rows = list(plan.get('debs') or []) + list(plan.get('aws_kernel_packages_sample') or [])
-    # Prefer full package row list when callers pass it; also accept plan debs.
     deb_rows = list(plan.get('debs') or [])
     combined = list(rows or []) + deb_rows
 
@@ -153,13 +168,17 @@ def validate_plan_aws_completeness(plan, package_rows=None, require_aws_profile=
 
     for hop in HOPS:
         hop_rows = by_hop.get(hop) or []
-        # Also accept sample rows tagged with hop when debs omitted in lean fixtures.
         sample_hop = [r for r in sample if r.get('hop') == hop]
         effective = hop_rows or sample_hop
-        ok_meta = hop_has_aws_metapackage(effective)
+        ok_meta = hop_required_aws_metapackages_present(effective)
+        missing_meta = [
+            m for m in REQUIRED_AWS_METAPACKAGES
+            if m not in {_package_name(r) for r in effective}
+        ]
         details['hops'][hop] = OrderedDict([
             ('aws_package_rows', len(effective)),
-            ('has_aws_metapackage_or_image', ok_meta),
+            ('has_required_aws_metapackages', ok_meta),
+            ('missing_aws_metapackages', missing_meta),
         ])
         if not effective:
             errors.append(
@@ -167,16 +186,17 @@ def validate_plan_aws_completeness(plan, package_rows=None, require_aws_profile=
             )
         elif not ok_meta:
             errors.append(
-                'aws_kernel_metapackage_missing_hop: %s lacks linux-aws / '
-                'linux-image-aws / linux-image-*-aws' % hop
+                'aws_kernel_metapackage_missing_hop: %s lacks required '
+                'metapackages %s (postboot contract requires both linux-aws and '
+                'linux-image-aws)' % (hop, ','.join(missing_meta))
             )
 
-        if hop in SNAPD_REQUIRED_HOPS and 'aws' in profiles:
-            # AWS xenial→bionic discovery installs snapd; omit only if aws absent.
+        # snapd: required for AWS xenial→bionic whenever AWS coverage is required
+        # (including production OS Core verify with require_aws_profile=True).
+        if hop in SNAPD_REQUIRED_HOPS:
             snap_ok = hop_has_snapd(combined, hop) or hop_has_snapd(
                 plan.get('debs') or [], hop
             )
-            # package_rows from build_plan use hop field.
             if package_rows is not None:
                 snap_ok = snap_ok or any(
                     r.get('hop') == hop and _package_name(r) == 'snapd'
@@ -185,12 +205,30 @@ def validate_plan_aws_completeness(plan, package_rows=None, require_aws_profile=
             details['hops'][hop]['snapd_present'] = snap_ok
             if not snap_ok:
                 errors.append(
-                    'snapd_missing_hop: %s requires snapd when aws profile is '
-                    'included (AWS discovery installs snapd on this hop)' % hop
+                    'snapd_missing_hop: %s requires snapd when AWS coverage is '
+                    'required (AWS discovery installs snapd on this hop)' % hop
                 )
 
     details['result'] = 'PASS' if not errors else 'FAIL'
     return not errors, errors, details
+
+
+def deb_basename_to_package(filename):
+    """Map ``name_version_arch.deb`` (or URL-encoded) basename → package name."""
+    base = os.path.basename(filename)
+    if base.endswith('.deb'):
+        base = base[:-4]
+    # Undo common URL encoding in discovery filenames.
+    try:
+        from urllib.parse import unquote
+    except ImportError:  # pragma: no cover
+        from urllib import unquote  # type: ignore
+    base = unquote(base)
+    # Debian convention: name_version_arch — version/arch may contain underscores
+    # only in rare cases; package names for our contract do not contain '_'.
+    if '_' not in base:
+        return base
+    return base.split('_', 1)[0]
 
 
 def iter_pool_deb_basenames(ubuntu_or_hop_root):
@@ -203,34 +241,55 @@ def iter_pool_deb_basenames(ubuntu_or_hop_root):
                 yield fn
 
 
+def hop_pool_package_names(ubuntu_root):
+    names = set()
+    for fn in iter_pool_deb_basenames(ubuntu_root):
+        names.add(deb_basename_to_package(fn))
+    return names
+
+
 def hop_pool_has_aws_debs(ubuntu_root):
     for fn in iter_pool_deb_basenames(ubuntu_root):
-        if AWS_DEB_NAME_RE.search(fn) or aws_kernel_package_name(
-            fn.rsplit('_', 2)[0] if '_' in fn else fn
-        ):
+        pkg = deb_basename_to_package(fn)
+        if pkg in AWS_METAPACKAGE_NAMES or aws_kernel_package_name(pkg):
             return True
-        # Filename forms: linux-image-5.4.0-1103-aws_....deb
-        base = fn.split('_', 1)[0]
-        if aws_kernel_package_name(base):
+        if AWS_DEB_NAME_RE.search(fn):
             return True
     return False
 
 
+def hop_pool_aws_contract(ubuntu_root):
+    """Physical hop contract used by OS Core / selective tree validation."""
+    names = hop_pool_package_names(ubuntu_root)
+    missing_meta = [m for m in REQUIRED_AWS_METAPACKAGES if m not in names]
+    return OrderedDict([
+        ('package_names_sample', sorted(names)[:40]),
+        ('has_required_aws_metapackages', not missing_meta),
+        ('missing_aws_metapackages', missing_meta),
+        ('has_snapd', 'snapd' in names),
+        ('has_any_aws_family', hop_pool_has_aws_debs(ubuntu_root)),
+    ])
+
+
 def validate_tree_aws_completeness(selective_or_payload_root, plan=None, require_aws_profile=None):
-    """Validate materialized selective/OS Core payload tree for AWS debs.
+    """Validate materialized selective/OS Core payload tree for AWS contract.
 
     ``selective_or_payload_root`` may be:
       - selective published root containing hops/<hop>/ubuntu/pool
       - OS Core payload root containing hops/<hop>/...
+
+    When AWS coverage is required, each hop must contain BOTH ``linux-aws`` and
+    ``linux-image-aws`` .deb metapackages. A lone versioned
+    ``linux-image-*-aws`` package is insufficient. xenial-to-bionic also
+    requires physical ``snapd``.
     """
     plan = plan or {}
     requires = plan_requires_aws_coverage(plan, require_aws_profile=require_aws_profile)
-    # Physical OS Core production path: if no plan profiles, still require AWS
-    # unless hermetic escape — callers pass require_aws_profile=True for OS Core.
     errors = []
     details = OrderedDict([
         ('requires_aws_coverage', requires),
         ('root', selective_or_payload_root),
+        ('required_aws_metapackages', list(REQUIRED_AWS_METAPACKAGES)),
         ('hops', OrderedDict()),
     ])
     if not requires:
@@ -245,15 +304,21 @@ def validate_tree_aws_completeness(selective_or_payload_root, plan=None, require
             os.path.join(selective_or_payload_root, hop),
         ]
         ubuntu = next((c for c in candidates if os.path.isdir(c)), candidates[0])
-        present = hop_pool_has_aws_debs(ubuntu)
+        contract = hop_pool_aws_contract(ubuntu)
         details['hops'][hop] = OrderedDict([
             ('ubuntu_root', ubuntu),
-            ('aws_debs_present', present),
+            ('contract', contract),
         ])
-        if not present:
+        if not contract['has_required_aws_metapackages']:
             errors.append(
-                'aws_deb_missing_in_tree: %s has no linux-aws family .deb files'
-                % hop
+                'aws_metapackage_deb_missing_in_tree: %s missing %s '
+                '(versioned linux-image-*-aws alone is insufficient)'
+                % (hop, ','.join(contract['missing_aws_metapackages']))
+            )
+        if hop in SNAPD_REQUIRED_HOPS and not contract['has_snapd']:
+            errors.append(
+                'snapd_deb_missing_in_tree: %s requires physical snapd .deb '
+                'when AWS coverage is required' % hop
             )
 
     details['result'] = 'PASS' if not errors else 'FAIL'

@@ -1535,19 +1535,29 @@ cmd_plan_selective_impl() {
   local -a disc_args=()
   local generic_prof="${PROJECT_ROOT}/artifacts/upgrade-discovery-profiles/generic"
   local aws_prof="${PROJECT_ROOT}/artifacts/upgrade-discovery-profiles/aws"
+  # Hermetic escape requires BOTH flags. UM_ALLOW_GENERIC_ONLY_DISCOVERY alone
+  # must not re-enable production generic-only OS Core defects.
+  local hermetic_generic_only=0
+  if [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" && "${UM_ALLOW_GENERIC_ONLY_DISCOVERY:-0}" == "1" ]]; then
+    hermetic_generic_only=1
+  fi
   if [[ -n "${DISCOVERY_ROOTS:-}" ]]; then
     # Space-separated profile=path entries, e.g.
     # DISCOVERY_ROOTS="generic=/path/generic aws=/path/aws"
     local entry
     local has_aws_root=0
+    local has_generic_root=0
     for entry in ${DISCOVERY_ROOTS}; do
       disc_args+=(--discovery-root "$entry")
       case "$entry" in
         aws=*) has_aws_root=1 ;;
+        generic=*) has_generic_root=1 ;;
       esac
     done
-    if [[ "$has_aws_root" -ne 1 && "${UM_ALLOW_GENERIC_ONLY_DISCOVERY:-0}" != "1" ]]; then
-      die "plan-selective FAIL: DISCOVERY_ROOTS must include aws=<path> (AWS DP coverage required; set UM_ALLOW_GENERIC_ONLY_DISCOVERY=1 only for hermetic tests)"
+    if [[ "$hermetic_generic_only" -ne 1 ]]; then
+      if [[ "$has_generic_root" -ne 1 || "$has_aws_root" -ne 1 ]]; then
+        die "plan-selective FAIL: DISCOVERY_ROOTS must include both generic=<path> and aws=<path> (got generic=${has_generic_root} aws=${has_aws_root}); set MM_HERMETIC_TEST_MODE=1 and UM_ALLOW_GENERIC_ONLY_DISCOVERY=1 together only for hermetic fixtures"
+      fi
     fi
   elif [[ -d "$generic_prof" && -d "$aws_prof" ]]; then
     disc_args+=(
@@ -1555,11 +1565,11 @@ cmd_plan_selective_impl() {
       --discovery-root "aws=${aws_prof}"
     )
     log "DISCOVERY_PROFILES=generic,aws (mandatory union for AWS DP coverage)"
-  elif [[ "${UM_ALLOW_GENERIC_ONLY_DISCOVERY:-0}" == "1" ]]; then
+  elif [[ "$hermetic_generic_only" -eq 1 ]]; then
     disc_args+=(--discovery-root "$DISCOVERY_ROOT")
-    warn "DISCOVERY_PROFILES=generic-only (UM_ALLOW_GENERIC_ONLY_DISCOVERY=1)"
+    warn "DISCOVERY_PROFILES=generic-only (MM_HERMETIC_TEST_MODE=1 + UM_ALLOW_GENERIC_ONLY_DISCOVERY=1)"
   else
-    die "plan-selective FAIL: missing AWS discovery profile at ${aws_prof} (and/or generic at ${generic_prof}); refusing generic-only selective plan that omits linux-aws"
+    die "plan-selective FAIL: missing mandatory generic+aws discovery profiles (generic=${generic_prof} aws=${aws_prof}); refusing bare/generic-only/aws-only selective plan"
   fi
   set +e
   python3 "$py" \

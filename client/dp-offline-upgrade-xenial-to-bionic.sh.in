@@ -1813,9 +1813,19 @@ check_os_baseline() {
       return 1
     fi
   fi
-  # Persist AWS/source kernel identity for postboot completion gate.
+  # AWS next-hop source readiness + fail-closed baseline persistence.
+  # Must run before any destructive package/LXD/release mutation.
+  if declare -F validate_aws_source_kernel_preflight >/dev/null 2>&1; then
+    validate_aws_source_kernel_preflight "${PIN_SOURCE_VERSION}" || {
+      log ERROR "AWS source kernel preflight failed; refusing destructive upgrade stages"
+      return 1
+    }
+  fi
   if declare -F persist_source_kernel_aws_baseline >/dev/null 2>&1; then
-    persist_source_kernel_aws_baseline || true
+    persist_source_kernel_aws_baseline || {
+      log ERROR "AWS source kernel baseline persistence failed; refusing hop"
+      return 1
+    }
   fi
   # DKMS modules → WARNING (OS safety signal; not a product gate)
   if [[ -d "$(hostpath /var/lib/dkms)" ]] && find "$(hostpath /var/lib/dkms)" -mindepth 1 -maxdepth 1 2>/dev/null | grep -q .; then
