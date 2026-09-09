@@ -14,6 +14,12 @@ ACPS_CURL_TLS_ARGS=()
 ACPS_CURL_NETRC_FILE="${ACPS_CURL_NETRC_FILE:-}"
 ACPS_INSECURE_TLS="${ACPS_INSECURE_TLS:-0}"
 
+# Explicit hermetic-test boundary. Never document in GUI/help.
+# Production must not honor ACPS_INSECURE_TLS or DP_PHASE2_SOURCE_BASE.
+_acps_hermetic_test_mode() {
+  [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" ]]
+}
+
 _acps_auth_die() {
   if declare -F mm_die >/dev/null 2>&1; then
     mm_die "$@"
@@ -107,6 +113,9 @@ acps_setup_curl_auth() {
   ACPS_CURL_TLS_ARGS=()
   ACPS_CURL_NETRC_FILE="${ACPS_CURL_NETRC_FILE:-}"
   if [[ -n "${DP_PHASE2_SOURCE_BASE:-}" ]]; then
+    if ! _acps_hermetic_test_mode; then
+      _acps_auth_die "DP_PHASE2_SOURCE_BASE=FAIL reason=production_forbidden"
+    fi
     ACPS_EFFECTIVE_BASE="${DP_PHASE2_SOURCE_BASE}"
     return 0
   fi
@@ -123,8 +132,11 @@ acps_setup_curl_auth() {
   [[ -n "${ACPS_USERNAME:-}" ]] || _acps_auth_die "ACPS_USERNAME=FAIL missing"
   [[ -n "${ACPS_PASSWORD:-}" ]] || _acps_auth_die "ACPS_PASSWORD=FAIL missing"
 
-  # Prefer secure TLS verification. Explicit opt-in required for -k.
+  # Prefer secure TLS verification. Explicit hermetic test mode required for -k.
   if [[ "${ACPS_INSECURE_TLS:-0}" == "1" ]]; then
+    if ! _acps_hermetic_test_mode; then
+      _acps_auth_die "ACPS_INSECURE_TLS=FAIL reason=production_forbidden"
+    fi
     ACPS_CURL_TLS_ARGS+=(-k)
     _acps_auth_warn "ACPS_TLS_VERIFY=DISABLED ACPS_INSECURE_TLS_WARNING=YES"
   else

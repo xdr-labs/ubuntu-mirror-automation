@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # tests/test_dp_phase2_bundle.sh — DP Phase 2 sync/verify logic with tiny fixtures
 set -euo pipefail
+export MM_HERMETIC_TEST_MODE=1
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=../scripts/lib/dp-phase2-common.sh

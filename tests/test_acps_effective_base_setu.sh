@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # ACPS_EFFECTIVE_BASE must be safe under set -u before acps_setup_curl_auth.
 set -euo pipefail
+export MM_HERMETIC_TEST_MODE=1
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FAIL=0
 pass() { echo "PASS: $*"; }

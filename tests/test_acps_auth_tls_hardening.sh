@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # ACPS auth/TLS hardening: default TLS verify, netrc (not -u), cleanup, set -u.
 set -euo pipefail
+export MM_HERMETIC_TEST_MODE=1
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FAIL=0

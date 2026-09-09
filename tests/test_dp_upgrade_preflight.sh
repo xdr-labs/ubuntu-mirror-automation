@@ -157,16 +157,15 @@ n2="$(pf_normalize_version '6.4.0+build123')"
 n3="$(pf_normalize_version '6.5.0-12')"
 [[ "$n3" == "6.5.0" ]] && pass "normalize 6.5.0-12" || fail "normalize dash: $n3"
 
-# 14. DP 6.1 is informational in Phase 1 OS-only (not BLOCKER)
+# 14. Known unsupported DP 6.1.x is a BLOCKER; undetermined remains non-hard-gated
 run_pf "$WORKDIR/dp61" \
   --collection "$FIX/dp61-blocked" --package-source-mode direct --bringup-mode online \
   --snapshot-reference "snap-ok" || true
-if grep -q 'DP_VERSION_SUPPORTED' "$RESDIR/checks.tsv" \
-   && ! grep DP_VERSION_SUPPORTED "$RESDIR/checks.tsv" | grep -q FAIL \
-   && grep DP_VERSION_SUPPORTED "$RESDIR/checks.tsv" | grep -q PASS; then
-  pass "DP 6.1.x not blocked in Phase 1 OS-only"
+if grep DP_VERSION_SUPPORTED "$RESDIR/checks.tsv" | grep -q FAIL \
+   && grep DP_VERSION_SUPPORTED "$RESDIR/checks.tsv" | grep -q BLOCKER; then
+  pass "DP 6.1.x blocked as BLOCKER"
 else
-  fail "DP 6.1 unexpectedly blocked or missing check"
+  fail "DP 6.1 should be BLOCKER when known unsupported"
 fi
 
 # 15. Ubuntu 16.04 → 4 hops

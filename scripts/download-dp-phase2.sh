@@ -341,11 +341,14 @@ cmd_sync() {
   dp2_info "STAGING_DIR=${STAGING_DIR}"
 
   # ACPS path: TLS verify + netrc (same policy as Mirror Manager).
-  # Fixture path (DP_PHASE2_SOURCE_BASE): no auth setup.
+  # Fixture path (DP_PHASE2_SOURCE_BASE): hermetic test mode only.
   if [[ -z "${DP_PHASE2_SOURCE_BASE:-}" ]]; then
     acps_setup_curl_auth
     ACPS_AUTH_ACTIVE=1
   else
+    if [[ "${MM_HERMETIC_TEST_MODE:-0}" != "1" ]]; then
+      dp2_die "DP_PHASE2_SOURCE_BASE=FAIL reason=production_forbidden"
+    fi
     ACPS_EFFECTIVE_BASE="${DP_PHASE2_SOURCE_BASE}"
   fi
 

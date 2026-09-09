@@ -88,6 +88,21 @@ um_resolve_config_path() {
   um_die "No mirror.conf found. Pass --config PATH"
 }
 
+# NGINX_SITE_NAME must be a single path leaf (no separators / traversal).
+um_validate_nginx_site_name() {
+  local name="${1:-${NGINX_SITE_NAME:-apt-mirror}}"
+  [[ -n "$name" ]] || um_die "NGINX_SITE_NAME=FAIL reason=empty"
+  case "$name" in
+    */*|*"\\"*|*\.\.*)
+      um_die "NGINX_SITE_NAME=FAIL reason=path_separator name=${name}"
+      ;;
+  esac
+  if [[ ! "$name" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    um_die "NGINX_SITE_NAME=FAIL reason=invalid_chars name=${name}"
+  fi
+  return 0
+}
+
 um_load_config() {
   local path
   path="$(um_resolve_config_path "${1:-}")"
@@ -115,15 +130,21 @@ um_load_config() {
   # DP Phase 2 (6.6.0) is immutable. Stale mirror.conf (e.g. 6.5.0) must not
   # restore a previous production target.
   DP_PHASE2_ENABLED="${DP_PHASE2_ENABLED:-true}"
-  if [[ "${MM_ALLOW_TARGET_OVERRIDE:-0}" == "1" ]]; then
+  if [[ "${MM_ALLOW_TARGET_OVERRIDE:-0}" == "1" && "${MM_HERMETIC_TEST_MODE:-0}" == "1" ]]; then
     DP_PHASE2_VERSION="${DP_PHASE2_VERSION:-6.6.0}"
   else
+    if [[ "${MM_ALLOW_TARGET_OVERRIDE:-0}" == "1" && "${MM_HERMETIC_TEST_MODE:-0}" != "1" ]]; then
+      um_die "MM_ALLOW_TARGET_OVERRIDE=FAIL reason=production_forbidden"
+    fi
     DP_PHASE2_VERSION="6.6.0"
   fi
   DP_PHASE2_ROOT="${DP_PHASE2_ROOT:-${BASE_PATH}/dp-phase2}"
   DP_PHASE2_MIN_FREE_GIB="${DP_PHASE2_MIN_FREE_GIB:-70}"
   DP_PHASE2_PUBLIC_PATH="/dp-phase2/${DP_PHASE2_VERSION}/"
   DP_PHASE2_KEEP_PREVIOUS="${DP_PHASE2_KEEP_PREVIOUS:-true}"
+
+  # Reject path separators / traversal in nginx site name (sites-available leaf).
+  um_validate_nginx_site_name "${NGINX_SITE_NAME:-apt-mirror}"
 
   um_apply_mirror_mode_components
 

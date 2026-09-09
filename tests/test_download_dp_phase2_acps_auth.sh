@@ -2,6 +2,7 @@
 # Standalone download-dp-phase2.sh must follow the same ACPS auth/TLS policy
 # as Mirror Manager (acps_auth.sh): default TLS verify, netrc (not -u), cleanup.
 set -euo pipefail
+export MM_HERMETIC_TEST_MODE=1
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DP2="${ROOT}/scripts/download-dp-phase2.sh"
