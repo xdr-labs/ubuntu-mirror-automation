@@ -2,6 +2,7 @@
 # P2: corrupt existing ACPS finals must not be skipped forever on Menu 2 retry.
 # Checksum verification remains authoritative; only invalid payloads are removed.
 set -euo pipefail
+export MM_HERMETIC_TEST_MODE=1
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMMON="${ROOT}/scripts/lib/mirror_manager_common.sh"

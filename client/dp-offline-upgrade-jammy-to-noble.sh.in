@@ -84,7 +84,7 @@ POSTBOOT_UNIT_NAME="stellar-offline-os-upgrade-postboot.service"
 MIN_ROOT_BYTES=12884901888   # 12 GiB - dp-os-upgrade.conf policy
 MIN_BOOT_BYTES=536870912     # 512 MiB
 MIN_AELLADATA_BYTES=5368709120 # 5 GiB
-MIN_DP_VERSION="6.2.0"       # Phase 2 reference only; not a Phase 1 hard gate
+MIN_DP_VERSION="6.2.0"       # Phase 1 hard gate when version is authoritatively known
 # Phase 1 default: OS upgrade enablement only (product gates never hard-fail).
 UPGRADE_PHASE=1
 UPGRADE_MODE="OS_ONLY_PHASE1"
@@ -1757,9 +1757,31 @@ log_product_state_phase1() {
   log INFO "DP_INSTALL_STATE=${DP_INSTALL_STATE}"
   log INFO "DP_PRODUCT_STATE_ACTION=IGNORED_BY_PHASE1_POLICY"
   log INFO "DP_PRODUCT_VALIDATION=NOT_IN_PHASE1_SCOPE"
-  log INFO "DP_VERSION_GATE=SKIPPED_PHASE1_OS_ONLY"
   log INFO "DP_TOPOLOGY_GATE=SKIPPED_PHASE1_OS_ONLY"
   log INFO "DP_SERVICE_GATE=SKIPPED_PHASE1_OS_ONLY"
+
+  # Known unsupported / at-target DP versions must never enter destructive OS mutation.
+  # UNDETERMINED source remains non-hard-gated (no invented product policy).
+  if [[ "${DP_VERSION_DETECT_STATUS:-}" == "ok" && "${DP_VERSION_CONSISTENCY:-}" == "PASS"       && -n "${DP_VERSION:-}" && "${DP_VERSION}" != "UNDETERMINED" ]]; then
+    if ! version_is_mmp "$DP_VERSION"; then
+      log ERROR "DP_VERSION_GATE=FAIL_MALFORMED version=${DP_VERSION}"
+      die "$EC_DP" "FAIL_UNSUPPORTED_DP_VERSION malformed=${DP_VERSION}"
+    fi
+    if ! version_ge "$DP_VERSION" "${MIN_DP_VERSION}"; then
+      log ERROR "DP_VERSION_GATE=FAIL_UNSUPPORTED source=${DP_VERSION} min=${MIN_DP_VERSION}"
+      die "$EC_DP" "FAIL_UNSUPPORTED_DP_VERSION source=${DP_VERSION} min=${MIN_DP_VERSION}"
+    fi
+    if version_ge "$DP_VERSION" "6.6.0"; then
+      log ERROR "DP_VERSION_GATE=FAIL_AT_OR_ABOVE_TARGET source=${DP_VERSION} target=6.6.0"
+      die "$EC_DP" "FAIL_DP_VERSION_AT_OR_ABOVE_TARGET source=${DP_VERSION}"
+    fi
+    log INFO "DP_VERSION_GATE=PASS_SUPPORTED source=${DP_VERSION} min=${MIN_DP_VERSION} target_excl=6.6.0"
+  elif [[ -n "${DP_VERSION:-}" && "${DP_VERSION}" != "UNDETERMINED"       && "${DP_VERSION_DETECT_STATUS:-}" == "ok"       && "${DP_VERSION_CONSISTENCY:-}" != "PASS" ]]; then
+    log ERROR "DP_VERSION_GATE=FAIL_INCONSISTENT version=${DP_VERSION} consistency=${DP_VERSION_CONSISTENCY:-}"
+    die "$EC_DP" "FAIL_DP_VERSION_INCONSISTENT version=${DP_VERSION}"
+  else
+    log INFO "DP_VERSION_GATE=UNDETERMINED_CONTINUE"
+  fi
 
   if [[ -n "$dpver" ]]; then
     log INFO "DP_VERSION=${dpver}"
@@ -4892,6 +4914,48 @@ change_login_shells() {
   : >"$rec"
   passwd_file="$(hostpath /etc/passwd)"
   local user shell line
+
+  _login_shell_set_to() {
+    local u="$1" target="$2"
+    if [[ -n "$TEST_ROOT" ]]; then
+      awk -F: -v u="$u" -v s="$target" 'BEGIN{OFS=":"} $1==u {$7=s} {print}' \
+        "$passwd_file" >"${passwd_file}.new"
+      mv -f "${passwd_file}.new" "$passwd_file"
+      return 0
+    fi
+    if command -v chsh >/dev/null 2>&1; then
+      chsh -s "$target" "$u" && return 0
+    fi
+    if command -v usermod >/dev/null 2>&1; then
+      usermod -s "$target" "$u"
+      return $?
+    fi
+    return 1
+  }
+
+  _login_shell_rollback_partial() {
+    local reason="${1:-partial_shell_change_failure}" u orig cur
+    log WARN "LOGIN_SHELL_TRANSACTION_ROLLBACK=BEGIN reason=${reason}"
+    if [[ -s "$rec" ]]; then
+      while IFS=$'\t' read -r u orig; do
+        [[ -n "$u" && -n "$orig" ]] || continue
+        if [[ -n "$TEST_ROOT" ]]; then
+          cur="$(grep -E "^${u}:" "$passwd_file" 2>/dev/null | cut -d: -f7 || true)"
+        else
+          cur="$(getent passwd "$u" 2>/dev/null | cut -d: -f7 || true)"
+        fi
+        if [[ "$cur" != "$orig" ]]; then
+          if _login_shell_set_to "$u" "$orig"; then
+            log INFO "LOGIN_SHELL_ROLLBACK_${u^^}=PASS restored=${orig}"
+          else
+            log ERROR "LOGIN_SHELL_ROLLBACK_${u^^}=FAIL wanted=${orig}"
+          fi
+        fi
+      done <"$rec"
+    fi
+    log WARN "LOGIN_SHELL_TRANSACTION_ROLLBACK=DONE reason=${reason}"
+  }
+
   for user in root aella; do
     if [[ -n "$TEST_ROOT" ]]; then
       line="$(grep -E "^${user}:" "$passwd_file" 2>/dev/null || true)"
@@ -4899,11 +4963,17 @@ change_login_shells() {
       shell="$(printf '%s' "$line" | cut -d: -f7)"
       printf '%s\t%s\n' "$user" "$shell" >>"$rec"
       if [[ "$shell" != "/bin/bash" ]]; then
-        # Fake-root: rewrite fixture passwd only (never touch host chsh)
-        # Fields after name: password:uid:gid:gecos:home:shell
-        awk -F: -v u="$user" 'BEGIN{OFS=":"} $1==u {$7="/bin/bash"} {print}' \
-          "$passwd_file" >"${passwd_file}.new"
-        mv -f "${passwd_file}.new" "$passwd_file"
+        if [[ -n "${DP_OFFLINE_FAKE_SHELL_CHANGE_FAIL_USER:-}" \
+            && "${DP_OFFLINE_FAKE_SHELL_CHANGE_FAIL_USER}" == "$user" ]]; then
+          log ERROR "LOGIN_SHELL_AUTOMATION=FAIL"
+          _login_shell_rollback_partial "injected_shell_change_fail_user=${user}"
+          die "$EC_INTERNAL" "FAIL_LOGIN_SHELL_CHANGE_${user}"
+        fi
+        if ! _login_shell_set_to "$user" "/bin/bash"; then
+          log ERROR "LOGIN_SHELL_AUTOMATION=FAIL"
+          _login_shell_rollback_partial "shell_set_failed_${user}"
+          die "$EC_INTERNAL" "FAIL_LOGIN_SHELL_CHANGE_${user}"
+        fi
         log INFO "TEST_ROOT: set ${user} shell ${shell} → /bin/bash in fixture passwd"
       else
         log INFO "${user} shell already /bin/bash"
@@ -4920,90 +4990,22 @@ change_login_shells() {
       continue
     fi
     if [[ "$shell" == "/usr/bin/aella_cli" || "$shell" == *aella_cli* ]]; then
-      if command -v chsh >/dev/null 2>&1; then
-        chsh -s /bin/bash "$user"
-      else
-        usermod -s /bin/bash "$user"
+      if ! _login_shell_set_to "$user" "/bin/bash"; then
+        log ERROR "LOGIN_SHELL_AUTOMATION=FAIL"
+        _login_shell_rollback_partial "shell_set_failed_${user}"
+        die "$EC_INTERNAL" "FAIL_LOGIN_SHELL_CHANGE_${user}"
       fi
       log INFO "changed ${user} shell ${shell} → /bin/bash"
     else
       log WARN "unexpected ${user} shell ${shell}; setting /bin/bash for upgrade safety"
-      chsh -s /bin/bash "$user" 2>/dev/null || usermod -s /bin/bash "$user"
+      if ! _login_shell_set_to "$user" "/bin/bash"; then
+        log ERROR "LOGIN_SHELL_AUTOMATION=FAIL"
+        _login_shell_rollback_partial "shell_set_failed_${user}"
+        die "$EC_INTERNAL" "FAIL_LOGIN_SHELL_CHANGE_${user}"
+      fi
     fi
   done
 }
-
-# =============================================================================
-# BEGIN_DP_POSTBOOT_DNS_TIME_POLICY
-# Jammy→Noble postboot DNS resolver repair + time readiness (Phase 1).
-# Build-time inlined from client/dp-postboot-readiness-policy.sh.inc by
-# scripts/lib/build_client_jammy_to_noble.py into the single-file client.
-# Target DP must not require a separate include file at runtime.
-# Never hard-gates on missing internal NTP alone. Never restarts NICs / reboot / bringup.
-# =============================================================================
-
-@@POSTBOOT_POLICY_LIB@@
-
-# Compatibility wrapper for call sites / fixtures that still name the Phase 1 helper.
-check_time_readiness_phase1() {
-  check_time_readiness "$@"
-}
-
-check_basic_network_route() {
-  # Default route / primary interface presence. Fixture-friendly.
-  if [[ -n "${STELLAR_OFFLINE_FAKE_DEFAULT_ROUTE:-}" ]]; then
-    [[ "${STELLAR_OFFLINE_FAKE_DEFAULT_ROUTE}" == "1" ]]
-    return $?
-  fi
-  if [[ -n "${DP_POSTBOOT_TEST_ROOT:-}" ]]; then
-    local hp
-    if declare -F dns_hp >/dev/null 2>&1; then
-      hp="$(dns_hp /tmp/default-route-ok)"
-      [[ -f "$hp" ]] && return 0
-      hp="$(dns_hp /proc/net/route)"
-    else
-      hp="${DP_POSTBOOT_TEST_ROOT}/tmp/default-route-ok"
-      [[ -f "$hp" ]] && return 0
-      hp="${DP_POSTBOOT_TEST_ROOT}/proc/net/route"
-    fi
-    [[ -f "$hp" ]] || return 1
-    awk 'NR>1 && $2=="00000000" { found=1 } END { exit(found?0:1) }' "$hp" 2>/dev/null
-    return $?
-  fi
-  local default_route default_iface
-  default_route="$(ip -4 route show default 2>/dev/null | awk 'NR==1 {print; exit}')"
-  default_iface="$(printf '%s\n' "$default_route" | awk '{for (i=1; i<=NF; i++) if ($i=="dev") {print $(i+1); exit}}')"
-  [[ -n "$default_route" && -n "$default_iface" ]] || return 1
-  if declare -F postboot_policy_log >/dev/null 2>&1; then
-    postboot_policy_log INFO "DEFAULT_ROUTE_CHECK=PASS"
-    postboot_policy_log INFO "DEFAULT_INTERFACE=${default_iface}"
-    postboot_policy_log INFO "DEFAULT_ROUTE=${default_route}"
-  elif declare -F log >/dev/null 2>&1; then
-    log INFO "DEFAULT_ROUTE_CHECK=PASS"
-    log INFO "DEFAULT_INTERFACE=${default_iface}"
-    log INFO "DEFAULT_ROUTE=${default_route}"
-  fi
-}
-
-emit_dns_time_result_contract() {
-  local _log=postboot_policy_log
-  declare -F postboot_policy_log >/dev/null 2>&1 || _log=log
-  "$_log" INFO "DNS_RESOLVER_STATE=${DNS_RESOLVER_STATE:-}"
-  "$_log" INFO "DNS_RESOLVER_REPAIR=${DNS_RESOLVER_REPAIR:-}"
-  "$_log" INFO "DNS_SERVERS_CONFIGURED=${DNS_SERVERS_CONFIGURED:-}"
-  "$_log" INFO "DNS_NAME_RESOLUTION=${DNS_NAME_RESOLUTION:-}"
-  "$_log" INFO "TIME_READINESS=${TIME_READINESS:-}"
-  "$_log" INFO "CLOCK_SKEW_SECONDS=${CLOCK_SKEW_SECONDS:-}"
-  "$_log" INFO "MAX_CLOCK_SKEW_SECONDS=${MAX_CLOCK_SKEW_SECONDS:-}"
-  "$_log" INFO "NTP_SOURCE_CLASS=${NTP_SOURCE_CLASS:-}"
-  "$_log" INFO "NTP_SELECTED_PEER=${NTP_SELECTED_PEER:-}"
-  "$_log" INFO "BRINGUP_READY=${BRINGUP_READY:-}"
-  "$_log" INFO "BRINGUP_EXECUTED=${BRINGUP_EXECUTED:-NO}"
-}
-
-# END_DP_POSTBOOT_DNS_TIME_POLICY
-# =============================================================================
-
 
 install_runner_and_units() {
   local work="$1"

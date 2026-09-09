@@ -141,4 +141,19 @@ fi
 [[ "$ACPS_DOWNLOAD_REQUIRED" == "NO" ]] || fail "ABSENT+verified should not require download"
 pass "ABSENT final + verified cache → ACPS_DOWNLOAD_REQUIRED=NO"
 
+# Menu2 auth gate: verified cache + empty creds → allow
+unset ACPS_DOWNLOAD_REQUIRED || true
+ACPS_USERNAME=""
+ACPS_PASSWORD=""
+seed_verified_cache "$CACHE"
+mm_acquisition_auth_or_verified_cache_ready \
+  || fail "verified cache + empty creds should allow Menu2 auth gate"
+pass "Menu2 verified-cache auth gate allows without credentials"
+
+# Menu2 auth gate: corrupt/unverified + empty creds → FAIL
+printf 'CORRUPT\n' >>"${CACHE}/images-6.6.0.tar"
+mm_acquisition_auth_or_verified_cache_ready \
+  && fail "corrupt cache + empty creds should fail Menu2 auth gate" \
+  || pass "Menu2 corrupt-cache auth gate requires credentials"
+
 echo "ALL VERIFIED ACPS OFFLINE REUSE TESTS PASSED"

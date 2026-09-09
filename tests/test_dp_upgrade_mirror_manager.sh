@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # tests/test_dp_upgrade_mirror_manager.sh — unified R2+ACPS Mirror Manager synthetic tests
 set -euo pipefail
+export MM_HERMETIC_TEST_MODE=1
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=lib/seed_complete_client_http_set.sh

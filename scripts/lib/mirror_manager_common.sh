@@ -52,11 +52,20 @@ MM_DRY_RUN="${MM_DRY_RUN:-0}"
 MM_FILES_CHANGED="${MM_FILES_CHANGED:-NO}"
 
 # Immutable production Phase 2 target. Saved workflow/config/environment
-# must not restore a previous target (e.g. 6.5.0). Tests may set
-# MM_ALLOW_TARGET_OVERRIDE=1 to exercise non-production versions.
+# must not restore a previous target (e.g. 6.5.0). Hermetic tests may set
+# MM_HERMETIC_TEST_MODE=1 and MM_ALLOW_TARGET_OVERRIDE=1 together.
 PHASE2_TARGET_VERSION_FIXED="6.6.0"
 PHASE2_TARGET_VERSION="${PHASE2_TARGET_VERSION_FIXED}"
 TARGET_DP_VERSION="${PHASE2_TARGET_VERSION}"
+
+# Production OS Core object identity (R2). Sidecar cross-check is additional;
+# these immutable values are authoritative for the production URL.
+OS_CORE_PRODUCTION_OBJECT_NAME="ubuntu-os-core-xenial-to-noble.tar"
+OS_CORE_PRODUCTION_EXPECTED_SHA256="6c60ae6c9884accdc37cfa8886a24e285bc8724da4fca61a3e55b223fa47fcc7"
+OS_CORE_PRODUCTION_EXPECTED_BYTES=3566336000
+# Canonical aliases (immutable production pin).
+OS_CORE_PRODUCTION_R2_SHA256="${OS_CORE_PRODUCTION_EXPECTED_SHA256}"
+OS_CORE_PRODUCTION_R2_BYTES="${OS_CORE_PRODUCTION_EXPECTED_BYTES}"
 
 # FULL = Ubuntu 16.04→24.04 OS hops + Phase 2
 # PHASE2_ONLY = DP already on Ubuntu 24.04; Phase 2 artifacts only
@@ -149,6 +158,104 @@ mm_assert_safe_destructive_path() {
   return 0
 }
 
+# Nginx site basename only — reject path separators / traversal.
+mm_assert_nginx_site_name() {
+  local name="${1:-${MM_NGINX_SITE_NAME:-${NGINX_SITE_NAME:-}}}"
+  [[ -n "$name" ]] || {
+    printf 'NGINX_SITE_NAME=FAIL reason=empty\n' >&2
+    return 1
+  }
+  if [[ "$name" == *"/"* || "$name" == *"\\"* || "$name" == *".."* ]]; then
+    printf 'NGINX_SITE_NAME=FAIL reason=path_separator name=%s\n' "$name" >&2
+    return 1
+  fi
+  if [[ ! "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+    printf 'NGINX_SITE_NAME=FAIL reason=malformed name=%s\n' "$name" >&2
+    return 1
+  fi
+  return 0
+}
+
+# Production: whatever URL supplies OS Core, actual SHA256+size MUST equal the
+# immutable production identity. An alternate R2/source URL must not disable the
+# pin. Hermetic fixtures (MM_HERMETIC_TEST_MODE=1) may use alternate URL + small
+# expected SHA/size via OS_CORE_TEST_EXPECTED_* / OS_CORE_EXPECTED_*.
+mm_assert_os_core_production_identity() {
+  local package="$1"
+  local url="${2:-${OS_CORE_R2_URL:-}}"
+  local expected_sha expected_bytes got_sha got_bytes base sidecar_sha
+  local hermetic_override=0
+
+  [[ -f "$package" ]] || {
+    mm_error "OS_CORE_PRODUCTION_IDENTITY=FAIL reason=missing_package"
+    return 1
+  }
+  base="$(basename "${url%%\?*}")"
+  [[ -n "$base" ]] || base="$(basename "$package")"
+
+  if [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" ]]; then
+    expected_sha="${OS_CORE_TEST_EXPECTED_SHA256:-${OS_CORE_EXPECTED_SHA256:-}}"
+    expected_bytes="${OS_CORE_TEST_EXPECTED_BYTES:-${OS_CORE_EXPECTED_BYTES:-}}"
+    if [[ -n "$expected_sha" || -n "$expected_bytes" ]]; then
+      hermetic_override=1
+    elif [[ "${url}" == "${OS_CORE_R2_URL_CONSTANT:-}" \
+      || "$base" == "${OS_CORE_PRODUCTION_OBJECT_NAME:-ubuntu-os-core-xenial-to-noble.tar}" ]]; then
+      # Production-named object without fixture override: still pin production.
+      expected_sha="${OS_CORE_PRODUCTION_R2_SHA256:-${OS_CORE_PRODUCTION_EXPECTED_SHA256:-}}"
+      expected_bytes="${OS_CORE_PRODUCTION_R2_BYTES:-${OS_CORE_PRODUCTION_EXPECTED_BYTES:-}}"
+    else
+      mm_info "OS_CORE_PRODUCTION_IDENTITY=SKIP reason=hermetic_non_production_url"
+      return 0
+    fi
+  else
+    # Production invocation: immutable identity always applies (URL/basename
+    # cannot skip or replace the pin).
+    expected_sha="${OS_CORE_PRODUCTION_R2_SHA256:-${OS_CORE_PRODUCTION_EXPECTED_SHA256:-}}"
+    expected_bytes="${OS_CORE_PRODUCTION_R2_BYTES:-${OS_CORE_PRODUCTION_EXPECTED_BYTES:-}}"
+  fi
+
+  if [[ -n "$expected_sha" && ${#expected_sha} -ne 64 ]]; then
+    mm_error "OS_CORE_PRODUCTION_IDENTITY=FAIL reason=missing_expected_sha"
+    return 1
+  fi
+  if [[ -n "$expected_bytes" && ! "$expected_bytes" =~ ^[0-9]+$ ]]; then
+    mm_error "OS_CORE_PRODUCTION_IDENTITY=FAIL reason=missing_expected_bytes"
+    return 1
+  fi
+  if [[ -z "$expected_sha" || -z "$expected_bytes" ]]; then
+    if [[ "$hermetic_override" -eq 1 ]]; then
+      mm_error "OS_CORE_PRODUCTION_IDENTITY=FAIL reason=incomplete_hermetic_expectation"
+      return 1
+    fi
+    mm_error "OS_CORE_PRODUCTION_IDENTITY=FAIL reason=missing_production_pin"
+    return 1
+  fi
+
+  got_sha="$(sha256sum "$package" | awk '{print tolower($1)}')"
+  expected_sha="$(printf '%s' "$expected_sha" | tr 'A-F' 'a-f')"
+  got_bytes="$(stat -c%s "$package" 2>/dev/null || wc -c <"$package" | tr -d ' ')"
+
+  # Sidecar cross-check must not replace the immutable pin.
+  if [[ -f "${package}.sha256" ]]; then
+    sidecar_sha="$(awk 'NF>=1 {print tolower($1); exit}' "${package}.sha256" 2>/dev/null || true)"
+    if [[ -n "$sidecar_sha" && "$sidecar_sha" != "$got_sha" ]]; then
+      mm_error "OS_CORE_PRODUCTION_IDENTITY=FAIL reason=sidecar_mismatch sidecar=${sidecar_sha} actual=${got_sha}"
+      return 1
+    fi
+  fi
+
+  if [[ "$got_sha" != "$expected_sha" ]]; then
+    mm_error "OS_CORE_PRODUCTION_IDENTITY=FAIL reason=sha256_mismatch expected=${expected_sha} got=${got_sha}"
+    return 1
+  fi
+  if [[ "$got_bytes" -ne "$expected_bytes" ]]; then
+    mm_error "OS_CORE_PRODUCTION_IDENTITY=FAIL reason=size_mismatch expected=${expected_bytes} got=${got_bytes}"
+    return 1
+  fi
+  mm_ok "OS_CORE_PRODUCTION_IDENTITY=PASS sha256=${got_sha} bytes=${got_bytes}"
+  return 0
+}
+
 # Parse KEY=VALUE metadata; duplicate keys always fail (no first/last-wins).
 # Prints value of requested key to stdout when key is set; with no key prints nothing
 # but still validates. Returns 1 on parse/duplicate errors.
@@ -193,6 +300,9 @@ mm_validate_worker_ssh_password() {
 mm_force_phase2_target() {
   PHASE2_TARGET_VERSION="${PHASE2_TARGET_VERSION_FIXED:-6.6.0}"
   if [[ "${MM_ALLOW_TARGET_OVERRIDE:-0}" == "1" ]]; then
+    if [[ "${MM_HERMETIC_TEST_MODE:-0}" != "1" ]]; then
+      mm_die "MM_ALLOW_TARGET_OVERRIDE=FAIL reason=production_forbidden"
+    fi
     TARGET_DP_VERSION="${TARGET_DP_VERSION:-${PHASE2_TARGET_VERSION}}"
   else
     TARGET_DP_VERSION="${PHASE2_TARGET_VERSION}"
@@ -1210,6 +1320,35 @@ mm_acquisition_auth_ready() {
   return 0
 }
 
+# True when a cryptographically verified local ACPS cache can satisfy TARGET.
+mm_acps_verified_cache_reuse_available() {
+  local ver cache
+  mm_force_phase2_target
+  ver="${TARGET_DP_VERSION:-${PHASE2_TARGET_VERSION:-6.6.0}}"
+  if ! declare -F acps_is_verified_cache >/dev/null 2>&1 \
+    || ! declare -F acps_cache_dir >/dev/null 2>&1; then
+    return 1
+  fi
+  if declare -F dp2_set_version >/dev/null 2>&1; then
+    dp2_set_version "$ver" 2>/dev/null || true
+  fi
+  cache="$(acps_cache_dir "$ver" 2>/dev/null || true)"
+  [[ -n "$cache" ]] || return 1
+  acps_is_verified_cache "$cache"
+}
+
+# Menu2 / acquisition gate: credentials OR verified-cache reuse (or prior
+# assessment that ACPS download is not required).
+mm_acquisition_auth_or_verified_cache_ready() {
+  if [[ "${ACPS_DOWNLOAD_REQUIRED:-}" == "NO" ]]; then
+    return 0
+  fi
+  if mm_acquisition_auth_ready; then
+    return 0
+  fi
+  mm_acps_verified_cache_reuse_available
+}
+
 # Historical name: base config ready. Prefer mm_config_base_ready /
 # mm_acquisition_auth_ready for new call sites that need the distinction.
 mm_config_ready() {
@@ -2152,7 +2291,7 @@ mm_client_files_ready() {
 # Local pre-readiness launcher contract for FULL mode.
 mm_client_launchers_ready() {
   local root="${1:-${MM_CLIENT_ROOT}}"
-  local hop launcher meta_key meta_sha file_sha mirror fpr
+  local hop launcher meta_key meta_sha file_sha mirror fpr kr_sha
   local wrapper wrapper_sha wkey wmeta
   local meta="${root}/client-set.env"
   [[ -d "$root" && -f "$meta" ]] || return 1
@@ -2164,6 +2303,9 @@ mm_client_launchers_ready() {
   fpr="${fpr// /}"
   [[ -n "$mirror" && -n "$fpr" ]] || return 1
   mm_parse_env_metadata_get "$meta" CLIENT_LAUNCHER_SCHEMA_VERSION >/dev/null || return 1
+  [[ -f "${root}/public-keyring.gpg" && -s "${root}/public-keyring.gpg" ]] || return 1
+  kr_sha="$(sha256sum "${root}/public-keyring.gpg" | awk '{print $1}')"
+  [[ -n "$kr_sha" ]] || return 1
   for hop in xenial-to-bionic bionic-to-focal focal-to-jammy jammy-to-noble; do
     launcher="dp-launch-${hop}.sh"
     [[ -f "${root}/${launcher}" && -s "${root}/${launcher}" ]] || return 1
@@ -2176,6 +2318,7 @@ mm_client_launchers_ready() {
     grep -q "HOP='${hop}'" "${root}/${launcher}" || return 1
     grep -Fq "${mirror%/}" "${root}/${launcher}" || return 1
     grep -q "EXPECTED_FPR='${fpr}'" "${root}/${launcher}" || return 1
+    grep -q "EXPECTED_KEYRING_SHA256='${kr_sha}'" "${root}/${launcher}" || return 1
     grep -q 'dp-client-command-runner.sh' "${root}/${launcher}" || return 1
     if grep -qE 'BEGIN PGP PRIVATE KEY|ACPS_PASS|PASSWORD=' "${root}/${launcher}"; then
       return 1

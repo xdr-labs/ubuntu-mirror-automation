@@ -358,6 +358,10 @@ r2_download_package() {
 
   OS_CORE_PACKAGE="$final"
   OS_CORE_PACKAGE_BYTES="$(mm_file_bytes "$final")"
+  if declare -F mm_assert_os_core_production_identity >/dev/null 2>&1; then
+    mm_assert_os_core_production_identity "$final" "${OS_CORE_R2_URL:-}" \
+      || mm_die "R2_PRODUCTION_IDENTITY=FAIL"
+  fi
   mm_state_set R2_OS_CORE_DOWNLOADED PASS
   mm_ok "R2_DOWNLOAD=PASS file=${base_name} size=${OS_CORE_PACKAGE_BYTES}"
 }

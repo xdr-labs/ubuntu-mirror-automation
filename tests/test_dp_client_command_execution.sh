@@ -103,7 +103,8 @@ python3 "${ROOT}/scripts/lib/build_client_launchers.py" \
   --project-root "$ROOT" \
   --output-dir "${HTTP_ROOT}/client" \
   --mirror-base-url "$MIRROR" \
-  --signing-fingerprint "$FPR" >/dev/null
+  --signing-fingerprint "$FPR" \
+    --expected-keyring-sha256 "$(sha256sum "$KR" | awk '{print $1}')" >/dev/null
 export MM_CLIENT_ROOT="${HTTP_ROOT}/client"
 LAUNCHER="dp-launch-${HOP}.sh"
 LAUNCHER_SHA="$(sha256sum "${HTTP_ROOT}/client/${LAUNCHER}" | awk '{print $1}')"

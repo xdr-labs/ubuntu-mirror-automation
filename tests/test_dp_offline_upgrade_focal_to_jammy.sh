@@ -607,7 +607,7 @@ cp -a "$fx2/etc/passwd" "$fx2/passwd.before"
 rc="$(run_preflight_fixture "$fx2")"
 if [[ "$rc" -eq 0 ]] \
    && grep -q 'UPGRADE_MODE=OS_ONLY_PHASE1' "$fx2/out.txt" \
-   && grep -q 'DP_VERSION_GATE=SKIPPED_PHASE1_OS_ONLY' "$fx2/out.txt" \
+   && grep -qE 'DP_VERSION_GATE=(SKIPPED_PHASE1_OS_ONLY|UNDETERMINED_CONTINUE)' "$fx2/out.txt" \
    && grep -q 'DP_TOPOLOGY_GATE=SKIPPED_PHASE1_OS_ONLY' "$fx2/out.txt" \
    && grep -q 'DP_INSTALL_STATE=UNINSTALLED' "$fx2/out.txt" \
    && grep -q 'preflight PASS' "$fx2/out.txt"; then
@@ -718,7 +718,7 @@ printf 'image: synthetic\n' >"$fx2/opt/aelladata/release-image.yml"
 rc="$(run_preflight_fixture "$fx2")"
 if [[ "$rc" -eq 0 ]] \
    && grep -q 'DP_VERSION=UNDETERMINED' "$fx2/out.txt" \
-   && grep -q 'DP_VERSION_GATE=SKIPPED_PHASE1_OS_ONLY' "$fx2/out.txt" \
+   && grep -qE 'DP_VERSION_GATE=(SKIPPED_PHASE1_OS_ONLY|UNDETERMINED_CONTINUE)' "$fx2/out.txt" \
    && grep -q 'preflight PASS' "$fx2/out.txt"; then
   pass "no DP version: Phase 1 preflight PASS"
 else
@@ -1617,10 +1617,16 @@ grep -q 'run_os_upgrade' "$SCRIPT_IN" && pass "run_os_upgrade present" || fail "
 grep -q 'run_product_post_upgrade' "$SCRIPT_IN" && pass "run_product_post_upgrade present" || fail "run_product_post_upgrade missing"
 grep -q 'UPGRADE_MODE=OS_ONLY_PHASE1' "$SCRIPT_IN" && pass "OS_ONLY_PHASE1 default mode" || fail "OS_ONLY_PHASE1 missing"
 grep -q 'product_validation_result=NOT_RUN_PHASE1' "$SCRIPT_IN" && pass "product_validation_result marker" || fail "product validation marker missing"
-if grep -nE 'die .*FAIL_DP_TOPOLOGY_UNDETERMINED|die .*FAIL_UNSUPPORTED_DP_TOPOLOGY|die .*FAIL_UNSUPPORTED_DP_VERSION|die .*FAIL_DP_VERSION_UNDETERMINED' "$SCRIPT_IN"; then
-  fail "product topology/version still hard-die in Phase 1 client"
+if grep -nE 'die .*FAIL_DP_TOPOLOGY_UNDETERMINED|die .*FAIL_UNSUPPORTED_DP_TOPOLOGY|die .*FAIL_DP_VERSION_UNDETERMINED' "$SCRIPT_IN"; then
+  fail "product topology/undetermined still hard-die in Phase 1 client"
 else
-  pass "product topology/version hard-dies removed"
+  pass "product topology undetermined hard-dies removed"
+fi
+if grep -q 'FAIL_UNSUPPORTED_DP_VERSION' "$SCRIPT_IN_RAW" \
+   && grep -q 'DP_VERSION_GATE=PASS_SUPPORTED\|DP_VERSION_GATE=FAIL_UNSUPPORTED' "$SCRIPT_IN_RAW"; then
+  pass "authoritative unsupported DP version is hard-gated before mutation"
+else
+  fail "DP version hard gate markers missing"
 fi
 
 rm -rf "$fx" "$fx2" "$FAKEBIN" "$FAKEBIN2"
@@ -1762,15 +1768,15 @@ VERSION_CODENAME=focal
 PRETTY_NAME="Ubuntu 22.04.5 LTS"
 EOF
 
-  # Unsupported DP version is NOT a Phase 1 hard gate (OS-only)
+  # Unsupported DP version IS a Phase 1 hard gate when authoritatively known
   set +e
   DP_OFFLINE_TEST_ROOT="$fake" DP_OFFLINE_FAKE_DP_VERSION=5.0.0 DP_OFFLINE_FAKE_ROLE=AIO     DP_OFFLINE_FAKE_MIRROR_TRUST=1     bash "$BUILT" --mirror-base "$MIRROR_BASE" --preflight-only >"$fake/out-dp.txt" 2>&1
   rc=$?
   set -e
-  if grep -q 'DP_VERSION_GATE=SKIPPED_PHASE1_OS_ONLY' "$fake/out-dp.txt"      && ! grep -q 'FAIL_UNSUPPORTED_DP_VERSION' "$fake/out-dp.txt"; then
-    pass "DP 5.0.0 not hard-gated in Phase 1 OS-only"
+  if grep -q 'FAIL_UNSUPPORTED_DP_VERSION' "$fake/out-dp.txt"; then
+    pass "DP 5.0.0 hard-gated in Phase 1 before mutation"
   else
-    fail "DP version unexpectedly gated (rc=${rc})"
+    fail "DP version unexpectedly not gated (rc=${rc})"
     tail -20 "$fake/out-dp.txt" || true
   fi
 

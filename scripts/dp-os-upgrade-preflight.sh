@@ -782,48 +782,50 @@ resolve_upgrade_path() {
       ;;
   esac
 
-  # DP version: Phase 1 diagnostic only (never BLOCKER). OS hops resolve from OS alone.
+  # DP version: known unsupported (< MIN) is a BLOCKER before mutation.
+  # UNDETERMINED / conflicting remain non-hard-gated (no invented product policy).
   local dp_status
   dp_status="$(pf_json_get "${COLLECTION_ROOT}/summary.json" dp.version_status)"
   if [[ "$dp_status" == "conflicting" ]]; then
     add_check DP_VERSION_DETECTED path PASS INFO \
-      "conflicting raw=${DP_VERSION_RAW}" "informational in Phase 1" \
-      "DP version evidence conflicts; ignored by Phase 1 OS-only policy (DP_VERSION_GATE=SKIPPED_PHASE1_OS_ONLY)" \
+      "conflicting raw=${DP_VERSION_RAW}" "informational when conflicting" \
+      "DP version evidence conflicts; not hard-gated (DP_VERSION_GATE=UNDETERMINED_CONTINUE)" \
       "none" "summary.json" "dp.version_status"
     add_check DP_VERSION_SUPPORTED path PASS INFO \
-      "skipped" "not gated in Phase 1" \
-      "DP_VERSION_GATE=SKIPPED_PHASE1_OS_ONLY" \
+      "skipped" "conflicting evidence" \
+      "DP_VERSION_GATE=UNDETERMINED_CONTINUE" \
       "none" "summary.json" "dp.version"
   elif [[ -z "$DP_VERSION_RAW" || -z "$DP_VERSION_NORM" ]]; then
     add_check DP_VERSION_DETECTED path PASS INFO \
-      "unknown" "optional in Phase 1" \
-      "DP version undetermined; Phase 1 continues (DP_VERSION_GATE=SKIPPED_PHASE1_OS_ONLY)" \
+      "unknown" "optional when undetermined" \
+      "DP version undetermined; Phase 1 continues (DP_VERSION_GATE=UNDETERMINED_CONTINUE)" \
       "none" "summary.json" "dp.version"
     add_check DP_VERSION_SUPPORTED path PASS INFO \
-      "skipped" "not gated in Phase 1" \
-      "DP_VERSION_GATE=SKIPPED_PHASE1_OS_ONLY" \
+      "skipped" "undetermined" \
+      "DP_VERSION_GATE=UNDETERMINED_CONTINUE" \
       "none" "summary.json" "dp.version"
   else
     add_check DP_VERSION_DETECTED path PASS INFO \
       "raw=${DP_VERSION_RAW} normalized=${DP_VERSION_NORM}" "detectable version" \
-      "DP version detected (informational; not a Phase 1 gate)" \
+      "DP version detected" \
       "none" "summary.json" "dp.version"
     local cmp
     cmp="$(pf_compare_versions "$DP_VERSION_NORM" "$POLICY_MIN_SUPPORTED_DP_VERSION")"
     if [[ "$cmp" == "lt" ]]; then
-      add_check DP_VERSION_SUPPORTED path PASS INFO \
-        "$DP_VERSION_NORM" "Phase 1 does not gate on DP min version" \
-        "DP below former minimum ${POLICY_MIN_SUPPORTED_DP_VERSION}; ignored (DP_VERSION_GATE=SKIPPED_PHASE1_OS_ONLY)" \
-        "none" "summary.json" "dp.version"
+      add_check DP_VERSION_SUPPORTED path FAIL BLOCKER \
+        "$DP_VERSION_NORM" ">= ${POLICY_MIN_SUPPORTED_DP_VERSION}" \
+        "Known unsupported DP version below ${POLICY_MIN_SUPPORTED_DP_VERSION} (DP_VERSION_GATE=FAIL_UNSUPPORTED)" \
+        "Upgrade DP software to ${POLICY_MIN_SUPPORTED_DP_VERSION}+ before Phase 1 OS hops" \
+        "summary.json" "dp.version"
     elif [[ "$cmp" == "unknown" ]]; then
       add_check DP_VERSION_SUPPORTED path PASS INFO \
-        "$DP_VERSION_NORM" "Phase 1 does not gate on DP version compare" \
-        "DP_VERSION_GATE=SKIPPED_PHASE1_OS_ONLY" \
+        "$DP_VERSION_NORM" "compare undetermined" \
+        "DP_VERSION_GATE=UNDETERMINED_CONTINUE" \
         "none" "summary.json" "dp.version"
     else
       add_check DP_VERSION_SUPPORTED path PASS INFO \
         "$DP_VERSION_NORM" ">= ${POLICY_MIN_SUPPORTED_DP_VERSION}" \
-        "DP version meets former minimum (informational)" \
+        "DP version meets minimum ${POLICY_MIN_SUPPORTED_DP_VERSION}" \
         "none" "summary.json" "dp.version"
     fi
   fi

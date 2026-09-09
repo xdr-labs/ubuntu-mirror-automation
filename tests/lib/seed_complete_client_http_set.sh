@@ -8,7 +8,7 @@ seed_complete_client_http_set() {
   local mirror="${2:-http://192.0.2.10}"
   local fpr="${3:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA}"
   local mode="${4:-FULL}"
-  local hop launcher f sha launcher_sha wrapper
+  local hop launcher f sha launcher_sha wrapper keyring_sha
 
   mirror="${mirror%/}"
   fpr="$(printf '%s' "$fpr" | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')"
@@ -31,12 +31,19 @@ EOF
     (cd "$root" && sha256sum "$f" >"${f}.sha256")
   done
 
+  cp -f "${root}/dp-client-command-runner.sh.sha256" "${root}/runner-manifest"
+  printf 'synthetic-asc\n' >"${root}/runner-manifest.asc"
+  printf 'PUB\n' >"${root}/public.gpg"
+  printf '\x99\x02\x00' >"${root}/public-keyring.gpg"
+  keyring_sha="$(sha256sum "${root}/public-keyring.gpg" | awk '{print $1}')"
+
   for hop in xenial-to-bionic bionic-to-focal focal-to-jammy jammy-to-noble; do
     launcher="dp-launch-${hop}.sh"
     cat >"${root}/${launcher}" <<EOF
 #!/bin/bash
 HOP='${hop}'
 EXPECTED_FPR='${fpr}'
+EXPECTED_KEYRING_SHA256='${keyring_sha}'
 MIRROR_BASE='${mirror}'
 # ${mirror}
 exec "\$(dirname "\$0")/dp-client-command-runner.sh" "\$@"
@@ -97,17 +104,12 @@ EOF
   (cd "$root" && sha256sum upgrade-phase2-same-version-recovery.sh \
     >upgrade-phase2-same-version-recovery.sh.sha256)
 
-  cp -f "${root}/dp-client-command-runner.sh.sha256" "${root}/runner-manifest"
-  printf 'synthetic-asc\n' >"${root}/runner-manifest.asc"
-  printf 'PUB\n' >"${root}/public.gpg"
-  printf '\x99\x02\x00' >"${root}/public-keyring.gpg"
-
   {
     printf 'CLIENT_MIRROR_BASE_URL=%s\n' "$mirror"
     printf 'MIRROR_HTTP_URL=%s\n' "$mirror"
     printf 'CLIENT_SIGNING_FINGERPRINT=%s\n' "$fpr"
     printf 'PREPARATION_MODE=%s\n' "$mode"
-    printf 'CLIENT_LAUNCHER_SCHEMA_VERSION=1\n'
+    printf 'CLIENT_LAUNCHER_SCHEMA_VERSION=2\n'
     for hop in xenial-to-bionic bionic-to-focal focal-to-jammy jammy-to-noble; do
       launcher="dp-launch-${hop}.sh"
       sha="$(sha256sum "${root}/${launcher}" | awk '{print $1}')"

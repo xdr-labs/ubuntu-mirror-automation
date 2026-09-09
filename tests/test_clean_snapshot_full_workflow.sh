@@ -165,14 +165,16 @@ LOCAL_SIGNING_PUBLIC_KEY="$LOCAL_CLIENT_SIGNING_DIR/public.gpg"
 LOCAL_KEY_FINGERPRINT="$FPR"
 expect "command runner staged" \
   local_signing_stage_command_runner "$STAGE" "$ROOT/client/dp-client-command-runner.sh"
+local_signing_stage_http_public_artifacts \
+  "$STAGE" "$LOCAL_CLIENT_SIGNING_DIR/public.gpg" "$FPR"
+STAGE_KR_SHA="$(sha256sum "$STAGE/public-keyring.gpg" | awk '{print $1}')"
 python3 "$RUNTIME/scripts/lib/build_client_launchers.py" \
   --project-root "$RUNTIME" \
   --output-dir "$STAGE" \
   --mirror-base-url "$MIRROR_HTTP_URL" \
-  --signing-fingerprint "$FPR" >/dev/null
+  --signing-fingerprint "$FPR" \
+  --expected-keyring-sha256 "$STAGE_KR_SHA" >/dev/null
 expect "launchers staged" test -f "$STAGE/dp-launch-xenial-to-bionic.sh"
-local_signing_stage_http_public_artifacts \
-  "$STAGE" "$LOCAL_CLIENT_SIGNING_DIR/public.gpg" "$FPR"
 CLIENT_GEN="client-fixture-1"
 mm_wf_write_client_set_metadata "$STAGE" "$CLIENT_GEN" "$FPR" \
   "$MIRROR_HTTP_URL" FULL
@@ -256,11 +258,13 @@ for _ in {1..30}; do
   sleep 0.1
 done
 LOCAL_MIRROR="http://127.0.0.1:$PORT"
+LIVE_KR_SHA="$(sha256sum "$MM_CLIENT_ROOT/public-keyring.gpg" | awk '{print $1}')"
 python3 "$RUNTIME/scripts/lib/build_client_launchers.py" \
   --project-root "$RUNTIME" \
   --output-dir "$MM_CLIENT_ROOT" \
   --mirror-base-url "$LOCAL_MIRROR" \
-  --signing-fingerprint "$FPR" >/dev/null
+  --signing-fingerprint "$FPR" \
+  --expected-keyring-sha256 "$LIVE_KR_SHA" >/dev/null
 STEP2_SHA=$(sha256sum "$MM_CLIENT_ROOT/dp-launch-xenial-to-bionic.sh" | awk '{print $1}')
 STEP2=$(gui_client_hop_command_line "$LOCAL_MIRROR" \
   dp-offline-upgrade-xenial-to-bionic.sh "$STEP2_SHA")

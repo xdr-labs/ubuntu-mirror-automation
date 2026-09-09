@@ -629,11 +629,20 @@ gui_download_and_prepare() {
       "Set Preparation Mode and Mirror Server IP first (target is fixed at ${PHASE2_TARGET_VERSION})."
     return 0
   fi
-  if ! mm_acquisition_auth_ready; then
+  # Verified local ACPS cache (or prior ACPS_DOWNLOAD_REQUIRED=NO) may satisfy
+  # acquisition without credentials/network.
+  if declare -F mm_acps_verified_cache_reuse_available >/dev/null 2>&1 \
+    && mm_acps_verified_cache_reuse_available; then
+    mm_info "ACPS_CONNECTION=NOT_REQUIRED reason=verified_cache_reuse_gui"
+    mm_info "ACPS_DOWNLOAD_REQUIRED=NO reason=verified_cache_reuse"
+    ACPS_DOWNLOAD_REQUIRED=NO
+  fi
+  if ! mm_acquisition_auth_or_verified_cache_ready; then
     mm_whiptail_msg "ACPS credentials required" \
       "Set ACPS Username and ACPS Password before Download and Prepare.
 Already-prepared artifacts remain valid if credentials are later cleared;
-new ACPS downloads require credentials."
+new ACPS downloads require credentials.
+A cryptographically verified local ACPS cache may be reused without credentials."
     return 0
   fi
   if ! mm_require_configured_mirror_server_ip; then

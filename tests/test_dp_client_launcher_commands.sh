@@ -54,6 +54,7 @@ gpg --homedir "$GPG_HOME" --batch --export-secret-keys --armor >"$PRIV"
 FPR="$(local_signing_fingerprint_of "$PUB")"
 KR="${WORKDIR}/public-keyring.gpg"
 local_signing_build_binary_keyring "$PUB" "$KR"
+KR_SHA="$(sha256sum "$KR" | awk '{print $1}')
 LOCAL_SIGNING_PRIVATE_KEY="$PRIV"
 LOCAL_SIGNING_PUBLIC_KEY="$PUB"
 LOCAL_KEY_FINGERPRINT="$FPR"
@@ -95,11 +96,13 @@ OUT_A="${WORKDIR}/launchers-a"
 OUT_B="${WORKDIR}/launchers-b"
 python3 "$LAUNCHER_BUILDER" \
   --project-root "$ROOT" --output-dir "$OUT_A" \
-  --mirror-base-url "$MIRROR" --signing-fingerprint "$FPR" --print-env \
+  --mirror-base-url "$MIRROR" --signing-fingerprint "$FPR" \
+  --expected-keyring-sha256 "$KR_SHA" --print-env \
   >"${WORKDIR}/launcher-a.env"
 python3 "$LAUNCHER_BUILDER" \
   --project-root "$ROOT" --output-dir "$OUT_B" \
-  --mirror-base-url "$MIRROR" --signing-fingerprint "$FPR" >/dev/null
+  --mirror-base-url "$MIRROR" --signing-fingerprint "$FPR" \
+  --expected-keyring-sha256 "$KR_SHA" >/dev/null
 for hop in "${HOPS[@]}"; do
   name="dp-launch-${hop}.sh"
   if cmp -s "${OUT_A}/${name}" "${OUT_B}/${name}"; then
@@ -118,6 +121,8 @@ for hop in "${HOPS[@]}"; do
     && pass "${hop}: embedded mirror" || fail "${hop}: embedded mirror"
   grep -q "EXPECTED_FPR='${FPR}'" "${CLIENT_ROOT}/${name}" \
     && pass "${hop}: embedded FPR" || fail "${hop}: embedded FPR"
+  grep -q "EXPECTED_KEYRING_SHA256='${KR_SHA}'" "${CLIENT_ROOT}/${name}" \
+    && pass "${hop}: embedded keyring SHA" || fail "${hop}: embedded keyring SHA"
   grep -q "HOP='${hop}'" "${CLIENT_ROOT}/${name}" \
     && pass "${hop}: embedded hop" || fail "${hop}: embedded hop"
   grep -q "SCRIPT='dp-offline-upgrade-${hop}.sh'" "${CLIENT_ROOT}/${name}" \

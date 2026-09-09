@@ -2,19 +2,28 @@
 # dp-client-hop-launcher.sh.in — authenticated Menu 7 OS-hop launcher template.
 #
 # Generated deterministically per hop with embedded Mirror URL, signing
-# fingerprint, hop id, and hop script name. Operator commands download this
-# file and pin its SHA256 literally; this launcher then authenticates the
-# existing dp-client-command-runner.sh exactly as the former three-line
-# Menu 7 bootstrap did.
+# fingerprint, exact public-keyring SHA256, hop id, and hop script name.
+# Operator commands download this file and pin its SHA256 literally; this
+# launcher then authenticates the existing dp-client-command-runner.sh.
+#
+# Trust model (fail closed):
+#   Menu 7 wrapper SHA → launcher SHA → embedded EXPECTED_KEYRING_SHA256
+#   → downloaded public-keyring.gpg byte-identical → primary FPR match
+#   → exactly one pub key → gpgv
 #
 # Placeholders (replaced by scripts/lib/build_client_launchers.py):
-#   @@MIRROR_BASE@@  @@EXPECTED_FPR@@  @@HOP@@  @@SCRIPT@@
-#   @@LAUNCHER_SCHEMA_VERSION@@
+#   @@MIRROR_BASE@@  @@EXPECTED_FPR@@  @@EXPECTED_KEYRING_SHA256@@
+#   @@HOP@@  @@SCRIPT@@  @@LAUNCHER_SCHEMA_VERSION@@
+#
+# Assumption: production Mirror client signing keyrings contain exactly one
+# primary OpenPGP public key (the Mirror signing identity). Xenial-compatible
+# checks use pub: colon records + SHA256 of keyring bytes.
 set -euo pipefail
 
 DP_OS_HOP_LAUNCHER_SCHEMA='@@LAUNCHER_SCHEMA_VERSION@@'
 MIRROR_BASE='@@MIRROR_BASE@@'
 EXPECTED_FPR='@@EXPECTED_FPR@@'
+EXPECTED_KEYRING_SHA256='@@EXPECTED_KEYRING_SHA256@@'
 HOP='@@HOP@@'
 SCRIPT='@@SCRIPT@@'
 
@@ -26,6 +35,10 @@ die() {
 [[ -n "$MIRROR_BASE" && "$MIRROR_BASE" != *__UNREPLACED__* ]] || die "invalid embedded MIRROR_BASE"
 [[ -n "$EXPECTED_FPR" && ${#EXPECTED_FPR} -eq 40 ]] || die "invalid embedded EXPECTED_FPR"
 [[ "$EXPECTED_FPR" =~ ^[0-9A-Fa-f]{40}$ ]] || die "EXPECTED_FPR must be 40 hex characters"
+[[ -n "$EXPECTED_KEYRING_SHA256" && ${#EXPECTED_KEYRING_SHA256} -eq 64 ]] \
+  || die "invalid embedded EXPECTED_KEYRING_SHA256"
+[[ "$EXPECTED_KEYRING_SHA256" =~ ^[0-9A-Fa-f]{64}$ ]] \
+  || die "EXPECTED_KEYRING_SHA256 must be 64 hex characters"
 [[ -n "$HOP" && "$HOP" != *__UNREPLACED__* ]] || die "invalid embedded HOP"
 [[ -n "$SCRIPT" && "$SCRIPT" == "dp-offline-upgrade-${HOP}.sh" ]] || die "SCRIPT/HOP binding mismatch"
 [[ -n "$DP_OS_HOP_LAUNCHER_SCHEMA" && "$DP_OS_HOP_LAUNCHER_SCHEMA" != *__UNREPLACED__* ]] \
@@ -45,9 +58,27 @@ for f in "$K" "$R" "${R}.sha256" "$M" "${M}.asc"; do
   curl -fsSLo "$f" "${MIRROR_BASE}/client/${f}" && test -s "$f" || exit 1
 done
 
-gpg --batch --no-default-keyring --keyring "./$K" --with-colons --fingerprint \
-  | grep -q ":${EXPECTED_FPR}:"
+GOT_SHA="$(sha256sum "./$K" | awk '{print tolower($1)}')"
+EXP_SHA="$(printf '%s' "$EXPECTED_KEYRING_SHA256" | tr 'A-F' 'a-f')"
+if [[ "$GOT_SHA" != "$EXP_SHA" ]]; then
+  die "KEYRING_TRUST=FAIL reason=sha256_mismatch got=${GOT_SHA}"
+fi
+
+PUB_COUNT="$(gpg --batch --no-default-keyring --keyring "./$K" --with-colons --list-keys 2>/dev/null \
+  | awk -F: '/^pub:/{c++} END{print c+0}')"
+if [[ "$PUB_COUNT" -ne 1 ]]; then
+  die "KEYRING_TRUST=FAIL reason=unexpected_pub_count count=${PUB_COUNT}"
+fi
+
+GOT_FPR="$(gpg --batch --no-default-keyring --keyring "./$K" --with-colons --fingerprint 2>/dev/null \
+  | awk -F: '/^fpr:/{print toupper($10); exit}')"
+[[ -n "$GOT_FPR" ]] || die "KEYRING_TRUST=FAIL reason=unreadable_fingerprint"
+EXP_FPR="$(printf '%s' "$EXPECTED_FPR" | tr 'a-f' 'A-F')"
+if [[ "$GOT_FPR" != "$EXP_FPR" ]]; then
+  die "KEYRING_TRUST=FAIL reason=fingerprint_mismatch got=${GOT_FPR}"
+fi
+
 gpgv --keyring "./$K" "${M}.asc" "$M"
 sha256sum -c "$M"
 sha256sum -c "${R}.sha256"
-bash "$R" "$MIRROR_BASE" "$HOP" "$SCRIPT" "$EXPECTED_FPR"
+bash "$R" "$MIRROR_BASE" "$HOP" "$SCRIPT" "$EXPECTED_FPR" "$EXPECTED_KEYRING_SHA256"
