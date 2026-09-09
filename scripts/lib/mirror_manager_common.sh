@@ -176,14 +176,15 @@ mm_assert_nginx_site_name() {
   return 0
 }
 
-# When OS_CORE_R2_URL names the production object (or production constant URL),
-# require immutable SHA+size. Sidecar may cross-check but never replaces the pin.
-# Hermetic fixtures: skip unless OS_CORE_EXPECTED_SHA256/BYTES (or TEST_*) set.
+# Production: whatever URL supplies OS Core, actual SHA256+size MUST equal the
+# immutable production identity. An alternate R2/source URL must not disable the
+# pin. Hermetic fixtures (MM_HERMETIC_TEST_MODE=1) may use alternate URL + small
+# expected SHA/size via OS_CORE_TEST_EXPECTED_* / OS_CORE_EXPECTED_*.
 mm_assert_os_core_production_identity() {
   local package="$1"
   local url="${2:-${OS_CORE_R2_URL:-}}"
   local expected_sha expected_bytes got_sha got_bytes base sidecar_sha
-  local apply_pin=0
+  local hermetic_override=0
 
   [[ -f "$package" ]] || {
     mm_error "OS_CORE_PRODUCTION_IDENTITY=FAIL reason=missing_package"
@@ -192,31 +193,26 @@ mm_assert_os_core_production_identity() {
   base="$(basename "${url%%\?*}")"
   [[ -n "$base" ]] || base="$(basename "$package")"
 
-  if [[ "${url}" == "${OS_CORE_R2_URL_CONSTANT:-}" \
-    || "$base" == "${OS_CORE_PRODUCTION_OBJECT_NAME:-ubuntu-os-core-xenial-to-noble.tar}" ]]; then
-    apply_pin=1
-    expected_sha="${OS_CORE_PRODUCTION_R2_SHA256:-${OS_CORE_PRODUCTION_EXPECTED_SHA256:-}}"
-    expected_bytes="${OS_CORE_PRODUCTION_R2_BYTES:-${OS_CORE_PRODUCTION_EXPECTED_BYTES:-}}"
-    # Hermetic fixtures may override expected identity for small mocked objects.
-    if [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" ]]; then
-      expected_sha="${OS_CORE_TEST_EXPECTED_SHA256:-${OS_CORE_EXPECTED_SHA256:-$expected_sha}}"
-      expected_bytes="${OS_CORE_TEST_EXPECTED_BYTES:-${OS_CORE_EXPECTED_BYTES:-$expected_bytes}}"
-    fi
-  elif [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" ]]; then
-    expected_sha="${OS_CORE_EXPECTED_SHA256:-${OS_CORE_TEST_EXPECTED_SHA256:-}}"
-    expected_bytes="${OS_CORE_EXPECTED_BYTES:-${OS_CORE_TEST_EXPECTED_BYTES:-}}"
+  if [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" ]]; then
+    expected_sha="${OS_CORE_TEST_EXPECTED_SHA256:-${OS_CORE_EXPECTED_SHA256:-}}"
+    expected_bytes="${OS_CORE_TEST_EXPECTED_BYTES:-${OS_CORE_EXPECTED_BYTES:-}}"
     if [[ -n "$expected_sha" || -n "$expected_bytes" ]]; then
-      apply_pin=1
+      hermetic_override=1
+    elif [[ "${url}" == "${OS_CORE_R2_URL_CONSTANT:-}" \
+      || "$base" == "${OS_CORE_PRODUCTION_OBJECT_NAME:-ubuntu-os-core-xenial-to-noble.tar}" ]]; then
+      # Production-named object without fixture override: still pin production.
+      expected_sha="${OS_CORE_PRODUCTION_R2_SHA256:-${OS_CORE_PRODUCTION_EXPECTED_SHA256:-}}"
+      expected_bytes="${OS_CORE_PRODUCTION_R2_BYTES:-${OS_CORE_PRODUCTION_EXPECTED_BYTES:-}}"
     else
       mm_info "OS_CORE_PRODUCTION_IDENTITY=SKIP reason=hermetic_non_production_url"
       return 0
     fi
   else
-    mm_info "OS_CORE_PRODUCTION_IDENTITY=SKIP reason=non_production_object name=${base}"
-    return 0
+    # Production invocation: immutable identity always applies (URL/basename
+    # cannot skip or replace the pin).
+    expected_sha="${OS_CORE_PRODUCTION_R2_SHA256:-${OS_CORE_PRODUCTION_EXPECTED_SHA256:-}}"
+    expected_bytes="${OS_CORE_PRODUCTION_R2_BYTES:-${OS_CORE_PRODUCTION_EXPECTED_BYTES:-}}"
   fi
-
-  [[ "$apply_pin" -eq 1 ]] || return 0
 
   if [[ -n "$expected_sha" && ${#expected_sha} -ne 64 ]]; then
     mm_error "OS_CORE_PRODUCTION_IDENTITY=FAIL reason=missing_expected_sha"
@@ -224,6 +220,14 @@ mm_assert_os_core_production_identity() {
   fi
   if [[ -n "$expected_bytes" && ! "$expected_bytes" =~ ^[0-9]+$ ]]; then
     mm_error "OS_CORE_PRODUCTION_IDENTITY=FAIL reason=missing_expected_bytes"
+    return 1
+  fi
+  if [[ -z "$expected_sha" || -z "$expected_bytes" ]]; then
+    if [[ "$hermetic_override" -eq 1 ]]; then
+      mm_error "OS_CORE_PRODUCTION_IDENTITY=FAIL reason=incomplete_hermetic_expectation"
+      return 1
+    fi
+    mm_error "OS_CORE_PRODUCTION_IDENTITY=FAIL reason=missing_production_pin"
     return 1
   fi
 
@@ -240,11 +244,11 @@ mm_assert_os_core_production_identity() {
     fi
   fi
 
-  if [[ -n "$expected_sha" && "$got_sha" != "$expected_sha" ]]; then
+  if [[ "$got_sha" != "$expected_sha" ]]; then
     mm_error "OS_CORE_PRODUCTION_IDENTITY=FAIL reason=sha256_mismatch expected=${expected_sha} got=${got_sha}"
     return 1
   fi
-  if [[ -n "$expected_bytes" && "$got_bytes" -ne "$expected_bytes" ]]; then
+  if [[ "$got_bytes" -ne "$expected_bytes" ]]; then
     mm_error "OS_CORE_PRODUCTION_IDENTITY=FAIL reason=size_mismatch expected=${expected_bytes} got=${got_bytes}"
     return 1
   fi

@@ -54,5 +54,17 @@ else
   fail "hermetic fixture URL should skip production pin"
 fi
 
+# Production mode + alternate URL/basename + wrong bytes => FAIL CLOSED
+# (URL override must not disable the immutable production identity).
+export MM_HERMETIC_TEST_MODE=0
+unset OS_CORE_TEST_EXPECTED_SHA256 OS_CORE_TEST_EXPECTED_BYTES \
+  OS_CORE_EXPECTED_SHA256 OS_CORE_EXPECTED_BYTES
+export OS_CORE_R2_URL="https://example.invalid/foo.tar"
+if ! mm_assert_os_core_production_identity "$pkg" "$OS_CORE_R2_URL" >/dev/null 2>&1; then
+  pass "production alternate URL / wrong bytes → FAIL CLOSED"
+else
+  fail "production alternate URL must not skip immutable identity"
+fi
+
 [[ "$FAIL" -eq 0 ]]
 echo "ALL R2 IMMUTABLE IDENTITY PIN TESTS PASSED"

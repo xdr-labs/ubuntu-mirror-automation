@@ -138,7 +138,7 @@ export MM_HERMETIC_TEST_MODE=0
 # shellcheck source=/dev/null
 # Extract validators from uninstall.sh without running uninstall.
 UM_SNIP="${TMP}/um_snip.sh"
-awk '/^um_assert_runtime_destructive_path\(\)/,/^um_assert_purge_path\(\)/ {if (/^um_assert_purge_path/) exit; print}' \
+awk '/^UM_PROD_INSTALL_LIB_DIR=/,/^um_assert_purge_path\(\)/ {if (/^um_assert_purge_path/) exit; print}' \
   "${ROOT}/uninstall.sh" >"$UM_SNIP"
 # Provide um_die
 cat >"${TMP}/um_helpers.sh" <<'EOF'
@@ -149,22 +149,22 @@ source "${TMP}/um_helpers.sh"
 # shellcheck source=/dev/null
 source "$UM_SNIP"
 set +e
-out="$(bash -c 'source "'"${TMP}/um_helpers.sh"'"; source "'"$UM_SNIP"'"; um_assert_runtime_destructive_path /usr/local "$(dirname /usr/local)" INSTALL_LIB_DIR' 2>&1)"
+out="$(bash -c 'source "'"${TMP}/um_helpers.sh"'"; source "'"$UM_SNIP"'"; MM_HERMETIC_TEST_MODE=0 um_assert_runtime_destructive_path /usr/local INSTALL_LIB_DIR' 2>&1)"
 rc=$?
 set -e
 [[ "$rc" -ne 0 ]] && pass "INSTALL_LIB_DIR=/usr/local rejected" || fail "/usr/local not rejected"
 set +e
-out="$(bash -c 'source "'"${TMP}/um_helpers.sh"'"; source "'"$UM_SNIP"'"; um_assert_runtime_destructive_path /etc "$(dirname /etc)" INSTALL_CONF_DIR' 2>&1)"
+out="$(bash -c 'source "'"${TMP}/um_helpers.sh"'"; source "'"$UM_SNIP"'"; MM_HERMETIC_TEST_MODE=0 um_assert_runtime_destructive_path /etc INSTALL_CONF_DIR' 2>&1)"
 rc=$?
 set -e
 [[ "$rc" -ne 0 ]] && pass "INSTALL_CONF_DIR=/etc rejected" || fail "/etc not rejected"
 set +e
-out="$(bash -c 'source "'"${TMP}/um_helpers.sh"'"; source "'"$UM_SNIP"'"; um_assert_runtime_destructive_path /usr/local/lib/ubuntu-mirror /usr/local/lib INSTALL_LIB_DIR' 2>&1)"
+out="$(bash -c 'source "'"${TMP}/um_helpers.sh"'"; source "'"$UM_SNIP"'"; MM_HERMETIC_TEST_MODE=0 um_assert_runtime_destructive_path /usr/local/lib/ubuntu-mirror INSTALL_LIB_DIR' 2>&1)"
 rc=$?
 set -e
 [[ "$rc" -eq 0 ]] && pass "default INSTALL_LIB_DIR accepted" || fail "default lib rejected: $out"
 set +e
-out="$(bash -c 'source "'"${TMP}/um_helpers.sh"'"; source "'"$UM_SNIP"'"; um_assert_runtime_destructive_path /etc/ubuntu-mirror /etc INSTALL_CONF_DIR' 2>&1)"
+out="$(bash -c 'source "'"${TMP}/um_helpers.sh"'"; source "'"$UM_SNIP"'"; MM_HERMETIC_TEST_MODE=0 um_assert_runtime_destructive_path /etc/ubuntu-mirror INSTALL_CONF_DIR' 2>&1)"
 rc=$?
 set -e
 [[ "$rc" -eq 0 ]] && pass "default INSTALL_CONF_DIR accepted" || fail "default conf rejected: $out"
@@ -172,7 +172,7 @@ set -e
 mkdir -p "${TMP}/real/ubuntu-mirror"
 ln -s "${TMP}/real" "${TMP}/link-escape"
 set +e
-out="$(bash -c 'source "'"${TMP}/um_helpers.sh"'"; source "'"$UM_SNIP"'"; um_assert_runtime_destructive_path "'"${TMP}/link-escape"'" /usr/local/lib INSTALL_LIB_DIR' 2>&1)"
+out="$(bash -c 'source "'"${TMP}/um_helpers.sh"'"; source "'"$UM_SNIP"'"; MM_HERMETIC_TEST_MODE=0 um_assert_runtime_destructive_path "'"${TMP}/link-escape"'" INSTALL_LIB_DIR' 2>&1)"
 rc=$?
 set -e
 [[ "$rc" -ne 0 ]] && pass "symlink path rejected" || fail "symlink not rejected"

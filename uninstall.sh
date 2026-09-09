@@ -119,16 +119,13 @@ remove_bins() {
     um_run rm -f "${INSTALL_BIN_DIR}/${ep}"
     um_run rm -f "/usr/local/sbin/${ep}"
   done
-  # Bind recursive deletes to approved install roots (fail closed).
-  # Approved ancestor is the parent of the product leaf (…/ubuntu-mirror), so
-  # production (/usr/local/lib/ubuntu-mirror) and temp-root fixtures both work.
-  um_assert_runtime_destructive_path \
-    "${INSTALL_LIB_DIR}" "$(dirname "${INSTALL_LIB_DIR}")" "INSTALL_LIB_DIR"
+  # Bind recursive deletes to independent approved install locations (fail closed).
+  # Approved roots are NOT derived from the candidate path.
+  um_assert_runtime_destructive_path "${INSTALL_LIB_DIR}" "INSTALL_LIB_DIR"
   um_run rm -rf "${INSTALL_LIB_DIR}"
   # Keep INSTALL_CONF_DIR unless force — operator may want mirror.conf
   if [[ "$UM_FORCE" == "1" ]]; then
-    um_assert_runtime_destructive_path \
-      "${INSTALL_CONF_DIR}" "$(dirname "${INSTALL_CONF_DIR}")" "INSTALL_CONF_DIR"
+    um_assert_runtime_destructive_path "${INSTALL_CONF_DIR}" "INSTALL_CONF_DIR"
     um_run rm -rf "${INSTALL_CONF_DIR}"
   else
     um_info "Keeping ${INSTALL_CONF_DIR} (use --force to remove)"
@@ -142,15 +139,41 @@ restore_mirror_list_note() {
   fi
 }
 
-# Validate configurable runtime/config dirs before rm -rf. Binds deletion to an
-# approved ancestor (e.g. /usr/local/lib, /etc) with the same forbidden-root /
-# depth / symlink rules as purge_data.
+# Production authoritative recursive-delete targets. Independent trust boundary:
+# never derived from INSTALL_* candidate paths.
+UM_PROD_INSTALL_LIB_DIR="/usr/local/lib/ubuntu-mirror"
+UM_PROD_INSTALL_CONF_DIR="/etc/ubuntu-mirror"
+
+# Resolve the approved exact path for a runtime/config recursive delete.
+# Hermetic tests may set MM_HERMETIC_TEST_MODE=1 and UM_TEST_APPROVED_ROOT=<tmp>
+# to mirror production layout under a dedicated test prefix.
+um_approved_runtime_path_for_label() {
+  local label="$1"
+  local base
+  if [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" && -n "${UM_TEST_APPROVED_ROOT:-}" ]]; then
+    base="${UM_TEST_APPROVED_ROOT%/}"
+    case "$label" in
+      INSTALL_LIB_DIR) printf '%s\n' "${base}/usr/local/lib/ubuntu-mirror"; return 0 ;;
+      INSTALL_CONF_DIR) printf '%s\n' "${base}/etc/ubuntu-mirror"; return 0 ;;
+    esac
+    return 1
+  fi
+  case "$label" in
+    INSTALL_LIB_DIR) printf '%s\n' "${UM_PROD_INSTALL_LIB_DIR}"; return 0 ;;
+    INSTALL_CONF_DIR) printf '%s\n' "${UM_PROD_INSTALL_CONF_DIR}"; return 0 ;;
+  esac
+  return 1
+}
+
+# Validate configurable runtime/config dirs before rm -rf against the independent
+# approved location for the label (not dirname of the candidate).
 um_assert_runtime_destructive_path() {
   local path="$1"
-  local approved_root="$2"
-  local label="${3:-path}"
-  local resolved approved_resolved parent depth
+  local label="${2:-path}"
+  local approved_root resolved approved_resolved parent depth
   [[ -n "$path" ]] || um_die "DESTRUCTIVE_PATH=FAIL label=${label} reason=empty"
+  approved_root="$(um_approved_runtime_path_for_label "$label")" \
+    || um_die "DESTRUCTIVE_PATH=FAIL label=${label} reason=unknown_label"
   [[ -n "$approved_root" ]] || um_die "DESTRUCTIVE_PATH=FAIL label=${label} reason=empty_approved_root"
   if [[ -L "$path" ]]; then
     um_die "DESTRUCTIVE_PATH=FAIL label=${label} reason=symlink path=${path}"
@@ -168,7 +191,7 @@ um_assert_runtime_destructive_path() {
   resolved="${resolved%/}"
   [[ -n "$resolved" ]] || resolved="/"
   case "$resolved" in
-    /|/bin|/boot|/dev|/etc|/home|/lib|/lib64|/media|/mnt|/opt|/proc|/root|/run|/sbin|/srv|/sys|/tmp|/usr|/usr/local|/var)
+    /|/bin|/boot|/dev|/etc|/home|/lib|/lib64|/media|/mnt|/opt|/proc|/root|/run|/sbin|/srv|/sys|/tmp|/usr|/usr/local|/var|/var/lib)
       um_die "DESTRUCTIVE_PATH=FAIL label=${label} reason=forbidden_root path=${resolved}"
       ;;
   esac
@@ -178,6 +201,7 @@ um_assert_runtime_destructive_path() {
     approved_resolved="${approved_root%/}"
   fi
   approved_resolved="${approved_resolved%/}"
+  # Candidate must equal the approved exact location (or a nested path under it).
   case "$resolved" in
     "$approved_resolved"|"$approved_resolved"/*) ;;
     *)
@@ -186,31 +210,15 @@ um_assert_runtime_destructive_path() {
   esac
   depth="$(awk -F/ '{print NF-1}' <<<"$resolved")"
   local min_depth=3
-  if [[ "$label" == "INSTALL_CONF_DIR" && "$approved_resolved" == "/etc" ]]; then
-    min_depth=2
+  if [[ "$label" == "INSTALL_CONF_DIR" ]]; then
+    # /etc/ubuntu-mirror is depth 2; hermetic ${TMP}/etc/ubuntu-mirror is deeper.
+    if [[ "$approved_resolved" == "/etc/ubuntu-mirror" || "$approved_resolved" == */etc/ubuntu-mirror ]]; then
+      min_depth=2
+    fi
   fi
   if [[ "$depth" -lt "$min_depth" ]]; then
     um_die "DESTRUCTIVE_PATH=FAIL label=${label} reason=insufficient_depth path=${resolved}"
   fi
-  # Expected product defaults / under approved product leaf names.
-  case "$label" in
-    INSTALL_LIB_DIR)
-      case "$resolved" in
-        */ubuntu-mirror|*/ubuntu-mirror/*) ;;
-        *)
-          um_die "DESTRUCTIVE_PATH=FAIL label=${label} reason=unexpected_location path=${resolved}"
-          ;;
-      esac
-      ;;
-    INSTALL_CONF_DIR)
-      case "$resolved" in
-        */ubuntu-mirror|*/ubuntu-mirror/*) ;;
-        *)
-          um_die "DESTRUCTIVE_PATH=FAIL label=${label} reason=unexpected_location path=${resolved}"
-          ;;
-      esac
-      ;;
-  esac
   return 0
 }
 
