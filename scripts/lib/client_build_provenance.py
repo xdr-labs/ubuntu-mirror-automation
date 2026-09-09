@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 
 CLIENT_PROVENANCE_SCHEMA_VERSION = "1"
 COMMAND_BLOCK_VERSION = "SUBSHELL_V2"
-LAUNCHER_SCHEMA_VERSION = "1"
+LAUNCHER_SCHEMA_VERSION = "2"
 HOPS = (
     "xenial-to-bionic",
     "bionic-to-focal",
@@ -388,6 +388,10 @@ def verify_client_set_integrity(root, current, expected_mirror="", expected_fing
             raise RuntimeError("CLIENT_LAUNCHER_MIRROR_MISMATCH hop=" + hop)
         if fpr not in launcher_text.upper():
             raise RuntimeError("CLIENT_LAUNCHER_FINGERPRINT_MISMATCH hop=" + hop)
+        keyring_sha = _sha_file(keyring)
+        if ("EXPECTED_KEYRING_SHA256='%s'" % keyring_sha) not in launcher_text \
+                and ('EXPECTED_KEYRING_SHA256="%s"' % keyring_sha) not in launcher_text:
+            raise RuntimeError("CLIENT_LAUNCHER_KEYRING_SHA_MISMATCH hop=" + hop)
         if "dp-client-command-runner.sh" not in launcher_text:
             raise RuntimeError("CLIENT_LAUNCHER_RUNNER_INVOKE_MISSING hop=" + hop)
         meta_key = "CLIENT_LAUNCHER_%s_SHA256" % hop.upper().replace("-", "_")

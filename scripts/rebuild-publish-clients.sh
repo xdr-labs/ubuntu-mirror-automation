@@ -460,11 +460,16 @@ LAUNCHER_BUILDER="${ROOT}/scripts/lib/build_client_launchers.py"
 if [[ ! -f "$LAUNCHER_BUILDER" ]]; then
   fail_build "" "launcher_builder_missing" "missing ${LAUNCHER_BUILDER}" 1
 fi
+LAUNCHER_KEYRING_SHA256="$(sha256sum "${STAGE_DIR}/public-keyring.gpg" | awk '{print $1}')"
+[[ -n "$LAUNCHER_KEYRING_SHA256" && ${#LAUNCHER_KEYRING_SHA256} -eq 64 ]] \
+  || fail_build "" "launcher_keyring_sha" "public-keyring.gpg SHA256 unavailable" 1
+evidence_echo "CLIENT_PUBLIC_KEYRING_SHA256=${LAUNCHER_KEYRING_SHA256}"
 if ! python3 "$LAUNCHER_BUILDER" \
   --project-root "$ROOT" \
   --output-dir "$STAGE_DIR" \
   --mirror-base-url "$MIRROR_BASE" \
   --signing-fingerprint "$LOCAL_KEY_FINGERPRINT" \
+  --expected-keyring-sha256 "$LAUNCHER_KEYRING_SHA256" \
   --print-env >>"$EVIDENCE_LOG"
 then
   fail_build "" "launcher_build" "LAUNCHER_BUILD=FAIL" 1

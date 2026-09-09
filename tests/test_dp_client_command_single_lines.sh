@@ -36,7 +36,8 @@ python3 "$LAUNCHER_BUILDER" \
   --project-root "$ROOT" \
   --output-dir "$MM_CLIENT_ROOT" \
   --mirror-base-url "$MIRROR" \
-  --signing-fingerprint "$FPR" >/dev/null
+  --signing-fingerprint "$FPR" \
+  --expected-keyring-sha256 "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" >/dev/null
 
 LIB="$TMP/installer-lib.sh"
 awk -v sd="${ROOT}/scripts" '

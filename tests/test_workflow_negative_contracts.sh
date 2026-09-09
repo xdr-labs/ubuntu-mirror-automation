@@ -26,7 +26,8 @@ python3 "$ROOT/scripts/lib/build_client_launchers.py" \
   --project-root "$ROOT" \
   --output-dir "$MM_CLIENT_ROOT" \
   --mirror-base-url "http://192.0.2.10" \
-  --signing-fingerprint "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" >/dev/null
+  --signing-fingerprint "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" \
+    --expected-keyring-sha256 "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" >/dev/null
 # shellcheck source=/dev/null
 source "$ROOT/scripts/lib/phase2_helper_generation.sh"
 install -m 0755 "$ROOT/client/stage-dp-phase2.sh" "$MM_CLIENT_ROOT/stage-dp-phase2.sh"
@@ -240,11 +241,13 @@ gpg --homedir "$GPG_HOME" --batch --yes --armor --detach-sign \
   "$HTTP_ROOT/client/$HOP/client-manifest.json"
 PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
 H_FPR="$(local_signing_fingerprint_of "$ASCII_KEY")"
+H_KR_SHA="$(sha256sum "$BINARY_KEY" | awk '{print $1}')"
 python3 "$ROOT/scripts/lib/build_client_launchers.py" \
   --project-root "$ROOT" \
   --output-dir "$HTTP_ROOT/client" \
   --mirror-base-url "http://127.0.0.1:$PORT" \
-  --signing-fingerprint "$H_FPR" >/dev/null
+  --signing-fingerprint "$H_FPR" \
+  --expected-keyring-sha256 "$H_KR_SHA" >/dev/null
 H_LAUNCHER_SHA="$(sha256sum "$HTTP_ROOT/client/dp-launch-${HOP}.sh" | awk '{print $1}')"
 python3 - "$HTTP_ROOT" "$PORT" >/dev/null 2>"$TMP/http.err" <<'PY' &
 import http.server, os, sys
