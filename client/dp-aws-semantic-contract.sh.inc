@@ -1,0 +1,77 @@
+# Generated AWS semantic contract (discovery-derived). Do not hand-edit.
+# shellcheck shell=bash
+AWS_SEMANTIC_CONTRACT_LOADED=1
+AWS_SEMANTIC_CONTRACT_SCHEMA=1
+
+aws_contract_clear() {
+  AWS_C_HOP=""
+  AWS_C_TARGET_VERSION_ID=""
+  AWS_C_LINUX_AWS_VERSION=""
+  AWS_C_LINUX_AWS_SHA256=""
+  AWS_C_LINUX_IMAGE_AWS_VERSION=""
+  AWS_C_LINUX_IMAGE_AWS_SHA256=""
+  AWS_C_KERNEL_RELEASES=""
+  AWS_C_VERSIONED_IMAGE_PACKAGES=""
+  AWS_C_SNAPD_VERSION=""
+}
+
+aws_contract_load_for_version_id() {
+  local ver="${1:-}"
+  aws_contract_clear
+  case "$ver" in
+    18.04)
+      AWS_C_HOP='xenial-to-bionic'
+      AWS_C_TARGET_VERSION_ID='18.04'
+      AWS_C_LINUX_AWS_VERSION='5.4.0.1103.81'
+      AWS_C_LINUX_AWS_SHA256='b26db52ae44bfe8cfb059ac1e878772a5a80288a2720e3f6b5caa0b7c6820bed'
+      AWS_C_LINUX_IMAGE_AWS_VERSION='5.4.0.1103.81'
+      AWS_C_LINUX_IMAGE_AWS_SHA256='749b87ebdaacf79eabafe60280f2bad5ad349de1efc14759316941f097f05a42'
+      AWS_C_KERNEL_RELEASES='5.4.0-1103-aws'
+      AWS_C_VERSIONED_IMAGE_PACKAGES='linux-image-5.4.0-1103-aws'
+      AWS_C_SNAPD_VERSION='2.58+18.04.1'
+      ;;
+    20.04)
+      AWS_C_HOP='bionic-to-focal'
+      AWS_C_TARGET_VERSION_ID='20.04'
+      AWS_C_LINUX_AWS_VERSION='5.15.0.1084.91~20.04.1'
+      AWS_C_LINUX_AWS_SHA256='1ef7259cc9081ae50c8175cc4a2d47770f8ff555a42d2eccbc85f0a4ffa8a54a'
+      AWS_C_LINUX_IMAGE_AWS_VERSION='5.15.0.1084.91~20.04.1'
+      AWS_C_LINUX_IMAGE_AWS_SHA256='fa9f6b20764d6e6a62af16c41a9be2fa4b47aca88c6d9d84b776ad55d2b018fc'
+      AWS_C_KERNEL_RELEASES='5.15.0-1084-aws'
+      AWS_C_VERSIONED_IMAGE_PACKAGES='linux-image-5.15.0-1084-aws'
+      AWS_C_SNAPD_VERSION=''
+      ;;
+    22.04)
+      AWS_C_HOP='focal-to-jammy'
+      AWS_C_TARGET_VERSION_ID='22.04'
+      AWS_C_LINUX_AWS_VERSION='6.8.0-1063.66~22.04.1'
+      AWS_C_LINUX_AWS_SHA256='6865857784d5f70d43bd94d66e46da540cbf714fd29add7fe471e9b6a588d0ac'
+      AWS_C_LINUX_IMAGE_AWS_VERSION='6.8.0-1063.66~22.04.1'
+      AWS_C_LINUX_IMAGE_AWS_SHA256='46dbf9d2ddf2aff0787afecaa83cd1f5d71a780c0000edc980fa0f6438ec5e81'
+      AWS_C_KERNEL_RELEASES='6.8.0-1063-aws'
+      AWS_C_VERSIONED_IMAGE_PACKAGES='linux-image-6.8.0-1063-aws'
+      AWS_C_SNAPD_VERSION=''
+      ;;
+    24.04)
+      AWS_C_HOP='jammy-to-noble'
+      AWS_C_TARGET_VERSION_ID='24.04'
+      AWS_C_LINUX_AWS_VERSION='7.0.0-1011.11~24.04.1'
+      AWS_C_LINUX_AWS_SHA256='80d4952185254d8c3eeca148c426dc57a8c421080731378b90803b045a9f70f0'
+      AWS_C_LINUX_IMAGE_AWS_VERSION='7.0.0-1011.11~24.04.1'
+      AWS_C_LINUX_IMAGE_AWS_SHA256='257cc613057cbc4b7f7659943627ebdbcffcd42228520be29af40849236b862c'
+      AWS_C_KERNEL_RELEASES='7.0.0-1011-aws'
+      AWS_C_VERSIONED_IMAGE_PACKAGES='linux-image-7.0.0-1011-aws'
+      AWS_C_SNAPD_VERSION=''
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+  if [[ -z "${AWS_C_LINUX_AWS_VERSION}" || -z "${AWS_C_LINUX_IMAGE_AWS_VERSION}" ]]; then
+    return 1
+  fi
+  if [[ -z "${AWS_C_KERNEL_RELEASES}" || -z "${AWS_C_VERSIONED_IMAGE_PACKAGES}" ]]; then
+    return 1
+  fi
+  return 0
+}

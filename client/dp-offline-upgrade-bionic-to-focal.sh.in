@@ -6230,6 +6230,13 @@ main() {
   if [[ ! -d /boot ]] || ! ls /boot/vmlinu* >/dev/null 2>&1; then
     fail_stage 1 "kernel/initramfs missing under /boot"
   fi
+  if declare -F validate_aws_target_kernel_pre_reboot >/dev/null 2>&1; then
+    if ! validate_aws_target_kernel_pre_reboot "20.04"; then
+      log ERROR "PRE_REBOOT_AWS_TARGET_GATE=FAIL; refusing automatic reboot"
+      write_state FAILED
+      fail_stage 1 "AWS target kernel not ready before reboot"
+    fi
+  fi
   RELEASE_UPGRADE_COMPLETED="true"
   persist_flags
   if [[ -z "$_TEST_PREFIX" ]]; then

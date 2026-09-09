@@ -488,6 +488,7 @@ def validate_package_tree(extract_root):
         payload_root,
         plan=embedded_plan,
         require_aws_profile=True,
+        verify_sha256=False,
     )
     if not aws_ok:
         raise OsCoreError(

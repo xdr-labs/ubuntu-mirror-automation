@@ -651,18 +651,23 @@ def render_script(template_path, replacements):
     body = body.replace(durable_token, durable_body)
 
     aws_token = "@@AWS_KERNEL_GATE_LIB@@"
-    aws_path = os.path.join(
-        os.path.dirname(os.path.abspath(template_path)),
-        "dp-postboot-aws-kernel-gate.sh.inc",
-    )
+    client_dir = os.path.dirname(os.path.abspath(template_path))
+    aws_path = os.path.join(client_dir, "dp-postboot-aws-kernel-gate.sh.inc")
+    aws_contract_path = os.path.join(client_dir, "dp-aws-semantic-contract.sh.inc")
     if aws_token not in body:
         raise BuildError("template missing token {}".format(aws_token))
     if not os.path.isfile(aws_path):
         raise BuildError("missing AWS kernel gate helper: {}".format(aws_path))
+    if not os.path.isfile(aws_contract_path):
+        raise BuildError(
+            "missing AWS semantic contract helper: {}".format(aws_contract_path)
+        )
+    with open(aws_contract_path, "r", encoding="utf-8") as fh:
+        aws_contract_body = fh.read().rstrip("\n") + "\n"
     with open(aws_path, "r", encoding="utf-8") as fh:
-        aws_body = fh.read().rstrip("\n") + "\n"
+        aws_gate_body = fh.read().rstrip("\n") + "\n"
+    aws_body = aws_contract_body + aws_gate_body
     body = body.replace(aws_token, aws_body)
-
     source_token = "@@SOURCE_PRODUCT_HELPER@@"
     if source_token in body:
         source_path = os.path.join(

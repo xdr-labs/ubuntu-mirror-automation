@@ -1,16 +1,20 @@
 #!/usr/bin/env bash
-# Shared AWS kernel source-preflight + post-hop completion gate.
-# Inlined into offline upgrade clients / postboot helpers.
+# Shared AWS kernel source-preflight, pre-reboot target readiness, and
+# post-hop completion gate. Inlined into offline upgrade clients / postboot.
 #
-# Contract (AWS source profile):
-#   - next-hop source preflight: installed/running AWS stack must be compatible
-#     with the CURRENT SOURCE Ubuntu series before any destructive mutation
-#   - baseline persistence: fail closed; atomic write + read-back
-#   - postboot COMPLETED_* gate: running kernel must be *-aws; both metapackages
-#     must be installed, target-series-compatible, and distinct from source baseline
+# Authority is the discovery-derived AWS semantic contract (exact package
+# versions / expected kernel releases per hop target VERSION_ID). Series
+# major.minor floors are NOT authoritative.
 #
-# Do not hard-code a single ABI (e.g. 5.4.0-1103). Series floors are GA major.minor
-# for linux-aws on that Ubuntu LTS; HWE kernels (>= floor) are accepted.
+# Contract usage:
+#   SOURCE PREFLIGHT (VERSION_ID=current source): installed AWS stack must
+#     match the hop contract whose TARGET is this VERSION_ID (prior hop
+#     completion state). Xenial 16.04 has no prior-hop contract — require a
+#     coherent installed AWS stack only.
+#   PRE-REBOOT (VERSION_ID=target): target contract packages + boot artifacts
+#     must be installed/prepared; do not start automatic reboot on failure.
+#   POSTBOOT (VERSION_ID=target): running kernel must be a contract target
+#     release; metapackages must match contract; not stale vs source baseline.
 # shellcheck shell=bash
 
 aws_gate_log() {
@@ -55,47 +59,42 @@ aws_running_kernel_release() {
   printf '%s' "$kr"
 }
 
-# GA linux-aws major.minor floor per Ubuntu LTS (not an ABI pin).
-# Discovery/installs may use HWE kernels at or above this floor.
-aws_series_kernel_floor() {
-  case "$1" in
-    16.04) printf '4.4' ;;
-    18.04) printf '4.15' ;;
-    20.04) printf '5.4' ;;
-    22.04) printf '5.15' ;;
-    24.04) printf '6.8' ;;
-    *) return 1 ;;
-  esac
+# Decode URL-encoded dpkg/discovery versions for comparison.
+aws_decode_version() {
+  local v="$1"
+  v="${v//%2[bB]/+}"
+  v="${v//%7[eE]/~}"
+  printf '%s' "$v"
 }
 
-# Parse major.minor from uname -r (4.4.0-1128-aws) or dpkg version
-# (4.4.0.1128.133 / 5.4.0.1103.81 / 5.4.0-1103.111~18.04.1).
-aws_parse_major_minor() {
-  local raw="$1"
-  if [[ "$raw" =~ ^([0-9]+)\.([0-9]+) ]]; then
-    printf '%s.%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
-    return 0
+aws_versions_equal() {
+  local a b
+  a="$(aws_decode_version "$1")"
+  b="$(aws_decode_version "$2")"
+  [[ -n "$a" && "$a" == "$b" ]]
+}
+
+# Load discovery-derived contract for a target Ubuntu VERSION_ID when needed.
+if [[ "${AWS_SEMANTIC_CONTRACT_LOADED:-0}" != "1" ]]; then
+  _aws_contract_inc="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/dp-aws-semantic-contract.sh.inc"
+  if [[ -n "${_aws_contract_inc}" && -f "${_aws_contract_inc}" ]]; then
+    # shellcheck disable=SC1090
+    source "${_aws_contract_inc}"
   fi
+  unset _aws_contract_inc
+fi
+
+aws_contract_available_for_version() {
+  declare -F aws_contract_load_for_version_id >/dev/null 2>&1 || return 1
+  aws_contract_load_for_version_id "$1"
+}
+
+aws_kernel_release_in_contract() {
+  local kr="$1" r
+  for r in ${AWS_C_KERNEL_RELEASES}; do
+    [[ "$kr" == "$r" ]] && return 0
+  done
   return 1
-}
-
-aws_mm_ge() {
-  # Return 0 if major.minor $1 >= $2.
-  local a="$1" b="$2"
-  local a1 a2 b1 b2
-  IFS=. read -r a1 a2 <<<"$a"
-  IFS=. read -r b1 b2 <<<"$b"
-  a1=${a1:-0}; a2=${a2:-0}; b1=${b1:-0}; b2=${b2:-0}
-  if (( a1 > b1 )); then return 0; fi
-  if (( a1 < b1 )); then return 1; fi
-  (( a2 >= b2 ))
-}
-
-aws_value_meets_series_floor() {
-  local series="$1" value="$2" floor mm
-  floor="$(aws_series_kernel_floor "$series")" || return 1
-  mm="$(aws_parse_major_minor "$value")" || return 1
-  aws_mm_ge "$mm" "$floor"
 }
 
 aws_detect_current_flavor() {
@@ -235,7 +234,7 @@ validate_aws_source_kernel_preflight() {
   # Arg: current SOURCE Ubuntu VERSION_ID (e.g. 18.04 for Bionic→Focal).
   # Rejects already-bad AWS state before destructive package/LXD/release mutation.
   local source_ver="${1:-}"
-  local flavor kr aws_ver img_ver floor
+  local flavor kr aws_ver img_ver
   flavor="$(aws_detect_current_flavor)"
   if [[ "$flavor" != "aws" ]]; then
     # Also treat installed AWS metapackages as AWS even if flavor helper differs.
@@ -250,10 +249,6 @@ validate_aws_source_kernel_preflight() {
     aws_gate_log ERROR "NEXT_HOP_PREFLIGHT_FAIL reason=missing_source_version"
     return 1
   fi
-  floor="$(aws_series_kernel_floor "$source_ver")" || {
-    aws_gate_log ERROR "NEXT_HOP_PREFLIGHT_FAIL reason=unknown_source_series series=${source_ver}"
-    return 1
-  }
 
   if ! aws_pkg_installed linux-aws; then
     aws_gate_log ERROR "NEXT_HOP_PREFLIGHT_FAIL reason=linux-aws_not_installed"
@@ -279,21 +274,36 @@ validate_aws_source_kernel_preflight() {
 
   aws_ver="$(aws_pkg_version linux-aws)"
   img_ver="$(aws_pkg_version linux-image-aws)"
-  aws_gate_log INFO "AWS_SOURCE_SERIES=${source_ver} floor=${floor}"
+  aws_gate_log INFO "AWS_SOURCE_SERIES=${source_ver}"
   aws_gate_log INFO "AWS_SOURCE_RUNNING_KERNEL=${kr}"
   aws_gate_log INFO "AWS_SOURCE_LINUX_AWS_VERSION=${aws_ver:-none}"
   aws_gate_log INFO "AWS_SOURCE_LINUX_IMAGE_AWS_VERSION=${img_ver:-none}"
 
-  if ! aws_value_meets_series_floor "$source_ver" "$kr"; then
-    aws_gate_log ERROR "NEXT_HOP_PREFLIGHT_FAIL reason=running_kernel_incompatible_with_source_series series=${source_ver} floor=${floor} kernel=${kr}"
+  # 16.04 has no prior-hop target contract in the four-hop discovery set.
+  # Require a coherent AWS stack only (exact identities enforced from 18.04+).
+  if [[ "$source_ver" == "16.04" ]]; then
+    aws_gate_log INFO "AWS_SOURCE_PREFLIGHT=PASS reason=xenial_source_no_prior_hop_contract"
+    return 0
+  fi
+
+  if ! aws_contract_available_for_version "$source_ver"; then
+    aws_gate_log ERROR "NEXT_HOP_PREFLIGHT_FAIL reason=missing_source_hop_contract series=${source_ver}"
     return 1
   fi
-  if ! aws_value_meets_series_floor "$source_ver" "$aws_ver"; then
-    aws_gate_log ERROR "NEXT_HOP_PREFLIGHT_FAIL reason=linux-aws_incompatible_with_source_series series=${source_ver} floor=${floor} version=${aws_ver}"
+  aws_gate_log INFO "AWS_SOURCE_CONTRACT_HOP=${AWS_C_HOP}"
+  aws_gate_log INFO "AWS_SOURCE_CONTRACT_LINUX_AWS=${AWS_C_LINUX_AWS_VERSION}"
+  aws_gate_log INFO "AWS_SOURCE_CONTRACT_KERNEL_RELEASES=${AWS_C_KERNEL_RELEASES}"
+
+  if ! aws_versions_equal "$aws_ver" "$AWS_C_LINUX_AWS_VERSION"; then
+    aws_gate_log ERROR "NEXT_HOP_PREFLIGHT_FAIL reason=linux-aws_not_source_contract_identity series=${source_ver} expected=${AWS_C_LINUX_AWS_VERSION} installed=${aws_ver}"
     return 1
   fi
-  if ! aws_value_meets_series_floor "$source_ver" "$img_ver"; then
-    aws_gate_log ERROR "NEXT_HOP_PREFLIGHT_FAIL reason=linux-image-aws_incompatible_with_source_series series=${source_ver} floor=${floor} version=${img_ver}"
+  if ! aws_versions_equal "$img_ver" "$AWS_C_LINUX_IMAGE_AWS_VERSION"; then
+    aws_gate_log ERROR "NEXT_HOP_PREFLIGHT_FAIL reason=linux-image-aws_not_source_contract_identity series=${source_ver} expected=${AWS_C_LINUX_IMAGE_AWS_VERSION} installed=${img_ver}"
+    return 1
+  fi
+  if ! aws_kernel_release_in_contract "$kr"; then
+    aws_gate_log ERROR "NEXT_HOP_PREFLIGHT_FAIL reason=running_kernel_not_source_contract_release series=${source_ver} expected=${AWS_C_KERNEL_RELEASES} kernel=${kr}"
     return 1
   fi
 
@@ -301,12 +311,115 @@ validate_aws_source_kernel_preflight() {
   return 0
 }
 
+validate_aws_target_kernel_pre_reboot() {
+  # Arg: TARGET Ubuntu VERSION_ID (e.g. 18.04 after xenial→bionic DRO).
+  # Runs AFTER package transition and BEFORE automatic reboot.
+  # On failure: do not mark hop successful; do not initiate automatic reboot.
+  # No rollback after package transition begins.
+  local target_ver="${1:-}"
+  local profile holds_dir src_kr
+  local cur_aws cur_img img_pkg kr boot_dir vmlinuz initrd matched_kr
+  profile="$(detect_aws_upgrade_profile)"
+  if [[ "$profile" != "aws" ]]; then
+    aws_gate_log INFO "PRE_REBOOT_AWS_TARGET_GATE=SKIP reason=non_aws_profile"
+    return 0
+  fi
+
+  if [[ -z "$target_ver" ]]; then
+    aws_gate_log ERROR "PRE_REBOOT_AWS_TARGET_GATE=FAIL reason=missing_target_version"
+    aws_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED"
+    return 1
+  fi
+  if ! aws_contract_available_for_version "$target_ver"; then
+    aws_gate_log ERROR "PRE_REBOOT_AWS_TARGET_GATE=FAIL reason=missing_target_hop_contract series=${target_ver}"
+    aws_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED"
+    return 1
+  fi
+
+  holds_dir="${HOLDS_DIR:-${STATE_ROOT:-/opt/aelladata/os-upgrade/offline}/critical-holds}"
+  src_kr=""
+  if [[ -f "$(aws_gate_hp "${holds_dir}/source_kernel_release")" ]]; then
+    src_kr="$(tr -d '\r\n' <"$(aws_gate_hp "${holds_dir}/source_kernel_release")" || true)"
+  fi
+
+  aws_gate_log INFO "PRE_REBOOT_AWS_TARGET_CONTRACT_HOP=${AWS_C_HOP}"
+  aws_gate_log INFO "PRE_REBOOT_AWS_TARGET_CONTRACT_LINUX_AWS=${AWS_C_LINUX_AWS_VERSION}"
+  aws_gate_log INFO "PRE_REBOOT_AWS_TARGET_CONTRACT_KERNEL_RELEASES=${AWS_C_KERNEL_RELEASES}"
+
+  if ! aws_pkg_installed linux-aws; then
+    aws_gate_log ERROR "PRE_REBOOT_AWS_TARGET_GATE=FAIL reason=linux-aws_not_installed"
+    aws_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED"
+    return 1
+  fi
+  if ! aws_pkg_installed linux-image-aws; then
+    aws_gate_log ERROR "PRE_REBOOT_AWS_TARGET_GATE=FAIL reason=linux-image-aws_not_installed"
+    aws_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED"
+    return 1
+  fi
+
+  cur_aws="$(aws_pkg_version linux-aws)"
+  cur_img="$(aws_pkg_version linux-image-aws)"
+  if [[ -z "$cur_aws" || -z "$cur_img" ]]; then
+    aws_gate_log ERROR "PRE_REBOOT_AWS_TARGET_GATE=FAIL reason=metapackage_version_unavailable"
+    aws_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED"
+    return 1
+  fi
+  if ! aws_versions_equal "$cur_aws" "$AWS_C_LINUX_AWS_VERSION"; then
+    aws_gate_log ERROR "PRE_REBOOT_AWS_TARGET_GATE=FAIL reason=linux-aws_not_target_contract_identity expected=${AWS_C_LINUX_AWS_VERSION} installed=${cur_aws}"
+    aws_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED"
+    return 1
+  fi
+  if ! aws_versions_equal "$cur_img" "$AWS_C_LINUX_IMAGE_AWS_VERSION"; then
+    aws_gate_log ERROR "PRE_REBOOT_AWS_TARGET_GATE=FAIL reason=linux-image-aws_not_target_contract_identity expected=${AWS_C_LINUX_IMAGE_AWS_VERSION} installed=${cur_img}"
+    aws_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED"
+    return 1
+  fi
+
+  matched_kr=""
+  for kr in ${AWS_C_KERNEL_RELEASES}; do
+    img_pkg="linux-image-${kr}"
+    if aws_pkg_installed "$img_pkg"; then
+      # Must not be merely the original source kernel release.
+      if [[ -n "$src_kr" && "$kr" == "$src_kr" ]]; then
+        aws_gate_log ERROR "PRE_REBOOT_AWS_TARGET_GATE=FAIL reason=target_image_still_source_kernel kernel=${kr}"
+        aws_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED"
+        return 1
+      fi
+      boot_dir="$(aws_gate_hp /boot)"
+      vmlinuz="${boot_dir}/vmlinuz-${kr}"
+      initrd="${boot_dir}/initrd.img-${kr}"
+      if [[ ! -f "$vmlinuz" || ! -s "$vmlinuz" ]]; then
+        aws_gate_log ERROR "PRE_REBOOT_AWS_TARGET_GATE=FAIL reason=missing_target_vmlinuz kernel=${kr} path=${vmlinuz}"
+        aws_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED"
+        return 1
+      fi
+      if [[ ! -f "$initrd" || ! -s "$initrd" ]]; then
+        aws_gate_log ERROR "PRE_REBOOT_AWS_TARGET_GATE=FAIL reason=missing_target_initrd kernel=${kr} path=${initrd}"
+        aws_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED"
+        return 1
+      fi
+      matched_kr="$kr"
+      break
+    fi
+  done
+
+  if [[ -z "$matched_kr" ]]; then
+    aws_gate_log ERROR "PRE_REBOOT_AWS_TARGET_GATE=FAIL reason=target_versioned_aws_image_not_installed expected=${AWS_C_VERSIONED_IMAGE_PACKAGES}"
+    aws_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED"
+    return 1
+  fi
+
+  aws_gate_log INFO "PRE_REBOOT_AWS_TARGET_KERNEL=${matched_kr}"
+  aws_gate_log INFO "PRE_REBOOT_AWS_TARGET_GATE=PASS"
+  return 0
+}
+
 validate_aws_post_hop_kernel_gate() {
-  # Arguments: expected_target_version_id (e.g. 18.04). Used for series-floor checks.
+  # Arguments: expected_target_version_id (e.g. 18.04). Discovery contract authority.
   # Runs after reboot, immediately before COMPLETED_*. No "pending reboot" PASS.
   local target_ver="${1:-}"
   local profile holds_dir src_aws src_img src_kr src_flavor
-  local cur_aws cur_img kr boot_aws floor
+  local cur_aws cur_img kr boot_aws
   profile="$(detect_aws_upgrade_profile)"
   if [[ "$profile" != "aws" ]]; then
     aws_gate_log INFO "AWS_POST_HOP_KERNEL_GATE=SKIP reason=non_aws_profile"
@@ -317,10 +430,10 @@ validate_aws_post_hop_kernel_gate() {
     aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=missing_target_version"
     return 1
   fi
-  floor="$(aws_series_kernel_floor "$target_ver")" || {
-    aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=unknown_target_series series=${target_ver}"
+  if ! aws_contract_available_for_version "$target_ver"; then
+    aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=missing_target_hop_contract series=${target_ver}"
     return 1
-  }
+  fi
 
   holds_dir="${HOLDS_DIR:-${STATE_ROOT:-/opt/aelladata/os-upgrade/offline}/critical-holds}"
   src_flavor=""
@@ -359,7 +472,10 @@ validate_aws_post_hop_kernel_gate() {
   cur_img="$(aws_pkg_version linux-image-aws)"
   aws_gate_log INFO "AWS_LINUX_AWS_VERSION=${cur_aws:-none}"
   aws_gate_log INFO "AWS_LINUX_IMAGE_AWS_VERSION=${cur_img:-none}"
-  aws_gate_log INFO "AWS_POST_HOP_TARGET_VERSION=${target_ver} floor=${floor}"
+  aws_gate_log INFO "AWS_POST_HOP_TARGET_VERSION=${target_ver}"
+  aws_gate_log INFO "AWS_POST_HOP_CONTRACT_HOP=${AWS_C_HOP}"
+  aws_gate_log INFO "AWS_POST_HOP_CONTRACT_LINUX_AWS=${AWS_C_LINUX_AWS_VERSION}"
+  aws_gate_log INFO "AWS_POST_HOP_CONTRACT_KERNEL_RELEASES=${AWS_C_KERNEL_RELEASES}"
 
   if [[ -z "$cur_aws" || -z "$cur_img" ]]; then
     aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=metapackage_version_unavailable"
@@ -367,22 +483,22 @@ validate_aws_post_hop_kernel_gate() {
   fi
 
   # Stale source metapackage: still equal to pre-upgrade baseline.
-  if [[ "$src_aws" == "$cur_aws" ]]; then
+  if aws_versions_equal "$src_aws" "$cur_aws"; then
     aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=stale_linux-aws_metapackage source=${src_aws} installed=${cur_aws}"
     return 1
   fi
-  if [[ "$src_img" == "$cur_img" ]]; then
+  if aws_versions_equal "$src_img" "$cur_img"; then
     aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=stale_linux-image-aws_metapackage source=${src_img} installed=${cur_img}"
     return 1
   fi
 
-  # Target-series compatibility: version-changed alone is insufficient.
-  if ! aws_value_meets_series_floor "$target_ver" "$cur_aws"; then
-    aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=linux-aws_incompatible_with_target_series series=${target_ver} floor=${floor} version=${cur_aws}"
+  # Target contract identity (not major.minor floor, not "version changed").
+  if ! aws_versions_equal "$cur_aws" "$AWS_C_LINUX_AWS_VERSION"; then
+    aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=linux-aws_not_target_contract_identity expected=${AWS_C_LINUX_AWS_VERSION} installed=${cur_aws}"
     return 1
   fi
-  if ! aws_value_meets_series_floor "$target_ver" "$cur_img"; then
-    aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=linux-image-aws_incompatible_with_target_series series=${target_ver} floor=${floor} version=${cur_img}"
+  if ! aws_versions_equal "$cur_img" "$AWS_C_LINUX_IMAGE_AWS_VERSION"; then
+    aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=linux-image-aws_not_target_contract_identity expected=${AWS_C_LINUX_IMAGE_AWS_VERSION} installed=${cur_img}"
     return 1
   fi
 
@@ -403,8 +519,8 @@ validate_aws_post_hop_kernel_gate() {
       return 1
       ;;
   esac
-  if ! aws_value_meets_series_floor "$target_ver" "$kr"; then
-    aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=running_kernel_incompatible_with_target_series series=${target_ver} floor=${floor} kernel=${kr}"
+  if ! aws_kernel_release_in_contract "$kr"; then
+    aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=running_kernel_not_target_contract_release expected=${AWS_C_KERNEL_RELEASES} kernel=${kr}"
     return 1
   fi
   if ! aws_pkg_installed "linux-image-${kr}"; then
