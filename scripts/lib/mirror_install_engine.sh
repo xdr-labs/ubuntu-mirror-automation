@@ -152,14 +152,23 @@ engine_rebuild_publish_local_client_set() {
 }
 
 # Ensure Phase 2 helper scripts are published (no OS-hop clients).
+# Stages a complete helper generation, validates it, then atomically swaps
+# into the live client root so a crash never exposes a mixed old/new set.
 engine_ensure_phase2_helpers() {
   local root="${MM_PROJECT_ROOT}"
   local dest="${MM_CLIENT_ROOT}"
-  local stage f
+  local stage f swap_out
 
   if mm_phase2_helpers_ready "$dest"; then
-    mm_check_phase2_helpers_ready
-    return 0
+    if [[ "${MM_PHASE2_HELPERS_FORCE_REPUBLISH:-0}" != "1" ]]; then
+      mm_check_phase2_helpers_ready
+      return 0
+    fi
+    if [[ "${MM_HERMETIC_TEST_MODE:-0}" != "1" ]]; then
+      mm_error "PHASE2_HELPERS_FORCE_REPUBLISH=FAIL reason=production_forbidden"
+      return 1
+    fi
+    mm_info "PHASE2_HELPERS_FORCE_REPUBLISH=YES"
   fi
 
   mkdir -p "$dest"
@@ -213,9 +222,38 @@ engine_ensure_phase2_helpers() {
   else
     chmod 0755 "$stage"
   fi
-  chmod 0755 "$dest" 2>/dev/null || true
-  cp -a "${stage}/." "$dest/"
-  rm -rf "$stage"
+  # Validate staged generation before cutover (previous live remains intact).
+  if ! mm_phase2_helpers_ready "$stage"; then
+    rm -rf "$stage"
+    mm_error "PHASE2_HELPERS_STAGE_VALIDATE=FAIL"
+    return 1
+  fi
+  if [[ "${MM_PHASE2_HELPERS_FAKE_SWAP_FAIL:-0}" == "1" ]]; then
+    rm -rf "$stage"
+    mm_error "PHASE2_HELPERS_ATOMIC_SWAP=FAIL reason=injected"
+    return 1
+  fi
+  if [[ -f "${root}/scripts/lib/atomic_dir_swap.py" ]]; then
+    set +e
+    swap_out="$(python3 "${root}/scripts/lib/atomic_dir_swap.py" \
+      --stage-dir "$stage" \
+      --live-dir "$dest" 2>&1)"
+    local swap_rc=$?
+    set -e
+    if [[ "$swap_rc" -ne 0 ]]; then
+      rm -rf "$stage"
+      mm_error "PHASE2_HELPERS_ATOMIC_SWAP=FAIL"
+      printf '%s\n' "$swap_out" >&2
+      return 1
+    fi
+    # atomic_dir_swap leaves previous generation aside; stage dir is consumed.
+    mm_info "PHASE2_HELPERS_ATOMIC_SWAP=PASS"
+  else
+    # Fail closed rather than non-atomic copy if swap helper is missing.
+    rm -rf "$stage"
+    mm_error "PHASE2_HELPERS_ATOMIC_SWAP=FAIL reason=swap_helper_missing"
+    return 1
+  fi
   if declare -F mm_normalize_http_public_tree_permissions >/dev/null 2>&1; then
     mm_normalize_http_public_tree_permissions "$dest" client || true
   fi
@@ -457,6 +495,22 @@ engine_resolve_paths() {
   MM_CLIENT_ROOT="${MM_CLIENT_ROOT:-${MM_MIRROR_ROOT}/client}"
   DP_PHASE2_ROOT="$MM_DP_PHASE2_ROOT"
   MM_CACHE_ROOT="${MM_CACHE_ROOT:-${MM_MIRROR_ROOT}/.install-cache}"
+  MM_NGINX_SITE_NAME="${MM_NGINX_SITE_NAME:-${NGINX_SITE_NAME:-apt-mirror}}"
+  if ! mm_assert_nginx_site_name "$MM_NGINX_SITE_NAME"; then
+    mm_die "NGINX_SITE_NAME=FAIL"
+  fi
+  # High-impact product roots: reject empty / traversal / shallow roots.
+  local p
+  for p in "$MM_MIRROR_ROOT" "$MM_SELECTIVE_ROOT" "$MM_DP_PHASE2_ROOT" "$MM_CLIENT_ROOT" "$MM_CACHE_ROOT"; do
+    case "$p" in
+      ""|"/"|"/etc"|"/usr"|"/var"|"/home"|"/opt")
+        mm_die "CONFIG_PATH=FAIL reason=forbidden_root path=${p}"
+        ;;
+    esac
+    if [[ "$p" == *..* ]]; then
+      mm_die "CONFIG_PATH=FAIL reason=path_traversal path=${p}"
+    fi
+  done
   # GUI mode: keep path init in the log file, but do not spam the TTY
   # (operators otherwise see only these three lines when a menu action exits).
   if [[ "${MM_GUI_MODE:-0}" == "1" ]]; then
@@ -714,6 +768,9 @@ engine_verify_os_core_package() {
   local package="$1"
   mm_assert_regular_file "$package" "os-core-package"
   OS_CORE_PACKAGE_BYTES="$(mm_file_bytes "$package")"
+  if ! mm_assert_os_core_production_identity "$package" "${OS_CORE_R2_URL:-}"; then
+    mm_die "OS_CORE_PRODUCTION_IDENTITY=FAIL"
+  fi
   local py="${MM_PROJECT_ROOT}/scripts/lib/os_core_package.py"
   local out pub=""
   local -a verify_args=(verify --package "$package")
