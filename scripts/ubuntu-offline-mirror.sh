@@ -1581,7 +1581,13 @@ cmd_plan_selective_impl() {
   local rc=$?
   set -e
   if [[ -f "$SELECTIVE_PLAN" ]]; then
+    mkdir -p "${SELECTIVE_MIRROR_ROOT}/state" 2>/dev/null || true
     cp -f "$SELECTIVE_PLAN" "${SELECTIVE_MIRROR_ROOT}/state/plan.json" 2>/dev/null || true
+    local contract_bash
+    contract_bash="$(dirname "$SELECTIVE_PLAN")/aws-semantic-contract.sh.inc"
+    if [[ -f "$contract_bash" ]]; then
+      cp -f "$contract_bash" "${SELECTIVE_MIRROR_ROOT}/state/aws-semantic-contract.sh.inc" 2>/dev/null || true
+    fi
   fi
   [[ "$rc" -eq 0 ]] || die "plan-selective FAIL"
   ok "plan-selective PASS → ${SELECTIVE_PLAN}"
@@ -1672,6 +1678,11 @@ cmd_verify_selective_impl() {
   [[ -f "$SELECTIVE_PLAN" ]] || { error "plan missing; run plan-selective first"; return 1; }
   mkdir -p "${SELECTIVE_MIRROR_ROOT}/state" 2>/dev/null || true
   cp -f "$SELECTIVE_PLAN" "${SELECTIVE_MIRROR_ROOT}/state/plan.json" 2>/dev/null || true
+  local contract_bash_v
+  contract_bash_v="$(dirname "$SELECTIVE_PLAN")/aws-semantic-contract.sh.inc"
+  if [[ -f "$contract_bash_v" ]]; then
+    cp -f "$contract_bash_v" "${SELECTIVE_MIRROR_ROOT}/state/aws-semantic-contract.sh.inc" 2>/dev/null || true
+  fi
   # Pre-publish only: validates staging. Never depends on production nginx
   # or selective/current (those are post-publish smoke tests inside publish-selective).
   local args=(

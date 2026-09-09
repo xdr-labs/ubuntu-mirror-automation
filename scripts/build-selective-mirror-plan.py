@@ -94,6 +94,7 @@ except ImportError:  # pragma: no cover
     )
 try:
     from aws_os_core_completeness import (  # noqa: E402
+        attach_contract_sha256,
         build_aws_semantic_contract,
         require_production_discovery_profiles,
         validate_plan_aws_completeness,
@@ -101,6 +102,7 @@ try:
     )
 except ImportError:  # pragma: no cover
     from scripts.lib.aws_os_core_completeness import (  # type: ignore
+        attach_contract_sha256,
         build_aws_semantic_contract,
         require_production_discovery_profiles,
         validate_plan_aws_completeness,
@@ -961,6 +963,7 @@ def build_plan(discovery_root, seed_root, profile_name='offline-upgrade-selectiv
     # Discovery-derived AWS semantic contract (exact package/version/arch/sha).
     # Built from the same generic∪aws union rows used for the selective plan.
     aws_semantic_contract = OrderedDict()
+    aws_semantic_contract_sha = ''
     if 'aws' in roots or aws_kernel_packages:
         aws_semantic_contract, contract_errs = build_aws_semantic_contract(
             package_rows_out,
@@ -968,6 +971,11 @@ def build_plan(discovery_root, seed_root, profile_name='offline-upgrade-selectiv
         )
         if contract_errs:
             errors.extend(contract_errs)
+        if aws_semantic_contract and aws_semantic_contract.get('hops'):
+            attach_contract_sha256(aws_semantic_contract)
+            aws_semantic_contract_sha = (
+                aws_semantic_contract.get('contract_sha256') or ''
+            )
 
     # When aws discovery is included, fail closed if the union drops AWS kernels
     # (or xenial→bionic snapd required by AWS discovery). Generic-only plans are
@@ -1073,6 +1081,7 @@ def build_plan(discovery_root, seed_root, profile_name='offline-upgrade-selectiv
         ])),
         ('aws_kernel_packages_sample', aws_kernel_packages[:40]),
         ('aws_semantic_contract', aws_semantic_contract),
+        ('aws_semantic_contract_sha256', aws_semantic_contract_sha),
         ('target_pocket_provenance', count_packages_by_pocket(package_rows_out, 'bionic')),
         ('unresolved_target_pocket_rows', unresolved_target_pockets[:50]),
         ('sizes', OrderedDict([
@@ -1210,6 +1219,10 @@ def main(argv=None):
         contract_bash = os.path.join(out_dir, 'aws-semantic-contract.sh.inc')
         write_aws_semantic_contract_bash(contract_bash, contract)
         print('aws_semantic_contract=%s' % contract_bash)
+        print(
+            'aws_semantic_contract_sha256=%s'
+            % (plan.get('aws_semantic_contract_sha256') or contract.get('contract_sha256') or '')
+        )
 
     print('validation_result=%s' % plan['validation_result'])
     print('discovery_profiles=%s' % ','.join(plan.get('discovery_profiles') or []))

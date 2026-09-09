@@ -102,6 +102,7 @@ ENV_FIELDS = (
     "CLIENT_TEMPLATES_SHA256",
     "CLIENT_SHARED_HELPERS_SHA256",
     "CLIENT_RUNNER_SHA256",
+    "CLIENT_AWS_SEMANTIC_CONTRACT_SHA256",
 )
 
 # Legacy alias kept for older metadata readers.
@@ -169,7 +170,12 @@ def _git_tree_state(root):
     return "unknown"
 
 
-def compute_provenance(project_root, mirror_base_url="", signing_fingerprint=""):
+def compute_provenance(
+    project_root,
+    mirror_base_url="",
+    signing_fingerprint="",
+    aws_semantic_contract_sha256="",
+):
     root = os.path.abspath(project_root)
     cat = {}
     for name, values in CATEGORY_PATTERNS.items():
@@ -177,6 +183,7 @@ def compute_provenance(project_root, mirror_base_url="", signing_fingerprint="")
     file_digest = _canonical_digest(root, all_input_files())
     mirror = (mirror_base_url or "").rstrip("/")
     fpr = (signing_fingerprint or "").upper().replace(" ", "")
+    contract_sha = (aws_semantic_contract_sha256 or "").strip().lower()
     # Build-input digest: file contents + explicit field separators for pins.
     # No timestamps, temp paths, generated outputs, private keys, or inodes.
     binder = hashlib.sha256()
@@ -190,6 +197,8 @@ def compute_provenance(project_root, mirror_base_url="", signing_fingerprint="")
     binder.update(mirror.encode("utf-8") + b"\n")
     binder.update(b"CLIENT_SIGNING_FINGERPRINT\0")
     binder.update(fpr.encode("utf-8") + b"\n")
+    binder.update(b"CLIENT_AWS_SEMANTIC_CONTRACT_SHA256\0")
+    binder.update(contract_sha.encode("utf-8") + b"\n")
     binder.update(b"PHASE1_HOP_DEFINITIONS\0")
     for hopdef in PHASE1_HOP_DEFINITIONS:
         binder.update(hopdef.encode("utf-8") + b"\n")
@@ -207,6 +216,7 @@ def compute_provenance(project_root, mirror_base_url="", signing_fingerprint="")
         "CLIENT_LAUNCHER_SCHEMA_VERSION": LAUNCHER_SCHEMA_VERSION,
         "CLIENT_MIRROR_BASE_URL": mirror,
         "CLIENT_SIGNING_FINGERPRINT": fpr,
+        "CLIENT_AWS_SEMANTIC_CONTRACT_SHA256": contract_sha,
         "CLIENT_BUILD_CREATED_UTC": created,
         "CLIENT_RUNTIME_MANIFEST_SHA256": _sha_file(
             os.path.join(root, "lib/runtime_manifest.sh")

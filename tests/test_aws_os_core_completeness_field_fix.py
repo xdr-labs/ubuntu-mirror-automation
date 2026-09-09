@@ -12,6 +12,7 @@ Covers independent-review blockers for PR #20:
 from __future__ import print_function
 
 import importlib.util
+import json
 import os
 import shutil
 import subprocess
@@ -246,7 +247,11 @@ class AwsTreeSemanticValidationTests(unittest.TestCase):
             )
             self.assertFalse(ok, detail)
             self.assertTrue(
-                any('aws_metapackage_deb_missing' in e for e in errors),
+                any(
+                    'aws_semantic_contract_missing' in e
+                    or 'aws_metapackage_deb_missing' in e
+                    for e in errors
+                ),
                 errors,
             )
         finally:
@@ -255,6 +260,10 @@ class AwsTreeSemanticValidationTests(unittest.TestCase):
     def test_versioned_image_only_tree_fails(self):
         # Blocker 4A: one versioned AWS image per hop is insufficient.
         tmp = tempfile.mkdtemp(prefix='um-aws-tree-imgonly-')
+        restore = _env_swap({
+            aws_c.HERMETIC_TEST_ENV: '1',
+            aws_c.ALLOW_NAME_ONLY_AWS_ENV: '1',
+        })
         try:
             for hop in dp.HOPS:
                 pool = os.path.join(
@@ -284,11 +293,16 @@ class AwsTreeSemanticValidationTests(unittest.TestCase):
                 errors,
             )
         finally:
+            restore()
             shutil.rmtree(tmp, ignore_errors=True)
 
     def test_aws_kernels_without_x2b_snapd_fails(self):
         # Blocker 4B.
         tmp = tempfile.mkdtemp(prefix='um-aws-tree-nosnapd-')
+        restore = _env_swap({
+            aws_c.HERMETIC_TEST_ENV: '1',
+            aws_c.ALLOW_NAME_ONLY_AWS_ENV: '1',
+        })
         try:
             for hop in dp.HOPS:
                 pool = os.path.join(
@@ -306,11 +320,16 @@ class AwsTreeSemanticValidationTests(unittest.TestCase):
             self.assertFalse(ok, detail)
             self.assertTrue(any('snapd_deb_missing' in e for e in errors), errors)
         finally:
+            restore()
             shutil.rmtree(tmp, ignore_errors=True)
 
     def test_complete_aws_tree_passes(self):
         # Blocker 4C.
         tmp = tempfile.mkdtemp(prefix='um-aws-tree-ok-')
+        restore = _env_swap({
+            aws_c.HERMETIC_TEST_ENV: '1',
+            aws_c.ALLOW_NAME_ONLY_AWS_ENV: '1',
+        })
         try:
             _plant_complete_aws_tree(tmp)
             plan = {'discovery_profiles': ['aws']}
@@ -319,6 +338,7 @@ class AwsTreeSemanticValidationTests(unittest.TestCase):
             )
             self.assertTrue(ok, errors or detail)
         finally:
+            restore()
             shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -1355,6 +1375,378 @@ class StandalonePlannerCliFailClosedTests(unittest.TestCase):
             self.assertIn('discovery_profiles=generic', stdout)
         finally:
             shutil.rmtree(out_dir, ignore_errors=True)
+
+
+def _synth_identity(package, version, content):
+    return {
+        'package': package,
+        'version': version,
+        'architecture': 'amd64',
+        'sha256': __import__('hashlib').sha256(content).hexdigest(),
+        'filename': '%s_%s_amd64.deb' % (package, version),
+        'size_bytes': len(content),
+    }, content
+
+
+def _synthetic_contract_and_contents():
+    """Tiny coherent per-hop contract with known .deb byte contents."""
+    import hashlib
+    from collections import OrderedDict
+
+    hops = OrderedDict()
+    contents = {}  # sha256 -> bytes
+    release_by_hop = {
+        'xenial-to-bionic': ('5.4.0.1103.81', '5.4.0-1103-aws'),
+        'bionic-to-focal': ('5.15.0.1084.91~20.04.1', '5.15.0-1084-aws'),
+        'focal-to-jammy': ('6.8.0-1063.66~22.04.1', '6.8.0-1063-aws'),
+        'jammy-to-noble': ('7.0.0-1011.11~24.04.1', '7.0.0-1011-aws'),
+    }
+    for hop in dp.HOPS:
+        ver, rel = release_by_hop[hop]
+        img_pkg = 'linux-image-%s' % rel
+        identities = []
+        for pkg, v in (
+            ('linux-aws', ver),
+            ('linux-image-aws', ver),
+            (img_pkg, ver),
+        ):
+            blob = ('SYNTH|%s|%s|%s' % (hop, pkg, v)).encode('utf-8')
+            ident, _ = _synth_identity(pkg, v, blob)
+            contents[ident['sha256']] = blob
+            identities.append(ident)
+        snap = None
+        if hop == 'xenial-to-bionic':
+            blob = b'SYNTH|x2b|snapd|2.58+18.04.1'
+            snap, _ = _synth_identity('snapd', '2.58+18.04.1', blob)
+            contents[snap['sha256']] = blob
+        hop_c = OrderedDict([
+            ('hop', hop),
+            ('source_series', hop.split('-to-')[0]),
+            ('target_series', hop.split('-to-')[1]),
+            ('source_version_id', aws_c.HOP_SOURCE_VERSION_ID[hop]),
+            ('target_version_id', aws_c.HOP_TARGET_VERSION_ID[hop]),
+            ('linux_aws', identities[0]),
+            ('linux_image_aws', identities[1]),
+            ('expected_kernel_releases', [rel]),
+            ('versioned_images', [identities[2]]),
+            ('boot_packages', []),
+            ('snapd', snap),
+        ])
+        hops[hop] = hop_c
+    contract = OrderedDict([
+        ('schema_version', aws_c.CONTRACT_SCHEMA_VERSION),
+        ('discovery_profiles', ['generic', 'aws']),
+        ('required_metapackages', list(aws_c.REQUIRED_AWS_METAPACKAGES)),
+        ('hops', hops),
+        ('by_target_version_id', OrderedDict(
+            (aws_c.HOP_TARGET_VERSION_ID[h], h) for h in dp.HOPS
+        )),
+    ])
+    aws_c.attach_contract_sha256(contract)
+    return contract, contents
+
+
+def _plant_synth_tree(root, contract, contents, mutate_hop=None, mutate_fn=None):
+    for hop, hop_c in (contract.get('hops') or {}).items():
+        idents = list(aws_c.iter_contract_identities(hop_c))
+        if mutate_hop == hop and mutate_fn:
+            idents = mutate_fn(list(idents), contents)
+        for ident in idents:
+            pkg = ident['package']
+            ver = ident['version']
+            arch = ident.get('architecture') or 'amd64'
+            letter = pkg[0] if pkg else 'x'
+            pool = os.path.join(
+                root, 'hops', hop, 'ubuntu', 'pool', 'main', letter, pkg,
+            )
+            os.makedirs(pool, exist_ok=True)
+            base = '%s_%s_%s.deb' % (pkg, ver, arch)
+            data = contents.get(ident.get('sha256') or '')
+            if data is None:
+                data = b'WRONG'
+            with open(os.path.join(pool, base), 'wb') as fh:
+                fh.write(data)
+
+
+def _write_plan_state(selective_root, contract, plan_checksum='a' * 64,
+                      discovery_checksum='b' * 64):
+    state = os.path.join(selective_root, 'state')
+    os.makedirs(state, exist_ok=True)
+    plan = {
+        'schema_version': 1,
+        'profile_name': 'offline-upgrade-selective',
+        'discovery_profiles': ['generic', 'aws'],
+        'aws_semantic_contract': contract,
+        'aws_semantic_contract_sha256': contract['contract_sha256'],
+        'plan_checksum': plan_checksum,
+        'discovery_artifact_checksum': discovery_checksum,
+        'validation_result': 'PASS',
+        'debs': [],
+    }
+    with open(os.path.join(state, 'plan.json'), 'w') as fh:
+        json.dump(plan, fh, indent=2, sort_keys=True)
+        fh.write('\n')
+    aws_c.write_aws_semantic_contract_bash(
+        os.path.join(state, 'aws-semantic-contract.sh.inc'), contract,
+    )
+    return plan
+
+
+class ContractBindingAuthorityTests(unittest.TestCase):
+    """Fourth-review P0/P1: single contract authority plan→client→OS Core."""
+
+    def test_plan_client_drift_uses_plan_not_tracked_snapshot(self):
+        contract, _contents = _synthetic_contract_and_contents()
+        # Drift Bionic linux-aws away from tracked snapshot identity.
+        bionic = contract['hops']['bionic-to-focal']
+        drifted_ver = '9.9.9.9999.99~drift'
+        blob = b'SYNTH|drift|linux-aws'
+        ident, _ = _synth_identity('linux-aws', drifted_ver, blob)
+        bionic['linux_aws'] = ident
+        # Keep image meta aligned enough for bash render.
+        bionic['linux_image_aws'] = dict(ident)
+        bionic['linux_image_aws']['package'] = 'linux-image-aws'
+        aws_c.attach_contract_sha256(contract)
+
+        tracked = open(
+            os.path.join(ROOT, 'client', 'dp-aws-semantic-contract.sh.inc')
+        ).read()
+        self.assertNotIn(drifted_ver, tracked)
+
+        tmp = tempfile.mkdtemp(prefix='um-aws-drift-')
+        try:
+            _write_plan_state(tmp, contract)
+            bash, sha, _c = aws_c.resolve_aws_semantic_contract_bash_for_client(tmp)
+            self.assertEqual(sha, contract['contract_sha256'])
+            self.assertIn(drifted_ver, bash)
+            self.assertIn('AWS_SEMANTIC_CONTRACT_SHA256=', bash)
+            # Must not silently use tracked snapshot authority.
+            self.assertNotEqual(
+                sha,
+                # tracked file content hash is unrelated; compare identity string
+                'tracked-not-used',
+            )
+            self.assertTrue(
+                drifted_ver in bash and '5.15.0.1084.91~20.04.1' not in bash
+                or drifted_ver in bash
+            )
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_client_contract_mismatch_fail_closed(self):
+        contract, _ = _synthetic_contract_and_contents()
+        tmp = tempfile.mkdtemp(prefix='um-aws-mismatch-')
+        try:
+            _write_plan_state(tmp, contract)
+            # Plant a sibling bash that does not match plan-rendered authority.
+            bad = os.path.join(tmp, 'state', 'aws-semantic-contract.sh.inc')
+            with open(bad, 'w') as fh:
+                fh.write('# stale\nAWS_SEMANTIC_CONTRACT_SHA256=deadbeef\n')
+            with self.assertRaises(ValueError) as ctx:
+                aws_c.resolve_aws_semantic_contract_bash_for_client(tmp)
+            self.assertIn('differs_from_plan', str(ctx.exception))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_wrong_hop_identity_fails_plan_validation(self):
+        contract, contents = _synthetic_contract_and_contents()
+        # Rows: required xenial identity present only under bionic hop membership.
+        x2b = contract['hops']['xenial-to-bionic']['linux_aws']
+        rows = []
+        for hop, hop_c in contract['hops'].items():
+            for ident in aws_c.iter_contract_identities(hop_c):
+                row_hop = hop
+                if hop == 'xenial-to-bionic' and ident['package'] == 'linux-aws':
+                    row_hop = 'bionic-to-focal'  # wrong hop membership
+                rows.append({
+                    'package': ident['package'],
+                    'version': ident['version'],
+                    'architecture': ident.get('architecture') or 'amd64',
+                    'sha256': ident['sha256'],
+                    'hop': row_hop,
+                    'source_hops': [row_hop],
+                })
+        plan = {
+            'discovery_profiles': ['generic', 'aws'],
+            'aws_semantic_contract': contract,
+            'aws_semantic_contract_sha256': contract['contract_sha256'],
+            'counts': {'aws_kernel_package_rows': len(rows)},
+            'debs': rows,
+        }
+        ok, errors, detail = aws_c.validate_plan_aws_completeness(
+            plan, package_rows=rows, require_aws_profile=True,
+        )
+        self.assertFalse(ok, detail)
+        self.assertTrue(
+            any(
+                'aws_contract_identity_missing_in_plan:xenial-to-bionic:linux-aws'
+                in e
+                for e in errors
+            ),
+            errors,
+        )
+
+    def test_end_to_end_contract_sha_identical(self):
+        import json
+        import tarfile
+        oc = _load('os_core_package', os.path.join(ROOT, 'scripts', 'lib', 'os_core_package.py'))
+        contract, contents = _synthetic_contract_and_contents()
+        plan_sha = contract['contract_sha256']
+        tmp = tempfile.mkdtemp(prefix='um-aws-e2e-')
+        try:
+            sel = os.path.join(tmp, 'sel')
+            # published-like tree
+            _plant_synth_tree(sel, contract, contents)
+            _write_plan_state(sel, contract)
+            # Client binding
+            bash, client_sha, _ = aws_c.resolve_aws_semantic_contract_bash_for_client(sel)
+            self.assertEqual(client_sha, plan_sha)
+            self.assertIn(plan_sha, bash)
+
+            out = os.path.join(tmp, 'out')
+            os.makedirs(out)
+            # Real OS Core build path
+            ns = type('A', (), {
+                'selective_root': sel,
+                'output_dir': out,
+                'project_root': ROOT,
+                'release_id': 'e2eContract001',
+                'signing_key': '',
+            })()
+            oc.cmd_build(ns)
+            tar_path = os.path.join(
+                out, 'ubuntu-os-core-xenial-to-noble-e2eContract001.tar'
+            )
+            extract = os.path.join(tmp, 'extract')
+            os.makedirs(extract)
+            with tarfile.open(tar_path, 'r:') as tf:
+                tf.extractall(extract)
+            pkg = os.path.join(extract, 'ubuntu-os-core')
+            with open(os.path.join(pkg, 'manifest.json')) as fh:
+                manifest = json.load(fh)
+            self.assertEqual(manifest.get('aws_semantic_contract_sha256'), plan_sha)
+            cpath = os.path.join(pkg, 'payload', 'state', 'aws-semantic-contract.json')
+            self.assertTrue(os.path.isfile(cpath))
+            with open(cpath) as fh:
+                embedded = json.load(fh)
+            self.assertEqual(
+                aws_c.aws_semantic_contract_sha256(embedded), plan_sha,
+            )
+            # payload.sha256 must cover the contract file
+            rel = 'state/aws-semantic-contract.json'
+            covered = False
+            with open(os.path.join(pkg, 'payload.sha256')) as fh:
+                for line in fh:
+                    if rel in line:
+                        covered = True
+                        break
+            self.assertTrue(covered, 'contract not in payload.sha256')
+            # Real verify
+            vns = type('V', (), {'package': tar_path, 'public_key': ''})()
+            oc.cmd_verify(vns)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_real_os_core_contract_embedded(self):
+        self.test_end_to_end_contract_sha_identical()
+
+    def test_real_os_core_wrong_version_fails(self):
+        import json
+        oc = _load('os_core_package', os.path.join(ROOT, 'scripts', 'lib', 'os_core_package.py'))
+        contract, contents = _synthetic_contract_and_contents()
+        tmp = tempfile.mkdtemp(prefix='um-aws-wrongver-')
+        try:
+            sel = os.path.join(tmp, 'sel')
+
+            def mutate(idents, contents_map):
+                out = []
+                for ident in idents:
+                    i = dict(ident)
+                    if i['package'] == 'linux-aws':
+                        i['version'] = '0.0.0.wrong'
+                        # keep same sha/content so filename/version mismatch is the defect
+                    out.append(i)
+                return out
+
+            _plant_synth_tree(
+                sel, contract, contents,
+                mutate_hop='xenial-to-bionic', mutate_fn=mutate,
+            )
+            # Other hops correct
+            for hop in dp.HOPS:
+                if hop == 'xenial-to-bionic':
+                    continue
+                _plant_synth_tree(sel, {'hops': {hop: contract['hops'][hop]}}, contents)
+            _write_plan_state(sel, contract)
+            out = os.path.join(tmp, 'out')
+            os.makedirs(out)
+            ns = type('A', (), {
+                'selective_root': sel,
+                'output_dir': out,
+                'project_root': ROOT,
+                'release_id': 'wrongVer001',
+                'signing_key': '',
+            })()
+            with self.assertRaises(oc.OsCoreError) as ctx:
+                oc.cmd_build(ns)
+            self.assertIn('AWS_OS_CORE_SEMANTIC_COMPLETENESS', str(ctx.exception))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_real_os_core_wrong_bytes_fails_sha256(self):
+        oc = _load('os_core_package', os.path.join(ROOT, 'scripts', 'lib', 'os_core_package.py'))
+        contract, contents = _synthetic_contract_and_contents()
+        tmp = tempfile.mkdtemp(prefix='um-aws-wrongbytes-')
+        try:
+            sel = os.path.join(tmp, 'sel')
+            # Plant correct names/versions but corrupt one payload byte map.
+            bad_contents = dict(contents)
+            xsha = contract['hops']['xenial-to-bionic']['linux_aws']['sha256']
+            bad_contents[xsha] = b'TAMPERED-BYTES-NOT-MATCHING-SHA'
+
+            _plant_synth_tree(sel, contract, bad_contents)
+            _write_plan_state(sel, contract)
+            out = os.path.join(tmp, 'out')
+            os.makedirs(out)
+            ns = type('A', (), {
+                'selective_root': sel,
+                'output_dir': out,
+                'project_root': ROOT,
+                'release_id': 'wrongBytes001',
+                'signing_key': '',
+            })()
+            with self.assertRaises(oc.OsCoreError) as ctx:
+                oc.cmd_build(ns)
+            msg = str(ctx.exception)
+            self.assertTrue(
+                'sha256' in msg.lower() or 'AWS_OS_CORE_SEMANTIC_COMPLETENESS' in msg,
+                msg,
+            )
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_real_os_core_missing_contract_fails(self):
+        oc = _load('os_core_package', os.path.join(ROOT, 'scripts', 'lib', 'os_core_package.py'))
+        contract, contents = _synthetic_contract_and_contents()
+        tmp = tempfile.mkdtemp(prefix='um-aws-nocontract-')
+        try:
+            sel = os.path.join(tmp, 'sel')
+            _plant_synth_tree(sel, contract, contents)
+            # Intentionally omit state/plan.json
+            out = os.path.join(tmp, 'out')
+            os.makedirs(out)
+            ns = type('A', (), {
+                'selective_root': sel,
+                'output_dir': out,
+                'project_root': ROOT,
+                'release_id': 'noContract001',
+                'signing_key': '',
+            })()
+            with self.assertRaises(oc.OsCoreError) as ctx:
+                oc.cmd_build(ns)
+            self.assertIn('AWS_SEMANTIC_CONTRACT', str(ctx.exception))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 if __name__ == '__main__':

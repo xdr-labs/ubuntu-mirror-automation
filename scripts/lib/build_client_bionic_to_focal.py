@@ -25,6 +25,7 @@ if _LIB_DIR not in sys.path:
 import client_build_repository as cbr
 import client_build_provenance as cbp
 import assert_client_executable_shebang as aces
+import aws_os_core_completeness as aws_c
 
 
 HOP = "bionic-to-focal"
@@ -520,7 +521,7 @@ def first_pool_filename_from_packages_gz(packages_gz_bytes):
     raise BuildError("no Filename in Packages.gz")
 
 
-def render_script(template_path, replacements):
+def render_script(template_path, replacements, aws_contract_body=""):
     with open(template_path, "r", encoding="utf-8") as fh:
         body = fh.read()
     helper_token = "@@DESTRUCTIVE_CONFIRMATION_HELPER@@"
@@ -579,20 +580,18 @@ def render_script(template_path, replacements):
     aws_token = "@@AWS_KERNEL_GATE_LIB@@"
     client_dir = os.path.dirname(os.path.abspath(template_path))
     aws_path = os.path.join(client_dir, "dp-postboot-aws-kernel-gate.sh.inc")
-    aws_contract_path = os.path.join(client_dir, "dp-aws-semantic-contract.sh.inc")
     if aws_token not in body:
         raise BuildError("template missing token {}".format(aws_token))
     if not os.path.isfile(aws_path):
         raise BuildError("missing AWS kernel gate helper: {}".format(aws_path))
-    if not os.path.isfile(aws_contract_path):
+    if not aws_contract_body:
         raise BuildError(
-            "missing AWS semantic contract helper: {}".format(aws_contract_path)
+            "missing AWS semantic contract body (plan-bound contract required)"
         )
-    with open(aws_contract_path, "r", encoding="utf-8") as fh:
-        aws_contract_body = fh.read().rstrip("\n") + "\n"
+    contract_text = aws_contract_body.rstrip("\n") + "\n"
     with open(aws_path, "r", encoding="utf-8") as fh:
         aws_gate_body = fh.read().rstrip("\n") + "\n"
-    aws_body = aws_contract_body + aws_gate_body
+    aws_body = contract_text + aws_gate_body
     body = body.replace(aws_token, aws_body)
     source_token = "@@SOURCE_PRODUCT_HELPER@@"
     if source_token in body:
@@ -764,6 +763,16 @@ def main(argv=None):
     )
     discovery_checksum = ready.get("discovery_artifact_checksum") or ""
 
+    try:
+        aws_contract_body, aws_contract_sha, _aws_contract = (
+            aws_c.resolve_aws_semantic_contract_bash_for_client(
+                selective_root, project_root=project_root
+            )
+        )
+    except ValueError as exc:
+        raise BuildError("AWS semantic contract binding failed: {}".format(exc))
+    print("AWS_SEMANTIC_CONTRACT_SHA256={}".format(aws_contract_sha))
+
     generated_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     repo_base = "{}/hops/{}/ubuntu".format(mirror_base, HOP)
 
@@ -794,6 +803,7 @@ def main(argv=None):
         project_root,
         mirror_base_url=mirror_base,
         signing_fingerprint=manifest_key_fpr or "",
+        aws_semantic_contract_sha256=aws_contract_sha,
     )
 
     manifest = OrderedDict(
@@ -836,6 +846,7 @@ def main(argv=None):
             ("sample_deb_url", sample_deb_url),
             ("plan_checksum", plan_checksum),
             ("discovery_checksum", discovery_checksum),
+            ("aws_semantic_contract_sha256", aws_contract_sha),
             ("confirm_phrase", CONFIRM_PHRASE),
             ("client_provenance_schema_version", build_provenance["CLIENT_PROVENANCE_SCHEMA_VERSION"]),
             ("client_build_input_sha256", build_provenance["CLIENT_BUILD_INPUT_SHA256"]),
@@ -949,7 +960,7 @@ def main(argv=None):
         "PROFILE_NAME": PROFILE_NAME,
     }
 
-    script_body = render_script(template, replacements)
+    script_body = render_script(template, replacements, aws_contract_body=aws_contract_body)
     aces.assert_client_executable_shebangs(script_body, 'bionic-to-focal')
     script_name = "dp-offline-upgrade-bionic-to-focal.sh"
     script_path = os.path.join(out_dir, script_name)

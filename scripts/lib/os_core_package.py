@@ -29,10 +29,24 @@ import tempfile
 from datetime import datetime, timezone
 
 try:
-    from aws_os_core_completeness import validate_tree_aws_completeness
+    from aws_os_core_completeness import (
+        AWS_SEMANTIC_CONTRACT_JSON_REL,
+        allow_name_only_aws_validation,
+        load_aws_semantic_contract_from_plan_file,
+        minimal_public_aws_semantic_contract,
+        validate_tree_aws_completeness,
+        verify_contract_checksum,
+        write_aws_semantic_contract_json,
+    )
 except ImportError:  # pragma: no cover
     from scripts.lib.aws_os_core_completeness import (  # type: ignore
+        AWS_SEMANTIC_CONTRACT_JSON_REL,
+        allow_name_only_aws_validation,
+        load_aws_semantic_contract_from_plan_file,
+        minimal_public_aws_semantic_contract,
         validate_tree_aws_completeness,
+        verify_contract_checksum,
+        write_aws_semantic_contract_json,
     )
 
 SCHEMA_VERSION = 1
@@ -470,25 +484,60 @@ def validate_package_tree(extract_root):
             % (manifest.get("payload_bytes"), payload_bytes)
         )
 
-    # Production OS Core must carry AWS kernel packages for every hop. Structural
-    # checksum PASS alone previously allowed generic-only payloads (field defect).
-    embedded_plan = {}
-    plan_path = os.path.join(payload_root, "state", "plan.json")
-    if not os.path.isfile(plan_path):
-        plan_path = os.path.join(pkg, "state", "plan.json")
-    if os.path.isfile(plan_path):
+    # Production OS Core must embed the AWS semantic contract and verify exact
+    # discovery-derived .deb identity (package/version/arch/SHA256).
+    contract_path = os.path.join(payload_root, AWS_SEMANTIC_CONTRACT_JSON_REL)
+    embedded_plan = {
+        "discovery_profiles": ["generic", "aws"],
+        "require_contract_checksum": True,
+    }
+    contract = None
+    contract_sha = ""
+    if os.path.isfile(contract_path):
         try:
-            with open(plan_path, "r", encoding="utf-8") as fh:
-                embedded_plan = json.load(fh)
-        except (OSError, ValueError, TypeError):
-            embedded_plan = {}
-    # Prefer plan discovery_profiles when present; otherwise require AWS coverage
-    # for all OS Core packages (supported AWS DP target) unless hermetic escape.
+            with open(contract_path, "r", encoding="utf-8") as fh:
+                contract = json.load(fh)
+        except (OSError, ValueError, TypeError) as exc:
+            raise OsCoreError(
+                "AWS_SEMANTIC_CONTRACT_MALFORMED path=%s err=%s" % (contract_path, exc)
+            )
+        ok_ck, actual_ck, ck_err = verify_contract_checksum(contract)
+        if not ok_ck:
+            raise OsCoreError(
+                "AWS_SEMANTIC_CONTRACT_CHECKSUM=FAIL detail=%s" % (ck_err or "mismatch")
+            )
+        contract_sha = actual_ck
+        manifest_ck = (manifest.get("aws_semantic_contract_sha256") or "").strip()
+        if not manifest_ck:
+            raise OsCoreError("AWS_SEMANTIC_CONTRACT_MANIFEST_SHA_MISSING")
+        if manifest_ck != contract_sha:
+            raise OsCoreError(
+                "AWS_SEMANTIC_CONTRACT_MANIFEST_MISMATCH manifest=%s embedded=%s"
+                % (manifest_ck[:16], contract_sha[:16])
+            )
+        embedded_plan["aws_semantic_contract"] = contract
+        embedded_plan["aws_semantic_contract_sha256"] = contract_sha
+    else:
+        # Legacy: allow plan.json only under hermetic name-only escape.
+        plan_path = os.path.join(payload_root, "state", "plan.json")
+        if not os.path.isfile(plan_path):
+            plan_path = os.path.join(pkg, "state", "plan.json")
+        if os.path.isfile(plan_path) and allow_name_only_aws_validation():
+            try:
+                with open(plan_path, "r", encoding="utf-8") as fh:
+                    embedded_plan = json.load(fh)
+            except (OSError, ValueError, TypeError):
+                embedded_plan = {"discovery_profiles": ["generic", "aws"]}
+        elif not allow_name_only_aws_validation():
+            raise OsCoreError(
+                "AWS_SEMANTIC_CONTRACT_MISSING path=%s" % contract_path
+            )
+
     aws_ok, aws_errs, aws_detail = validate_tree_aws_completeness(
         payload_root,
         plan=embedded_plan,
         require_aws_profile=True,
-        verify_sha256=False,
+        verify_sha256=True if contract else False,
     )
     if not aws_ok:
         raise OsCoreError(
@@ -498,6 +547,8 @@ def validate_package_tree(extract_root):
     # Stash for callers; avoid printing from pure validate (cmd_verify logs).
     manifest = dict(manifest)
     manifest["aws_semantic_completeness"] = aws_detail.get("result") or "PASS"
+    if contract_sha:
+        manifest["aws_semantic_contract_sha256"] = contract_sha
 
     return manifest
 
@@ -579,6 +630,61 @@ def collect_from_selective_published(selective_root, payload_root):
         keys_dst = os.path.join(payload_root, "keys")
         os.makedirs(keys_dst, exist_ok=True)
         shutil.copy2(keys_src, os.path.join(keys_dst, "ubuntu-mirror-selective.gpg"))
+
+    # Embed public-safe AWS semantic contract from the verified selective plan.
+    return embed_aws_semantic_contract_from_selective(selective_root, payload_root)
+
+
+def embed_aws_semantic_contract_from_selective(selective_root, payload_root):
+    """Copy/bind plan AWS contract into payload/state/aws-semantic-contract.json.
+
+    Returns (contract_sha256, plan_checksum, discovery_checksum) — empty strings
+    when hermetic name-only escape allows missing plan.
+    """
+    plan_path = os.path.join(selective_root, "state", "plan.json")
+    if not os.path.isfile(plan_path):
+        # published-like trees may keep state beside published/
+        alt = os.path.join(os.path.dirname(selective_root), "state", "plan.json")
+        if os.path.isfile(alt):
+            plan_path = alt
+    if not os.path.isfile(plan_path):
+        if allow_name_only_aws_validation():
+            return "", "", ""
+        raise OsCoreError(
+            "AWS_SEMANTIC_CONTRACT_ABSENT: selective state/plan.json missing "
+            "under %s" % selective_root
+        )
+    try:
+        contract, contract_sha = load_aws_semantic_contract_from_plan_file(plan_path)
+    except ValueError as exc:
+        if allow_name_only_aws_validation():
+            return "", "", ""
+        raise OsCoreError("AWS_SEMANTIC_CONTRACT_ABSENT: %s" % exc)
+
+    public = minimal_public_aws_semantic_contract(contract)
+    # Ensure embedded artifact uses the verified plan checksum.
+    public["contract_sha256"] = contract_sha
+    dest = os.path.join(payload_root, AWS_SEMANTIC_CONTRACT_JSON_REL)
+    write_aws_semantic_contract_json(dest, public)
+    # Re-read and confirm binding.
+    with open(dest, "r", encoding="utf-8") as fh:
+        embedded = json.load(fh)
+    ok, actual, err = verify_contract_checksum(embedded, expected_sha=contract_sha)
+    if not ok or actual != contract_sha:
+        raise OsCoreError(
+            "AWS_SEMANTIC_CONTRACT_EMBED_FAIL detail=%s" % (err or "checksum")
+        )
+
+    plan_ck = ""
+    disc_ck = ""
+    try:
+        with open(plan_path, "r", encoding="utf-8") as fh:
+            plan = json.load(fh)
+        plan_ck = (plan.get("plan_checksum") or "").strip()
+        disc_ck = (plan.get("discovery_artifact_checksum") or "").strip()
+    except (OSError, ValueError, TypeError):
+        pass
+    return contract_sha, plan_ck, disc_ck
 
 
 def payload_stats(payload_root):
@@ -856,7 +962,9 @@ def cmd_build(args):
         pkg_root = os.path.join(build_tmp, PACKAGE_ROOT_NAME)
         payload_root = os.path.join(pkg_root, "payload")
         os.makedirs(payload_root, exist_ok=True)
-        collect_from_selective_published(selective_root, payload_root)
+        contract_sha, plan_ck, disc_ck = collect_from_selective_published(
+            selective_root, payload_root
+        )
         validate_symlinks(pkg_root, payload_root)
         payload_sum = os.path.join(pkg_root, "payload.sha256")
         file_count = write_payload_sha256(payload_root, payload_sum)
@@ -865,21 +973,28 @@ def cmd_build(args):
             raise OsCoreError("PAYLOAD_COUNT_INTERNAL")
         # Safety margin: package + extract + stage (~3x payload) + 512MiB
         required_free = payload_bytes * 3 + (512 * 1024 * 1024)
-        discovery_ck = sha256_file(payload_sum)
-        # Deterministic plan identity (excludes timestamps / mutable paths).
-        plan_identity = {
-            "artifact_type": ARTIFACT_TYPE,
-            "schema_version": SCHEMA_VERSION,
-            "supported_hops": list(SUPPORTED_HOPS),
-            "supported_source_os": "16.04",
-            "target_os": "24.04",
-            "payload_file_count": file_count,
-            "payload_bytes": payload_bytes,
-            "discovery_artifact_checksum": discovery_ck,
-        }
-        selective_plan_ck = sha256_bytes(
-            json.dumps(plan_identity, sort_keys=True, separators=(",", ":"))
-        )
+        discovery_ck = disc_ck if is_hex64(disc_ck) else sha256_file(payload_sum)
+        # Prefer real selective plan checksum when present; otherwise derive a
+        # deterministic identity over payload stats (legacy/synthetic builds).
+        if is_hex64(plan_ck):
+            selective_plan_ck = plan_ck.lower()
+        else:
+            plan_identity = {
+                "artifact_type": ARTIFACT_TYPE,
+                "schema_version": SCHEMA_VERSION,
+                "supported_hops": list(SUPPORTED_HOPS),
+                "supported_source_os": "16.04",
+                "target_os": "24.04",
+                "payload_file_count": file_count,
+                "payload_bytes": payload_bytes,
+                "discovery_artifact_checksum": discovery_ck,
+                "aws_semantic_contract_sha256": contract_sha or "",
+            }
+            selective_plan_ck = sha256_bytes(
+                json.dumps(plan_identity, sort_keys=True, separators=(",", ":"))
+            )
+        if not contract_sha and not allow_name_only_aws_validation():
+            raise OsCoreError("AWS_SEMANTIC_CONTRACT_SHA_MISSING")
         manifest = {
             "schema_version": SCHEMA_VERSION,
             "artifact_type": ARTIFACT_TYPE,
@@ -895,6 +1010,7 @@ def cmd_build(args):
             "source_selective_root": "SELECTIVE_PUBLISHED",
             "selective_plan_checksum": selective_plan_ck,
             "discovery_artifact_checksum": discovery_ck,
+            "aws_semantic_contract_sha256": contract_sha,
         }
         with open(os.path.join(pkg_root, "manifest.json"), "w", encoding="utf-8") as fh:
             json.dump(manifest, fh, indent=2, sort_keys=True)
@@ -935,6 +1051,7 @@ def cmd_build(args):
         print("PAYLOAD_BYTES=%s" % payload_bytes)
         print("SELECTIVE_PLAN_CHECKSUM=%s" % selective_plan_ck)
         print("DISCOVERY_ARTIFACT_CHECKSUM=%s" % discovery_ck)
+        print("AWS_SEMANTIC_CONTRACT_SHA256=%s" % contract_sha)
         print("SIGNATURE=%s" % ("YES" if signed else "NO"))
     finally:
         shutil.rmtree(build_tmp, ignore_errors=True)

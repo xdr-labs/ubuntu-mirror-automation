@@ -18,6 +18,7 @@ Python 3.5+; standard library only.
 from __future__ import print_function, unicode_literals
 
 import hashlib
+import json
 import os
 import re
 from collections import OrderedDict
@@ -35,6 +36,8 @@ except ImportError:  # pragma: no cover
 # Hermetic/unit-test escape only. Production builders must never set these.
 ALLOW_GENERIC_ONLY_ENV = 'UM_ALLOW_GENERIC_ONLY_DISCOVERY'
 HERMETIC_TEST_ENV = 'MM_HERMETIC_TEST_MODE'
+# Name-only AWS tree validation is hermetic-only (same dual escape).
+ALLOW_NAME_ONLY_AWS_ENV = 'UM_ALLOW_NAME_ONLY_AWS_VALIDATION'
 
 # Authoritative metapackage names shared with client gates.
 REQUIRED_AWS_METAPACKAGES = (
@@ -72,9 +75,186 @@ VERSION_ID_TO_TARGET_HOP = OrderedDict(
 
 CONTRACT_SCHEMA_VERSION = 1
 
+# Embedded OS Core / selective state relative path for the public contract artifact.
+AWS_SEMANTIC_CONTRACT_JSON_REL = os.path.join('state', 'aws-semantic-contract.json')
+
 
 def _env_truthy(name):
     return os.environ.get(name, '') in ('1', 'true', 'yes', 'on')
+
+
+def _canonical_contract_for_hash(contract):
+    """Return a plain dict suitable for stable hashing (no contract_sha256)."""
+    if not contract:
+        return {}
+    # Round-trip through JSON so nested OrderedDicts become plain dicts.
+    body = json.loads(json.dumps(contract, sort_keys=True, default=str))
+    body.pop('contract_sha256', None)
+    return body
+
+
+def aws_semantic_contract_sha256(contract):
+    """Stable SHA256 over the authoritative semantic contract body."""
+    body = _canonical_contract_for_hash(contract)
+    blob = json.dumps(body, sort_keys=True, separators=(',', ':'), ensure_ascii=True)
+    return hashlib.sha256(blob.encode('utf-8')).hexdigest()
+
+
+def attach_contract_sha256(contract):
+    """Attach/refresh contract_sha256 on a contract OrderedDict/dict."""
+    if not contract:
+        return contract
+    sha = aws_semantic_contract_sha256(contract)
+    if isinstance(contract, OrderedDict):
+        contract['contract_sha256'] = sha
+    else:
+        contract['contract_sha256'] = sha
+    return contract
+
+
+def verify_contract_checksum(contract, expected_sha=None):
+    """Return (ok, actual_sha, error_message)."""
+    if not contract or not (contract.get('hops') or {}):
+        return False, '', 'aws_semantic_contract_missing'
+    schema = contract.get('schema_version')
+    try:
+        schema_i = int(schema)
+    except (TypeError, ValueError):
+        schema_i = -1
+    if schema_i != CONTRACT_SCHEMA_VERSION:
+        return False, '', 'aws_semantic_contract_schema_unsupported:%s' % schema
+    actual = aws_semantic_contract_sha256(contract)
+    embedded = (contract.get('contract_sha256') or '').strip()
+    if embedded and embedded != actual:
+        return False, actual, (
+            'aws_semantic_contract_checksum_mismatch embedded=%s actual=%s'
+            % (embedded[:16], actual[:16])
+        )
+    if expected_sha:
+        expected_sha = expected_sha.strip()
+        if expected_sha != actual:
+            return False, actual, (
+                'aws_semantic_contract_checksum_mismatch expected=%s actual=%s'
+                % (expected_sha[:16], actual[:16])
+            )
+    return True, actual, ''
+
+
+def minimal_public_aws_semantic_contract(contract):
+    """Public-safe contract for OS Core embedding (no host paths / secrets).
+
+    The plan ``aws_semantic_contract`` is already identity-only. Embed a deep copy
+    with a verified ``contract_sha256`` so plan/client/OS Core share one authority.
+    """
+    if not contract:
+        return OrderedDict()
+    raw = json.loads(json.dumps(contract, sort_keys=True, default=str))
+    attach_contract_sha256(raw)
+    return raw
+
+
+def load_aws_semantic_contract_from_plan_file(plan_path):
+    """Load and verify aws_semantic_contract from a selective plan JSON file.
+
+    Returns (contract, contract_sha256).
+    Raises ValueError on fail-closed conditions.
+    """
+    if not plan_path or not os.path.isfile(plan_path):
+        raise ValueError('aws_semantic_contract_absent: plan missing path=%s' % plan_path)
+    try:
+        with open(plan_path, 'r') as fh:
+            plan = json.load(fh)
+    except (OSError, ValueError, TypeError) as exc:
+        raise ValueError('aws_semantic_contract_absent: plan unreadable (%s)' % exc)
+    return load_aws_semantic_contract_from_plan(plan)
+
+
+def load_aws_semantic_contract_from_plan(plan):
+    """Extract and verify contract from a plan dict. Returns (contract, sha256)."""
+    plan = plan or {}
+    contract = plan.get('aws_semantic_contract')
+    if not contract or not (contract.get('hops') or {}):
+        raise ValueError('aws_semantic_contract_absent')
+    expected = (
+        (plan.get('aws_semantic_contract_sha256') or '').strip()
+        or (contract.get('contract_sha256') or '').strip()
+    )
+    if not expected:
+        raise ValueError('aws_semantic_contract_checksum_absent')
+    ok, actual, err = verify_contract_checksum(contract, expected_sha=expected)
+    if not ok:
+        raise ValueError(err or 'aws_semantic_contract_checksum_mismatch')
+    # Ensure embedded field is present for downstream consumers.
+    contract = dict(contract)
+    contract['contract_sha256'] = actual
+    return contract, actual
+
+
+def resolve_aws_semantic_contract_bash_for_client(selective_root, project_root=None):
+    """Resolve authoritative AWS contract bash for client generation.
+
+    Production authority is selective ``state/plan.json`` → ``aws_semantic_contract``.
+    The tracked ``client/dp-aws-semantic-contract.sh.inc`` is never an independent
+    production authority; it may be used only under the hermetic dual escape when
+    no verified plan contract is available.
+
+    Returns (bash_text, contract_sha256, contract_dict).
+    """
+    selective_root = os.path.abspath(selective_root or '')
+    plan_path = os.path.join(selective_root, 'state', 'plan.json')
+    contract = None
+    contract_sha = ''
+    if os.path.isfile(plan_path):
+        contract, contract_sha = load_aws_semantic_contract_from_plan_file(plan_path)
+    elif allow_generic_only_discovery() and project_root:
+        fixture = os.path.join(
+            os.path.abspath(project_root), 'client', 'dp-aws-semantic-contract.sh.inc',
+        )
+        if not os.path.isfile(fixture):
+            raise ValueError(
+                'aws_semantic_contract_absent: no plan and no hermetic fixture'
+            )
+        with open(fixture, 'r') as fh:
+            text = fh.read()
+        # Hermetic fixture path: derive sha from file contents only (not plan-bound).
+        contract_sha = hashlib.sha256(text.encode('utf-8')).hexdigest()
+        if not text.endswith('\n'):
+            text += '\n'
+        return text, contract_sha, None
+    else:
+        raise ValueError(
+            'aws_semantic_contract_absent: missing %s' % plan_path
+        )
+
+    # Optional sibling bash must match plan-rendered authority when present.
+    sibling = os.path.join(selective_root, 'state', 'aws-semantic-contract.sh.inc')
+    bash = render_aws_semantic_contract_bash(contract)
+    if not bash.endswith('\n'):
+        bash += '\n'
+    if os.path.isfile(sibling):
+        with open(sibling, 'r') as fh:
+            existing = fh.read()
+        if not existing.endswith('\n'):
+            existing += '\n'
+        if existing != bash:
+            raise ValueError(
+                'aws_semantic_contract_differs_from_plan: state bash != plan contract'
+            )
+    return bash, contract_sha, contract
+
+
+def write_aws_semantic_contract_json(path, contract):
+    """Write public contract JSON atomically; returns path."""
+    public = minimal_public_aws_semantic_contract(contract)
+    parent = os.path.dirname(path)
+    if parent and not os.path.isdir(parent):
+        os.makedirs(parent)
+    tmp = path + '.tmp.%d' % os.getpid()
+    with open(tmp, 'w') as fh:
+        json.dump(public, fh, indent=2, sort_keys=True)
+        fh.write('\n')
+    os.replace(tmp, path)
+    return path
 
 
 def allow_generic_only_discovery():
@@ -83,6 +263,15 @@ def allow_generic_only_discovery():
     Production with only UM_ALLOW_GENERIC_ONLY_DISCOVERY=1 must NOT bypass.
     """
     return _env_truthy(HERMETIC_TEST_ENV) and _env_truthy(ALLOW_GENERIC_ONLY_ENV)
+
+
+def allow_name_only_aws_validation():
+    """True only for hermetic fixtures that explicitly opt into name-only AWS checks.
+
+    Production OS Core build/verify must never take this path.
+    Requires MM_HERMETIC_TEST_MODE=1 and UM_ALLOW_NAME_ONLY_AWS_VALIDATION=1.
+    """
+    return _env_truthy(HERMETIC_TEST_ENV) and _env_truthy(ALLOW_NAME_ONLY_AWS_ENV)
 
 
 def require_production_discovery_profiles(profiles):
@@ -439,6 +628,8 @@ def build_aws_semantic_contract(package_rows, discovery_profiles=None):
             (HOP_TARGET_VERSION_ID[h], h) for h in HOPS if h in hops
         )),
     ])
+    if hops and not errors:
+        attach_contract_sha256(contract)
     return contract, errors
 
 
@@ -458,10 +649,18 @@ def iter_contract_identities(hop_contract):
             yield ident
 
 
-def _index_rows_by_sha_and_name(rows):
+def _index_rows_by_sha_and_name(rows, hop=None):
+    """Index rows by sha256 and name/version/arch.
+
+    When ``hop`` is set, only rows that list that hop in source_hops/hop are
+    indexed — preventing a package present only in hop B from satisfying hop A.
+    """
     by_sha = {}
     by_nv = {}
     for row in rows or []:
+        if hop is not None:
+            if hop not in _row_hops(row) and row.get('hop') != hop:
+                continue
         sha = (row.get('sha256') or '').strip()
         name = _package_name(row)
         ver = decode_pkg_version(row.get('version') or '')
@@ -475,12 +674,15 @@ def _index_rows_by_sha_and_name(rows):
 
 
 def validate_rows_match_aws_contract(contract, package_rows, hops=None):
-    """Ensure package rows include every contract identity (sha/version/arch)."""
+    """Ensure package rows include every contract identity (sha/version/arch).
+
+    Matching is hop-scoped: an identity required for hop A must appear in rows
+    that belong to hop A (source_hops/hop), not merely elsewhere in the plan.
+    """
     errors = []
     details = OrderedDict([('hops', OrderedDict())])
     if not contract or not contract.get('hops'):
         return False, ['aws_semantic_contract_missing'], details
-    by_sha, by_nv = _index_rows_by_sha_and_name(package_rows)
     for hop in (hops or list(contract.get('hops') or {})):
         hop_c = (contract.get('hops') or {}).get(hop)
         hop_detail = OrderedDict([('identities', [])])
@@ -488,6 +690,7 @@ def validate_rows_match_aws_contract(contract, package_rows, hops=None):
             errors.append('aws_contract_hop_missing:%s' % hop)
             details['hops'][hop] = hop_detail
             continue
+        by_sha, by_nv = _index_rows_by_sha_and_name(package_rows, hop=hop)
         for ident in iter_contract_identities(hop_c):
             pkg = ident.get('package')
             ver = ident.get('version')
@@ -560,6 +763,13 @@ def validate_plan_aws_completeness(plan, package_rows=None, require_aws_profile=
         details['contract_built'] = True
     else:
         details['contract_built'] = False
+        ok_ck, actual_ck, ck_err = verify_contract_checksum(
+            contract,
+            expected_sha=(plan.get('aws_semantic_contract_sha256') or None),
+        )
+        details['contract_sha256'] = actual_ck
+        if not ok_ck:
+            errors.append(ck_err or 'aws_semantic_contract_checksum_mismatch')
 
     if contract_errors:
         errors.extend(contract_errors)
@@ -567,6 +777,7 @@ def validate_plan_aws_completeness(plan, package_rows=None, require_aws_profile=
     details['aws_semantic_contract'] = OrderedDict([
         ('schema_version', (contract or {}).get('schema_version')),
         ('hop_count', len((contract or {}).get('hops') or {})),
+        ('contract_sha256', (contract or {}).get('contract_sha256') or details.get('contract_sha256')),
     ])
 
     by_hop = collect_aws_packages_by_hop(combined)
@@ -743,7 +954,10 @@ def _find_identity_in_pool(ubuntu_root, identity, verify_sha256=False):
             continue
         detail['found'] = True
         detail['path'] = path
-        if verify_sha256 and expected_sha:
+        if verify_sha256:
+            if not expected_sha:
+                detail['sha_ok'] = False
+                return False, detail
             try:
                 actual = file_sha256(path)
             except OSError:
@@ -795,8 +1009,16 @@ def validate_tree_aws_completeness(
                 errors.extend(build_errs)
 
     if not contract or not contract.get('hops'):
-        # Legacy name-only path kept only when no contract can be derived —
-        # still fail closed on missing metapackage names.
+        # Name-only path is hermetic-only. Production must fail closed.
+        if not allow_name_only_aws_validation():
+            errors.append(
+                'aws_semantic_contract_missing: exact identity contract required '
+                '(name-only fallback needs %s=1 and %s=1)'
+                % (HERMETIC_TEST_ENV, ALLOW_NAME_ONLY_AWS_ENV)
+            )
+            details['mode'] = 'fail_closed_no_contract'
+            details['result'] = 'FAIL'
+            return False, errors, details
         for hop in HOPS:
             candidates = [
                 os.path.join(selective_or_payload_root, 'hops', hop, 'ubuntu'),
@@ -823,6 +1045,21 @@ def validate_tree_aws_completeness(
                 )
         details['result'] = 'PASS' if not errors else 'FAIL'
         return not errors, errors, details
+
+    # When a contract is present, optionally enforce its checksum binding.
+    expected_ck = (
+        (plan.get('aws_semantic_contract_sha256') or '').strip()
+        or (contract.get('contract_sha256') or '').strip()
+    )
+    if expected_ck or plan.get('require_contract_checksum'):
+        ok_ck, actual_ck, ck_err = verify_contract_checksum(
+            contract, expected_sha=expected_ck or None,
+        )
+        details['contract_sha256'] = actual_ck
+        if not ok_ck:
+            errors.append(ck_err or 'aws_semantic_contract_checksum_mismatch')
+            details['result'] = 'FAIL'
+            return False, errors, details
 
     for hop in HOPS:
         hop_c = (contract.get('hops') or {}).get(hop)
@@ -888,6 +1125,11 @@ def assert_plan_aws_completeness(plan, package_rows=None, require_aws_profile=No
 
 def render_aws_semantic_contract_bash(contract):
     """Render bash include defining aws_contract_load_for_version_id()."""
+    contract_sha = ''
+    if contract:
+        contract_sha = (contract.get('contract_sha256') or '').strip()
+        if not contract_sha and contract.get('hops'):
+            contract_sha = aws_semantic_contract_sha256(contract)
     lines = [
         '# Generated AWS semantic contract (discovery-derived). Do not hand-edit.',
         '# shellcheck shell=bash',
@@ -895,6 +1137,7 @@ def render_aws_semantic_contract_bash(contract):
         'AWS_SEMANTIC_CONTRACT_SCHEMA=%s' % (
             (contract or {}).get('schema_version') or CONTRACT_SCHEMA_VERSION
         ),
+        'AWS_SEMANTIC_CONTRACT_SHA256=%s' % _bash_quote(contract_sha),
         '',
         'aws_contract_clear() {',
         '  AWS_C_HOP=""',
