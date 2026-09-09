@@ -57,7 +57,11 @@ except ImportError:  # pragma: no cover
         write_selective_generation_plan_json,
     )
 
-SCHEMA_VERSION = 1
+# Schema 1 = legacy R2 / pre-generation-bound artifacts (intentionally supported
+# for materialize provenance fallback only). Schema 2 = generation-bound
+# AWS-aware OS Core (payload_manifest_sha256 + embedded plan + AWS contract).
+LEGACY_SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 ARTIFACT_TYPE = "ubuntu-os-core"
 SUPPORTED_HOPS = (
     "xenial-to-bionic",
@@ -591,8 +595,16 @@ def validate_package_tree(extract_root):
 
     with open(manifest_path, "r", encoding="utf-8") as fh:
         manifest = json.load(fh)
-    if int(manifest.get("schema_version", -1)) != SCHEMA_VERSION:
-        raise OsCoreError("MANIFEST_SCHEMA=FAIL")
+    try:
+        schema_ver = int(manifest.get("schema_version", -1))
+    except (TypeError, ValueError):
+        schema_ver = -1
+    if schema_ver not in (LEGACY_SCHEMA_VERSION, SCHEMA_VERSION):
+        raise OsCoreError(
+            "MANIFEST_SCHEMA=FAIL got=%s want=%s|%s"
+            % (schema_ver, LEGACY_SCHEMA_VERSION, SCHEMA_VERSION)
+        )
+    is_legacy_schema = schema_ver == LEGACY_SCHEMA_VERSION
     if manifest.get("artifact_type") != ARTIFACT_TYPE:
         raise OsCoreError("ARTIFACT_TYPE=FAIL")
     for hop in SUPPORTED_HOPS:
@@ -622,6 +634,11 @@ def validate_package_tree(extract_root):
     # Distinct payload-manifest identity (hash of payload.sha256 file).
     actual_payload_manifest_sha = sha256_file(payload_sum)
     manifest_payload_sha = (manifest.get("payload_manifest_sha256") or "").strip()
+    if schema_ver >= SCHEMA_VERSION and not manifest_payload_sha:
+        raise OsCoreError(
+            "MANIFEST_PAYLOAD_MANIFEST_SHA_MISSING schema=%s requires payload_manifest_sha256"
+            % schema_ver
+        )
     if manifest_payload_sha:
         if not is_hex64(manifest_payload_sha):
             raise OsCoreError("MANIFEST_PAYLOAD_MANIFEST_SHA_INVALID")
@@ -631,8 +648,11 @@ def validate_package_tree(extract_root):
                 % (manifest_payload_sha.lower(), actual_payload_manifest_sha)
             )
 
-    # Production OS Core must embed the AWS semantic contract and verify exact
-    # discovery-derived .deb identity (package/version/arch/SHA256).
+    # Production OS Core (schema 2) must embed the AWS semantic contract and
+    # verify exact discovery-derived .deb identity (package/version/arch/SHA256).
+    # Schema 1 legacy artifacts remain intentionally recognized without the
+    # generation-bound contract when the hermetic escape is set; otherwise
+    # AWS-incomplete legacy packages fail closed as non-current.
     contract_path = os.path.join(payload_root, AWS_SEMANTIC_CONTRACT_JSON_REL)
     gen_plan_path = os.path.join(payload_root, SELECTIVE_GENERATION_PLAN_REL)
     embedded_plan = {
@@ -666,8 +686,8 @@ def validate_package_tree(extract_root):
         embedded_plan["aws_semantic_contract"] = contract
         embedded_plan["aws_semantic_contract_sha256"] = contract_sha
 
-        # New-schema packages must embed the public-safe generation record and
-        # bind the same plan/discovery/contract tuple as the outer manifest.
+        # Schema 2 (and any package carrying payload_manifest_sha256) must embed
+        # the public-safe generation record bound to the outer manifest tuple.
         if os.path.isfile(gen_plan_path):
             try:
                 with open(gen_plan_path, "r", encoding="utf-8") as fh:
@@ -707,36 +727,35 @@ def validate_package_tree(extract_root):
                     "EMBEDDED_GENERATION_CONTRACT_MISMATCH "
                     "embedded=%s contract=%s" % (gen_contract[:16], contract_sha[:16])
                 )
-            # Discovery must remain distinct from payload-manifest identity when
-            # the new schema field is present.
-            if (
-                manifest_payload_sha
-                and manifest_disc
-                and manifest_disc == actual_payload_manifest_sha
-                and manifest_disc == gen_disc
-            ):
-                # Not inherently illegal if they collide by chance, but new builds
-                # should never *require* equality; no extra error here.
-                pass
-        elif manifest_payload_sha:
-            # New schema (payload_manifest_sha256 present) requires generation record.
+        elif schema_ver >= SCHEMA_VERSION or manifest_payload_sha:
             raise OsCoreError(
                 "EMBEDDED_GENERATION_PLAN_MISSING path=%s" % gen_plan_path
             )
     else:
-        # Legacy: allow plan.json only under hermetic name-only escape.
+        # Legacy schema 1 or hermetic name-only: allow missing embedded contract.
         plan_path = gen_plan_path
         if not os.path.isfile(plan_path):
             plan_path = os.path.join(pkg, "state", "plan.json")
-        if os.path.isfile(plan_path) and allow_name_only_aws_validation():
+        if os.path.isfile(plan_path) and (
+            allow_name_only_aws_validation() or is_legacy_schema
+        ):
             try:
                 with open(plan_path, "r", encoding="utf-8") as fh:
                     embedded_plan = json.load(fh)
             except (OSError, ValueError, TypeError):
                 embedded_plan = {"discovery_profiles": ["generic", "aws"]}
-        elif not allow_name_only_aws_validation():
+        elif is_legacy_schema and allow_name_only_aws_validation():
+            embedded_plan = {"discovery_profiles": ["generic", "aws"]}
+        elif schema_ver >= SCHEMA_VERSION or not allow_name_only_aws_validation():
+            if schema_ver >= SCHEMA_VERSION:
+                raise OsCoreError(
+                    "AWS_SEMANTIC_CONTRACT_MISSING path=%s" % contract_path
+                )
+            # Legacy schema without contract is not a valid *current* artifact.
             raise OsCoreError(
-                "AWS_SEMANTIC_CONTRACT_MISSING path=%s" % contract_path
+                "AWS_SEMANTIC_CONTRACT_MISSING path=%s "
+                "(legacy schema=%s is recognized only with hermetic escape "
+                "or embedded contract)" % (contract_path, schema_ver)
             )
 
     aws_ok, aws_errs, aws_detail = validate_tree_aws_completeness(

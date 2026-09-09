@@ -20,6 +20,10 @@ RAN=0
 PASS_COUNT=0
 FAIL_COUNT=0
 TIMEOUT_COUNT=0
+AWS_FIELD_REGRESSION_GATE=SKIP
+PRODUCTION_LIFECYCLE_ROUNDTRIP=SKIP
+REAL_CLIENT_BUILD_AFTER_R2_ROUNDTRIP=SKIP
+CLIENT_FINALIZATION_INTEGRATION=SKIP
 
 TEST_LIST=(
   test_install.sh
@@ -37,6 +41,7 @@ TEST_LIST=(
   test_selective_mirror.py
   test_selective_plan_checksum_semantic.py
   test_aws_selective_mirror_union.py
+  test_aws_os_core_completeness_field_fix.py
   test_selective_orchestration_lock.sh
   test_selective_runtime_migration.py
   test_sync_by_hash.py
@@ -153,6 +158,7 @@ TEST_LIST=(
   test_per_mirror_local_signing.sh
   test_client_ready_circular_gate.sh
   test_os_core_selective_ready_provenance.sh
+  test_os_core_r2_roundtrip_integration.sh
   test_client_finalization_local_fs_integration.sh
   test_client_build_provenance.sh
   test_phase2_existing_reuse_progress.sh
@@ -175,11 +181,12 @@ TEST_LIST=(
 # Integration tests required for FULL_SUITE=PASS (real builders, not mocked finalizer).
 INTEGRATION_REQUIRED=(
   test_client_finalization_local_fs_integration.sh
+  test_os_core_r2_roundtrip_integration.sh
 )
 
 is_long_test() {
   case "$1" in
-    test_dp_offline_upgrade_*.sh|test_dp_os_upgrade.sh|test_dp_upgrade_preflight.sh|test_selective_mirror.py|test_offline_mirror.sh|test_dp_upgrade_mirror_manager.sh|test_client_finalization_local_fs_integration.sh|test_client_build_provenance.sh|test_client_os_userspace_matrix.sh)
+    test_dp_offline_upgrade_*.sh|test_dp_os_upgrade.sh|test_dp_upgrade_preflight.sh|test_selective_mirror.py|test_offline_mirror.sh|test_dp_upgrade_mirror_manager.sh|test_client_finalization_local_fs_integration.sh|test_os_core_r2_roundtrip_integration.sh|test_aws_os_core_completeness_field_fix.py|test_client_build_provenance.sh|test_client_os_userspace_matrix.sh)
       return 0
       ;;
     *)
@@ -277,6 +284,24 @@ run_one() {
       fi
     fi
   done
+  # Truthful coverage accounting — only PASS when the named test actually ran OK.
+  case "$t" in
+    test_aws_os_core_completeness_field_fix.py)
+      if [[ "$rc" -eq 0 ]]; then AWS_FIELD_REGRESSION_GATE=PASS; else AWS_FIELD_REGRESSION_GATE=FAIL; fi
+      ;;
+    test_os_core_r2_roundtrip_integration.sh)
+      if [[ "$rc" -eq 0 ]]; then
+        PRODUCTION_LIFECYCLE_ROUNDTRIP=PASS
+        REAL_CLIENT_BUILD_AFTER_R2_ROUNDTRIP=PASS
+      else
+        PRODUCTION_LIFECYCLE_ROUNDTRIP=FAIL
+        REAL_CLIENT_BUILD_AFTER_R2_ROUNDTRIP=FAIL
+      fi
+      ;;
+    test_client_finalization_local_fs_integration.sh)
+      if [[ "$rc" -eq 0 ]]; then CLIENT_FINALIZATION_INTEGRATION=PASS; else CLIENT_FINALIZATION_INTEGRATION=FAIL; fi
+      ;;
+  esac
   RAN=$((RAN + 1))
   if [[ "$rc" -eq 0 ]]; then
     PASS_COUNT=$((PASS_COUNT + 1))
@@ -375,17 +400,24 @@ echo "PASS=${PASS_COUNT}"
 echo "FAIL=${FAIL_COUNT}"
 echo "TIMEOUT=${TIMEOUT_COUNT}"
 echo "ACCOUNTING_VALID=${ACCOUNTING_VALID}"
+echo "AWS_FIELD_REGRESSION_GATE=${AWS_FIELD_REGRESSION_GATE}"
+echo "PRODUCTION_LIFECYCLE_ROUNDTRIP=${PRODUCTION_LIFECYCLE_ROUNDTRIP}"
+echo "REAL_CLIENT_BUILD_AFTER_R2_ROUNDTRIP=${REAL_CLIENT_BUILD_AFTER_R2_ROUNDTRIP}"
+echo "CLIENT_FINALIZATION_INTEGRATION=${CLIENT_FINALIZATION_INTEGRATION}"
 
 if [[ "$FAIL" -eq 0 ]]; then
   echo "RUN_ALL_ADDITIONAL_TRACKED_DIFF=0"
   echo "RUN_ALL_ADDITIONAL_UNTRACKED_FILES=0"
   echo "UNIT_TESTS=PASS"
-  echo "REAL_FOUR_HOP_BUILD_TEST=PASS"
-  echo "INSTALLED_RUNTIME_TEST=PASS"
-  echo "NO_NETWORK_PREPARE_TEST=PASS"
-  echo "ACTUAL_HTTP_ENABLE_TEST=PASS"
-  echo "RETRY_REUSE_TEST=PASS"
-  echo "FAILURE_ATOMICITY_TEST=PASS"
+  # Only echo client-integration PASS markers when those tests actually passed.
+  if [[ "$CLIENT_FINALIZATION_INTEGRATION" == PASS ]]; then
+    echo "REAL_FOUR_HOP_BUILD_TEST=PASS"
+    echo "INSTALLED_RUNTIME_TEST=PASS"
+    echo "NO_NETWORK_PREPARE_TEST=PASS"
+  fi
+  if [[ "$PRODUCTION_LIFECYCLE_ROUNDTRIP" == PASS ]]; then
+    echo "REAL_PRODUCTION_LIFECYCLE_ROUNDTRIP=PASS"
+  fi
   echo "FULL_SUITE_RESULT=PASS"
   echo "ALL TESTS PASSED"
   if [[ "$ACCOUNTING_VALID" != YES ]]; then

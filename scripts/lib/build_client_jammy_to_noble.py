@@ -587,8 +587,15 @@ def assert_no_f2j_residuals(label, body):
     """Fail closed if Focal→Jammy current-hop literals leaked into J2N artifacts.
 
     Note: previous-hop name focal-to-jammy is allowed in handoff constants.
+    Discovery-bound AWS_C_HOP assignments legitimately name every hop in the
+    embedded semantic contract and must not trip this residual scan.
     """
-    m = FORBIDDEN_F2J_RESIDUAL_RE.search(body)
+    scan = re.sub(
+        r"(?m)^(\s*AWS_C_HOP=)'[^']*'",
+        r"\1'__aws_contract_hop__'",
+        body or "",
+    )
+    m = FORBIDDEN_F2J_RESIDUAL_RE.search(scan)
     if m:
         raise BuildError(
             "{} contains forbidden F2J residual {!r}".format(label, m.group(0))

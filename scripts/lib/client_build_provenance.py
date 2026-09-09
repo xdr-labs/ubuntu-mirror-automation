@@ -331,12 +331,33 @@ def classify_client_set(project_root, client_root, expected_mirror="", expected_
     mirror = (expected_mirror or meta_mirror).rstrip("/")
     fpr = (expected_fingerprint or meta_fpr).upper().replace(" ", "")
     if expected_fingerprint and meta_fpr and meta_fpr != fpr:
-        current = compute_provenance(project_root, mirror_base_url=mirror, signing_fingerprint=fpr)
+        current = compute_provenance(
+            project_root,
+            mirror_base_url=mirror,
+            signing_fingerprint=fpr,
+            aws_semantic_contract_sha256=metadata.get(
+                "CLIENT_AWS_SEMANTIC_CONTRACT_SHA256", ""
+            ),
+        )
         return ("STALE_SIGNING_IDENTITY", "REBUILD_SIGN_PUBLISH", current, "signing_fingerprint_mismatch")
     if expected_mirror and meta_mirror and meta_mirror != mirror:
-        current = compute_provenance(project_root, mirror_base_url=mirror, signing_fingerprint=fpr)
+        current = compute_provenance(
+            project_root,
+            mirror_base_url=mirror,
+            signing_fingerprint=fpr,
+            aws_semantic_contract_sha256=metadata.get(
+                "CLIENT_AWS_SEMANTIC_CONTRACT_SHA256", ""
+            ),
+        )
         return ("STALE_BUILD_INPUT", "REBUILD_SIGN_PUBLISH", current, "mirror_mismatch")
-    current = compute_provenance(project_root, mirror_base_url=mirror, signing_fingerprint=fpr)
+    current = compute_provenance(
+        project_root,
+        mirror_base_url=mirror,
+        signing_fingerprint=fpr,
+        aws_semantic_contract_sha256=metadata.get(
+            "CLIENT_AWS_SEMANTIC_CONTRACT_SHA256", ""
+        ),
+    )
 
     if metadata.get("CLIENT_PROVENANCE_SCHEMA_VERSION", "") != current["CLIENT_PROVENANCE_SCHEMA_VERSION"]:
         return ("STALE_BUILD_INPUT", "REBUILD_SIGN_PUBLISH", current, "schema_mismatch")
@@ -529,6 +550,7 @@ def main(argv=None):
     p_compute.add_argument("--project-root", required=True)
     p_compute.add_argument("--mirror-base-url", default="")
     p_compute.add_argument("--signing-fingerprint", default="")
+    p_compute.add_argument("--aws-semantic-contract-sha256", default="")
     p_compute.add_argument("--format", choices=("env", "json"), default="env")
     p_list = sub.add_parser("list-files")
     p_classify = sub.add_parser("classify-client-set")
@@ -554,6 +576,10 @@ def main(argv=None):
                 args.project_root,
                 mirror_base_url=args.mirror_base_url,
                 signing_fingerprint=args.signing_fingerprint,
+                aws_semantic_contract_sha256=getattr(
+                    args, "aws_semantic_contract_sha256", ""
+                )
+                or "",
             )
             if args.format == "json":
                 print(json.dumps(values, sort_keys=True, indent=2))

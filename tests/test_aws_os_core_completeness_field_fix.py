@@ -2499,8 +2499,13 @@ class SixthReviewR2RoundTripAndChecksumTests(unittest.TestCase):
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
-    def test_r2_roundtrip_real_build_verify_materialize_client(self):
-        """Mandatory hermetic lifecycle using real production functions."""
+    def test_os_core_component_roundtrip_and_client_contract_resolution(self):
+        """Component-level OS Core build/verify + READY restore + contract resolve.
+
+        This is NOT the production lifecycle round-trip (planner→materialize→
+        validator→engine→client). Authority for REAL_PRODUCTION_LIFECYCLE_ROUNDTRIP
+        is tests/test_os_core_r2_roundtrip_integration.sh.
+        """
         import hashlib
         import tarfile
         oc = _load('os_core_package', os.path.join(ROOT, 'scripts', 'lib', 'os_core_package.py'))
