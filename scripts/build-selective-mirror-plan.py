@@ -92,6 +92,14 @@ except ImportError:  # pragma: no cover
         normalize_mirror_host,
         parse_discovery_root_args,
     )
+try:
+    from aws_os_core_completeness import (  # noqa: E402
+        validate_plan_aws_completeness,
+    )
+except ImportError:  # pragma: no cover
+    from scripts.lib.aws_os_core_completeness import (  # type: ignore
+        validate_plan_aws_completeness,
+    )
 
 
 def eprint(*args, **kwargs):
@@ -943,6 +951,22 @@ def build_plan(discovery_root, seed_root, profile_name='offline-upgrade-selectiv
         warnings.append('expected 8 upgrader artifacts (4 tar + 4 gpg), found %d unique' % len(seen_up_sha))
     if not meta_release_required:
         errors.append('meta-release required')
+
+    # When aws discovery is included, fail closed if the union drops AWS kernels
+    # (or xenial→bionic snapd required by AWS discovery). Generic-only plans are
+    # unchanged here; production plan-selective forces aws into discovery_roots.
+    aws_ok, aws_errs, _aws_details = validate_plan_aws_completeness(
+        {
+            'profile_name': profile_name,
+            'discovery_profiles': list(roots.keys()),
+            'counts': {'aws_kernel_package_rows': len(aws_kernel_packages)},
+            'aws_kernel_packages_sample': aws_kernel_packages[:40],
+            'debs': list(debs.values()),
+        },
+        package_rows=package_rows_out,
+    )
+    if not aws_ok:
+        errors.extend(aws_errs)
 
     validation = 'PASS' if not errors else 'FAIL'
 

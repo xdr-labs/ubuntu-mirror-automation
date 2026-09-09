@@ -52,6 +52,7 @@ CATEGORY_PATTERNS = {
         "client/dp-offline-upgrade-focal-to-jammy.sh.in",
         "client/dp-offline-upgrade-jammy-to-noble.sh.in",
         "client/dp-postboot-readiness-policy.sh.inc",
+        "client/dp-postboot-aws-kernel-gate.sh.inc",
         "client/dp-client-hop-launcher.sh.in",
     ),
     "helpers": (

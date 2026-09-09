@@ -28,6 +28,13 @@ import tarfile
 import tempfile
 from datetime import datetime, timezone
 
+try:
+    from aws_os_core_completeness import validate_tree_aws_completeness
+except ImportError:  # pragma: no cover
+    from scripts.lib.aws_os_core_completeness import (  # type: ignore
+        validate_tree_aws_completeness,
+    )
+
 SCHEMA_VERSION = 1
 ARTIFACT_TYPE = "ubuntu-os-core"
 SUPPORTED_HOPS = (
@@ -462,6 +469,35 @@ def validate_package_tree(extract_root):
             "MANIFEST_BYTES_MISMATCH manifest=%s actual=%s"
             % (manifest.get("payload_bytes"), payload_bytes)
         )
+
+    # Production OS Core must carry AWS kernel packages for every hop. Structural
+    # checksum PASS alone previously allowed generic-only payloads (field defect).
+    embedded_plan = {}
+    plan_path = os.path.join(payload_root, "state", "plan.json")
+    if not os.path.isfile(plan_path):
+        plan_path = os.path.join(pkg, "state", "plan.json")
+    if os.path.isfile(plan_path):
+        try:
+            with open(plan_path, "r", encoding="utf-8") as fh:
+                embedded_plan = json.load(fh)
+        except (OSError, ValueError, TypeError):
+            embedded_plan = {}
+    # Prefer plan discovery_profiles when present; otherwise require AWS coverage
+    # for all OS Core packages (supported AWS DP target) unless hermetic escape.
+    aws_ok, aws_errs, aws_detail = validate_tree_aws_completeness(
+        payload_root,
+        plan=embedded_plan,
+        require_aws_profile=True,
+    )
+    if not aws_ok:
+        raise OsCoreError(
+            "AWS_OS_CORE_SEMANTIC_COMPLETENESS=FAIL detail=%s errors=%s"
+            % (aws_detail.get("result"), "; ".join(aws_errs))
+        )
+    # Stash for callers; avoid printing from pure validate (cmd_verify logs).
+    manifest = dict(manifest)
+    manifest["aws_semantic_completeness"] = aws_detail.get("result") or "PASS"
+
     return manifest
 
 
@@ -944,6 +980,10 @@ def cmd_verify(args):
         safe_tar_extract(package, extract_tmp)
         manifest = validate_package_tree(extract_tmp)
         print("OS_CORE_VERIFY=PASS")
+        print(
+            "AWS_OS_CORE_SEMANTIC_COMPLETENESS=%s"
+            % (manifest.get("aws_semantic_completeness") or "SKIP")
+        )
         print("RELEASE_ID=%s" % manifest.get("release_id", ""))
         print("PAYLOAD_FILE_COUNT=%s" % manifest.get("payload_file_count", 0))
         print("PAYLOAD_BYTES=%s" % manifest.get("payload_bytes", 0))
