@@ -987,6 +987,8 @@ is_critical_os_hold_package() {
 
 @@DURABLE_WRITE_HELPER@@
 
+@@AWS_KERNEL_GATE_LIB@@
+
 @@SOURCE_PRODUCT_HELPER@@
 
 critical_holds_dir() {
@@ -2035,6 +2037,10 @@ check_os_baseline() {
       log ERROR "FAIL_UNSUPPORTED_BASELINE: foreign architectures present: ${foreign}"
       return 1
     fi
+  fi
+  # Persist AWS/source kernel identity for postboot completion gate.
+  if declare -F persist_source_kernel_aws_baseline >/dev/null 2>&1; then
+    persist_source_kernel_aws_baseline || true
   fi
   # DKMS modules → WARNING (OS safety signal; not a product gate)
   if [[ -d "$(hostpath /var/lib/dkms)" ]] && find "$(hostpath /var/lib/dkms)" -mindepth 1 -maxdepth 1 2>/dev/null | grep -q .; then
@@ -6229,6 +6235,8 @@ RUNNER
 #!/usr/bin/env bash
 set -euo pipefail
 @@DURABLE_WRITE_HELPER@@
+
+@@AWS_KERNEL_GATE_LIB@@
 STATE_ROOT="/opt/aelladata/os-upgrade/offline"
 STATE_FILE="${STATE_ROOT}/state"
 HISTORY_FILE="${STATE_ROOT}/hop_history"
@@ -6270,6 +6278,11 @@ main() {
       rm -f /etc/apt/apt.conf.d/97stellar-offline-conffile-policy
       log INFO "NONINTERACTIVE_CONFFILE_POLICY_REMOVED=YES reason=postboot"
     fi
+  fi
+  if ! validate_aws_post_hop_kernel_gate "20.04"; then
+    log ERROR "AWS kernel post-hop validation failed; refusing COMPLETED_FOCAL"
+    write_state FAILED
+    exit 1
   fi
   write_state COMPLETED_FOCAL
   mkdir -p /etc/motd.d 2>/dev/null || true

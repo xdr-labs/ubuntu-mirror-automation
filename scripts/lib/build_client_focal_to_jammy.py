@@ -595,6 +595,19 @@ def render_script(template_path, replacements):
         durable_body = fh.read().rstrip("\n") + "\n"
     body = body.replace(durable_token, durable_body)
 
+    aws_token = "@@AWS_KERNEL_GATE_LIB@@"
+    aws_path = os.path.join(
+        os.path.dirname(os.path.abspath(template_path)),
+        "dp-postboot-aws-kernel-gate.sh.inc",
+    )
+    if aws_token not in body:
+        raise BuildError("template missing token {}".format(aws_token))
+    if not os.path.isfile(aws_path):
+        raise BuildError("missing AWS kernel gate helper: {}".format(aws_path))
+    with open(aws_path, "r", encoding="utf-8") as fh:
+        aws_body = fh.read().rstrip("\n") + "\n"
+    body = body.replace(aws_token, aws_body)
+
     source_token = "@@SOURCE_PRODUCT_HELPER@@"
     if source_token in body:
         source_path = os.path.join(
