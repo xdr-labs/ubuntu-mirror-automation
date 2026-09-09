@@ -399,6 +399,10 @@ dpkg-query() {
         if [[ "$2" == *Status* ]]; then printf 'install ok installed\n'; return 0; fi
         if [[ "$2" == *Version* ]]; then printf '5.4.0.1103.81\n'; return 0; fi
         ;;
+      snapd)
+        if [[ "$2" == *Status* ]]; then printf 'install ok installed\n'; return 0; fi
+        if [[ "$2" == *Version* ]]; then printf '2.58+18.04.1\n'; return 0; fi
+        ;;
     esac
   fi
   return 1
@@ -577,6 +581,10 @@ dpkg-query() {
       linux-aws|linux-image-aws|linux-image-5.4.0-1103-aws)
         if [[ "$2" == *Status* ]]; then printf 'install ok installed\n'; return 0; fi
         if [[ "$2" == *Version* ]]; then printf '5.4.0.1103.81\n'; return 0; fi
+        ;;
+      snapd)
+        if [[ "$2" == *Status* ]]; then printf 'install ok installed\n'; return 0; fi
+        if [[ "$2" == *Version* ]]; then printf '2.58+18.04.1\n'; return 0; fi
         ;;
     esac
   fi
@@ -923,6 +931,10 @@ dpkg-query() {
         if [[ "$2" == *Status* ]]; then printf 'install ok installed\n'; return 0; fi
         if [[ "$2" == *Version* ]]; then printf '5.4.0.1103.81\n'; return 0; fi
         ;;
+      snapd)
+        if [[ "$2" == *Status* ]]; then printf 'install ok installed\n'; return 0; fi
+        if [[ "$2" == *Version* ]]; then printf '2.58+18.04.1\n'; return 0; fi
+        ;;
     esac
   fi
   return 1
@@ -1037,6 +1049,10 @@ echo PRE_REBOOT_FAIL
       linux-aws|linux-image-aws|linux-image-5.4.0-1103-aws)
         if [[ "$2" == *Status* ]]; then printf 'install ok installed\n'; return 0; fi
         if [[ "$2" == *Version* ]]; then printf '5.4.0.1103.81\n'; return 0; fi
+        ;;
+      snapd)
+        if [[ "$2" == *Status* ]]; then printf 'install ok installed\n'; return 0; fi
+        if [[ "$2" == *Version* ]]; then printf '2.58+18.04.1\n'; return 0; fi
         ;;
 '''
             script = self._script(
@@ -1469,7 +1485,7 @@ def _plant_synth_tree(root, contract, contents, mutate_hop=None, mutate_fn=None)
 
 
 def _write_plan_state(selective_root, contract, plan_checksum='a' * 64,
-                      discovery_checksum='b' * 64):
+                      discovery_checksum='b' * 64, write_ready=True):
     state = os.path.join(selective_root, 'state')
     os.makedirs(state, exist_ok=True)
     plan = {
@@ -1489,6 +1505,13 @@ def _write_plan_state(selective_root, contract, plan_checksum='a' * 64,
     aws_c.write_aws_semantic_contract_bash(
         os.path.join(state, 'aws-semantic-contract.sh.inc'), contract,
     )
+    if write_ready:
+        aws_c.write_ready_generation_marker(
+            os.path.join(state, 'READY'),
+            plan_checksum,
+            discovery_checksum,
+            contract['contract_sha256'],
+        )
     return plan
 
 
@@ -1745,6 +1768,514 @@ class ContractBindingAuthorityTests(unittest.TestCase):
             with self.assertRaises(oc.OsCoreError) as ctx:
                 oc.cmd_build(ns)
             self.assertIn('AWS_SEMANTIC_CONTRACT', str(ctx.exception))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+class FifthReviewGenerationBindingTests(unittest.TestCase):
+    """P0: READY / state plan / contract must be generation-bound."""
+
+    def test_ready_state_plan_generation_drift_fails(self):
+        contract_a, _ = _synthetic_contract_and_contents()
+        contract_b, _ = _synthetic_contract_and_contents()
+        # Drift contract B linux-aws so SHA differs.
+        blob = b'SYNTH|genB|linux-aws|drift'
+        ident, _ = _synth_identity('linux-aws', '9.9.9.9999.99', blob)
+        contract_b['hops']['xenial-to-bionic']['linux_aws'] = ident
+        aws_c.attach_contract_sha256(contract_b)
+        self.assertNotEqual(
+            contract_a['contract_sha256'], contract_b['contract_sha256'],
+        )
+
+        tmp = tempfile.mkdtemp(prefix='um-aws-gen-drift-')
+        try:
+            # Plan/state = B; READY = A
+            _write_plan_state(
+                tmp, contract_b,
+                plan_checksum='b' * 64,
+                discovery_checksum='c' * 64,
+                write_ready=False,
+            )
+            aws_c.write_ready_generation_marker(
+                os.path.join(tmp, 'state', 'READY'),
+                'a' * 64,
+                'a' * 64,
+                contract_a['contract_sha256'],
+            )
+            with self.assertRaises(ValueError) as ctx:
+                aws_c.load_verified_selective_generation(tmp)
+            self.assertIn('selective_generation_drift', str(ctx.exception))
+            with self.assertRaises(ValueError):
+                aws_c.resolve_aws_semantic_contract_bash_for_client(tmp)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_contract_sha_only_drift_fails(self):
+        contract, _ = _synthetic_contract_and_contents()
+        tmp = tempfile.mkdtemp(prefix='um-aws-contract-drift-')
+        try:
+            plan_ck = 'd' * 64
+            disc_ck = 'e' * 64
+            _write_plan_state(
+                tmp, contract,
+                plan_checksum=plan_ck,
+                discovery_checksum=disc_ck,
+                write_ready=False,
+            )
+            # READY plan/discovery match; contract SHA does not.
+            aws_c.write_ready_generation_marker(
+                os.path.join(tmp, 'state', 'READY'),
+                plan_ck,
+                disc_ck,
+                'f' * 64,
+            )
+            with self.assertRaises(ValueError) as ctx:
+                aws_c.load_verified_selective_generation(tmp)
+            msg = str(ctx.exception)
+            self.assertIn('selective_generation_drift', msg)
+            self.assertIn('aws_semantic_contract_sha256', msg)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_state_write_failure_fails_closed(self):
+        contract, _ = _synthetic_contract_and_contents()
+        tmp = tempfile.mkdtemp(prefix='um-aws-state-write-')
+        try:
+            plan_src_dir = os.path.join(tmp, 'analysis')
+            os.makedirs(plan_src_dir)
+            plan_path = os.path.join(plan_src_dir, 'plan.json')
+            plan = {
+                'schema_version': 1,
+                'validation_result': 'PASS',
+                'plan_checksum': '1' * 64,
+                'discovery_artifact_checksum': '2' * 64,
+                'aws_semantic_contract': contract,
+                'aws_semantic_contract_sha256': contract['contract_sha256'],
+            }
+            with open(plan_path, 'w') as fh:
+                json.dump(plan, fh)
+            aws_c.write_aws_semantic_contract_bash(
+                os.path.join(plan_src_dir, 'aws-semantic-contract.sh.inc'), contract,
+            )
+
+            sel = os.path.join(tmp, 'sel')
+            # Prior generation READY A present.
+            _write_plan_state(
+                sel, contract,
+                plan_checksum='a' * 64,
+                discovery_checksum='a' * 64,
+            )
+            ready_path = os.path.join(sel, 'state', 'READY')
+            self.assertTrue(os.path.isfile(ready_path))
+            state_dir = os.path.join(sel, 'state')
+            os.chmod(state_dir, 0o555)
+            try:
+                with self.assertRaises(ValueError) as ctx:
+                    aws_c.publish_selective_generation_state(sel, plan_path)
+                msg = str(ctx.exception)
+                self.assertTrue(
+                    'selective_generation' in msg or 'selective_ready_invalidate' in msg,
+                    msg,
+                )
+            finally:
+                os.chmod(state_dir, 0o755)
+            # Fail closed: did not report PASS; READY was not replaced with B.
+            # Either invalidate failed (READY A remains) or state was not updated
+            # to the new plan checksum.
+            if os.path.isfile(ready_path):
+                fields = {}
+                for line in open(ready_path):
+                    if '=' in line:
+                        k, v = line.strip().split('=', 1)
+                        fields[k] = v
+                self.assertEqual(fields.get('plan_checksum'), 'a' * 64)
+            plan_on_disk = json.load(open(os.path.join(state_dir, 'plan.json')))
+            self.assertEqual(plan_on_disk.get('plan_checksum'), 'a' * 64)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_valid_generation_binding_passes_client_and_os_core(self):
+        oc = _load('os_core_package', os.path.join(ROOT, 'scripts', 'lib', 'os_core_package.py'))
+        contract, contents = _synthetic_contract_and_contents()
+        tmp = tempfile.mkdtemp(prefix='um-aws-valid-gen-')
+        try:
+            sel = os.path.join(tmp, 'sel')
+            _plant_synth_tree(sel, contract, contents)
+            _write_plan_state(sel, contract)
+            gen = aws_c.load_verified_selective_generation(sel)
+            self.assertEqual(gen['aws_semantic_contract_sha256'], contract['contract_sha256'])
+            bash, sha, _ = aws_c.resolve_aws_semantic_contract_bash_for_client(sel)
+            self.assertEqual(sha, contract['contract_sha256'])
+            self.assertIn('AWS_SEMANTIC_CONTRACT_SHA256=', bash)
+
+            out = os.path.join(tmp, 'out')
+            os.makedirs(out)
+            ns = type('A', (), {
+                'selective_root': sel,
+                'output_dir': out,
+                'project_root': ROOT,
+                'release_id': 'validGen001',
+                'signing_key': '',
+            })()
+            oc.cmd_build(ns)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+class FifthReviewSnapdGateTests(unittest.TestCase):
+    """P0: xenial→bionic snapd contract enforced at runtime."""
+
+    def _prereboot_script(self, tmp, snap_ver):
+        for rel, content in (
+            ('/boot/vmlinuz-5.4.0-1103-aws', b'k'),
+            ('/boot/initrd.img-5.4.0-1103-aws', b'i'),
+        ):
+            path = os.path.join(tmp, rel.lstrip('/'))
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            open(path, 'wb').write(content)
+        holds = os.path.join(tmp, 'opt/aelladata/os-upgrade/offline/critical-holds')
+        os.makedirs(holds, exist_ok=True)
+        open(os.path.join(holds, 'source_kernel_flavor'), 'w').write('aws\n')
+        open(os.path.join(holds, 'source_kernel_release'), 'w').write('4.4.0-1128-aws\n')
+        open(os.path.join(holds, 'source_linux_aws_version'), 'w').write('4.4.0.1128.133\n')
+        open(os.path.join(holds, 'source_linux_image_aws_version'), 'w').write(
+            '4.4.0.1128.133\n'
+        )
+        return r'''
+set -euo pipefail
+TEST_ROOT="%s"
+STATE_ROOT="/opt/aelladata/os-upgrade/offline"
+HOLDS_DIR="${STATE_ROOT}/critical-holds"
+dpkg-query() {
+  local pkg="${3:-}"
+  if [[ "$1" == "-W" ]]; then
+    case "$pkg" in
+      linux-aws|linux-image-aws|linux-image-5.4.0-1103-aws)
+        if [[ "$2" == *Status* ]]; then printf 'install ok installed\n'; return 0; fi
+        if [[ "$2" == *Version* ]]; then printf '5.4.0.1103.81\n'; return 0; fi
+        ;;
+      snapd)
+        if [[ "$2" == *Status* ]]; then printf 'install ok installed\n'; return 0; fi
+        if [[ "$2" == *Version* ]]; then printf '%s\n'; return 0; fi
+        ;;
+    esac
+  fi
+  return 1
+}
+uname() { printf '4.4.0-1128-aws\n'; }
+source "%s"
+source "%s"
+if validate_aws_target_kernel_pre_reboot "18.04"; then
+  echo PRE_REBOOT_PASS
+  exit 0
+fi
+echo PRE_REBOOT_FAIL
+''' % (
+            tmp,
+            snap_ver,
+            os.path.join(ROOT, 'client', 'dp-aws-semantic-contract.sh.inc'),
+            GATE_INC,
+        )
+
+    def test_x2b_pre_reboot_stale_snapd_fails(self):
+        tmp = tempfile.mkdtemp(prefix='um-aws-snapd-prereboot-')
+        try:
+            script = self._prereboot_script(tmp, '2.48.3')
+            out = subprocess.check_output(['bash', '-c', script], stderr=subprocess.STDOUT)
+            text = out.decode('utf-8', 'replace')
+            self.assertIn('PRE_REBOOT_FAIL', text)
+            self.assertIn('snapd_not_contract_identity', text)
+            self.assertIn('AUTOMATIC_REBOOT_NOT_STARTED', text)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_x2b_postboot_stale_snapd_fails(self):
+        tmp = tempfile.mkdtemp(prefix='um-aws-snapd-postboot-')
+        try:
+            holds = os.path.join(tmp, 'opt/aelladata/os-upgrade/offline/critical-holds')
+            boot = os.path.join(tmp, 'boot')
+            os.makedirs(holds)
+            os.makedirs(boot)
+            open(os.path.join(holds, 'source_kernel_flavor'), 'w').write('aws\n')
+            open(os.path.join(holds, 'source_kernel_release'), 'w').write('4.4.0-1128-aws\n')
+            open(os.path.join(holds, 'source_linux_aws_version'), 'w').write('4.4.0.1128.133\n')
+            open(os.path.join(holds, 'source_linux_image_aws_version'), 'w').write(
+                '4.4.0.1128.133\n'
+            )
+            open(os.path.join(boot, 'vmlinuz-5.4.0-1103-aws'), 'wb').write(b'k')
+            script = r'''
+set -euo pipefail
+TEST_ROOT="%s"
+STATE_ROOT="/opt/aelladata/os-upgrade/offline"
+HOLDS_DIR="${STATE_ROOT}/critical-holds"
+DP_OFFLINE_FAKE_KERNEL="5.4.0-1103-aws"
+dpkg-query() {
+  local pkg="${3:-}"
+  if [[ "$1" == "-W" ]]; then
+    case "$pkg" in
+      linux-aws|linux-image-aws|linux-image-5.4.0-1103-aws)
+        if [[ "$2" == *Status* ]]; then printf 'install ok installed\n'; return 0; fi
+        if [[ "$2" == *Version* ]]; then printf '5.4.0.1103.81\n'; return 0; fi
+        ;;
+      snapd)
+        if [[ "$2" == *Status* ]]; then printf 'install ok installed\n'; return 0; fi
+        if [[ "$2" == *Version* ]]; then printf '2.48.3\n'; return 0; fi
+        ;;
+    esac
+  fi
+  return 1
+}
+uname() { printf '5.4.0-1103-aws\n'; }
+source "%s"
+source "%s"
+if validate_aws_post_hop_kernel_gate "18.04"; then
+  echo COMPLETED_BIONIC
+  exit 0
+fi
+echo POSTBOOT_FAIL
+''' % (
+                tmp,
+                os.path.join(ROOT, 'client', 'dp-aws-semantic-contract.sh.inc'),
+                GATE_INC,
+            )
+            out = subprocess.check_output(['bash', '-c', script], stderr=subprocess.STDOUT)
+            text = out.decode('utf-8', 'replace')
+            self.assertIn('POSTBOOT_FAIL', text)
+            self.assertIn('snapd_not_contract_identity', text)
+            self.assertNotIn('COMPLETED_BIONIC', text)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_next_hop_recovery_stale_snapd_fails(self):
+        script = r'''
+set -euo pipefail
+TEST_ROOT=$(mktemp -d)
+trap 'rm -rf "$TEST_ROOT"' EXIT
+DP_OFFLINE_FAKE_KERNEL="5.4.0-1103-aws"
+MUTATION_ENTERED=0
+simulate_destructive_stage() { MUTATION_ENTERED=1; echo MUTATION_ENTERED; }
+dpkg-query() {
+  local pkg="${3:-}"
+  if [[ "$1" == "-W" ]]; then
+    case "$pkg" in
+      linux-aws|linux-image-aws|linux-image-5.4.0-1103-aws)
+        if [[ "$2" == *Status* ]]; then printf 'install ok installed\n'; return 0; fi
+        if [[ "$2" == *Version* ]]; then printf '5.4.0.1103.81\n'; return 0; fi
+        ;;
+      snapd)
+        if [[ "$2" == *Status* ]]; then printf 'install ok installed\n'; return 0; fi
+        if [[ "$2" == *Version* ]]; then printf '2.48.3\n'; return 0; fi
+        ;;
+    esac
+  fi
+  return 1
+}
+uname() { printf '5.4.0-1103-aws\n'; }
+kernel_flavor() { printf 'aws\n'; }
+source "%s"
+source "%s"
+if validate_aws_source_kernel_preflight "18.04"; then
+  simulate_destructive_stage
+  echo PREFLIGHT_PASS
+  exit 0
+fi
+echo PREFLIGHT_FAIL
+echo "MUTATION_ENTERED=${MUTATION_ENTERED}"
+''' % (
+            os.path.join(ROOT, 'client', 'dp-aws-semantic-contract.sh.inc'),
+            GATE_INC,
+        )
+        out = subprocess.check_output(['bash', '-c', script], stderr=subprocess.STDOUT)
+        text = out.decode('utf-8', 'replace')
+        self.assertIn('PREFLIGHT_FAIL', text)
+        self.assertIn('snapd_not_contract_identity', text)
+        self.assertIn('MUTATION_ENTERED=0', text)
+
+    def test_valid_bionic_snapd_passes(self):
+        tmp = tempfile.mkdtemp(prefix='um-aws-snapd-ok-')
+        try:
+            script = self._prereboot_script(tmp, '2.58+18.04.1')
+            out = subprocess.check_output(['bash', '-c', script], stderr=subprocess.STDOUT)
+            text = out.decode('utf-8', 'replace')
+            self.assertIn('PRE_REBOOT_PASS', text)
+            self.assertIn('AWS_CONTRACT_SNAPD=PASS', text)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_later_hop_empty_snapd_not_required(self):
+        # Focal target contract has empty snapd — gate must not require snapd.
+        tmp = tempfile.mkdtemp(prefix='um-aws-snapd-later-')
+        try:
+            for rel, content in (
+                ('/boot/vmlinuz-5.15.0-1084-aws', b'k'),
+                ('/boot/initrd.img-5.15.0-1084-aws', b'i'),
+            ):
+                path = os.path.join(tmp, rel.lstrip('/'))
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                open(path, 'wb').write(content)
+            holds = os.path.join(tmp, 'opt/aelladata/os-upgrade/offline/critical-holds')
+            os.makedirs(holds, exist_ok=True)
+            open(os.path.join(holds, 'source_kernel_flavor'), 'w').write('aws\n')
+            open(os.path.join(holds, 'source_kernel_release'), 'w').write(
+                '5.4.0-1103-aws\n'
+            )
+            open(os.path.join(holds, 'source_linux_aws_version'), 'w').write(
+                '5.4.0.1103.81\n'
+            )
+            open(os.path.join(holds, 'source_linux_image_aws_version'), 'w').write(
+                '5.4.0.1103.81\n'
+            )
+            script = r'''
+set -euo pipefail
+TEST_ROOT="%s"
+STATE_ROOT="/opt/aelladata/os-upgrade/offline"
+HOLDS_DIR="${STATE_ROOT}/critical-holds"
+dpkg-query() {
+  local pkg="${3:-}"
+  if [[ "$1" == "-W" ]]; then
+    case "$pkg" in
+      linux-aws|linux-image-aws|linux-image-5.15.0-1084-aws)
+        if [[ "$2" == *Status* ]]; then printf 'install ok installed\n'; return 0; fi
+        if [[ "$2" == *Version* ]]; then printf '5.15.0.1084.91~20.04.1\n'; return 0; fi
+        ;;
+    esac
+  fi
+  return 1
+}
+uname() { printf '5.4.0-1103-aws\n'; }
+source "%s"
+source "%s"
+validate_aws_target_kernel_pre_reboot "20.04"
+echo PRE_REBOOT_PASS
+''' % (
+                tmp,
+                os.path.join(ROOT, 'client', 'dp-aws-semantic-contract.sh.inc'),
+                GATE_INC,
+            )
+            out = subprocess.check_output(['bash', '-c', script], stderr=subprocess.STDOUT)
+            text = out.decode('utf-8', 'replace')
+            self.assertIn('PRE_REBOOT_PASS', text)
+            self.assertNotIn('snapd_not_installed', text)
+            self.assertNotIn('snapd_not_contract_identity', text)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+class FifthReviewBootPackageGateTests(unittest.TestCase):
+    """P1: discovery boot_packages rendered and enforced at runtime."""
+
+    def test_boot_packages_rendered_into_bash_contract(self):
+        contract, _ = _synthetic_contract_and_contents()
+        rel = contract['hops']['xenial-to-bionic']['expected_kernel_releases'][0]
+        mod_name = 'linux-modules-%s' % rel
+        blob = b'SYNTH|boot|modules'
+        ident, _ = _synth_identity(mod_name, '5.4.0.1103.81', blob)
+        contract['hops']['xenial-to-bionic']['boot_packages'] = [ident]
+        aws_c.attach_contract_sha256(contract)
+        bash = aws_c.render_aws_semantic_contract_bash(contract)
+        self.assertIn("AWS_C_BOOT_PACKAGES='%s'" % mod_name, bash)
+        self.assertIn(
+            "AWS_C_BOOT_PACKAGE_VERSIONS='%s=5.4.0.1103.81'" % mod_name, bash,
+        )
+
+    def _prereboot_with_boot_pkg(self, tmp, install_modules=True):
+        for rel, content in (
+            ('/boot/vmlinuz-5.4.0-1103-aws', b'k'),
+            ('/boot/initrd.img-5.4.0-1103-aws', b'i'),
+        ):
+            path = os.path.join(tmp, rel.lstrip('/'))
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            open(path, 'wb').write(content)
+        holds = os.path.join(tmp, 'opt/aelladata/os-upgrade/offline/critical-holds')
+        os.makedirs(holds, exist_ok=True)
+        open(os.path.join(holds, 'source_kernel_flavor'), 'w').write('aws\n')
+        open(os.path.join(holds, 'source_kernel_release'), 'w').write('4.4.0-1128-aws\n')
+        open(os.path.join(holds, 'source_linux_aws_version'), 'w').write('4.4.0.1128.133\n')
+        open(os.path.join(holds, 'source_linux_image_aws_version'), 'w').write(
+            '4.4.0.1128.133\n'
+        )
+        modules_case = ''
+        if install_modules:
+            modules_case = r'''
+      linux-modules-5.4.0-1103-aws)
+        if [[ "$2" == *Status* ]]; then printf 'install ok installed\n'; return 0; fi
+        if [[ "$2" == *Version* ]]; then printf '5.4.0.1103.81\n'; return 0; fi
+        ;;
+'''
+        # Inline a minimal contract with boot package for 18.04.
+        return r'''
+set -euo pipefail
+TEST_ROOT="%s"
+STATE_ROOT="/opt/aelladata/os-upgrade/offline"
+HOLDS_DIR="${STATE_ROOT}/critical-holds"
+AWS_SEMANTIC_CONTRACT_LOADED=1
+aws_contract_clear() {
+  AWS_C_HOP=""; AWS_C_TARGET_VERSION_ID=""; AWS_C_LINUX_AWS_VERSION=""
+  AWS_C_LINUX_AWS_SHA256=""; AWS_C_LINUX_IMAGE_AWS_VERSION=""; AWS_C_LINUX_IMAGE_AWS_SHA256=""
+  AWS_C_KERNEL_RELEASES=""; AWS_C_VERSIONED_IMAGE_PACKAGES=""
+  AWS_C_BOOT_PACKAGES=""; AWS_C_BOOT_PACKAGE_VERSIONS=""; AWS_C_SNAPD_VERSION=""
+}
+aws_contract_load_for_version_id() {
+  local ver="${1:-}"
+  aws_contract_clear
+  [[ "$ver" == "18.04" ]] || return 1
+  AWS_C_HOP='xenial-to-bionic'
+  AWS_C_TARGET_VERSION_ID='18.04'
+  AWS_C_LINUX_AWS_VERSION='5.4.0.1103.81'
+  AWS_C_LINUX_IMAGE_AWS_VERSION='5.4.0.1103.81'
+  AWS_C_KERNEL_RELEASES='5.4.0-1103-aws'
+  AWS_C_VERSIONED_IMAGE_PACKAGES='linux-image-5.4.0-1103-aws'
+  AWS_C_BOOT_PACKAGES='linux-modules-5.4.0-1103-aws'
+  AWS_C_BOOT_PACKAGE_VERSIONS='linux-modules-5.4.0-1103-aws=5.4.0.1103.81'
+  AWS_C_SNAPD_VERSION='2.58+18.04.1'
+  return 0
+}
+dpkg-query() {
+  local pkg="${3:-}"
+  if [[ "$1" == "-W" ]]; then
+    case "$pkg" in
+      linux-aws|linux-image-aws|linux-image-5.4.0-1103-aws)
+        if [[ "$2" == *Status* ]]; then printf 'install ok installed\n'; return 0; fi
+        if [[ "$2" == *Version* ]]; then printf '5.4.0.1103.81\n'; return 0; fi
+        ;;
+      snapd)
+        if [[ "$2" == *Status* ]]; then printf 'install ok installed\n'; return 0; fi
+        if [[ "$2" == *Version* ]]; then printf '2.58+18.04.1\n'; return 0; fi
+        ;;
+%s
+    esac
+  fi
+  return 1
+}
+uname() { printf '4.4.0-1128-aws\n'; }
+source "%s"
+if validate_aws_target_kernel_pre_reboot "18.04"; then
+  echo PRE_REBOOT_PASS
+  exit 0
+fi
+echo PRE_REBOOT_FAIL
+''' % (tmp, modules_case, GATE_INC)
+
+    def test_missing_required_boot_package_fails(self):
+        tmp = tempfile.mkdtemp(prefix='um-aws-boot-missing-')
+        try:
+            script = self._prereboot_with_boot_pkg(tmp, install_modules=False)
+            out = subprocess.check_output(['bash', '-c', script], stderr=subprocess.STDOUT)
+            text = out.decode('utf-8', 'replace')
+            self.assertIn('PRE_REBOOT_FAIL', text)
+            self.assertIn('boot_package_not_installed', text)
+            self.assertIn('AUTOMATIC_REBOOT_NOT_STARTED', text)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_complete_boot_package_contract_passes(self):
+        tmp = tempfile.mkdtemp(prefix='um-aws-boot-ok-')
+        try:
+            script = self._prereboot_with_boot_pkg(tmp, install_modules=True)
+            out = subprocess.check_output(['bash', '-c', script], stderr=subprocess.STDOUT)
+            text = out.decode('utf-8', 'replace')
+            self.assertIn('PRE_REBOOT_PASS', text)
+            self.assertIn('AWS_CONTRACT_BOOT_PACKAGES=PASS', text)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 

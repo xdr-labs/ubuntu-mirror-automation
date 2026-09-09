@@ -1580,16 +1580,25 @@ cmd_plan_selective_impl() {
     --profile-name offline-upgrade-selective
   local rc=$?
   set -e
-  if [[ -f "$SELECTIVE_PLAN" ]]; then
-    mkdir -p "${SELECTIVE_MIRROR_ROOT}/state" 2>/dev/null || true
-    cp -f "$SELECTIVE_PLAN" "${SELECTIVE_MIRROR_ROOT}/state/plan.json" 2>/dev/null || true
-    local contract_bash
-    contract_bash="$(dirname "$SELECTIVE_PLAN")/aws-semantic-contract.sh.inc"
-    if [[ -f "$contract_bash" ]]; then
-      cp -f "$contract_bash" "${SELECTIVE_MIRROR_ROOT}/state/aws-semantic-contract.sh.inc" 2>/dev/null || true
-    fi
-  fi
   [[ "$rc" -eq 0 ]] || die "plan-selective FAIL"
+  [[ -f "$SELECTIVE_PLAN" ]] || die "plan-selective FAIL: plan missing after PASS: $SELECTIVE_PLAN"
+  # Invalidate READY, then atomically publish plan+contract state (fail closed).
+  # Never leave READY for generation A with plan/contract for generation B.
+  PYTHONPATH="${PROJECT_ROOT}/scripts/lib${PYTHONPATH:+:$PYTHONPATH}" \
+    python3 -c "
+import sys
+from aws_os_core_completeness import publish_selective_generation_state
+try:
+    gen = publish_selective_generation_state(sys.argv[1], sys.argv[2])
+except Exception as exc:
+    sys.stderr.write('SELECTIVE_GENERATION_STATE_PUBLISH=FAIL detail=%s\n' % exc)
+    sys.exit(1)
+print('SELECTIVE_GENERATION_STATE_PUBLISH=PASS')
+print('PLAN_CHECKSUM=%s' % gen['plan_checksum'])
+print('DISCOVERY_ARTIFACT_CHECKSUM=%s' % gen['discovery_artifact_checksum'])
+print('AWS_SEMANTIC_CONTRACT_SHA256=%s' % gen['aws_semantic_contract_sha256'])
+" "$SELECTIVE_MIRROR_ROOT" "$SELECTIVE_PLAN" \
+    || die "plan-selective FAIL: generation state publish"
   ok "plan-selective PASS → ${SELECTIVE_PLAN}"
 }
 
@@ -1676,13 +1685,19 @@ cmd_verify_selective_impl() {
   local py hop="${1:-}"
   py="$(resolve_validate_selective_py)" || { error "validate_selective_mirror.py not found"; return 1; }
   [[ -f "$SELECTIVE_PLAN" ]] || { error "plan missing; run plan-selective first"; return 1; }
-  mkdir -p "${SELECTIVE_MIRROR_ROOT}/state" 2>/dev/null || true
-  cp -f "$SELECTIVE_PLAN" "${SELECTIVE_MIRROR_ROOT}/state/plan.json" 2>/dev/null || true
-  local contract_bash_v
-  contract_bash_v="$(dirname "$SELECTIVE_PLAN")/aws-semantic-contract.sh.inc"
-  if [[ -f "$contract_bash_v" ]]; then
-    cp -f "$contract_bash_v" "${SELECTIVE_MIRROR_ROOT}/state/aws-semantic-contract.sh.inc" 2>/dev/null || true
-  fi
+  # Fail-closed generation state publish (invalidates READY; refreshes plan+contract).
+  PYTHONPATH="${PROJECT_ROOT}/scripts/lib${PYTHONPATH:+:$PYTHONPATH}" \
+    python3 -c "
+import sys
+from aws_os_core_completeness import publish_selective_generation_state
+try:
+    publish_selective_generation_state(sys.argv[1], sys.argv[2])
+except Exception as exc:
+    sys.stderr.write('SELECTIVE_GENERATION_STATE_PUBLISH=FAIL detail=%s\n' % exc)
+    sys.exit(1)
+print('SELECTIVE_GENERATION_STATE_PUBLISH=PASS')
+" "$SELECTIVE_MIRROR_ROOT" "$SELECTIVE_PLAN" \
+    || { error "verify-selective FAIL: generation state publish"; return 1; }
   # Pre-publish only: validates staging. Never depends on production nginx
   # or selective/current (those are post-publish smoke tests inside publish-selective).
   local args=(

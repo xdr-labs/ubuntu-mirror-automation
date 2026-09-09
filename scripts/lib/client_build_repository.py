@@ -112,9 +112,14 @@ def validate_ready_provenance(ready_path):
         or ""
     ).strip()
     discovery = (fields.get("discovery_artifact_checksum") or "").strip()
+    contract = (fields.get("aws_semantic_contract_sha256") or "").strip()
     if not plan or not discovery:
         raise RepositoryError(
             "READY missing plan/discovery checksums (refusing to invent values)"
+        )
+    if not contract:
+        raise RepositoryError(
+            "READY missing aws_semantic_contract_sha256 (refusing to invent values)"
         )
     return fields
 

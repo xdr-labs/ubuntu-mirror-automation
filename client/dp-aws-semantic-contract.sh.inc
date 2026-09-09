@@ -13,6 +13,8 @@ aws_contract_clear() {
   AWS_C_LINUX_IMAGE_AWS_SHA256=""
   AWS_C_KERNEL_RELEASES=""
   AWS_C_VERSIONED_IMAGE_PACKAGES=""
+  AWS_C_BOOT_PACKAGES=""
+  AWS_C_BOOT_PACKAGE_VERSIONS=""
   AWS_C_SNAPD_VERSION=""
 }
 
@@ -29,6 +31,8 @@ aws_contract_load_for_version_id() {
       AWS_C_LINUX_IMAGE_AWS_SHA256='749b87ebdaacf79eabafe60280f2bad5ad349de1efc14759316941f097f05a42'
       AWS_C_KERNEL_RELEASES='5.4.0-1103-aws'
       AWS_C_VERSIONED_IMAGE_PACKAGES='linux-image-5.4.0-1103-aws'
+      AWS_C_BOOT_PACKAGES=''
+      AWS_C_BOOT_PACKAGE_VERSIONS=''
       AWS_C_SNAPD_VERSION='2.58+18.04.1'
       ;;
     20.04)
@@ -40,6 +44,8 @@ aws_contract_load_for_version_id() {
       AWS_C_LINUX_IMAGE_AWS_SHA256='fa9f6b20764d6e6a62af16c41a9be2fa4b47aca88c6d9d84b776ad55d2b018fc'
       AWS_C_KERNEL_RELEASES='5.15.0-1084-aws'
       AWS_C_VERSIONED_IMAGE_PACKAGES='linux-image-5.15.0-1084-aws'
+      AWS_C_BOOT_PACKAGES=''
+      AWS_C_BOOT_PACKAGE_VERSIONS=''
       AWS_C_SNAPD_VERSION=''
       ;;
     22.04)
@@ -51,6 +57,8 @@ aws_contract_load_for_version_id() {
       AWS_C_LINUX_IMAGE_AWS_SHA256='46dbf9d2ddf2aff0787afecaa83cd1f5d71a780c0000edc980fa0f6438ec5e81'
       AWS_C_KERNEL_RELEASES='6.8.0-1063-aws'
       AWS_C_VERSIONED_IMAGE_PACKAGES='linux-image-6.8.0-1063-aws'
+      AWS_C_BOOT_PACKAGES=''
+      AWS_C_BOOT_PACKAGE_VERSIONS=''
       AWS_C_SNAPD_VERSION=''
       ;;
     24.04)
@@ -62,6 +70,8 @@ aws_contract_load_for_version_id() {
       AWS_C_LINUX_IMAGE_AWS_SHA256='257cc613057cbc4b7f7659943627ebdbcffcd42228520be29af40849236b862c'
       AWS_C_KERNEL_RELEASES='7.0.0-1011-aws'
       AWS_C_VERSIONED_IMAGE_PACKAGES='linux-image-7.0.0-1011-aws'
+      AWS_C_BOOT_PACKAGES=''
+      AWS_C_BOOT_PACKAGE_VERSIONS=''
       AWS_C_SNAPD_VERSION=''
       ;;
     *)

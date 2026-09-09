@@ -32,7 +32,7 @@ try:
     from aws_os_core_completeness import (
         AWS_SEMANTIC_CONTRACT_JSON_REL,
         allow_name_only_aws_validation,
-        load_aws_semantic_contract_from_plan_file,
+        load_verified_selective_generation,
         minimal_public_aws_semantic_contract,
         validate_tree_aws_completeness,
         verify_contract_checksum,
@@ -42,7 +42,7 @@ except ImportError:  # pragma: no cover
     from scripts.lib.aws_os_core_completeness import (  # type: ignore
         AWS_SEMANTIC_CONTRACT_JSON_REL,
         allow_name_only_aws_validation,
-        load_aws_semantic_contract_from_plan_file,
+        load_verified_selective_generation,
         minimal_public_aws_semantic_contract,
         validate_tree_aws_completeness,
         verify_contract_checksum,
@@ -151,12 +151,14 @@ def derive_os_core_provenance(pkg_root, payload_root=None):
         fields = read_ready_fields(embedded)
         plan = fields.get("selective_plan_checksum") or fields.get("plan_checksum") or ""
         disc = fields.get("discovery_artifact_checksum") or ""
-        if is_hex64(plan) and is_hex64(disc):
+        contract = fields.get("aws_semantic_contract_sha256") or ""
+        if is_hex64(plan) and is_hex64(disc) and is_hex64(contract):
             return {
                 "source": "PACKAGE_EMBEDDED_READY",
                 "action": "REUSE_VERIFIED",
                 "selective_plan_checksum": plan.lower(),
                 "discovery_artifact_checksum": disc.lower(),
+                "aws_semantic_contract_sha256": contract.lower(),
                 "os_core_manifest_sha256": manifest_sha,
                 "os_core_payload_manifest_sha256": payload_manifest_sha,
                 "release_id": fields.get("os_core_release_id") or "",
@@ -166,7 +168,8 @@ def derive_os_core_provenance(pkg_root, payload_root=None):
         manifest = json.load(fh)
     plan = (manifest.get("selective_plan_checksum") or "").strip()
     disc = (manifest.get("discovery_artifact_checksum") or "").strip()
-    if is_hex64(plan) and is_hex64(disc):
+    contract = (manifest.get("aws_semantic_contract_sha256") or "").strip()
+    if is_hex64(plan) and is_hex64(disc) and is_hex64(contract):
         if disc.lower() != payload_manifest_sha:
             raise OsCoreError(
                 "MANIFEST_DISCOVERY_MISMATCH manifest=%s actual=%s"
@@ -177,13 +180,15 @@ def derive_os_core_provenance(pkg_root, payload_root=None):
             "action": "CREATE_VERIFIED",
             "selective_plan_checksum": plan.lower(),
             "discovery_artifact_checksum": disc.lower(),
+            "aws_semantic_contract_sha256": contract.lower(),
             "os_core_manifest_sha256": manifest_sha,
             "os_core_payload_manifest_sha256": payload_manifest_sha,
             "release_id": str(manifest.get("release_id") or ""),
         }
 
     # Current R2 packages: no READY, no explicit provenance fields.
-    return {
+    # Contract SHA may still be present on newer manifests.
+    out = {
         "source": "PACKAGE_MANIFEST_AND_PAYLOAD_SHA256",
         "action": "CREATE_VERIFIED",
         "selective_plan_checksum": manifest_sha,
@@ -192,14 +197,23 @@ def derive_os_core_provenance(pkg_root, payload_root=None):
         "os_core_payload_manifest_sha256": payload_manifest_sha,
         "release_id": str(manifest.get("release_id") or ""),
     }
+    if is_hex64(contract):
+        out["aws_semantic_contract_sha256"] = contract.lower()
+    else:
+        # Legacy R2 packages without contract field cannot mint generation-bound READY.
+        out["aws_semantic_contract_sha256"] = ""
+    return out
 
 
 def write_selective_ready_from_provenance(selective_root, provenance):
     """Atomically write selective/state/READY from verified provenance dict."""
     plan = provenance.get("selective_plan_checksum") or ""
     disc = provenance.get("discovery_artifact_checksum") or ""
+    contract = provenance.get("aws_semantic_contract_sha256") or ""
     if not is_hex64(plan) or not is_hex64(disc):
         raise OsCoreError("PROVENANCE_CHECKSUM_INVALID")
+    if not is_hex64(contract):
+        raise OsCoreError("PROVENANCE_CONTRACT_SHA_INVALID")
     state_dir = os.path.join(selective_root, "state")
     os.makedirs(state_dir, exist_ok=True)
     ready_path = os.path.join(state_dir, "READY")
@@ -214,6 +228,7 @@ def write_selective_ready_from_provenance(selective_root, provenance):
         "selective_plan_checksum=%s" % plan.lower(),
         "plan_checksum=%s" % plan.lower(),
         "discovery_artifact_checksum=%s" % disc.lower(),
+        "aws_semantic_contract_sha256=%s" % contract.lower(),
         "validation_phase=os_core_materialize",
     ]
     if provenance.get("release_id"):
@@ -226,29 +241,38 @@ def write_selective_ready_from_provenance(selective_root, provenance):
     fields = read_ready_fields(ready_path)
     got_plan = fields.get("selective_plan_checksum") or fields.get("plan_checksum") or ""
     got_disc = fields.get("discovery_artifact_checksum") or ""
-    if got_plan.lower() != plan.lower() or got_disc.lower() != disc.lower():
+    got_contract = fields.get("aws_semantic_contract_sha256") or ""
+    if (
+        got_plan.lower() != plan.lower()
+        or got_disc.lower() != disc.lower()
+        or got_contract.lower() != contract.lower()
+    ):
         raise OsCoreError("READY_WRITE_VERIFY_FAIL")
-    if not is_hex64(got_plan) or not is_hex64(got_disc):
+    if not is_hex64(got_plan) or not is_hex64(got_disc) or not is_hex64(got_contract):
         raise OsCoreError("READY_WRITE_VERIFY_FAIL empty_or_malformed")
     return ready_path
 
 
 def verify_selective_ready_file(ready_path):
-    """Fail closed unless READY carries two non-empty 64-hex provenance checksums."""
+    """Fail closed unless READY carries generation-bound provenance checksums."""
     if not ready_path or not os.path.isfile(ready_path):
         raise OsCoreError("SELECTIVE_READY_MISSING path=%s" % ready_path)
     fields = read_ready_fields(ready_path)
     plan = fields.get("selective_plan_checksum") or fields.get("plan_checksum") or ""
     disc = fields.get("discovery_artifact_checksum") or ""
+    contract = fields.get("aws_semantic_contract_sha256") or ""
     if not plan or not disc:
         raise OsCoreError("SELECTIVE_READY_EMPTY_CHECKSUM")
     if not is_hex64(plan):
         raise OsCoreError("SELECTIVE_READY_MALFORMED_PLAN")
     if not is_hex64(disc):
         raise OsCoreError("SELECTIVE_READY_MALFORMED_DISCOVERY")
+    if not is_hex64(contract):
+        raise OsCoreError("SELECTIVE_READY_MALFORMED_CONTRACT")
     return {
         "selective_plan_checksum": plan.lower(),
         "discovery_artifact_checksum": disc.lower(),
+        "aws_semantic_contract_sha256": contract.lower(),
         "source": fields.get("os_core_provenance_source") or "LEGACY_READY",
     }
 
@@ -636,37 +660,35 @@ def collect_from_selective_published(selective_root, payload_root):
 
 
 def embed_aws_semantic_contract_from_selective(selective_root, payload_root):
-    """Copy/bind plan AWS contract into payload/state/aws-semantic-contract.json.
+    """Bind verified READY↔plan generation into payload/state/aws-semantic-contract.json.
 
     Returns (contract_sha256, plan_checksum, discovery_checksum) — empty strings
     when hermetic name-only escape allows missing plan.
     """
-    plan_path = os.path.join(selective_root, "state", "plan.json")
-    if not os.path.isfile(plan_path):
-        # published-like trees may keep state beside published/
-        alt = os.path.join(os.path.dirname(selective_root), "state", "plan.json")
-        if os.path.isfile(alt):
-            plan_path = alt
-    if not os.path.isfile(plan_path):
-        if allow_name_only_aws_validation():
-            return "", "", ""
-        raise OsCoreError(
-            "AWS_SEMANTIC_CONTRACT_ABSENT: selective state/plan.json missing "
-            "under %s" % selective_root
-        )
+    selective_root = os.path.abspath(selective_root)
     try:
-        contract, contract_sha = load_aws_semantic_contract_from_plan_file(plan_path)
+        gen = load_verified_selective_generation(selective_root)
     except ValueError as exc:
         if allow_name_only_aws_validation():
             return "", "", ""
         raise OsCoreError("AWS_SEMANTIC_CONTRACT_ABSENT: %s" % exc)
 
+    if gen.get("hermetic_fixture"):
+        if allow_name_only_aws_validation():
+            return gen.get("aws_semantic_contract_sha256") or "", "", ""
+        raise OsCoreError(
+            "AWS_SEMANTIC_CONTRACT_ABSENT: hermetic fixture is not production authority"
+        )
+
+    contract = gen.get("contract")
+    contract_sha = gen.get("aws_semantic_contract_sha256") or ""
+    if not contract or not contract_sha:
+        raise OsCoreError("AWS_SEMANTIC_CONTRACT_ABSENT: verified generation missing contract")
+
     public = minimal_public_aws_semantic_contract(contract)
-    # Ensure embedded artifact uses the verified plan checksum.
     public["contract_sha256"] = contract_sha
     dest = os.path.join(payload_root, AWS_SEMANTIC_CONTRACT_JSON_REL)
     write_aws_semantic_contract_json(dest, public)
-    # Re-read and confirm binding.
     with open(dest, "r", encoding="utf-8") as fh:
         embedded = json.load(fh)
     ok, actual, err = verify_contract_checksum(embedded, expected_sha=contract_sha)
@@ -675,16 +697,11 @@ def embed_aws_semantic_contract_from_selective(selective_root, payload_root):
             "AWS_SEMANTIC_CONTRACT_EMBED_FAIL detail=%s" % (err or "checksum")
         )
 
-    plan_ck = ""
-    disc_ck = ""
-    try:
-        with open(plan_path, "r", encoding="utf-8") as fh:
-            plan = json.load(fh)
-        plan_ck = (plan.get("plan_checksum") or "").strip()
-        disc_ck = (plan.get("discovery_artifact_checksum") or "").strip()
-    except (OSError, ValueError, TypeError):
-        pass
-    return contract_sha, plan_ck, disc_ck
+    return (
+        contract_sha,
+        gen.get("plan_checksum") or "",
+        gen.get("discovery_artifact_checksum") or "",
+    )
 
 
 def payload_stats(payload_root):

@@ -830,22 +830,17 @@ def main(argv=None):
     up_tar_sha = sha256_file(upgrader_tar)
     up_gpg_sha = sha256_file(upgrader_gpg)
 
-    ready = cbr.validate_ready_provenance(ready_path)
-    plan_checksum = (
-        ready.get("selective_plan_checksum")
-        or ready.get("plan_checksum")
-        or ""
-    )
-    discovery_checksum = ready.get("discovery_artifact_checksum") or ""
-
+    cbr.validate_ready_provenance(ready_path)
     try:
-        aws_contract_body, aws_contract_sha, _aws_contract = (
-            aws_c.resolve_aws_semantic_contract_bash_for_client(
-                selective_root, project_root=project_root
-            )
+        gen = aws_c.load_verified_selective_generation(
+            selective_root, project_root=project_root
         )
     except ValueError as exc:
-        raise BuildError("AWS semantic contract binding failed: {}".format(exc))
+        raise BuildError("Selective generation binding failed: {}".format(exc))
+    plan_checksum = gen.get("plan_checksum") or ""
+    discovery_checksum = gen.get("discovery_artifact_checksum") or ""
+    aws_contract_body = gen["bash"]
+    aws_contract_sha = gen["aws_semantic_contract_sha256"]
     print("AWS_SEMANTIC_CONTRACT_SHA256={}".format(aws_contract_sha))
 
     generated_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())

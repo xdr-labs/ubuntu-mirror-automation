@@ -97,6 +97,60 @@ aws_kernel_release_in_contract() {
   return 1
 }
 
+# Enforce discovery-derived snapd identity when the loaded hop contract sets it.
+# Empty AWS_C_SNAPD_VERSION means no snapd gate for this hop.
+aws_validate_contract_snapd() {
+  local phase="${1:-GATE}"
+  local exp got
+  exp="${AWS_C_SNAPD_VERSION:-}"
+  if [[ -z "$exp" ]]; then
+    return 0
+  fi
+  if ! aws_pkg_installed snapd; then
+    aws_gate_log ERROR "${phase}=FAIL reason=snapd_not_installed expected=${exp}"
+    return 1
+  fi
+  got="$(aws_pkg_version snapd)"
+  if ! aws_versions_equal "$got" "$exp"; then
+    aws_gate_log ERROR "${phase}=FAIL reason=snapd_not_contract_identity expected=${exp} installed=${got}"
+    return 1
+  fi
+  aws_gate_log INFO "AWS_CONTRACT_SNAPD_VERSION=${exp}"
+  aws_gate_log INFO "AWS_CONTRACT_SNAPD=PASS"
+  return 0
+}
+
+# Enforce discovery-derived boot packages (modules/modules-extra) when present.
+# Empty AWS_C_BOOT_PACKAGES means no boot-package gate for this hop.
+aws_validate_contract_boot_packages() {
+  local phase="${1:-GATE}"
+  local pkg pair name exp got
+  if [[ -z "${AWS_C_BOOT_PACKAGES:-}" ]]; then
+    return 0
+  fi
+  for pkg in ${AWS_C_BOOT_PACKAGES}; do
+    if ! aws_pkg_installed "$pkg"; then
+      aws_gate_log ERROR "${phase}=FAIL reason=boot_package_not_installed package=${pkg}"
+      return 1
+    fi
+  done
+  if [[ -n "${AWS_C_BOOT_PACKAGE_VERSIONS:-}" ]]; then
+    for pair in ${AWS_C_BOOT_PACKAGE_VERSIONS}; do
+      name="${pair%%=*}"
+      exp="${pair#*=}"
+      [[ -n "$name" && -n "$exp" && "$name" != "$pair" ]] || continue
+      got="$(aws_pkg_version "$name")"
+      if ! aws_versions_equal "$got" "$exp"; then
+        aws_gate_log ERROR "${phase}=FAIL reason=boot_package_not_contract_identity package=${name} expected=${exp} installed=${got}"
+        return 1
+      fi
+    done
+  fi
+  aws_gate_log INFO "AWS_CONTRACT_BOOT_PACKAGES=${AWS_C_BOOT_PACKAGES}"
+  aws_gate_log INFO "AWS_CONTRACT_BOOT_PACKAGES=PASS"
+  return 0
+}
+
 aws_detect_current_flavor() {
   local flavor kr
   if declare -F kernel_flavor >/dev/null 2>&1; then
@@ -306,6 +360,12 @@ validate_aws_source_kernel_preflight() {
     aws_gate_log ERROR "NEXT_HOP_PREFLIGHT_FAIL reason=running_kernel_not_source_contract_release series=${source_ver} expected=${AWS_C_KERNEL_RELEASES} kernel=${kr}"
     return 1
   fi
+  if ! aws_validate_contract_snapd "NEXT_HOP_PREFLIGHT_FAIL"; then
+    return 1
+  fi
+  if ! aws_validate_contract_boot_packages "NEXT_HOP_PREFLIGHT_FAIL"; then
+    return 1
+  fi
 
   aws_gate_log INFO "AWS_SOURCE_PREFLIGHT=PASS"
   return 0
@@ -405,6 +465,15 @@ validate_aws_target_kernel_pre_reboot() {
 
   if [[ -z "$matched_kr" ]]; then
     aws_gate_log ERROR "PRE_REBOOT_AWS_TARGET_GATE=FAIL reason=target_versioned_aws_image_not_installed expected=${AWS_C_VERSIONED_IMAGE_PACKAGES}"
+    aws_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED"
+    return 1
+  fi
+
+  if ! aws_validate_contract_snapd "PRE_REBOOT_AWS_TARGET_GATE"; then
+    aws_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED"
+    return 1
+  fi
+  if ! aws_validate_contract_boot_packages "PRE_REBOOT_AWS_TARGET_GATE"; then
     aws_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED"
     return 1
   fi
@@ -525,6 +594,12 @@ validate_aws_post_hop_kernel_gate() {
   fi
   if ! aws_pkg_installed "linux-image-${kr}"; then
     aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=running_aws_image_pkg_missing kernel=${kr}"
+    return 1
+  fi
+  if ! aws_validate_contract_snapd "AWS_POST_HOP_KERNEL_GATE"; then
+    return 1
+  fi
+  if ! aws_validate_contract_boot_packages "AWS_POST_HOP_KERNEL_GATE"; then
     return 1
   fi
 

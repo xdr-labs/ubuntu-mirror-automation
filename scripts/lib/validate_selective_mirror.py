@@ -1430,6 +1430,7 @@ def validate_tree(plan_path, selective_root, mirror_root=None, run_apt=False,
         ('discovery_artifact_checksum', plan.get('discovery_artifact_checksum')),
         ('selective_plan_checksum', plan.get('plan_checksum')),
         ('plan_checksum', plan.get('plan_checksum')),
+        ('aws_semantic_contract_sha256', plan.get('aws_semantic_contract_sha256')),
         ('repository_content_checksum', content_checksum),
         ('staging_root', staging),
         ('snapshot_root', live),
@@ -1487,6 +1488,11 @@ def write_ready(path, result, publish_result=None):
         'selective_plan_checksum=%s' % result.get('selective_plan_checksum'),
         'plan_checksum=%s' % (
             result.get('plan_checksum') or result.get('selective_plan_checksum') or ''
+        ),
+        'aws_semantic_contract_sha256=%s' % (
+            result.get('aws_semantic_contract_sha256')
+            or pub.get('aws_semantic_contract_sha256')
+            or ''
         ),
         'repository_content_checksum=%s' % result.get('repository_content_checksum'),
         'verify_result_checksum=%s' % (

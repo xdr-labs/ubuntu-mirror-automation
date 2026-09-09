@@ -190,47 +190,415 @@ def load_aws_semantic_contract_from_plan(plan):
     return contract, actual
 
 
-def resolve_aws_semantic_contract_bash_for_client(selective_root, project_root=None):
-    """Resolve authoritative AWS contract bash for client generation.
+def _is_hex64(value):
+    s = (value or '').strip().lower()
+    if len(s) != 64:
+        return False
+    try:
+        int(s, 16)
+    except ValueError:
+        return False
+    return True
 
-    Production authority is selective ``state/plan.json`` → ``aws_semantic_contract``.
-    The tracked ``client/dp-aws-semantic-contract.sh.inc`` is never an independent
-    production authority; it may be used only under the hermetic dual escape when
-    no verified plan contract is available.
 
-    Returns (bash_text, contract_sha256, contract_dict).
+def _read_ready_kv_fields(ready_path):
+    fields = {}
+    with open(ready_path, 'r') as fh:
+        for line in fh:
+            line = line.strip()
+            if '=' in line:
+                k, v = line.split('=', 1)
+                fields[k.strip()] = v.strip()
+    return fields
+
+
+def generation_tuple_from_plan(plan):
+    """Extract the selective generation identity tuple from a plan dict."""
+    plan = plan or {}
+    contract = plan.get('aws_semantic_contract') or {}
+    return OrderedDict([
+        ('plan_checksum', (plan.get('plan_checksum') or '').strip().lower()),
+        (
+            'discovery_artifact_checksum',
+            (plan.get('discovery_artifact_checksum') or '').strip().lower(),
+        ),
+        (
+            'aws_semantic_contract_sha256',
+            (
+                (plan.get('aws_semantic_contract_sha256') or '').strip()
+                or (contract.get('contract_sha256') or '').strip()
+            ).lower(),
+        ),
+    ])
+
+
+def generation_tuple_from_ready(fields):
+    """Extract the selective generation identity tuple from READY fields."""
+    fields = fields or {}
+    return OrderedDict([
+        (
+            'plan_checksum',
+            (
+                fields.get('selective_plan_checksum')
+                or fields.get('plan_checksum')
+                or ''
+            ).strip().lower(),
+        ),
+        (
+            'discovery_artifact_checksum',
+            (fields.get('discovery_artifact_checksum') or '').strip().lower(),
+        ),
+        (
+            'aws_semantic_contract_sha256',
+            (fields.get('aws_semantic_contract_sha256') or '').strip().lower(),
+        ),
+    ])
+
+
+def _require_generation_tuple(tuple_doc, source):
+    for key in (
+        'plan_checksum',
+        'discovery_artifact_checksum',
+        'aws_semantic_contract_sha256',
+    ):
+        val = (tuple_doc.get(key) or '').strip().lower()
+        if not _is_hex64(val):
+            raise ValueError(
+                'selective_generation_%s_incomplete:%s' % (source, key)
+            )
+        tuple_doc[key] = val
+    return tuple_doc
+
+
+def compare_generation_tuples(ready_tuple, plan_tuple):
+    """Compare READY vs plan generation tuples. Raises ValueError on drift."""
+    ready_tuple = _require_generation_tuple(dict(ready_tuple), 'ready')
+    plan_tuple = _require_generation_tuple(dict(plan_tuple), 'plan')
+    for key in (
+        'plan_checksum',
+        'discovery_artifact_checksum',
+        'aws_semantic_contract_sha256',
+    ):
+        if ready_tuple[key] != plan_tuple[key]:
+            raise ValueError(
+                'selective_generation_drift:%s ready=%s plan=%s'
+                % (key, ready_tuple[key][:16], plan_tuple[key][:16])
+            )
+    return plan_tuple
+
+
+def write_ready_generation_marker(
+    ready_path,
+    plan_checksum,
+    discovery_artifact_checksum,
+    aws_semantic_contract_sha256,
+    extra_lines=None,
+):
+    """Atomically write a minimal READY receipt with the generation tuple."""
+    plan_checksum = (plan_checksum or '').strip().lower()
+    discovery_artifact_checksum = (discovery_artifact_checksum or '').strip().lower()
+    aws_semantic_contract_sha256 = (aws_semantic_contract_sha256 or '').strip().lower()
+    _require_generation_tuple(
+        {
+            'plan_checksum': plan_checksum,
+            'discovery_artifact_checksum': discovery_artifact_checksum,
+            'aws_semantic_contract_sha256': aws_semantic_contract_sha256,
+        },
+        'ready_write',
+    )
+    parent = os.path.dirname(ready_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    lines = [
+        'READY',
+        'selective_plan_checksum=%s' % plan_checksum,
+        'plan_checksum=%s' % plan_checksum,
+        'discovery_artifact_checksum=%s' % discovery_artifact_checksum,
+        'aws_semantic_contract_sha256=%s' % aws_semantic_contract_sha256,
+        'validation_phase=generation_bound',
+    ]
+    if extra_lines:
+        lines.extend(list(extra_lines))
+    tmp = ready_path + '.tmp.%d' % os.getpid()
+    with open(tmp, 'w') as fh:
+        fh.write('\n'.join(lines) + '\n')
+    os.replace(tmp, ready_path)
+    # Read-back verify
+    got = generation_tuple_from_ready(_read_ready_kv_fields(ready_path))
+    compare_generation_tuples(
+        got,
+        {
+            'plan_checksum': plan_checksum,
+            'discovery_artifact_checksum': discovery_artifact_checksum,
+            'aws_semantic_contract_sha256': aws_semantic_contract_sha256,
+        },
+    )
+    return ready_path
+
+
+def _atomic_copy_file(src, dest):
+    """Copy src→dest atomically with SHA256 read-back. Fail closed."""
+    if not src or not os.path.isfile(src):
+        raise ValueError('atomic_copy_missing_src:%s' % src)
+    parent = os.path.dirname(dest)
+    if parent:
+        try:
+            os.makedirs(parent, exist_ok=True)
+        except OSError as exc:
+            raise ValueError('atomic_copy_mkdir_fail:%s (%s)' % (parent, exc))
+    h = hashlib.sha256()
+    with open(src, 'rb') as fh:
+        data = fh.read()
+    h.update(data)
+    src_sha = h.hexdigest()
+    tmp = dest + '.tmp.%d' % os.getpid()
+    try:
+        with open(tmp, 'wb') as fh:
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, dest)
+    except OSError as exc:
+        try:
+            if os.path.isfile(tmp):
+                os.unlink(tmp)
+        except OSError:
+            pass
+        raise ValueError('atomic_copy_write_fail:%s (%s)' % (dest, exc))
+    # Read-back
+    rh = hashlib.sha256()
+    with open(dest, 'rb') as fh:
+        rh.update(fh.read())
+    if rh.hexdigest() != src_sha:
+        raise ValueError(
+            'atomic_copy_readback_mismatch:%s expected=%s got=%s'
+            % (dest, src_sha[:16], rh.hexdigest()[:16])
+        )
+    return src_sha
+
+
+def invalidate_selective_ready(selective_root):
+    """Remove READY so consumers cannot bind an older generation. Fail closed."""
+    ready = os.path.join(os.path.abspath(selective_root), 'state', 'READY')
+    if not os.path.lexists(ready):
+        return False
+    try:
+        os.unlink(ready)
+    except OSError as exc:
+        raise ValueError('selective_ready_invalidate_fail:%s (%s)' % (ready, exc))
+    if os.path.lexists(ready):
+        raise ValueError('selective_ready_invalidate_incomplete:%s' % ready)
+    return True
+
+
+def publish_selective_generation_state(
+    selective_root,
+    plan_src,
+    contract_bash_src=None,
+    invalidate_ready=True,
+):
+    """Atomically publish plan.json + AWS contract bash into selective state.
+
+    Lifecycle (fail closed):
+      1. invalidate READY (optional, default on)
+      2. mkdir state
+      3. atomic plan.json publish + read-back
+      4. atomic contract bash publish + read-back (required when plan has contract)
+      5. verify plan generation tuple + contract body SHA
+
+    Does NOT write READY — that happens only after successful post-publish verify.
+    Raises ValueError on any failure; never reports success with stale state.
+    Returns verified generation tuple OrderedDict.
     """
     selective_root = os.path.abspath(selective_root or '')
-    plan_path = os.path.join(selective_root, 'state', 'plan.json')
-    contract = None
-    contract_sha = ''
-    if os.path.isfile(plan_path):
-        contract, contract_sha = load_aws_semantic_contract_from_plan_file(plan_path)
-    elif allow_generic_only_discovery() and project_root:
-        fixture = os.path.join(
-            os.path.abspath(project_root), 'client', 'dp-aws-semantic-contract.sh.inc',
-        )
-        if not os.path.isfile(fixture):
-            raise ValueError(
-                'aws_semantic_contract_absent: no plan and no hermetic fixture'
-            )
-        with open(fixture, 'r') as fh:
-            text = fh.read()
-        # Hermetic fixture path: derive sha from file contents only (not plan-bound).
-        contract_sha = hashlib.sha256(text.encode('utf-8')).hexdigest()
-        if not text.endswith('\n'):
-            text += '\n'
-        return text, contract_sha, None
-    else:
+    plan_src = os.path.abspath(plan_src or '')
+    if not os.path.isfile(plan_src):
+        raise ValueError('selective_generation_plan_src_missing:%s' % plan_src)
+    state = os.path.join(selective_root, 'state')
+    try:
+        os.makedirs(state, exist_ok=True)
+    except OSError as exc:
+        raise ValueError('selective_generation_state_mkdir_fail:%s (%s)' % (state, exc))
+
+    if invalidate_ready:
+        invalidate_selective_ready(selective_root)
+
+    plan_dest = os.path.join(state, 'plan.json')
+    try:
+        _atomic_copy_file(plan_src, plan_dest)
+    except ValueError as exc:
+        raise ValueError('selective_generation_plan_state_fail:%s' % exc)
+
+    try:
+        with open(plan_dest, 'r') as fh:
+            plan = json.load(fh)
+    except (OSError, ValueError, TypeError) as exc:
+        raise ValueError('selective_generation_plan_unreadable:%s' % exc)
+
+    if (plan.get('validation_result') or '') != 'PASS':
         raise ValueError(
-            'aws_semantic_contract_absent: missing %s' % plan_path
+            'selective_generation_plan_not_pass:%s'
+            % (plan.get('validation_result') or 'missing')
         )
 
-    # Optional sibling bash must match plan-rendered authority when present.
-    sibling = os.path.join(selective_root, 'state', 'aws-semantic-contract.sh.inc')
+    plan_tuple = _require_generation_tuple(generation_tuple_from_plan(plan), 'plan')
+    contract, contract_sha = load_aws_semantic_contract_from_plan(plan)
+    if contract_sha != plan_tuple['aws_semantic_contract_sha256']:
+        raise ValueError(
+            'selective_generation_contract_sha_mismatch plan=%s body=%s'
+            % (plan_tuple['aws_semantic_contract_sha256'][:16], contract_sha[:16])
+        )
+
+    if not contract_bash_src:
+        sibling_src = os.path.join(os.path.dirname(plan_src), 'aws-semantic-contract.sh.inc')
+        if os.path.isfile(sibling_src):
+            contract_bash_src = sibling_src
+    rendered = render_aws_semantic_contract_bash(contract)
+    if not rendered.endswith('\n'):
+        rendered += '\n'
+    bash_dest = os.path.join(state, 'aws-semantic-contract.sh.inc')
+    if contract_bash_src and os.path.isfile(contract_bash_src):
+        try:
+            _atomic_copy_file(contract_bash_src, bash_dest)
+        except ValueError as exc:
+            raise ValueError('selective_generation_contract_state_fail:%s' % exc)
+        with open(bash_dest, 'r') as fh:
+            existing = fh.read()
+        if not existing.endswith('\n'):
+            existing += '\n'
+        if existing != rendered:
+            raise ValueError(
+                'selective_generation_contract_bash_mismatch: copied bash != plan render'
+            )
+    else:
+        # Plan carries a contract: materialize rendered bash atomically.
+        tmp = bash_dest + '.tmp.%d' % os.getpid()
+        try:
+            with open(tmp, 'w') as fh:
+                fh.write(rendered)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, bash_dest)
+        except OSError as exc:
+            try:
+                if os.path.isfile(tmp):
+                    os.unlink(tmp)
+            except OSError:
+                pass
+            raise ValueError(
+                'selective_generation_contract_state_fail:%s' % exc
+            )
+        with open(bash_dest, 'r') as fh:
+            existing = fh.read()
+        if not existing.endswith('\n'):
+            existing += '\n'
+        if existing != rendered:
+            raise ValueError(
+                'selective_generation_contract_bash_readback_mismatch'
+            )
+
+    return OrderedDict([
+        ('plan_checksum', plan_tuple['plan_checksum']),
+        ('discovery_artifact_checksum', plan_tuple['discovery_artifact_checksum']),
+        ('aws_semantic_contract_sha256', contract_sha),
+        ('plan', plan),
+        ('contract', contract),
+        ('bash', rendered),
+        ('plan_path', plan_dest),
+        ('contract_bash_path', bash_dest),
+    ])
+
+
+def load_verified_selective_generation(selective_root, project_root=None):
+    """Load READY + state/plan.json and verify they form one selective generation.
+
+    Checks (all required; fail closed):
+      - READY exists with plan/discovery/contract SHA256 fields
+      - state/plan.json exists with validation_result == PASS
+      - READY tuple == plan tuple (all three fields)
+      - plan contract body verifies and matches plan/READY contract SHA
+      - optional state bash matches plan-rendered contract
+
+    Returns OrderedDict with plan, contract, bash, and generation checksums.
+    Hermetic dual-escape only when BOTH READY and plan are absent.
+    """
+    selective_root = os.path.abspath(selective_root or '')
+    state = os.path.join(selective_root, 'state')
+    ready_path = os.path.join(state, 'READY')
+    plan_path = os.path.join(state, 'plan.json')
+
+    ready_exists = os.path.isfile(ready_path)
+    plan_exists = os.path.isfile(plan_path)
+
+    if not ready_exists and not plan_exists:
+        if allow_generic_only_discovery() and project_root:
+            fixture = os.path.join(
+                os.path.abspath(project_root),
+                'client',
+                'dp-aws-semantic-contract.sh.inc',
+            )
+            if not os.path.isfile(fixture):
+                raise ValueError(
+                    'aws_semantic_contract_absent: no plan/READY and no hermetic fixture'
+                )
+            with open(fixture, 'r') as fh:
+                text = fh.read()
+            if not text.endswith('\n'):
+                text += '\n'
+            contract_sha = hashlib.sha256(text.encode('utf-8')).hexdigest()
+            return OrderedDict([
+                ('plan_checksum', ''),
+                ('discovery_artifact_checksum', ''),
+                ('aws_semantic_contract_sha256', contract_sha),
+                ('plan', None),
+                ('contract', None),
+                ('bash', text),
+                ('ready_fields', {}),
+                ('hermetic_fixture', True),
+            ])
+        raise ValueError(
+            'selective_generation_absent: missing READY and plan under %s' % state
+        )
+
+    if not ready_exists:
+        raise ValueError('selective_generation_ready_absent: %s' % ready_path)
+    if not plan_exists:
+        raise ValueError('selective_generation_plan_absent: %s' % plan_path)
+
+    ready_fields = _read_ready_kv_fields(ready_path)
+    ready_tuple = generation_tuple_from_ready(ready_fields)
+
+    try:
+        with open(plan_path, 'r') as fh:
+            plan = json.load(fh)
+    except (OSError, ValueError, TypeError) as exc:
+        raise ValueError('selective_generation_plan_unreadable:%s' % exc)
+
+    if (plan.get('validation_result') or '') != 'PASS':
+        raise ValueError(
+            'selective_generation_plan_not_pass:%s'
+            % (plan.get('validation_result') or 'missing')
+        )
+
+    plan_tuple = generation_tuple_from_plan(plan)
+    compare_generation_tuples(ready_tuple, plan_tuple)
+
+    contract, contract_sha = load_aws_semantic_contract_from_plan(plan)
+    if contract_sha != plan_tuple['aws_semantic_contract_sha256']:
+        raise ValueError(
+            'selective_generation_contract_body_mismatch plan=%s body=%s'
+            % (plan_tuple['aws_semantic_contract_sha256'][:16], contract_sha[:16])
+        )
+    if contract_sha != ready_tuple['aws_semantic_contract_sha256']:
+        raise ValueError(
+            'selective_generation_contract_ready_mismatch ready=%s body=%s'
+            % (ready_tuple['aws_semantic_contract_sha256'][:16], contract_sha[:16])
+        )
+
     bash = render_aws_semantic_contract_bash(contract)
     if not bash.endswith('\n'):
         bash += '\n'
+    sibling = os.path.join(state, 'aws-semantic-contract.sh.inc')
     if os.path.isfile(sibling):
         with open(sibling, 'r') as fh:
             existing = fh.read()
@@ -240,7 +608,35 @@ def resolve_aws_semantic_contract_bash_for_client(selective_root, project_root=N
             raise ValueError(
                 'aws_semantic_contract_differs_from_plan: state bash != plan contract'
             )
-    return bash, contract_sha, contract
+
+    return OrderedDict([
+        ('plan_checksum', plan_tuple['plan_checksum']),
+        ('discovery_artifact_checksum', plan_tuple['discovery_artifact_checksum']),
+        ('aws_semantic_contract_sha256', contract_sha),
+        ('plan', plan),
+        ('contract', contract),
+        ('bash', bash),
+        ('ready_fields', ready_fields),
+        ('hermetic_fixture', False),
+        ('ready_path', ready_path),
+        ('plan_path', plan_path),
+    ])
+
+
+def resolve_aws_semantic_contract_bash_for_client(selective_root, project_root=None):
+    """Resolve authoritative AWS contract bash for client generation.
+
+    Production authority is the verified READY↔state/plan.json generation tuple.
+    The tracked ``client/dp-aws-semantic-contract.sh.inc`` is never an independent
+    production authority; it may be used only under the hermetic dual escape when
+    no verified plan/READY generation is available.
+
+    Returns (bash_text, contract_sha256, contract_dict).
+    """
+    gen = load_verified_selective_generation(
+        selective_root, project_root=project_root,
+    )
+    return gen['bash'], gen['aws_semantic_contract_sha256'], gen.get('contract')
 
 
 def write_aws_semantic_contract_json(path, contract):
@@ -1148,6 +1544,8 @@ def render_aws_semantic_contract_bash(contract):
         '  AWS_C_LINUX_IMAGE_AWS_SHA256=""',
         '  AWS_C_KERNEL_RELEASES=""',
         '  AWS_C_VERSIONED_IMAGE_PACKAGES=""',
+        '  AWS_C_BOOT_PACKAGES=""',
+        '  AWS_C_BOOT_PACKAGE_VERSIONS=""',
         '  AWS_C_SNAPD_VERSION=""',
         '}',
         '',
@@ -1170,6 +1568,18 @@ def render_aws_semantic_contract_bash(contract):
             for i in (hop_c.get('versioned_images') or [])
             if i and i.get('package')
         ]
+        boot_names = []
+        boot_pairs = []
+        for bp in (hop_c.get('boot_packages') or []):
+            if not bp:
+                continue
+            bname = (bp.get('package') or '').strip()
+            bver = (bp.get('version') or '').strip()
+            if not bname:
+                continue
+            boot_names.append(bname)
+            if bver:
+                boot_pairs.append('%s=%s' % (bname, bver))
         snap = hop_c.get('snapd') or {}
         lines.extend([
             '    %s)' % tver,
@@ -1185,6 +1595,8 @@ def render_aws_semantic_contract_bash(contract):
             ),
             '      AWS_C_KERNEL_RELEASES=%s' % _bash_quote(' '.join(releases)),
             '      AWS_C_VERSIONED_IMAGE_PACKAGES=%s' % _bash_quote(' '.join(images)),
+            '      AWS_C_BOOT_PACKAGES=%s' % _bash_quote(' '.join(boot_names)),
+            '      AWS_C_BOOT_PACKAGE_VERSIONS=%s' % _bash_quote(' '.join(boot_pairs)),
             '      AWS_C_SNAPD_VERSION=%s' % _bash_quote(snap.get('version') or ''),
             '      ;;',
         ])
