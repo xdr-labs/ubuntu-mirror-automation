@@ -127,6 +127,66 @@ class FieldDefectReproductionTests(unittest.TestCase):
         self.assertGreater(len(x2b_snapd), 0)
 
 
+class AwsPlanSemanticValidationTests(unittest.TestCase):
+    def test_aws_profile_plan_missing_linux_aws_family_fails(self):
+        # Case 3: discovery_profiles includes aws but plan rows omit linux-aws.
+        rows = [
+            {
+                'package': 'bash',
+                'hop': hop,
+                'source_hops': [hop],
+                'version': '1',
+            }
+            for hop in dp.HOPS
+        ]
+        plan = {
+            'profile_name': 'offline-upgrade-selective',
+            'discovery_profiles': ['generic', 'aws'],
+            'counts': {'aws_kernel_package_rows': 0},
+            'debs': rows,
+        }
+        ok, errors, detail = aws_c.validate_plan_aws_completeness(
+            plan, package_rows=rows,
+        )
+        self.assertFalse(ok, detail)
+        self.assertTrue(
+            any('aws_kernel' in e for e in errors),
+            errors,
+        )
+
+    def test_aws_x2b_plan_missing_snapd_fails(self):
+        # Case 4: AWS xenial→bionic discovery requires snapd; kernels alone insufficient.
+        rows = []
+        for hop in dp.HOPS:
+            rows.append({
+                'package': 'linux-aws',
+                'hop': hop,
+                'source_hops': [hop],
+                'version': '1',
+            })
+            rows.append({
+                'package': 'linux-image-aws',
+                'hop': hop,
+                'source_hops': [hop],
+                'version': '1',
+            })
+        plan = {
+            'profile_name': 'offline-upgrade-selective',
+            'discovery_profiles': ['generic', 'aws'],
+            'counts': {'aws_kernel_package_rows': len(rows)},
+            'debs': rows,
+        }
+        ok, errors, detail = aws_c.validate_plan_aws_completeness(
+            plan, package_rows=rows,
+        )
+        self.assertFalse(ok, detail)
+        self.assertTrue(any('snapd_missing_hop' in e for e in errors), errors)
+        self.assertTrue(
+            any('xenial-to-bionic' in e for e in errors if 'snapd' in e),
+            errors,
+        )
+
+
 class AwsTreeSemanticValidationTests(unittest.TestCase):
     def test_empty_tree_fails_when_aws_required(self):
         tmp = tempfile.mkdtemp(prefix='um-aws-tree-')
