@@ -31,22 +31,30 @@ from datetime import datetime, timezone
 try:
     from aws_os_core_completeness import (
         AWS_SEMANTIC_CONTRACT_JSON_REL,
+        SELECTIVE_GENERATION_PLAN_REL,
         allow_name_only_aws_validation,
         load_verified_selective_generation,
         minimal_public_aws_semantic_contract,
+        minimal_public_selective_generation_plan,
+        restore_selective_generation_from_os_core_payload,
         validate_tree_aws_completeness,
         verify_contract_checksum,
         write_aws_semantic_contract_json,
+        write_selective_generation_plan_json,
     )
 except ImportError:  # pragma: no cover
     from scripts.lib.aws_os_core_completeness import (  # type: ignore
         AWS_SEMANTIC_CONTRACT_JSON_REL,
+        SELECTIVE_GENERATION_PLAN_REL,
         allow_name_only_aws_validation,
         load_verified_selective_generation,
         minimal_public_aws_semantic_contract,
+        minimal_public_selective_generation_plan,
+        restore_selective_generation_from_os_core_payload,
         validate_tree_aws_completeness,
         verify_contract_checksum,
         write_aws_semantic_contract_json,
+        write_selective_generation_plan_json,
     )
 
 SCHEMA_VERSION = 1
@@ -118,12 +126,17 @@ def derive_os_core_provenance(pkg_root, payload_root=None):
 
     Prefer (in order):
       1. Embedded payload/state/READY with valid hex checksums
-      2. Explicit selective_plan_checksum / discovery_artifact_checksum in manifest.json
-         (discovery must match sha256(payload.sha256))
-      3. Backward-compatible derivation for packages already on R2:
+      2. New candidate schema: explicit selective_plan_checksum,
+         discovery_artifact_checksum, aws_semantic_contract_sha256, and
+         payload_manifest_sha256 in manifest.json (discovery is independent of
+         sha256(payload.sha256); payload_manifest_sha256 must match it)
+      3. Embedded payload/state/plan.json generation record bound by manifest
+      4. Backward-compatible derivation for packages already on R2 that lack
+         payload_manifest_sha256:
          selective_plan_checksum = sha256(manifest.json)
          discovery_artifact_checksum = sha256(payload.sha256)
 
+    Never invents discovery identity from payload SHA for new-schema artifacts.
     Never invents empty or placeholder checksums.
     """
     pkg_root = os.path.abspath(pkg_root)
@@ -142,11 +155,11 @@ def derive_os_core_provenance(pkg_root, payload_root=None):
     manifest_sha = sha256_file(manifest_path)
     payload_manifest_sha = sha256_file(payload_sum)
 
-    embedded = os.path.join(payload_root, "state", "READY")
-    # After payload has been moved out of pkg_root, callers may pass the moved
-    # payload path separately; also accept READY already under that tree.
-    if not os.path.isfile(embedded):
-        embedded = os.path.join(payload_root, "state", "READY")
+    # Prefer READY only when it is still inside the package payload tree.
+    # Never treat a destination selective_root READY as package authority — that
+    # would silently bind a fresh R2 materialize to stale external state.
+    pkg_payload = os.path.join(pkg_root, "payload")
+    embedded = os.path.join(pkg_payload, "state", "READY")
     if os.path.isfile(embedded):
         fields = read_ready_fields(embedded)
         plan = fields.get("selective_plan_checksum") or fields.get("plan_checksum") or ""
@@ -161,6 +174,7 @@ def derive_os_core_provenance(pkg_root, payload_root=None):
                 "aws_semantic_contract_sha256": contract.lower(),
                 "os_core_manifest_sha256": manifest_sha,
                 "os_core_payload_manifest_sha256": payload_manifest_sha,
+                "payload_manifest_sha256": payload_manifest_sha,
                 "release_id": fields.get("os_core_release_id") or "",
             }
 
@@ -169,12 +183,51 @@ def derive_os_core_provenance(pkg_root, payload_root=None):
     plan = (manifest.get("selective_plan_checksum") or "").strip()
     disc = (manifest.get("discovery_artifact_checksum") or "").strip()
     contract = (manifest.get("aws_semantic_contract_sha256") or "").strip()
-    if is_hex64(plan) and is_hex64(disc) and is_hex64(contract):
-        if disc.lower() != payload_manifest_sha:
+    payload_field = (manifest.get("payload_manifest_sha256") or "").strip()
+
+    # New candidate schema: four distinct identities. Discovery must NOT be
+    # required to equal sha256(payload.sha256).
+    if (
+        is_hex64(plan)
+        and is_hex64(disc)
+        and is_hex64(contract)
+        and is_hex64(payload_field)
+    ):
+        if payload_field.lower() != payload_manifest_sha:
             raise OsCoreError(
-                "MANIFEST_DISCOVERY_MISMATCH manifest=%s actual=%s"
-                % (disc.lower(), payload_manifest_sha)
+                "MANIFEST_PAYLOAD_MANIFEST_MISMATCH manifest=%s actual=%s"
+                % (payload_field.lower(), payload_manifest_sha)
             )
+        # Prefer embedded generation record when present; must bind the same tuple.
+        gen_plan_path = os.path.join(payload_root, SELECTIVE_GENERATION_PLAN_REL)
+        if os.path.isfile(gen_plan_path):
+            try:
+                with open(gen_plan_path, "r", encoding="utf-8") as fh:
+                    gen_plan = json.load(fh)
+            except (OSError, ValueError, TypeError) as exc:
+                raise OsCoreError(
+                    "EMBEDDED_GENERATION_PLAN_UNREADABLE err=%s" % exc
+                )
+            gen_plan_ck = (
+                gen_plan.get("plan_checksum")
+                or gen_plan.get("selective_plan_checksum")
+                or ""
+            ).strip().lower()
+            gen_disc = (gen_plan.get("discovery_artifact_checksum") or "").strip().lower()
+            gen_contract = (
+                gen_plan.get("aws_semantic_contract_sha256")
+                or ((gen_plan.get("aws_semantic_contract") or {}).get("contract_sha256") or "")
+            ).strip().lower()
+            if (
+                gen_plan_ck != plan.lower()
+                or gen_disc != disc.lower()
+                or gen_contract != contract.lower()
+            ):
+                raise OsCoreError(
+                    "EMBEDDED_GENERATION_MANIFEST_MISMATCH "
+                    "manifest_plan=%s gen_plan=%s"
+                    % (plan.lower()[:16], gen_plan_ck[:16])
+                )
         return {
             "source": "PACKAGE_MANIFEST_FIELDS",
             "action": "CREATE_VERIFIED",
@@ -183,11 +236,39 @@ def derive_os_core_provenance(pkg_root, payload_root=None):
             "aws_semantic_contract_sha256": contract.lower(),
             "os_core_manifest_sha256": manifest_sha,
             "os_core_payload_manifest_sha256": payload_manifest_sha,
+            "payload_manifest_sha256": payload_manifest_sha,
             "release_id": str(manifest.get("release_id") or ""),
         }
 
-    # Current R2 packages: no READY, no explicit provenance fields.
-    # Contract SHA may still be present on newer manifests.
+    # Embedded generation without full new-schema payload_manifest field still
+    # restores the original tuple (do not invent from payload SHA).
+    gen_plan_path = os.path.join(payload_root, SELECTIVE_GENERATION_PLAN_REL)
+    if os.path.isfile(gen_plan_path) and is_hex64(plan) and is_hex64(disc) and is_hex64(contract):
+        return {
+            "source": "PACKAGE_EMBEDDED_GENERATION",
+            "action": "CREATE_VERIFIED",
+            "selective_plan_checksum": plan.lower(),
+            "discovery_artifact_checksum": disc.lower(),
+            "aws_semantic_contract_sha256": contract.lower(),
+            "os_core_manifest_sha256": manifest_sha,
+            "os_core_payload_manifest_sha256": payload_manifest_sha,
+            "payload_manifest_sha256": payload_manifest_sha,
+            "release_id": str(manifest.get("release_id") or ""),
+        }
+
+    # Legacy R2 packages: no READY, no payload_manifest_sha256 field.
+    # Keep inventing discovery from payload digest ONLY for that legacy shape.
+    # If someone wrote discovery into an incomplete new-ish manifest without
+    # payload_manifest_sha256, refuse to conflate it with payload digest.
+    if is_hex64(plan) and is_hex64(disc) and is_hex64(contract) and not payload_field:
+        # Incomplete new schema (missing payload_manifest_sha256): fail closed
+        # rather than silently aliasing discovery to payload.
+        raise OsCoreError(
+            "MANIFEST_PAYLOAD_MANIFEST_SHA_MISSING "
+            "new-schema manifests require payload_manifest_sha256 distinct from "
+            "discovery_artifact_checksum"
+        )
+
     out = {
         "source": "PACKAGE_MANIFEST_AND_PAYLOAD_SHA256",
         "action": "CREATE_VERIFIED",
@@ -195,6 +276,7 @@ def derive_os_core_provenance(pkg_root, payload_root=None):
         "discovery_artifact_checksum": payload_manifest_sha,
         "os_core_manifest_sha256": manifest_sha,
         "os_core_payload_manifest_sha256": payload_manifest_sha,
+        "payload_manifest_sha256": payload_manifest_sha,
         "release_id": str(manifest.get("release_id") or ""),
     }
     if is_hex64(contract):
@@ -206,7 +288,12 @@ def derive_os_core_provenance(pkg_root, payload_root=None):
 
 
 def write_selective_ready_from_provenance(selective_root, provenance):
-    """Atomically write selective/state/READY from verified provenance dict."""
+    """Atomically write selective/state/READY from verified provenance dict.
+
+    Also restores public-safe generation plan/contract state when the selective
+    root carries (or can restore) an embedded OS Core generation record so
+    load_verified_selective_generation() works on a fresh Mirror.
+    """
     plan = provenance.get("selective_plan_checksum") or ""
     disc = provenance.get("discovery_artifact_checksum") or ""
     contract = provenance.get("aws_semantic_contract_sha256") or ""
@@ -216,6 +303,30 @@ def write_selective_ready_from_provenance(selective_root, provenance):
         raise OsCoreError("PROVENANCE_CONTRACT_SHA_INVALID")
     state_dir = os.path.join(selective_root, "state")
     os.makedirs(state_dir, exist_ok=True)
+
+    # Restore generation artifacts before READY so a fresh materialize is self-
+    # sufficient. Legacy packages without embedded plan remain READY-only.
+    plan_path = os.path.join(state_dir, "plan.json")
+    if os.path.isfile(plan_path) or os.path.isfile(
+        os.path.join(selective_root, SELECTIVE_GENERATION_PLAN_REL)
+    ):
+        try:
+            restored = restore_selective_generation_from_os_core_payload(
+                selective_root, payload_root=selective_root,
+            )
+        except ValueError as exc:
+            raise OsCoreError("GENERATION_RESTORE_FAIL: %s" % exc)
+        if (
+            restored["plan_checksum"] != plan.lower()
+            or restored["discovery_artifact_checksum"] != disc.lower()
+            or restored["aws_semantic_contract_sha256"] != contract.lower()
+        ):
+            raise OsCoreError(
+                "GENERATION_RESTORE_TUPLE_MISMATCH "
+                "provenance_plan=%s restored_plan=%s"
+                % (plan.lower()[:16], restored["plan_checksum"][:16])
+            )
+
     ready_path = os.path.join(state_dir, "READY")
     lines = [
         "READY",
@@ -508,9 +619,22 @@ def validate_package_tree(extract_root):
             % (manifest.get("payload_bytes"), payload_bytes)
         )
 
+    # Distinct payload-manifest identity (hash of payload.sha256 file).
+    actual_payload_manifest_sha = sha256_file(payload_sum)
+    manifest_payload_sha = (manifest.get("payload_manifest_sha256") or "").strip()
+    if manifest_payload_sha:
+        if not is_hex64(manifest_payload_sha):
+            raise OsCoreError("MANIFEST_PAYLOAD_MANIFEST_SHA_INVALID")
+        if manifest_payload_sha.lower() != actual_payload_manifest_sha:
+            raise OsCoreError(
+                "MANIFEST_PAYLOAD_MANIFEST_MISMATCH manifest=%s actual=%s"
+                % (manifest_payload_sha.lower(), actual_payload_manifest_sha)
+            )
+
     # Production OS Core must embed the AWS semantic contract and verify exact
     # discovery-derived .deb identity (package/version/arch/SHA256).
     contract_path = os.path.join(payload_root, AWS_SEMANTIC_CONTRACT_JSON_REL)
+    gen_plan_path = os.path.join(payload_root, SELECTIVE_GENERATION_PLAN_REL)
     embedded_plan = {
         "discovery_profiles": ["generic", "aws"],
         "require_contract_checksum": True,
@@ -541,9 +665,67 @@ def validate_package_tree(extract_root):
             )
         embedded_plan["aws_semantic_contract"] = contract
         embedded_plan["aws_semantic_contract_sha256"] = contract_sha
+
+        # New-schema packages must embed the public-safe generation record and
+        # bind the same plan/discovery/contract tuple as the outer manifest.
+        if os.path.isfile(gen_plan_path):
+            try:
+                with open(gen_plan_path, "r", encoding="utf-8") as fh:
+                    gen_plan = json.load(fh)
+            except (OSError, ValueError, TypeError) as exc:
+                raise OsCoreError(
+                    "EMBEDDED_GENERATION_PLAN_MALFORMED err=%s" % exc
+                )
+            if (gen_plan.get("validation_result") or "") != "PASS":
+                raise OsCoreError("EMBEDDED_GENERATION_PLAN_NOT_PASS")
+            gen_plan_ck = (
+                gen_plan.get("plan_checksum")
+                or gen_plan.get("selective_plan_checksum")
+                or ""
+            ).strip().lower()
+            gen_disc = (gen_plan.get("discovery_artifact_checksum") or "").strip().lower()
+            gen_contract = (
+                gen_plan.get("aws_semantic_contract_sha256")
+                or ((gen_plan.get("aws_semantic_contract") or {}).get("contract_sha256") or "")
+            ).strip().lower()
+            manifest_plan = (manifest.get("selective_plan_checksum") or "").strip().lower()
+            manifest_disc = (manifest.get("discovery_artifact_checksum") or "").strip().lower()
+            if not (is_hex64(gen_plan_ck) and is_hex64(gen_disc) and is_hex64(gen_contract)):
+                raise OsCoreError("EMBEDDED_GENERATION_PLAN_INCOMPLETE")
+            if manifest_plan and gen_plan_ck != manifest_plan:
+                raise OsCoreError(
+                    "EMBEDDED_GENERATION_PLAN_CHECKSUM_MISMATCH "
+                    "manifest=%s embedded=%s" % (manifest_plan[:16], gen_plan_ck[:16])
+                )
+            if manifest_disc and gen_disc != manifest_disc:
+                raise OsCoreError(
+                    "EMBEDDED_GENERATION_DISCOVERY_MISMATCH "
+                    "manifest=%s embedded=%s" % (manifest_disc[:16], gen_disc[:16])
+                )
+            if gen_contract != contract_sha:
+                raise OsCoreError(
+                    "EMBEDDED_GENERATION_CONTRACT_MISMATCH "
+                    "embedded=%s contract=%s" % (gen_contract[:16], contract_sha[:16])
+                )
+            # Discovery must remain distinct from payload-manifest identity when
+            # the new schema field is present.
+            if (
+                manifest_payload_sha
+                and manifest_disc
+                and manifest_disc == actual_payload_manifest_sha
+                and manifest_disc == gen_disc
+            ):
+                # Not inherently illegal if they collide by chance, but new builds
+                # should never *require* equality; no extra error here.
+                pass
+        elif manifest_payload_sha:
+            # New schema (payload_manifest_sha256 present) requires generation record.
+            raise OsCoreError(
+                "EMBEDDED_GENERATION_PLAN_MISSING path=%s" % gen_plan_path
+            )
     else:
         # Legacy: allow plan.json only under hermetic name-only escape.
-        plan_path = os.path.join(payload_root, "state", "plan.json")
+        plan_path = gen_plan_path
         if not os.path.isfile(plan_path):
             plan_path = os.path.join(pkg, "state", "plan.json")
         if os.path.isfile(plan_path) and allow_name_only_aws_validation():
@@ -573,6 +755,7 @@ def validate_package_tree(extract_root):
     manifest["aws_semantic_completeness"] = aws_detail.get("result") or "PASS"
     if contract_sha:
         manifest["aws_semantic_contract_sha256"] = contract_sha
+    manifest["os_core_payload_manifest_sha256"] = actual_payload_manifest_sha
 
     return manifest
 
@@ -660,7 +843,11 @@ def collect_from_selective_published(selective_root, payload_root):
 
 
 def embed_aws_semantic_contract_from_selective(selective_root, payload_root):
-    """Bind verified READY↔plan generation into payload/state/aws-semantic-contract.json.
+    """Bind verified READY↔plan generation into payload/state for R2 transport.
+
+    Embeds:
+      - state/aws-semantic-contract.json (public-safe contract)
+      - state/plan.json (public-safe generation record; covered by payload.sha256)
 
     Returns (contract_sha256, plan_checksum, discovery_checksum) — empty strings
     when hermetic name-only escape allows missing plan.
@@ -682,8 +869,14 @@ def embed_aws_semantic_contract_from_selective(selective_root, payload_root):
 
     contract = gen.get("contract")
     contract_sha = gen.get("aws_semantic_contract_sha256") or ""
+    plan_ck = gen.get("plan_checksum") or ""
+    disc_ck = gen.get("discovery_artifact_checksum") or ""
     if not contract or not contract_sha:
         raise OsCoreError("AWS_SEMANTIC_CONTRACT_ABSENT: verified generation missing contract")
+    if not is_hex64(plan_ck) or not is_hex64(disc_ck):
+        raise OsCoreError(
+            "SELECTIVE_GENERATION_INCOMPLETE: plan/discovery checksum missing"
+        )
 
     public = minimal_public_aws_semantic_contract(contract)
     public["contract_sha256"] = contract_sha
@@ -697,10 +890,26 @@ def embed_aws_semantic_contract_from_selective(selective_root, payload_root):
             "AWS_SEMANTIC_CONTRACT_EMBED_FAIL detail=%s" % (err or "checksum")
         )
 
+    # Public-safe generation record so fresh R2 materialize can recreate
+    # load_verified_selective_generation() without prior local planner state.
+    gen_plan = minimal_public_selective_generation_plan(
+        plan_ck, disc_ck, public, contract_sha256=contract_sha,
+    )
+    plan_dest = os.path.join(payload_root, SELECTIVE_GENERATION_PLAN_REL)
+    write_selective_generation_plan_json(plan_dest, gen_plan)
+    with open(plan_dest, "r", encoding="utf-8") as fh:
+        embedded_plan = json.load(fh)
+    if (embedded_plan.get("plan_checksum") or "").lower() != plan_ck.lower():
+        raise OsCoreError("SELECTIVE_GENERATION_PLAN_EMBED_FAIL plan_checksum")
+    if (embedded_plan.get("discovery_artifact_checksum") or "").lower() != disc_ck.lower():
+        raise OsCoreError("SELECTIVE_GENERATION_PLAN_EMBED_FAIL discovery")
+    if (embedded_plan.get("aws_semantic_contract_sha256") or "").lower() != contract_sha.lower():
+        raise OsCoreError("SELECTIVE_GENERATION_PLAN_EMBED_FAIL contract")
+
     return (
         contract_sha,
-        gen.get("plan_checksum") or "",
-        gen.get("discovery_artifact_checksum") or "",
+        plan_ck,
+        disc_ck,
     )
 
 
@@ -990,12 +1199,23 @@ def cmd_build(args):
             raise OsCoreError("PAYLOAD_COUNT_INTERNAL")
         # Safety margin: package + extract + stage (~3x payload) + 512MiB
         required_free = payload_bytes * 3 + (512 * 1024 * 1024)
-        discovery_ck = disc_ck if is_hex64(disc_ck) else sha256_file(payload_sum)
+        payload_manifest_ck = sha256_file(payload_sum)
+        # New schema: discovery is the selective discovery identity, NEVER the
+        # payload-manifest digest. Fail closed when generation did not supply it.
+        if is_hex64(disc_ck):
+            discovery_ck = disc_ck.lower()
+        elif allow_name_only_aws_validation():
+            discovery_ck = payload_manifest_ck
+        else:
+            raise OsCoreError(
+                "DISCOVERY_ARTIFACT_CHECKSUM_MISSING: verified selective generation "
+                "required for OS Core build"
+            )
         # Prefer real selective plan checksum when present; otherwise derive a
-        # deterministic identity over payload stats (legacy/synthetic builds).
+        # deterministic identity over payload stats (hermetic/synthetic only).
         if is_hex64(plan_ck):
             selective_plan_ck = plan_ck.lower()
-        else:
+        elif allow_name_only_aws_validation():
             plan_identity = {
                 "artifact_type": ARTIFACT_TYPE,
                 "schema_version": SCHEMA_VERSION,
@@ -1006,9 +1226,15 @@ def cmd_build(args):
                 "payload_bytes": payload_bytes,
                 "discovery_artifact_checksum": discovery_ck,
                 "aws_semantic_contract_sha256": contract_sha or "",
+                "payload_manifest_sha256": payload_manifest_ck,
             }
             selective_plan_ck = sha256_bytes(
                 json.dumps(plan_identity, sort_keys=True, separators=(",", ":"))
+            )
+        else:
+            raise OsCoreError(
+                "SELECTIVE_PLAN_CHECKSUM_MISSING: verified selective generation "
+                "required for OS Core build"
             )
         if not contract_sha and not allow_name_only_aws_validation():
             raise OsCoreError("AWS_SEMANTIC_CONTRACT_SHA_MISSING")
@@ -1028,6 +1254,7 @@ def cmd_build(args):
             "selective_plan_checksum": selective_plan_ck,
             "discovery_artifact_checksum": discovery_ck,
             "aws_semantic_contract_sha256": contract_sha,
+            "payload_manifest_sha256": payload_manifest_ck,
         }
         with open(os.path.join(pkg_root, "manifest.json"), "w", encoding="utf-8") as fh:
             json.dump(manifest, fh, indent=2, sort_keys=True)
@@ -1069,6 +1296,7 @@ def cmd_build(args):
         print("SELECTIVE_PLAN_CHECKSUM=%s" % selective_plan_ck)
         print("DISCOVERY_ARTIFACT_CHECKSUM=%s" % discovery_ck)
         print("AWS_SEMANTIC_CONTRACT_SHA256=%s" % contract_sha)
+        print("PAYLOAD_MANIFEST_SHA256=%s" % payload_manifest_ck)
         print("SIGNATURE=%s" % ("YES" if signed else "NO"))
     finally:
         shutil.rmtree(build_tmp, ignore_errors=True)

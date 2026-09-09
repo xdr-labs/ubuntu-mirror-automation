@@ -1035,7 +1035,7 @@ def validate_tree(plan_path, selective_root, mirror_root=None, run_apt=False,
         actual_result=aws_plan_detail.get('result'),
     )
     aws_tree_ok, aws_tree_errs, aws_tree_detail = validate_tree_aws_completeness(
-        live, plan=plan,
+        live, plan=plan, verify_sha256=True,
     )
     gate(
         'aws_tree_semantic_completeness',

@@ -2280,5 +2280,374 @@ echo PRE_REBOOT_FAIL
             shutil.rmtree(tmp, ignore_errors=True)
 
 
+class SixthReviewR2RoundTripAndChecksumTests(unittest.TestCase):
+    """Sixth-review P0/P1: distinct checksums + R2 fresh materialize self-sufficiency."""
+
+    def _build_os_core(self, oc, sel, out, release_id):
+        ns = type('A', (), {
+            'selective_root': sel,
+            'output_dir': out,
+            'project_root': ROOT,
+            'release_id': release_id,
+            'signing_key': '',
+        })()
+        oc.cmd_build(ns)
+        return os.path.join(
+            out, 'ubuntu-os-core-xenial-to-noble-%s.tar' % release_id,
+        )
+
+    def test_discovery_and_payload_manifest_checksums_are_distinct(self):
+        import hashlib
+        import tarfile
+        oc = _load('os_core_package', os.path.join(ROOT, 'scripts', 'lib', 'os_core_package.py'))
+        contract, contents = _synthetic_contract_and_contents()
+        plan_ck = 'a' * 64
+        disc_ck = 'b' * 64
+        self.assertNotEqual(plan_ck, disc_ck)
+        tmp = tempfile.mkdtemp(prefix='um-aws-disc-payload-')
+        try:
+            sel = os.path.join(tmp, 'sel')
+            _plant_synth_tree(sel, contract, contents)
+            _write_plan_state(
+                sel, contract,
+                plan_checksum=plan_ck,
+                discovery_checksum=disc_ck,
+            )
+            out = os.path.join(tmp, 'out')
+            os.makedirs(out)
+            tar_path = self._build_os_core(oc, sel, out, 'discPayload001')
+            extract = os.path.join(tmp, 'extract')
+            os.makedirs(extract)
+            with tarfile.open(tar_path, 'r:') as tf:
+                tf.extractall(extract)
+            pkg = os.path.join(extract, 'ubuntu-os-core')
+            with open(os.path.join(pkg, 'manifest.json')) as fh:
+                manifest = json.load(fh)
+            payload_manifest = hashlib.sha256(
+                open(os.path.join(pkg, 'payload.sha256'), 'rb').read()
+            ).hexdigest()
+            self.assertEqual(manifest.get('discovery_artifact_checksum'), disc_ck)
+            self.assertEqual(manifest.get('payload_manifest_sha256'), payload_manifest)
+            self.assertNotEqual(
+                manifest.get('discovery_artifact_checksum'),
+                manifest.get('payload_manifest_sha256'),
+            )
+            self.assertEqual(manifest.get('selective_plan_checksum'), plan_ck)
+            self.assertEqual(
+                manifest.get('aws_semantic_contract_sha256'),
+                contract['contract_sha256'],
+            )
+            oc.cmd_verify(type('V', (), {'package': tar_path, 'public_key': ''})())
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_payload_manifest_sha_tamper_fails_verify(self):
+        import tarfile
+        oc = _load('os_core_package', os.path.join(ROOT, 'scripts', 'lib', 'os_core_package.py'))
+        contract, contents = _synthetic_contract_and_contents()
+        tmp = tempfile.mkdtemp(prefix='um-aws-payload-tamper-')
+        try:
+            sel = os.path.join(tmp, 'sel')
+            _plant_synth_tree(sel, contract, contents)
+            _write_plan_state(sel, contract, plan_checksum='1' * 64, discovery_checksum='2' * 64)
+            out = os.path.join(tmp, 'out')
+            os.makedirs(out)
+            tar_path = self._build_os_core(oc, sel, out, 'payloadTamper001')
+            # Rebuild tar with tampered manifest.payload_manifest_sha256
+            work = os.path.join(tmp, 'tamper')
+            os.makedirs(work)
+            with tarfile.open(tar_path, 'r:') as tf:
+                tf.extractall(work)
+            mp = os.path.join(work, 'ubuntu-os-core', 'manifest.json')
+            with open(mp) as fh:
+                manifest = json.load(fh)
+            manifest['payload_manifest_sha256'] = '0' * 64
+            with open(mp, 'w') as fh:
+                json.dump(manifest, fh, indent=2, sort_keys=True)
+                fh.write('\n')
+            bad_tar = os.path.join(tmp, 'bad.tar')
+            with tarfile.open(bad_tar, 'w') as tf:
+                tf.add(
+                    os.path.join(work, 'ubuntu-os-core'),
+                    arcname='ubuntu-os-core',
+                )
+            # validate_package_tree path used by verify
+            with self.assertRaises(oc.OsCoreError) as ctx:
+                oc.validate_package_tree(work)
+            self.assertIn('MANIFEST_PAYLOAD_MANIFEST_MISMATCH', str(ctx.exception))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_fresh_materialize_restores_generation_without_prior_plan(self):
+        import tarfile
+        oc = _load('os_core_package', os.path.join(ROOT, 'scripts', 'lib', 'os_core_package.py'))
+        contract, contents = _synthetic_contract_and_contents()
+        plan_ck = 'c' * 64
+        disc_ck = 'd' * 64
+        tmp = tempfile.mkdtemp(prefix='um-aws-fresh-mat-')
+        try:
+            sel = os.path.join(tmp, 'sel')
+            _plant_synth_tree(sel, contract, contents)
+            _write_plan_state(
+                sel, contract,
+                plan_checksum=plan_ck,
+                discovery_checksum=disc_ck,
+            )
+            out = os.path.join(tmp, 'out')
+            os.makedirs(out)
+            tar_path = self._build_os_core(oc, sel, out, 'freshMat001')
+            oc.cmd_verify(type('V', (), {'package': tar_path, 'public_key': ''})())
+
+            extract = os.path.join(tmp, 'extract')
+            os.makedirs(extract)
+            with tarfile.open(tar_path, 'r:') as tf:
+                tf.extractall(extract)
+            pkg = os.path.join(extract, 'ubuntu-os-core')
+            # Fresh empty destination — no prior plan/READY.
+            dest = os.path.join(tmp, 'fresh-selective')
+            # Simulate engine move of payload into selective root.
+            shutil.copytree(os.path.join(pkg, 'payload'), dest)
+            # Ensure we did not copy READY from source (build does not embed READY).
+            ready_src = os.path.join(dest, 'state', 'READY')
+            if os.path.isfile(ready_src):
+                os.unlink(ready_src)
+            self.assertTrue(
+                os.path.isfile(os.path.join(dest, 'state', 'plan.json')),
+                'OS Core must embed public-safe plan.json',
+            )
+            # Real provenance → READY materialization path
+            ns = type('R', (), {
+                'package_root': pkg,
+                'selective_root': dest,
+                'payload_root': dest,
+            })()
+            oc.cmd_write_selective_ready(ns)
+            gen = aws_c.load_verified_selective_generation(dest)
+            self.assertEqual(gen['plan_checksum'], plan_ck)
+            self.assertEqual(gen['discovery_artifact_checksum'], disc_ck)
+            self.assertEqual(gen['aws_semantic_contract_sha256'], contract['contract_sha256'])
+            bash, client_sha, _ = aws_c.resolve_aws_semantic_contract_bash_for_client(dest)
+            self.assertEqual(client_sha, contract['contract_sha256'])
+            self.assertIn(contract['contract_sha256'], bash)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_stale_external_plan_replaced_by_os_core_generation(self):
+        import tarfile
+        oc = _load('os_core_package', os.path.join(ROOT, 'scripts', 'lib', 'os_core_package.py'))
+        contract, contents = _synthetic_contract_and_contents()
+        plan_ck = 'e' * 64
+        disc_ck = 'f' * 64
+        tmp = tempfile.mkdtemp(prefix='um-aws-stale-plan-')
+        try:
+            sel = os.path.join(tmp, 'sel')
+            _plant_synth_tree(sel, contract, contents)
+            _write_plan_state(
+                sel, contract,
+                plan_checksum=plan_ck,
+                discovery_checksum=disc_ck,
+            )
+            out = os.path.join(tmp, 'out')
+            os.makedirs(out)
+            tar_path = self._build_os_core(oc, sel, out, 'stalePlan001')
+            extract = os.path.join(tmp, 'extract')
+            os.makedirs(extract)
+            with tarfile.open(tar_path, 'r:') as tf:
+                tf.extractall(extract)
+            pkg = os.path.join(extract, 'ubuntu-os-core')
+
+            dest = os.path.join(tmp, 'dest')
+            os.makedirs(os.path.join(dest, 'state'), exist_ok=True)
+            # Plant unrelated stale plan that must NOT win.
+            stale_contract, _ = _synthetic_contract_and_contents()
+            blob = b'SYNTH|stale|linux-aws'
+            ident, _ = _synth_identity('linux-aws', '0.0.0.stale', blob)
+            stale_contract['hops']['xenial-to-bionic']['linux_aws'] = ident
+            aws_c.attach_contract_sha256(stale_contract)
+            _write_plan_state(
+                dest, stale_contract,
+                plan_checksum='9' * 64,
+                discovery_checksum='8' * 64,
+            )
+            # Overlay verified payload state from OS Core (engine replaces tree).
+            # Invalidate any stale READY so package manifest is the authority.
+            stale_ready = os.path.join(dest, 'state', 'READY')
+            if os.path.isfile(stale_ready):
+                os.unlink(stale_ready)
+            for name in ('plan.json', 'aws-semantic-contract.json'):
+                src = os.path.join(pkg, 'payload', 'state', name)
+                if os.path.isfile(src):
+                    shutil.copy2(src, os.path.join(dest, 'state', name))
+            # Copy hops so client resolution is meaningful after READY.
+            if os.path.isdir(os.path.join(pkg, 'payload', 'hops')):
+                if os.path.isdir(os.path.join(dest, 'hops')):
+                    shutil.rmtree(os.path.join(dest, 'hops'))
+                shutil.copytree(
+                    os.path.join(pkg, 'payload', 'hops'),
+                    os.path.join(dest, 'hops'),
+                )
+            oc.cmd_write_selective_ready(type('R', (), {
+                'package_root': pkg,
+                'selective_root': dest,
+                'payload_root': dest,
+            })())
+            gen = aws_c.load_verified_selective_generation(dest)
+            self.assertEqual(gen['plan_checksum'], plan_ck)
+            self.assertEqual(gen['discovery_artifact_checksum'], disc_ck)
+            self.assertNotEqual(gen['plan_checksum'], '9' * 64)
+            self.assertEqual(gen['aws_semantic_contract_sha256'], contract['contract_sha256'])
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_r2_roundtrip_real_build_verify_materialize_client(self):
+        """Mandatory hermetic lifecycle using real production functions."""
+        import hashlib
+        import tarfile
+        oc = _load('os_core_package', os.path.join(ROOT, 'scripts', 'lib', 'os_core_package.py'))
+        contract, contents = _synthetic_contract_and_contents()
+        plan_ck = hashlib.sha256(b'generation-A-plan').hexdigest()
+        disc_ck = hashlib.sha256(b'generation-A-discovery').hexdigest()
+        self.assertNotEqual(plan_ck, disc_ck)
+        tmp = tempfile.mkdtemp(prefix='um-aws-r2-roundtrip-')
+        try:
+            # 1-3: tiny valid tree + verified generation A + READY A
+            sel = os.path.join(tmp, 'sel-src')
+            _plant_synth_tree(sel, contract, contents)
+            _write_plan_state(
+                sel, contract,
+                plan_checksum=plan_ck,
+                discovery_checksum=disc_ck,
+                write_ready=True,
+            )
+            gen_a = aws_c.load_verified_selective_generation(sel)
+            self.assertEqual(gen_a['plan_checksum'], plan_ck)
+            self.assertEqual(gen_a['discovery_artifact_checksum'], disc_ck)
+
+            # 4-5: REAL os_core build + verify
+            out = os.path.join(tmp, 'out')
+            os.makedirs(out)
+            tar_path = self._build_os_core(oc, sel, out, 'r2RoundTrip001')
+            oc.cmd_verify(type('V', (), {'package': tar_path, 'public_key': ''})())
+
+            # 6-7: extract into NEW EMPTY selective root + provenance READY path
+            extract = os.path.join(tmp, 'extract')
+            os.makedirs(extract)
+            with tarfile.open(tar_path, 'r:') as tf:
+                tf.extractall(extract)
+            pkg = os.path.join(extract, 'ubuntu-os-core')
+            # Prove we did not manually copy source plan outside OS Core contract.
+            self.assertTrue(
+                os.path.isfile(os.path.join(pkg, 'payload', 'state', 'plan.json'))
+            )
+            fresh = os.path.join(tmp, 'fresh-mirror')
+            shutil.copytree(os.path.join(pkg, 'payload'), fresh)
+            if os.path.isfile(os.path.join(fresh, 'state', 'READY')):
+                os.unlink(os.path.join(fresh, 'state', 'READY'))
+            oc.cmd_write_selective_ready(type('R', (), {
+                'package_root': pkg,
+                'selective_root': fresh,
+                'payload_root': fresh,
+            })())
+
+            # 8-9: canonical generation restored + load_verified_selective_generation
+            gen_b = aws_c.load_verified_selective_generation(fresh)
+            self.assertEqual(gen_b['plan_checksum'], plan_ck)
+            self.assertEqual(gen_b['discovery_artifact_checksum'], disc_ck)
+            self.assertEqual(gen_b['aws_semantic_contract_sha256'], contract['contract_sha256'])
+            self.assertEqual(gen_a['plan_checksum'], gen_b['plan_checksum'])
+            self.assertEqual(
+                gen_a['discovery_artifact_checksum'],
+                gen_b['discovery_artifact_checksum'],
+            )
+            self.assertEqual(
+                gen_a['aws_semantic_contract_sha256'],
+                gen_b['aws_semantic_contract_sha256'],
+            )
+
+            # 10: REAL client contract-resolution path
+            bash, client_sha, _ = aws_c.resolve_aws_semantic_contract_bash_for_client(
+                fresh, project_root=ROOT,
+            )
+            self.assertEqual(client_sha, contract['contract_sha256'])
+            self.assertEqual(client_sha, gen_b['aws_semantic_contract_sha256'])
+            self.assertIn('AWS_SEMANTIC_CONTRACT_SHA256=', bash)
+
+            with open(os.path.join(pkg, 'manifest.json')) as fh:
+                manifest = json.load(fh)
+            self.assertEqual(manifest['selective_plan_checksum'], plan_ck)
+            self.assertEqual(manifest['discovery_artifact_checksum'], disc_ck)
+            self.assertNotEqual(
+                manifest['discovery_artifact_checksum'],
+                manifest['payload_manifest_sha256'],
+            )
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_plan_same_name_version_wrong_sha_fails(self):
+        contract, contents = _synthetic_contract_and_contents()
+        x2b = contract['hops']['xenial-to-bionic']['linux_aws']
+        wrong_sha = 'b' * 64
+        self.assertNotEqual(x2b['sha256'], wrong_sha)
+        rows = []
+        for hop, hop_c in contract['hops'].items():
+            for ident in aws_c.iter_contract_identities(hop_c):
+                sha = ident['sha256']
+                if hop == 'xenial-to-bionic' and ident['package'] == 'linux-aws':
+                    sha = wrong_sha
+                rows.append({
+                    'package': ident['package'],
+                    'version': ident['version'],
+                    'architecture': ident.get('architecture') or 'amd64',
+                    'sha256': sha,
+                    'hop': hop,
+                    'source_hops': [hop],
+                })
+        plan = {
+            'discovery_profiles': ['generic', 'aws'],
+            'aws_semantic_contract': contract,
+            'aws_semantic_contract_sha256': contract['contract_sha256'],
+            'debs': rows,
+        }
+        ok, errors, detail = aws_c.validate_plan_aws_completeness(
+            plan, package_rows=rows, require_aws_profile=True,
+        )
+        self.assertFalse(ok, detail)
+        self.assertTrue(
+            any('aws_contract_identity_sha256_mismatch_in_plan' in e for e in errors),
+            errors,
+        )
+
+    def test_prepublish_contract_file_wrong_bytes_fails(self):
+        contract, contents = _synthetic_contract_and_contents()
+        tmp = tempfile.mkdtemp(prefix='um-aws-prepub-bytes-')
+        try:
+            # Correct filenames/versions, wrong bytes for one critical AWS deb.
+            bad_contents = dict(contents)
+            xsha = contract['hops']['xenial-to-bionic']['linux_aws']['sha256']
+            bad_contents[xsha] = b'TAMPERED-PREPUBLISH-BYTES'
+            live = os.path.join(tmp, 'staging')
+            _plant_synth_tree(live, contract, bad_contents)
+            plan = {
+                'discovery_profiles': ['generic', 'aws'],
+                'aws_semantic_contract': contract,
+                'aws_semantic_contract_sha256': contract['contract_sha256'],
+                'require_contract_checksum': True,
+            }
+            # Pre-publish gate now calls verify_sha256=True for the AWS critical set.
+            ok, errors, detail = aws_c.validate_tree_aws_completeness(
+                live, plan=plan, require_aws_profile=True, verify_sha256=True,
+            )
+            self.assertFalse(ok, detail)
+            self.assertTrue(
+                any('aws_contract_deb_sha256_mismatch_in_tree' in e for e in errors),
+                errors,
+            )
+            # READY must not be written on pre-publish semantic failure.
+            ready = os.path.join(tmp, 'state', 'READY')
+            self.assertFalse(os.path.isfile(ready))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
 if __name__ == '__main__':
     unittest.main()

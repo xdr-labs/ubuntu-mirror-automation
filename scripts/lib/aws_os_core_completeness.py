@@ -77,6 +77,9 @@ CONTRACT_SCHEMA_VERSION = 1
 
 # Embedded OS Core / selective state relative path for the public contract artifact.
 AWS_SEMANTIC_CONTRACT_JSON_REL = os.path.join('state', 'aws-semantic-contract.json')
+# Public-safe generation record restored onto fresh Mirrors after OS Core materialize.
+SELECTIVE_GENERATION_PLAN_REL = os.path.join('state', 'plan.json')
+SELECTIVE_GENERATION_SCHEMA_VERSION = 1
 
 
 def _env_truthy(name):
@@ -653,6 +656,164 @@ def write_aws_semantic_contract_json(path, contract):
     return path
 
 
+def minimal_public_selective_generation_plan(
+    plan_checksum,
+    discovery_artifact_checksum,
+    contract,
+    contract_sha256=None,
+):
+    """Public-safe generation record for OS Core embedding (no private discovery).
+
+    Carries only the generation identity tuple + public AWS semantic contract so a
+    fresh Mirror can recreate verified READY↔plan state after R2 materialization.
+    """
+    contract = minimal_public_aws_semantic_contract(contract)
+    contract_sha = (
+        (contract_sha256 or '').strip().lower()
+        or (contract.get('contract_sha256') or '').strip().lower()
+    )
+    if not contract_sha:
+        contract_sha = aws_semantic_contract_sha256(contract)
+    contract['contract_sha256'] = contract_sha
+    plan_checksum = (plan_checksum or '').strip().lower()
+    discovery_artifact_checksum = (discovery_artifact_checksum or '').strip().lower()
+    _require_generation_tuple(
+        {
+            'plan_checksum': plan_checksum,
+            'discovery_artifact_checksum': discovery_artifact_checksum,
+            'aws_semantic_contract_sha256': contract_sha,
+        },
+        'generation_embed',
+    )
+    return OrderedDict([
+        ('schema_version', SELECTIVE_GENERATION_SCHEMA_VERSION),
+        ('profile_name', 'offline-upgrade-selective'),
+        ('discovery_profiles', ['generic', 'aws']),
+        ('validation_result', 'PASS'),
+        ('plan_checksum', plan_checksum),
+        ('selective_plan_checksum', plan_checksum),
+        ('discovery_artifact_checksum', discovery_artifact_checksum),
+        ('aws_semantic_contract_sha256', contract_sha),
+        ('aws_semantic_contract', contract),
+        # Empty public-safe package list: identities live in the contract.
+        ('debs', []),
+    ])
+
+
+def write_selective_generation_plan_json(path, plan):
+    """Atomically write public-safe selective generation plan.json."""
+    parent = os.path.dirname(path)
+    if parent and not os.path.isdir(parent):
+        os.makedirs(parent)
+    tmp = path + '.tmp.%d' % os.getpid()
+    with open(tmp, 'w') as fh:
+        json.dump(plan, fh, indent=2, sort_keys=True)
+        fh.write('\n')
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, path)
+    return path
+
+
+def restore_selective_generation_from_os_core_payload(selective_root, payload_root=None):
+    """Ensure selective_root/state carries generation plan + contract from payload.
+
+    Used after OS Core materialization onto a clean Mirror. Prefer files already
+    present under selective_root/state (moved with payload). Fail closed when the
+    embedded generation record is absent or inconsistent.
+    Returns verified generation OrderedDict from load_verified_selective_generation
+    after READY is present — callers write READY first or pass ready_already=False
+    and only restore plan/contract artifacts.
+
+    This helper restores plan.json + contract JSON + bash include; it does NOT
+    write READY.
+    """
+    selective_root = os.path.abspath(selective_root or '')
+    if payload_root is None:
+        payload_root = selective_root
+    else:
+        payload_root = os.path.abspath(payload_root)
+
+    state = os.path.join(selective_root, 'state')
+    try:
+        os.makedirs(state, exist_ok=True)
+    except OSError as exc:
+        raise ValueError('selective_generation_restore_mkdir_fail:%s (%s)' % (state, exc))
+
+    src_plan = os.path.join(payload_root, SELECTIVE_GENERATION_PLAN_REL)
+    dst_plan = os.path.join(state, 'plan.json')
+    src_contract = os.path.join(payload_root, AWS_SEMANTIC_CONTRACT_JSON_REL)
+    dst_contract = os.path.join(state, 'aws-semantic-contract.json')
+
+    # When selective_root IS the moved payload, src == dst; still verify.
+    if not os.path.isfile(src_plan) and not os.path.isfile(dst_plan):
+        raise ValueError(
+            'selective_generation_restore_plan_absent: embedded %s missing'
+            % SELECTIVE_GENERATION_PLAN_REL
+        )
+    if os.path.isfile(src_plan) and os.path.abspath(src_plan) != os.path.abspath(dst_plan):
+        _atomic_copy_file(src_plan, dst_plan)
+    elif not os.path.isfile(dst_plan):
+        raise ValueError('selective_generation_restore_plan_absent: %s' % dst_plan)
+
+    if os.path.isfile(src_contract) and os.path.abspath(src_contract) != os.path.abspath(dst_contract):
+        _atomic_copy_file(src_contract, dst_contract)
+
+    try:
+        with open(dst_plan, 'r') as fh:
+            plan = json.load(fh)
+    except (OSError, ValueError, TypeError) as exc:
+        raise ValueError('selective_generation_restore_plan_unreadable:%s' % exc)
+
+    if (plan.get('validation_result') or '') != 'PASS':
+        raise ValueError(
+            'selective_generation_restore_plan_not_pass:%s'
+            % (plan.get('validation_result') or 'missing')
+        )
+    plan_tuple = _require_generation_tuple(generation_tuple_from_plan(plan), 'restore')
+    contract, contract_sha = load_aws_semantic_contract_from_plan(plan)
+    if contract_sha != plan_tuple['aws_semantic_contract_sha256']:
+        raise ValueError(
+            'selective_generation_restore_contract_mismatch plan=%s body=%s'
+            % (plan_tuple['aws_semantic_contract_sha256'][:16], contract_sha[:16])
+        )
+
+    # Keep JSON sibling in sync for OS Core / tooling.
+    if not os.path.isfile(dst_contract):
+        write_aws_semantic_contract_json(dst_contract, contract)
+
+    bash = render_aws_semantic_contract_bash(contract)
+    if not bash.endswith('\n'):
+        bash += '\n'
+    bash_dest = os.path.join(state, 'aws-semantic-contract.sh.inc')
+    tmp = bash_dest + '.tmp.%d' % os.getpid()
+    try:
+        with open(tmp, 'w') as fh:
+            fh.write(bash)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, bash_dest)
+    except OSError as exc:
+        try:
+            if os.path.isfile(tmp):
+                os.unlink(tmp)
+        except OSError:
+            pass
+        raise ValueError('selective_generation_restore_bash_fail:%s' % exc)
+
+    return OrderedDict([
+        ('plan_checksum', plan_tuple['plan_checksum']),
+        ('discovery_artifact_checksum', plan_tuple['discovery_artifact_checksum']),
+        ('aws_semantic_contract_sha256', contract_sha),
+        ('plan', plan),
+        ('contract', contract),
+        ('bash', bash),
+        ('plan_path', dst_plan),
+        ('contract_json_path', dst_contract),
+        ('contract_bash_path', bash_dest),
+    ])
+
+
 def allow_generic_only_discovery():
     """True only when BOTH hermetic test mode and explicit escape are set.
 
@@ -1074,6 +1235,10 @@ def validate_rows_match_aws_contract(contract, package_rows, hops=None):
 
     Matching is hop-scoped: an identity required for hop A must appear in rows
     that belong to hop A (source_hops/hop), not merely elsewhere in the plan.
+
+    When a contract identity carries a non-empty sha256, exact SHA match is
+    required (plus package/version/arch). Name/version/arch fallback is only
+    allowed when the contract identity has no sha256 (legacy/hermetic rows).
     """
     errors = []
     details = OrderedDict([('hops', OrderedDict())])
@@ -1091,15 +1256,34 @@ def validate_rows_match_aws_contract(contract, package_rows, hops=None):
             pkg = ident.get('package')
             ver = ident.get('version')
             arch = ident.get('architecture') or 'amd64'
-            sha = ident.get('sha256') or ''
+            sha = (ident.get('sha256') or '').strip()
             matched = False
             match_how = ''
-            if sha and sha in by_sha:
-                matched = True
-                match_how = 'sha256'
-            elif (pkg, ver, arch) in by_nv or (pkg, ver, '') in by_nv:
-                matched = True
-                match_how = 'name_version_arch'
+            if sha:
+                # Strict: contract SHA present ⇒ require exact SHA row, and that
+                # row must also carry the same package/version/arch identity.
+                for row in by_sha.get(sha) or []:
+                    row_pkg = _package_name(row)
+                    row_ver = decode_pkg_version(row.get('version') or '')
+                    row_arch = (row.get('architecture') or '').strip() or 'amd64'
+                    if row_pkg == pkg and versions_equal(row_ver, ver) and row_arch == arch:
+                        matched = True
+                        match_how = 'sha256'
+                        break
+                if not matched:
+                    # Same name/version/arch with a different SHA is a hard fail —
+                    # do not accept name_version_arch fallback when contract has SHA.
+                    if (pkg, ver, arch) in by_nv or (pkg, ver, '') in by_nv:
+                        match_how = 'sha256_mismatch'
+                        errors.append(
+                            'aws_contract_identity_sha256_mismatch_in_plan:'
+                            '%s:%s:%s:expected=%s'
+                            % (hop, pkg, ver, sha[:16])
+                        )
+            else:
+                if (pkg, ver, arch) in by_nv or (pkg, ver, '') in by_nv:
+                    matched = True
+                    match_how = 'name_version_arch'
             hop_detail['identities'].append(OrderedDict([
                 ('package', pkg),
                 ('version', ver),
@@ -1108,7 +1292,7 @@ def validate_rows_match_aws_contract(contract, package_rows, hops=None):
                 ('matched', matched),
                 ('match_how', match_how),
             ]))
-            if not matched:
+            if not matched and match_how != 'sha256_mismatch':
                 errors.append(
                     'aws_contract_identity_missing_in_plan:%s:%s:%s:%s'
                     % (hop, pkg, ver, sha[:12] if sha else 'nosha')
@@ -1331,7 +1515,12 @@ def hop_pool_aws_contract(ubuntu_root):
 
 
 def _find_identity_in_pool(ubuntu_root, identity, verify_sha256=False):
-    """Return (found, detail) for one identity under a hop pool."""
+    """Return (found, detail) for one identity under a hop pool.
+
+    ``found`` is True when a basename matching package/version/arch exists.
+    When ``verify_sha256`` is set, ``detail['sha_ok']`` reports whether bytes
+    match the contract SHA (False on mismatch or missing expected SHA).
+    """
     detail = OrderedDict([
         ('package', (identity or {}).get('package')),
         ('version', (identity or {}).get('version')),
@@ -1353,16 +1542,15 @@ def _find_identity_in_pool(ubuntu_root, identity, verify_sha256=False):
         if verify_sha256:
             if not expected_sha:
                 detail['sha_ok'] = False
-                return False, detail
+                return True, detail
             try:
                 actual = file_sha256(path)
             except OSError:
                 detail['sha_ok'] = False
-                return False, detail
+                return True, detail
             detail['sha_ok'] = (actual == expected_sha)
             detail['actual_sha256'] = actual
-            if actual != expected_sha:
-                return False, detail
+            return True, detail
         return True, detail
     return False, detail
 
