@@ -23,8 +23,9 @@ source "${SCRIPT_DIR}/lib/acps_auth.sh"
 # Never enable set -x; never print ACPS_PASS / ACPS_PASSWORD.
 # Auth uses mode-0600 netrc (never curl -u). TLS verify ON unless
 # ACPS_INSECURE_TLS=1 explicitly opts into -k (hermetic only).
-# Production destination is fixed inside acps_auth.sh; env ACPS_HOST /
-# ACPS_PATH / ACPS_BASE_URL / ACPS_BASE_URL_FIXED cannot redirect it.
+# Production destination is the code-owned literal in acps_auth.sh; env
+# ACPS_PRODUCTION_BASE_URL / ACPS_HOST / ACPS_PATH / ACPS_BASE_URL /
+# ACPS_BASE_URL_FIXED cannot redirect production auth or netrc machine.
 # ---------------------------------------------------------------------------
 ACPS_USER="${ACPS_USER:-${ACPS_USERNAME:-}}"
 ACPS_PASS="${ACPS_PASS:-${ACPS_PASSWORD:-}}"
@@ -36,7 +37,8 @@ ACPS_HOST="${ACPS_HOST:-acps.stellarcyber.ai}"
 ACPS_PATH="${ACPS_PATH:-/provision/aelladeb_py3}"
 ACPS_BASE_URL="${ACPS_BASE_URL:-}"
 ACPS_BASE_URL_FIXED="${ACPS_BASE_URL_FIXED:-}"
-ACPS_PRODUCTION_BASE_URL="${ACPS_PRODUCTION_BASE_URL:-https://acps.stellarcyber.ai/provision/aelladeb_py3}"
+# Re-assert immutable production authority (ignore any inherited env value).
+ACPS_PRODUCTION_BASE_URL="https://acps.stellarcyber.ai/provision/aelladeb_py3"
 
 _load_acps_credentials_from_gui_config() {
   local cfg="${DP_UPGRADE_MIRROR_CONFIG:-/etc/ubuntu-mirror/dp-upgrade-mirror.conf}"

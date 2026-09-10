@@ -57,6 +57,7 @@ CATEGORY_PATTERNS = {
         "client/dp-client-hop-launcher.sh.in",
     ),
     "helpers": (
+        "client/lib/dp-offline-hermetic-escapes.sh",
         "client/lib/dp-offline-destructive-confirmation.sh",
         "client/lib/dp-offline-release-upgrade-reconciliation.sh",
         "client/lib/dp-offline-apt-preflight-sandbox.sh",

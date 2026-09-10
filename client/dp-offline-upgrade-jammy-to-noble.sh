@@ -286,8 +286,134 @@ CLIENT_HANDOFF_RESULT=""
 CLIENT_EXIT_REASON=""
 MONITOR_RESULT=""
 
-# systemctl binary (overridable in fixture tests)
+# systemctl binary (fixture override requires MM_HERMETIC_TEST_MODE=1)
 SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
+# shellcheck shell=bash
+# Shared hermetic fixture-escape policy for offline OS upgrade clients.
+# Injected into single-file clients at build / stub-render time.
+# Compatible with Bash 4.3+ and safe under `set -Eeuo pipefail`.
+#
+# Contract:
+# - Production must never honor test/fixture controls from the environment alone.
+# - Fixture behavior requires MM_HERMETIC_TEST_MODE=1 AND the specific control.
+# - Call dp_offline_enforce_production_fixture_policy early in main() before
+#   TEST_ROOT / SYSTEMCTL_BIN fixture paths take effect.
+
+dp_offline_hermetic_test_mode() {
+  [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" ]]
+}
+
+# True when hermetic fixtures are permitted (companion flag checked by caller).
+dp_offline_hermetic_fixtures_enabled() {
+  dp_offline_hermetic_test_mode
+}
+
+# Category-C fixture controls: alter trust, identity, topology, confirmation,
+# package mutation, systemctl behavior, or upgrade success/failure semantics.
+# Keep this list the single inventory shared by all four hop clients.
+dp_offline_category_c_fixture_vars() {
+  printf '%s\n' \
+    DP_OFFLINE_TEST_ROOT \
+    STELLAR_OFFLINE_TEST_ROOT \
+    DP_OFFLINE_TEST_HANDOFF \
+    DP_OFFLINE_FAKE_DP_VERSION \
+    DP_OFFLINE_FAKE_ROLE \
+    DP_OFFLINE_FAKE_MIRROR_TRUST \
+    DP_OFFLINE_FAKE_CONFIRM \
+    DP_OFFLINE_FAKE_KERNEL \
+    DP_OFFLINE_FAKE_UNHOLD_FAIL \
+    DP_OFFLINE_FAKE_UNHOLD_STILL_HELD \
+    DP_OFFLINE_FAKE_HOLD_FAIL \
+    DP_OFFLINE_FAKE_SHELL_CHANGE_FAIL \
+    DP_OFFLINE_FAKE_SHELL_CHANGE_FAIL_USER \
+    DP_OFFLINE_FAKE_SHELL_CHSH_FAIL \
+    DP_OFFLINE_FAKE_SHELL_NOOP_SUCCESS \
+    DP_OFFLINE_FAKE_FAIL_AFTER_UNHOLD \
+    DP_OFFLINE_FORCE_NONINTERACTIVE \
+    DP_OFFLINE_FORCE_MONITOR \
+    DP_OFFLINE_UPGRADE_MODE \
+    STELLAR_OFFLINE_FORCE_SEMANTIC_GATE_FAIL \
+    STELLAR_OFFLINE_FORCE_DRO_PRE_TRANSITION_FAIL \
+    STELLAR_OFFLINE_SMOKE_STOP_BEFORE_DRO \
+    DP_OFFLINE_FAKE_PYTHON2_CLASS \
+    DP_OFFLINE_FAKE_PYTHON2_PACKAGES \
+    DP_OFFLINE_FAKE_PYTHON2_RDEPENDS \
+    DP_OFFLINE_FAKE_PYTHON2_NO_CANDIDATE \
+    DP_OFFLINE_FAKE_PYTHON2_PRODUCT_REMOVE \
+    DP_OFFLINE_FAKE_PYTHON2_SIM_PLAN \
+    DP_OFFLINE_FAKE_LXD_CLASS \
+    DP_OFFLINE_FAKE_LXD_CONTAINERS \
+    DP_OFFLINE_FAKE_LXD_IMAGES \
+    DP_OFFLINE_FAKE_LXD_STORAGE \
+    DP_OFFLINE_FAKE_LXD_WAITREADY \
+    DP_OFFLINE_FAKE_LXD_TIMEOUT \
+    DP_OFFLINE_FAKE_LXD_JSON_PARSE \
+    DP_OFFLINE_FAKE_LXD_REMOVAL_SIM \
+    DP_OFFLINE_FAKE_LXD_NETWORK_RISK \
+    DP_OFFLINE_FAKE_LXD_TARGET_SELECTED \
+    DP_OFFLINE_FAKE_LXD_DO_REMOVE \
+    STELLAR_OFFLINE_FAKE_NTP_UID_PROCS \
+    STELLAR_OFFLINE_FAKE_NTP_UID_PROCS_AFTER_STOP \
+    STELLAR_OFFLINE_FAKE_LEGACY_NTP_PACKAGE \
+    STELLAR_OFFLINE_FAKE_NTPSEC_PACKAGE \
+    STELLAR_OFFLINE_FAKE_LEGACY_NTP_UNIT_FRAGMENT \
+    STELLAR_OFFLINE_FAKE_LEGACY_NTP_UNIT_OWNED \
+    STELLAR_OFFLINE_FAKE_LEGACY_NTP_ACTIVE \
+    STELLAR_OFFLINE_FAKE_DEFAULT_ROUTE \
+    STELLAR_OFFLINE_FAKE_SYSTEMCTL_STOP \
+    DP_OFFLINE_FAKE_LXD_WAITREADY_DELAY_SECS \
+    DP_OFFLINE_FAKE_LXD_TIMEOUT_ONCE \
+    DP_OFFLINE_FAKE_LXD_JSON_PARSE_FAIL
+}
+
+# Resolve TEST_ROOT only under hermetic fixtures.
+dp_offline_resolve_test_root() {
+  if dp_offline_hermetic_fixtures_enabled; then
+    printf '%s' "${DP_OFFLINE_TEST_ROOT:-}"
+  else
+    printf '%s' ""
+  fi
+}
+
+# Resolve SYSTEMCTL_BIN: production always uses systemctl; fixture override
+# requires hermetic mode.
+dp_offline_resolve_systemctl_bin() {
+  if dp_offline_hermetic_fixtures_enabled; then
+    printf '%s' "${SYSTEMCTL_BIN:-systemctl}"
+  else
+    printf '%s' "systemctl"
+  fi
+}
+
+# Fail closed in production when any Category-C fixture control is present, or
+# when SYSTEMCTL_BIN is overridden away from the default binary name.
+dp_offline_enforce_production_fixture_policy() {
+  if dp_offline_hermetic_test_mode; then
+    return 0
+  fi
+
+  local var val bad=""
+  while IFS= read -r var; do
+    [[ -n "$var" ]] || continue
+    # Bash 4.3-safe indirect expansion.
+    eval "val=\${${var}-}"
+    if [[ -n "$val" ]]; then
+      bad="${bad}${bad:+ }${var}"
+    fi
+  done < <(dp_offline_category_c_fixture_vars)
+
+  if [[ -n "${SYSTEMCTL_BIN:-}" && "${SYSTEMCTL_BIN}" != "systemctl" ]]; then
+    bad="${bad}${bad:+ }SYSTEMCTL_BIN"
+  fi
+
+  if [[ -n "$bad" ]]; then
+    printf 'ERROR: FIXTURE_ESCAPE_PRODUCTION_FORBIDDEN vars=%s (require MM_HERMETIC_TEST_MODE=1)\n' "$bad" >&2
+    return 1
+  fi
+
+  SYSTEMCTL_BIN="systemctl"
+  return 0
+}
 HANDOFF_WAIT_SECS="${HANDOFF_WAIT_SECS:-15}"
 HANDOFF_POLL_SECS="${HANDOFF_POLL_SECS:-1}"
 HANDOFF_CONFIRMED=0
@@ -919,7 +1045,7 @@ detect_dp_version() {
   DP_VERSION_DETECT_STATUS="undetermined"
   DP_VERSION_CLI_STATUS=""
 
-  if [[ -n "${DP_OFFLINE_FAKE_DP_VERSION:-}" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "${DP_OFFLINE_FAKE_DP_VERSION:-}" ]]; then
     DP_VERSION="$DP_OFFLINE_FAKE_DP_VERSION"
     DP_VERSION_SOURCE="FAKE"
     DP_VERSION_MATCHED_RECORDS=1
@@ -1002,7 +1128,7 @@ detect_dp_topology() {
   DP_TOPOLOGY_CLI_STATUS=""
   DP_TOPOLOGY_SUPPORTED=""
 
-  if [[ -n "${DP_OFFLINE_FAKE_ROLE:-}" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "${DP_OFFLINE_FAKE_ROLE:-}" ]]; then
     DP_TOPOLOGY="$(canonicalize_dp_topology "$DP_OFFLINE_FAKE_ROLE")"
     DP_TOPOLOGY_SOURCE="FAKE"
     DP_TOPOLOGY_CONSISTENCY="PASS"
@@ -2351,10 +2477,10 @@ test_root_set_held_packages() {
 apt_mark_unhold_pkg() {
   local pkg="$1"
   if [[ -n "$TEST_ROOT" ]]; then
-    if [[ "${DP_OFFLINE_FAKE_UNHOLD_FAIL:-}" == "$pkg" || "${DP_OFFLINE_FAKE_UNHOLD_FAIL:-}" == "all" ]]; then
+    if dp_offline_hermetic_fixtures_enabled && [[ "${DP_OFFLINE_FAKE_UNHOLD_FAIL:-}" == "$pkg" || "${DP_OFFLINE_FAKE_UNHOLD_FAIL:-}" == "all" ]]; then
       return 1
     fi
-    if [[ "${DP_OFFLINE_FAKE_UNHOLD_STILL_HELD:-}" == "1" || "${DP_OFFLINE_FAKE_UNHOLD_STILL_HELD:-}" == "$pkg" ]]; then
+    if dp_offline_hermetic_fixtures_enabled && [[ "${DP_OFFLINE_FAKE_UNHOLD_STILL_HELD:-}" == "1" || "${DP_OFFLINE_FAKE_UNHOLD_STILL_HELD:-}" == "$pkg" ]]; then
       # Command "succeeds" but selection remains hold - verification must catch this.
       return 0
     fi
@@ -2374,7 +2500,7 @@ apt_mark_unhold_pkg() {
 apt_mark_hold_pkg() {
   local pkg="$1"
   if [[ -n "$TEST_ROOT" ]]; then
-    if [[ "${DP_OFFLINE_FAKE_HOLD_FAIL:-}" == "$pkg" || "${DP_OFFLINE_FAKE_HOLD_FAIL:-}" == "all" ]]; then
+    if dp_offline_hermetic_fixtures_enabled && [[ "${DP_OFFLINE_FAKE_HOLD_FAIL:-}" == "$pkg" || "${DP_OFFLINE_FAKE_HOLD_FAIL:-}" == "all" ]]; then
       return 1
     fi
     local cur
@@ -5721,7 +5847,7 @@ python2_pkg_installed_p() {
 collect_python2_inventory() {
   # Sets PYTHON2_* evidence paths and classification. Never mutates packages.
   local stamp evid
-  if [[ -z "${TEST_ROOT:-}" && -n "${DP_OFFLINE_TEST_ROOT:-}" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -z "${TEST_ROOT:-}" && -n "${DP_OFFLINE_TEST_ROOT:-}" ]]; then
     TEST_ROOT="$DP_OFFLINE_TEST_ROOT"
   fi
   stamp="$(date -u '+%Y%m%dT%H%M%SZ' 2>/dev/null || date +%Y%m%d%H%M%S)"
@@ -5739,7 +5865,7 @@ collect_python2_inventory() {
     printf 'POLICY=PHASE1_OS_ONLY_NO_AUTO_PURGE\n'
   } >"$PYTHON2_INVENTORY_EVIDENCE"
 
-  if [[ -n "${DP_OFFLINE_FAKE_PYTHON2_CLASS:-}" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "${DP_OFFLINE_FAKE_PYTHON2_CLASS:-}" ]]; then
     PYTHON2_PREFLIGHT_CLASS="$DP_OFFLINE_FAKE_PYTHON2_CLASS"
     case "$PYTHON2_PREFLIGHT_CLASS" in
       PYTHON2_ABSENT)
@@ -6318,7 +6444,10 @@ PY
 
 lxd_waitready_once() {
   local evid="$1" attempt="$2" out="${evid}/waitready-attempt-${attempt}.stdout" err="${evid}/waitready-attempt-${attempt}.stderr"
-  local start end rc mode="${DP_OFFLINE_FAKE_LXD_WAITREADY:-}"
+  local start end rc mode=""
+  if dp_offline_hermetic_fixtures_enabled; then
+    mode="${DP_OFFLINE_FAKE_LXD_WAITREADY:-}"
+  fi
   start="$(date +%s)"
   log INFO "LXD_WAITREADY_ATTEMPT=${attempt}"
   set +e
@@ -6369,7 +6498,7 @@ lxd_run_inventory_commands() {
   rm -f "${evid}/.has_running" "${evid}/.has_stopped" "${evid}/.has_images" "${evid}/.has_storage" 2>/dev/null || true
 
   # First-attempt-only timeout fixture (cold-start retry path).
-  if [[ "${DP_OFFLINE_FAKE_LXD_TIMEOUT:-0}" == "1" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ "${DP_OFFLINE_FAKE_LXD_TIMEOUT:-0}" == "1" ]]; then
     if [[ "${DP_OFFLINE_FAKE_LXD_TIMEOUT_ONCE:-1}" == "1" && "$attempt" -eq 1 ]]; then
       printf 'TIMEOUT=lxc list\n' >>"${evid}/errors.txt"
       printf 'ATTEMPT=%s\nCOMPLETE=0\n' "$attempt" >"${evid}/inventory-attempt-${attempt}.env"
@@ -6381,7 +6510,7 @@ lxd_run_inventory_commands() {
     fi
   fi
 
-  if [[ "${DP_OFFLINE_FAKE_LXD_JSON_PARSE_FAIL:-0}" == "1" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ "${DP_OFFLINE_FAKE_LXD_JSON_PARSE_FAIL:-0}" == "1" ]]; then
     printf 'PARSE_FAIL=instances.json\n' >>"${evid}/errors.txt"
     printf 'ATTEMPT=%s\nCOMPLETE=0\n' "$attempt" >"${evid}/inventory-attempt-${attempt}.env"
     return 1
@@ -6580,7 +6709,7 @@ collect_and_classify_lxd_inventory() {
   local stamp evid attempt=1 start rc=0 complete=0 cold=0 installed=0
   stamp="$(date -u '+%Y%m%dT%H%M%SZ')"; evid="$(hostpath "${STATE_ROOT}/evidence/lxd-inventory/${stamp}")"
   mkdir -p "$evid"; LXD_INVENTORY_EVIDENCE="${evid}/inventory.txt"; lxd_validate_inventory_timeouts
-  if [[ -n "${DP_OFFLINE_FAKE_LXD_CLASS:-}" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "${DP_OFFLINE_FAKE_LXD_CLASS:-}" ]]; then
     LXD_PREFLIGHT_CLASS="$DP_OFFLINE_FAKE_LXD_CLASS"
     case "$LXD_PREFLIGHT_CLASS" in LXD_NOT_INSTALLED|LXD_INSTALLED_UNUSED|LXD_IN_USE|LXD_AMBIGUOUS) ;; *) LXD_PREFLIGHT_CLASS=LXD_AMBIGUOUS ;; esac
     lxd_set_class_policy "$LXD_PREFLIGHT_CLASS"
@@ -6643,7 +6772,7 @@ collect_and_classify_lxd_inventory() {
   trap 'lxd_restore_runtime_state "'"$evid"'"' RETURN
   lxd_start_runtime_for_inventory || true
   # Fixtures without waitready binary: treat as ready unless hang/fail forced.
-  if [[ -z "${DP_OFFLINE_FAKE_LXD_WAITREADY:-}" && -n "${TEST_ROOT:-}" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -z "${DP_OFFLINE_FAKE_LXD_WAITREADY:-}" && -n "${TEST_ROOT:-}" ]]; then
     export DP_OFFLINE_FAKE_LXD_WAITREADY=ok
   fi
   start="$(date +%s)"
@@ -6813,7 +6942,7 @@ simulate_unused_lxd_removal() {
   local line pkg
 
   mkdir -p "$evid"
-  if [[ -n "${DP_OFFLINE_FAKE_LXD_REMOVAL_SIM:-}" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "${DP_OFFLINE_FAKE_LXD_REMOVAL_SIM:-}" ]]; then
     printf '%s\n' "$DP_OFFLINE_FAKE_LXD_REMOVAL_SIM" >"$sim"
   else
     set +e
@@ -6895,7 +7024,7 @@ scan_package_maintainer_network_risk() {
 
   # Also scan apt-cache show for remaining candidate descriptions (informational),
   # but only fail when an installed/candidate preinst would still run.
-  if [[ "${DP_OFFLINE_FAKE_LXD_NETWORK_RISK:-}" == "1" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ "${DP_OFFLINE_FAKE_LXD_NETWORK_RISK:-}" == "1" ]]; then
     hit=1
     printf 'HIT=FAKE_NETWORK_RISK\n' >>"${evid}/network-risk-scan.txt"
   fi
@@ -6917,7 +7046,10 @@ guard_lxd_target_transition() {
   local evid="$1"
   local sim="${evid}/target-plan-sim.txt"
   local selected=0 rc=0
-  local force_selected="${DP_OFFLINE_FAKE_LXD_TARGET_SELECTED:-}"
+  local force_selected=""
+  if dp_offline_hermetic_fixtures_enabled; then
+    force_selected="${DP_OFFLINE_FAKE_LXD_TARGET_SELECTED:-}"
+  fi
 
   mkdir -p "$evid"
   if [[ -n "$force_selected" ]]; then
@@ -6990,7 +7122,7 @@ remove_unused_lxd_before_dro() {
     die "$EC_LXD" "FAIL_LXD_REMOVAL_SIMULATION"
   fi
 
-  if [[ -n "${TEST_ROOT:-}" && -z "${DP_OFFLINE_FAKE_LXD_DO_REMOVE:-}" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "${TEST_ROOT:-}" && -z "${DP_OFFLINE_FAKE_LXD_DO_REMOVE:-}" ]]; then
     # Fixture path: record simulated success without mutating host.
     log INFO "LXD_REMOVAL_RESULT=PASS"
     log INFO "LXD_POST_REMOVAL_DPKG_AUDIT=PASS"
@@ -7161,7 +7293,7 @@ run_os_preflight() {
   fi
 
   # Stub-pin fixtures skip live mirror/GPG so OS-only preflight can PASS in tests.
-  if [[ -n "$TEST_ROOT" && ( "$PIN_KEY_FINGERPRINT" == "DEADBEEF" || "${DP_OFFLINE_FAKE_MIRROR_TRUST:-}" == "1" ) ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "$TEST_ROOT" && ( "$PIN_KEY_FINGERPRINT" == "DEADBEEF" || "${DP_OFFLINE_FAKE_MIRROR_TRUST:-}" == "1" ) ]]; then
     log INFO "MIRROR_TRUST_GATE=SKIPPED_TEST_FIXTURE"
     log INFO "SOURCE_OS=${PIN_SOURCE_VERSION}"
     log INFO "SOURCE_CODENAME=${PIN_SOURCE_CODENAME}"
@@ -7416,7 +7548,7 @@ EOF
   if [[ "$SKIP_CONFIRM" -eq 1 ]]; then
     die "$EC_CONFIRM" "SKIP_CONFIRM is not allowed outside TEST_ROOT"
   fi
-  if [[ -n "$TEST_ROOT" && "${DP_OFFLINE_FAKE_CONFIRM:-}" == "$PIN_CONFIRM_PHRASE" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "$TEST_ROOT" && "${DP_OFFLINE_FAKE_CONFIRM:-}" == "$PIN_CONFIRM_PHRASE" ]]; then
     return 0
   fi
   require_destructive_confirmation "$PIN_CONFIRM_PHRASE" || die "$EC_CONFIRM" "confirmation rejected"
@@ -7638,7 +7770,7 @@ install_legacy_apt_keyring() {
   fpr="$(printf '%s' "$fpr" | tr '[:lower:]' '[:upper:]')"
   log INFO "LEGACY_APT_KEYRING_PATH=${LEGACY_APT_KEYRING_PATH}"
   log INFO "LEGACY_APT_KEY_FINGERPRINT=${fpr}"
-  if [[ -n "$TEST_ROOT" && ( "$PIN_KEY_FINGERPRINT" == "DEADBEEF" || "${DP_OFFLINE_FAKE_MIRROR_TRUST:-}" == "1" ) ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "$TEST_ROOT" && ( "$PIN_KEY_FINGERPRINT" == "DEADBEEF" || "${DP_OFFLINE_FAKE_MIRROR_TRUST:-}" == "1" ) ]]; then
     log WARN "TEST_ROOT: skipping legacy key fingerprint hard-match"
     log INFO "LEGACY_APT_KEY_FINGERPRINT_MATCH=PASS"
   elif [[ -z "$fpr" || "$fpr" != "$PIN_KEY_FINGERPRINT" ]]; then
@@ -7670,7 +7802,7 @@ install_legacy_apt_keyring() {
   installed_fpr="$(gpg --no-default-keyring --keyring "$dest" --with-colons --fingerprint 2>/dev/null \
     | awk -F: '/^fpr:/ {print $10; exit}' || true)"
   installed_fpr="$(printf '%s' "$installed_fpr" | tr '[:lower:]' '[:upper:]')"
-  if [[ -n "$TEST_ROOT" && ( "$PIN_KEY_FINGERPRINT" == "DEADBEEF" || "${DP_OFFLINE_FAKE_MIRROR_TRUST:-}" == "1" ) ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "$TEST_ROOT" && ( "$PIN_KEY_FINGERPRINT" == "DEADBEEF" || "${DP_OFFLINE_FAKE_MIRROR_TRUST:-}" == "1" ) ]]; then
     log INFO "LEGACY_APT_KEY_INSTALL=PASS"
   elif [[ -z "$installed_fpr" || "$installed_fpr" != "$PIN_KEY_FINGERPRINT" ]]; then
     log ERROR "FAIL_LEGACY_APT_KEYRING_POSTINSTALL_VALIDATION"
@@ -9163,7 +9295,7 @@ build_runtime_meta_release_content() {
   local dest="$2"
   local offline_meta
   offline_meta="$work/meta-release-lts"
-  if [[ -n "$TEST_ROOT" && ( "$PIN_KEY_FINGERPRINT" == "DEADBEEF" || "${DP_OFFLINE_FAKE_MIRROR_TRUST:-}" == "1" ) ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "$TEST_ROOT" && ( "$PIN_KEY_FINGERPRINT" == "DEADBEEF" || "${DP_OFFLINE_FAKE_MIRROR_TRUST:-}" == "1" ) ]]; then
     cat >"$dest" <<EOF
 Dist: ${PIN_TARGET_CODENAME}
 Name: Ubuntu ${PIN_TARGET_VERSION} LTS
@@ -9862,7 +9994,7 @@ check_time_readiness_phase1() {
 
 check_basic_network_route() {
   # Default route / primary interface presence. Fixture-friendly.
-  if [[ -n "${STELLAR_OFFLINE_FAKE_DEFAULT_ROUTE:-}" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "${STELLAR_OFFLINE_FAKE_DEFAULT_ROUTE:-}" ]]; then
     [[ "${STELLAR_OFFLINE_FAKE_DEFAULT_ROUTE}" == "1" ]]
     return $?
   fi
@@ -9925,6 +10057,132 @@ install_runner_and_units() {
 # stellar-offline-os-upgrade-runner - Jammy→Noble detached upgrade
 # Bash 4.3 compatible. Does not inherit client shell env; loads EnvironmentFile.
 set -eo pipefail
+# shellcheck shell=bash
+# Shared hermetic fixture-escape policy for offline OS upgrade clients.
+# Injected into single-file clients at build / stub-render time.
+# Compatible with Bash 4.3+ and safe under `set -Eeuo pipefail`.
+#
+# Contract:
+# - Production must never honor test/fixture controls from the environment alone.
+# - Fixture behavior requires MM_HERMETIC_TEST_MODE=1 AND the specific control.
+# - Call dp_offline_enforce_production_fixture_policy early in main() before
+#   TEST_ROOT / SYSTEMCTL_BIN fixture paths take effect.
+
+dp_offline_hermetic_test_mode() {
+  [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" ]]
+}
+
+# True when hermetic fixtures are permitted (companion flag checked by caller).
+dp_offline_hermetic_fixtures_enabled() {
+  dp_offline_hermetic_test_mode
+}
+
+# Category-C fixture controls: alter trust, identity, topology, confirmation,
+# package mutation, systemctl behavior, or upgrade success/failure semantics.
+# Keep this list the single inventory shared by all four hop clients.
+dp_offline_category_c_fixture_vars() {
+  printf '%s\n' \
+    DP_OFFLINE_TEST_ROOT \
+    STELLAR_OFFLINE_TEST_ROOT \
+    DP_OFFLINE_TEST_HANDOFF \
+    DP_OFFLINE_FAKE_DP_VERSION \
+    DP_OFFLINE_FAKE_ROLE \
+    DP_OFFLINE_FAKE_MIRROR_TRUST \
+    DP_OFFLINE_FAKE_CONFIRM \
+    DP_OFFLINE_FAKE_KERNEL \
+    DP_OFFLINE_FAKE_UNHOLD_FAIL \
+    DP_OFFLINE_FAKE_UNHOLD_STILL_HELD \
+    DP_OFFLINE_FAKE_HOLD_FAIL \
+    DP_OFFLINE_FAKE_SHELL_CHANGE_FAIL \
+    DP_OFFLINE_FAKE_SHELL_CHANGE_FAIL_USER \
+    DP_OFFLINE_FAKE_SHELL_CHSH_FAIL \
+    DP_OFFLINE_FAKE_SHELL_NOOP_SUCCESS \
+    DP_OFFLINE_FAKE_FAIL_AFTER_UNHOLD \
+    DP_OFFLINE_FORCE_NONINTERACTIVE \
+    DP_OFFLINE_FORCE_MONITOR \
+    DP_OFFLINE_UPGRADE_MODE \
+    STELLAR_OFFLINE_FORCE_SEMANTIC_GATE_FAIL \
+    STELLAR_OFFLINE_FORCE_DRO_PRE_TRANSITION_FAIL \
+    STELLAR_OFFLINE_SMOKE_STOP_BEFORE_DRO \
+    DP_OFFLINE_FAKE_PYTHON2_CLASS \
+    DP_OFFLINE_FAKE_PYTHON2_PACKAGES \
+    DP_OFFLINE_FAKE_PYTHON2_RDEPENDS \
+    DP_OFFLINE_FAKE_PYTHON2_NO_CANDIDATE \
+    DP_OFFLINE_FAKE_PYTHON2_PRODUCT_REMOVE \
+    DP_OFFLINE_FAKE_PYTHON2_SIM_PLAN \
+    DP_OFFLINE_FAKE_LXD_CLASS \
+    DP_OFFLINE_FAKE_LXD_CONTAINERS \
+    DP_OFFLINE_FAKE_LXD_IMAGES \
+    DP_OFFLINE_FAKE_LXD_STORAGE \
+    DP_OFFLINE_FAKE_LXD_WAITREADY \
+    DP_OFFLINE_FAKE_LXD_TIMEOUT \
+    DP_OFFLINE_FAKE_LXD_JSON_PARSE \
+    DP_OFFLINE_FAKE_LXD_REMOVAL_SIM \
+    DP_OFFLINE_FAKE_LXD_NETWORK_RISK \
+    DP_OFFLINE_FAKE_LXD_TARGET_SELECTED \
+    DP_OFFLINE_FAKE_LXD_DO_REMOVE \
+    STELLAR_OFFLINE_FAKE_NTP_UID_PROCS \
+    STELLAR_OFFLINE_FAKE_NTP_UID_PROCS_AFTER_STOP \
+    STELLAR_OFFLINE_FAKE_LEGACY_NTP_PACKAGE \
+    STELLAR_OFFLINE_FAKE_NTPSEC_PACKAGE \
+    STELLAR_OFFLINE_FAKE_LEGACY_NTP_UNIT_FRAGMENT \
+    STELLAR_OFFLINE_FAKE_LEGACY_NTP_UNIT_OWNED \
+    STELLAR_OFFLINE_FAKE_LEGACY_NTP_ACTIVE \
+    STELLAR_OFFLINE_FAKE_DEFAULT_ROUTE \
+    STELLAR_OFFLINE_FAKE_SYSTEMCTL_STOP \
+    DP_OFFLINE_FAKE_LXD_WAITREADY_DELAY_SECS \
+    DP_OFFLINE_FAKE_LXD_TIMEOUT_ONCE \
+    DP_OFFLINE_FAKE_LXD_JSON_PARSE_FAIL
+}
+
+# Resolve TEST_ROOT only under hermetic fixtures.
+dp_offline_resolve_test_root() {
+  if dp_offline_hermetic_fixtures_enabled; then
+    printf '%s' "${DP_OFFLINE_TEST_ROOT:-}"
+  else
+    printf '%s' ""
+  fi
+}
+
+# Resolve SYSTEMCTL_BIN: production always uses systemctl; fixture override
+# requires hermetic mode.
+dp_offline_resolve_systemctl_bin() {
+  if dp_offline_hermetic_fixtures_enabled; then
+    printf '%s' "${SYSTEMCTL_BIN:-systemctl}"
+  else
+    printf '%s' "systemctl"
+  fi
+}
+
+# Fail closed in production when any Category-C fixture control is present, or
+# when SYSTEMCTL_BIN is overridden away from the default binary name.
+dp_offline_enforce_production_fixture_policy() {
+  if dp_offline_hermetic_test_mode; then
+    return 0
+  fi
+
+  local var val bad=""
+  while IFS= read -r var; do
+    [[ -n "$var" ]] || continue
+    # Bash 4.3-safe indirect expansion.
+    eval "val=\${${var}-}"
+    if [[ -n "$val" ]]; then
+      bad="${bad}${bad:+ }${var}"
+    fi
+  done < <(dp_offline_category_c_fixture_vars)
+
+  if [[ -n "${SYSTEMCTL_BIN:-}" && "${SYSTEMCTL_BIN}" != "systemctl" ]]; then
+    bad="${bad}${bad:+ }SYSTEMCTL_BIN"
+  fi
+
+  if [[ -n "$bad" ]]; then
+    printf 'ERROR: FIXTURE_ESCAPE_PRODUCTION_FORBIDDEN vars=%s (require MM_HERMETIC_TEST_MODE=1)\n' "$bad" >&2
+    return 1
+  fi
+
+  SYSTEMCTL_BIN="systemctl"
+  return 0
+}
 # Shared durable atomic write helpers for offline OS-upgrade clients.
 # shellcheck shell=bash
 # Injected at build time via the DURABLE_WRITE_HELPER template token.
@@ -10141,7 +10399,11 @@ atomic_write_file() {
 
 
 # Optional fake-root prefix for fixture tests only (never set by production unit).
-_TEST_PREFIX="${STELLAR_OFFLINE_TEST_ROOT:-}"
+# Requires MM_HERMETIC_TEST_MODE=1; production ignores STELLAR_OFFLINE_TEST_ROOT.
+_TEST_PREFIX=""
+if dp_offline_hermetic_fixtures_enabled; then
+  _TEST_PREFIX="${STELLAR_OFFLINE_TEST_ROOT:-}"
+fi
 _hp() {
   if [[ -n "$_TEST_PREFIX" ]]; then
     printf '%s%s' "$_TEST_PREFIX" "$1"
@@ -11321,7 +11583,7 @@ ntp_quiesce_stamp_path() {
 
 count_ntp_uid_processes() {
   # Test hooks (fixture path only).
-  if [[ -n "${STELLAR_OFFLINE_FAKE_NTP_UID_PROCS:-}" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "${STELLAR_OFFLINE_FAKE_NTP_UID_PROCS:-}" ]]; then
     printf '%s' "${STELLAR_OFFLINE_FAKE_NTP_UID_PROCS}"
     return 0
   fi
@@ -11336,7 +11598,7 @@ count_ntp_uid_processes() {
 }
 
 legacy_ntp_package_installed() {
-  if [[ -n "${STELLAR_OFFLINE_FAKE_LEGACY_NTP_PACKAGE:-}" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "${STELLAR_OFFLINE_FAKE_LEGACY_NTP_PACKAGE:-}" ]]; then
     [[ "${STELLAR_OFFLINE_FAKE_LEGACY_NTP_PACKAGE}" == "1" ]]
     return $?
   fi
@@ -11350,7 +11612,7 @@ legacy_ntp_package_installed() {
 }
 
 ntpsec_package_installed() {
-  if [[ -n "${STELLAR_OFFLINE_FAKE_NTPSEC_PACKAGE:-}" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "${STELLAR_OFFLINE_FAKE_NTPSEC_PACKAGE:-}" ]]; then
     [[ "${STELLAR_OFFLINE_FAKE_NTPSEC_PACKAGE}" == "1" ]]
     return $?
   fi
@@ -11360,7 +11622,7 @@ ntpsec_package_installed() {
 }
 
 legacy_ntp_unit_fragment() {
-  if [[ -n "${STELLAR_OFFLINE_FAKE_LEGACY_NTP_UNIT_FRAGMENT:-}" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "${STELLAR_OFFLINE_FAKE_LEGACY_NTP_UNIT_FRAGMENT:-}" ]]; then
     printf '%s' "${STELLAR_OFFLINE_FAKE_LEGACY_NTP_UNIT_FRAGMENT}"
     return 0
   fi
@@ -11369,7 +11631,7 @@ legacy_ntp_unit_fragment() {
 
 legacy_ntp_unit_owned_by_ntp_package() {
   # True only when ntp.service fragment is owned by package "ntp" (not ntpsec alias).
-  if [[ -n "${STELLAR_OFFLINE_FAKE_LEGACY_NTP_UNIT_OWNED:-}" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "${STELLAR_OFFLINE_FAKE_LEGACY_NTP_UNIT_OWNED:-}" ]]; then
     [[ "${STELLAR_OFFLINE_FAKE_LEGACY_NTP_UNIT_OWNED}" == "1" ]]
     return $?
   fi
@@ -11389,7 +11651,7 @@ legacy_ntp_unit_owned_by_ntp_package() {
 }
 
 legacy_ntp_unit_is_active() {
-  if [[ -n "${STELLAR_OFFLINE_FAKE_LEGACY_NTP_ACTIVE:-}" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "${STELLAR_OFFLINE_FAKE_LEGACY_NTP_ACTIVE:-}" ]]; then
     [[ "${STELLAR_OFFLINE_FAKE_LEGACY_NTP_ACTIVE}" == "1" ]]
     return $?
   fi
@@ -11415,7 +11677,7 @@ emit_ntp_quiesce_markers() {
 
 stop_legacy_ntp_systemd_units() {
   # Stop only legacy ntp units. Never touch ntpsec.service.
-  if [[ -n "${STELLAR_OFFLINE_FAKE_SYSTEMCTL_STOP:-}" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "${STELLAR_OFFLINE_FAKE_SYSTEMCTL_STOP:-}" ]]; then
     if [[ "${STELLAR_OFFLINE_FAKE_SYSTEMCTL_STOP}" == "ok" ]]; then
       log INFO "LEGACY_NTP_SYSTEMCTL_STOP=FAKE_OK"
       return 0
@@ -12123,7 +12385,7 @@ main() {
   load_release_upgrade_flag
   assert_no_external_apt
 
-  if [[ "${STELLAR_OFFLINE_SMOKE_STOP_BEFORE_DRO:-}" == "1" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ "${STELLAR_OFFLINE_SMOKE_STOP_BEFORE_DRO:-}" == "1" ]]; then
     set_stage "META_RELEASE_VALIDATION"
     validate_meta_release_before_dro
     set_stage "PRE_DRO_REPOSITORY_SEMANTIC_GATE"
@@ -12137,7 +12399,7 @@ main() {
     exit 0
   fi
 
-  if [[ "${STELLAR_OFFLINE_FORCE_SEMANTIC_GATE_FAIL:-}" == "1" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ "${STELLAR_OFFLINE_FORCE_SEMANTIC_GATE_FAIL:-}" == "1" ]]; then
     set_stage "PRE_DRO_REPOSITORY_SEMANTIC_GATE"
     fail_stage 1 "FAIL_INJECTED_PRE_DRO_SEMANTIC_GATE"
   fi
@@ -12201,7 +12463,7 @@ main() {
   mark_release_upgrade_process_spawned
   start_package_transition_watcher
   # Test-only: fail after invocation, before any package mutation.
-  if [[ "${STELLAR_OFFLINE_FORCE_DRO_PRE_TRANSITION_FAIL:-}" == "1" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ "${STELLAR_OFFLINE_FORCE_DRO_PRE_TRANSITION_FAIL:-}" == "1" ]]; then
     FAILURE_CLASS="PRE_MUTATION_SOURCE_REWRITE"
     mkdir -p "$(_hp /var/log/dist-upgrade)"
     printf 'E:The repository http://archive.ubuntu.com/ubuntu noble Release\n' \
@@ -13051,7 +13313,7 @@ check_time_readiness_phase1() {
 
 check_basic_network_route() {
   local default_route default_iface
-  if [[ -n "${STELLAR_OFFLINE_FAKE_DEFAULT_ROUTE:-}" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "${STELLAR_OFFLINE_FAKE_DEFAULT_ROUTE:-}" ]]; then
     [[ "${STELLAR_OFFLINE_FAKE_DEFAULT_ROUTE}" == "1" ]]
     return $?
   fi
@@ -13444,6 +13706,11 @@ fixture_test_root_prefix() {
   # Handoff fixtures set TEST_ROOT + DP_OFFLINE_TEST_HANDOFF=1. Prefer those so a
   # stale STELLAR_OFFLINE_TEST_ROOT from the parent environment cannot poison
   # runner cmdline matching. Runner-only fixtures still use STELLAR_*.
+  # Production: never honor fixture roots without MM_HERMETIC_TEST_MODE=1.
+  if ! dp_offline_hermetic_fixtures_enabled; then
+    printf '%s' ""
+    return 0
+  fi
   if [[ "${DP_OFFLINE_TEST_HANDOFF:-}" == "1" ]]; then
     printf '%s' "${TEST_ROOT:-${DP_OFFLINE_TEST_ROOT:-}}"
     return 0
@@ -13688,10 +13955,10 @@ EOF
 
 client_is_interactive_tty() {
   # Test overrides (fixture-only).
-  if [[ "${DP_OFFLINE_FORCE_NONINTERACTIVE:-}" == "1" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ "${DP_OFFLINE_FORCE_NONINTERACTIVE:-}" == "1" ]]; then
     return 1
   fi
-  if [[ "${DP_OFFLINE_FORCE_MONITOR:-}" == "1" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ "${DP_OFFLINE_FORCE_MONITOR:-}" == "1" ]]; then
     return 0
   fi
   [[ -t 0 && -t 1 ]]
@@ -14643,7 +14910,7 @@ commit_and_start() {
   fi
   remove_unused_lxd_before_dro
 
-  if [[ -n "$TEST_ROOT" && "${DP_OFFLINE_FAKE_FAIL_AFTER_UNHOLD:-}" == "1" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "$TEST_ROOT" && "${DP_OFFLINE_FAKE_FAIL_AFTER_UNHOLD:-}" == "1" ]]; then
     log ERROR "TEST: injected failure after unhold (before APT metadata / release upgrade)"
     restore_critical_os_holds_if_safe "injected_pre_upgrade_failure" || true
     die "$EC_INTERNAL" "FAIL_INJECTED_AFTER_UNHOLD"
@@ -14674,7 +14941,7 @@ commit_and_start() {
       fi
       die "$EC_DISTUPGRADE_SOURCE" "$err"
     fi
-    if [[ -z "$TEST_ROOT" ]] || [[ "${DP_OFFLINE_FAKE_MIRROR_TRUST:-}" != "1" ]]; then
+    if [[ -z "$TEST_ROOT" ]] || ! dp_offline_hermetic_fixtures_enabled || [[ "${DP_OFFLINE_FAKE_MIRROR_TRUST:-}" != "1" ]]; then
       if ! validate_target_pocket_components_from_mirror; then
         die "$EC_TARGET_POCKET" "FAIL_TARGET_POCKET_COMPONENT_EMPTY"
       fi
@@ -17305,7 +17572,12 @@ main() {
   fi
 
   # Test harness hooks - keep logical paths; hostpath() prefixes TEST_ROOT at access.
-  TEST_ROOT="${DP_OFFLINE_TEST_ROOT:-}"
+  # Dual-hermetic: MM_HERMETIC_TEST_MODE=1 required for any fixture control.
+  if ! dp_offline_enforce_production_fixture_policy; then
+    die "$EC_USAGE" "FIXTURE_ESCAPE_PRODUCTION_FORBIDDEN"
+  fi
+  SYSTEMCTL_BIN="$(dp_offline_resolve_systemctl_bin)"
+  TEST_ROOT="$(dp_offline_resolve_test_root)"
   STATE_ROOT="/opt/aelladata/os-upgrade/offline"
   STATE_FILE="${STATE_ROOT}/state"
   HISTORY_FILE="${STATE_ROOT}/hop_history"
@@ -17323,8 +17595,8 @@ main() {
   RUNNER_PATH="/usr/local/sbin/stellar-offline-os-upgrade-runner"
   POSTBOOT_PATH="/usr/local/sbin/stellar-offline-os-upgrade-postboot"
 
-  # Default Phase 1 mode (explicit env override for tests).
-  if [[ "${DP_OFFLINE_UPGRADE_MODE:-}" == "OS_ONLY_PHASE1" || "${DP_OFFLINE_UPGRADE_MODE:-}" == "os-only" ]]; then
+  # Default Phase 1 mode (explicit env override for hermetic tests only).
+  if dp_offline_hermetic_fixtures_enabled && [[ "${DP_OFFLINE_UPGRADE_MODE:-}" == "OS_ONLY_PHASE1" || "${DP_OFFLINE_UPGRADE_MODE:-}" == "os-only" ]]; then
     UPGRADE_MODE="OS_ONLY_PHASE1"
   fi
   UPGRADE_PHASE=1

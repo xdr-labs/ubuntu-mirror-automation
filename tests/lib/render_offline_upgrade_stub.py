@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 HELPERS = (
+    ("@@HERMETIC_ESCAPES_HELPER@@", "dp-offline-hermetic-escapes.sh"),
     ("@@DESTRUCTIVE_CONFIRMATION_HELPER@@", "dp-offline-destructive-confirmation.sh"),
     ("@@RELEASE_UPGRADE_RECONCILIATION_HELPER@@", "dp-offline-release-upgrade-reconciliation.sh"),
     ("@@APT_PREFLIGHT_SANDBOX_HELPER@@", "dp-offline-apt-preflight-sandbox.sh"),

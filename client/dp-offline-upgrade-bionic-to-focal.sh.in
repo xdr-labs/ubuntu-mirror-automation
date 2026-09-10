@@ -148,8 +148,9 @@ CLIENT_HANDOFF_RESULT=""
 CLIENT_EXIT_REASON=""
 MONITOR_RESULT=""
 
-# systemctl binary (overridable in fixture tests)
+# systemctl binary (fixture override requires MM_HERMETIC_TEST_MODE=1)
 SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
+@@HERMETIC_ESCAPES_HELPER@@
 HANDOFF_WAIT_SECS="${HANDOFF_WAIT_SECS:-15}"
 HANDOFF_POLL_SECS="${HANDOFF_POLL_SECS:-1}"
 HANDOFF_CONFIRMED=0
@@ -781,7 +782,7 @@ detect_dp_version() {
   DP_VERSION_DETECT_STATUS="undetermined"
   DP_VERSION_CLI_STATUS=""
 
-  if [[ -n "${DP_OFFLINE_FAKE_DP_VERSION:-}" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "${DP_OFFLINE_FAKE_DP_VERSION:-}" ]]; then
     DP_VERSION="$DP_OFFLINE_FAKE_DP_VERSION"
     DP_VERSION_SOURCE="FAKE"
     DP_VERSION_MATCHED_RECORDS=1
@@ -864,7 +865,7 @@ detect_dp_topology() {
   DP_TOPOLOGY_CLI_STATUS=""
   DP_TOPOLOGY_SUPPORTED=""
 
-  if [[ -n "${DP_OFFLINE_FAKE_ROLE:-}" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "${DP_OFFLINE_FAKE_ROLE:-}" ]]; then
     DP_TOPOLOGY="$(canonicalize_dp_topology "$DP_OFFLINE_FAKE_ROLE")"
     DP_TOPOLOGY_SOURCE="FAKE"
     DP_TOPOLOGY_CONSISTENCY="PASS"
@@ -1065,10 +1066,10 @@ test_root_set_held_packages() {
 apt_mark_unhold_pkg() {
   local pkg="$1"
   if [[ -n "$TEST_ROOT" ]]; then
-    if [[ "${DP_OFFLINE_FAKE_UNHOLD_FAIL:-}" == "$pkg" || "${DP_OFFLINE_FAKE_UNHOLD_FAIL:-}" == "all" ]]; then
+    if dp_offline_hermetic_fixtures_enabled && [[ "${DP_OFFLINE_FAKE_UNHOLD_FAIL:-}" == "$pkg" || "${DP_OFFLINE_FAKE_UNHOLD_FAIL:-}" == "all" ]]; then
       return 1
     fi
-    if [[ "${DP_OFFLINE_FAKE_UNHOLD_STILL_HELD:-}" == "1" || "${DP_OFFLINE_FAKE_UNHOLD_STILL_HELD:-}" == "$pkg" ]]; then
+    if dp_offline_hermetic_fixtures_enabled && [[ "${DP_OFFLINE_FAKE_UNHOLD_STILL_HELD:-}" == "1" || "${DP_OFFLINE_FAKE_UNHOLD_STILL_HELD:-}" == "$pkg" ]]; then
       # Command "succeeds" but selection remains hold - verification must catch this.
       return 0
     fi
@@ -1088,7 +1089,7 @@ apt_mark_unhold_pkg() {
 apt_mark_hold_pkg() {
   local pkg="$1"
   if [[ -n "$TEST_ROOT" ]]; then
-    if [[ "${DP_OFFLINE_FAKE_HOLD_FAIL:-}" == "$pkg" || "${DP_OFFLINE_FAKE_HOLD_FAIL:-}" == "all" ]]; then
+    if dp_offline_hermetic_fixtures_enabled && [[ "${DP_OFFLINE_FAKE_HOLD_FAIL:-}" == "$pkg" || "${DP_OFFLINE_FAKE_HOLD_FAIL:-}" == "all" ]]; then
       return 1
     fi
     local cur
@@ -2575,7 +2576,7 @@ run_os_preflight() {
   fi
 
   # Stub-pin fixtures skip live mirror/GPG so OS-only preflight can PASS in tests.
-  if [[ -n "$TEST_ROOT" && ( "$PIN_KEY_FINGERPRINT" == "DEADBEEF" || "${DP_OFFLINE_FAKE_MIRROR_TRUST:-}" == "1" ) ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "$TEST_ROOT" && ( "$PIN_KEY_FINGERPRINT" == "DEADBEEF" || "${DP_OFFLINE_FAKE_MIRROR_TRUST:-}" == "1" ) ]]; then
     log INFO "MIRROR_TRUST_GATE=SKIPPED_TEST_FIXTURE"
     log INFO "SOURCE_OS=${PIN_SOURCE_VERSION}"
     log INFO "SOURCE_CODENAME=${PIN_SOURCE_CODENAME}"
@@ -2709,7 +2710,7 @@ EOF
   if [[ "$SKIP_CONFIRM" -eq 1 ]]; then
     die "$EC_CONFIRM" "SKIP_CONFIRM is not allowed outside TEST_ROOT"
   fi
-  if [[ -n "$TEST_ROOT" && "${DP_OFFLINE_FAKE_CONFIRM:-}" == "$PIN_CONFIRM_PHRASE" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "$TEST_ROOT" && "${DP_OFFLINE_FAKE_CONFIRM:-}" == "$PIN_CONFIRM_PHRASE" ]]; then
     return 0
   fi
   require_destructive_confirmation "$PIN_CONFIRM_PHRASE" || die "$EC_CONFIRM" "confirmation rejected"
@@ -2970,7 +2971,7 @@ install_legacy_apt_keyring() {
   fpr="$(printf '%s' "$fpr" | tr '[:lower:]' '[:upper:]')"
   log INFO "LEGACY_APT_KEYRING_PATH=${LEGACY_APT_KEYRING_PATH}"
   log INFO "LEGACY_APT_KEY_FINGERPRINT=${fpr}"
-  if [[ -n "$TEST_ROOT" && ( "$PIN_KEY_FINGERPRINT" == "DEADBEEF" || "${DP_OFFLINE_FAKE_MIRROR_TRUST:-}" == "1" ) ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "$TEST_ROOT" && ( "$PIN_KEY_FINGERPRINT" == "DEADBEEF" || "${DP_OFFLINE_FAKE_MIRROR_TRUST:-}" == "1" ) ]]; then
     log WARN "TEST_ROOT: skipping legacy key fingerprint hard-match"
     log INFO "LEGACY_APT_KEY_FINGERPRINT_MATCH=PASS"
   elif [[ -z "$fpr" || "$fpr" != "$PIN_KEY_FINGERPRINT" ]]; then
@@ -3002,7 +3003,7 @@ install_legacy_apt_keyring() {
   installed_fpr="$(gpg --no-default-keyring --keyring "$dest" --with-colons --fingerprint 2>/dev/null \
     | awk -F: '/^fpr:/ {print $10; exit}' || true)"
   installed_fpr="$(printf '%s' "$installed_fpr" | tr '[:lower:]' '[:upper:]')"
-  if [[ -n "$TEST_ROOT" && ( "$PIN_KEY_FINGERPRINT" == "DEADBEEF" || "${DP_OFFLINE_FAKE_MIRROR_TRUST:-}" == "1" ) ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "$TEST_ROOT" && ( "$PIN_KEY_FINGERPRINT" == "DEADBEEF" || "${DP_OFFLINE_FAKE_MIRROR_TRUST:-}" == "1" ) ]]; then
     log INFO "LEGACY_APT_KEY_INSTALL=PASS"
   elif [[ -z "$installed_fpr" || "$installed_fpr" != "$PIN_KEY_FINGERPRINT" ]]; then
     log ERROR "FAIL_LEGACY_APT_KEYRING_POSTINSTALL_VALIDATION"
@@ -4334,7 +4335,7 @@ build_runtime_meta_release_content() {
   local dest="$2"
   local offline_meta
   offline_meta="$work/meta-release-lts"
-  if [[ -n "$TEST_ROOT" && ( "$PIN_KEY_FINGERPRINT" == "DEADBEEF" || "${DP_OFFLINE_FAKE_MIRROR_TRUST:-}" == "1" ) ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "$TEST_ROOT" && ( "$PIN_KEY_FINGERPRINT" == "DEADBEEF" || "${DP_OFFLINE_FAKE_MIRROR_TRUST:-}" == "1" ) ]]; then
     cat >"$dest" <<EOF
 Dist: ${PIN_TARGET_CODENAME}
 Name: Ubuntu ${PIN_TARGET_VERSION} LTS
@@ -4525,10 +4526,15 @@ install_runner_and_units() {
 # stellar-offline-os-upgrade-runner - Bionic→Focal detached upgrade
 # Bash 4.3 compatible. Does not inherit client shell env; loads EnvironmentFile.
 set -eo pipefail
+@@HERMETIC_ESCAPES_HELPER@@
 @@DURABLE_WRITE_HELPER@@
 
 # Optional fake-root prefix for fixture tests only (never set by production unit).
-_TEST_PREFIX="${STELLAR_OFFLINE_TEST_ROOT:-}"
+# Requires MM_HERMETIC_TEST_MODE=1; production ignores STELLAR_OFFLINE_TEST_ROOT.
+_TEST_PREFIX=""
+if dp_offline_hermetic_fixtures_enabled; then
+  _TEST_PREFIX="${STELLAR_OFFLINE_TEST_ROOT:-}"
+fi
 _hp() {
   if [[ -n "$_TEST_PREFIX" ]]; then
     printf '%s%s' "$_TEST_PREFIX" "$1"
@@ -6113,7 +6119,7 @@ main() {
   load_release_upgrade_flag
   assert_no_external_apt
 
-  if [[ "${STELLAR_OFFLINE_SMOKE_STOP_BEFORE_DRO:-}" == "1" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ "${STELLAR_OFFLINE_SMOKE_STOP_BEFORE_DRO:-}" == "1" ]]; then
     set_stage "META_RELEASE_VALIDATION"
     validate_meta_release_before_dro
     set_stage "PRE_DRO_REPOSITORY_SEMANTIC_GATE"
@@ -6127,7 +6133,7 @@ main() {
     exit 0
   fi
 
-  if [[ "${STELLAR_OFFLINE_FORCE_SEMANTIC_GATE_FAIL:-}" == "1" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ "${STELLAR_OFFLINE_FORCE_SEMANTIC_GATE_FAIL:-}" == "1" ]]; then
     set_stage "PRE_DRO_REPOSITORY_SEMANTIC_GATE"
     fail_stage 1 "FAIL_INJECTED_PRE_DRO_SEMANTIC_GATE"
   fi
@@ -6187,7 +6193,7 @@ main() {
   mark_release_upgrade_process_spawned
   start_package_transition_watcher
   # Test-only: fail after invocation, before any package mutation.
-  if [[ "${STELLAR_OFFLINE_FORCE_DRO_PRE_TRANSITION_FAIL:-}" == "1" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ "${STELLAR_OFFLINE_FORCE_DRO_PRE_TRANSITION_FAIL:-}" == "1" ]]; then
     FAILURE_CLASS="PRE_MUTATION_SOURCE_REWRITE"
     mkdir -p "$(_hp /var/log/dist-upgrade)"
     printf 'E:The repository http://archive.ubuntu.com/ubuntu focal Release\n' \
@@ -6575,6 +6581,11 @@ fixture_test_root_prefix() {
   # Handoff fixtures set TEST_ROOT + DP_OFFLINE_TEST_HANDOFF=1. Prefer those so a
   # stale STELLAR_OFFLINE_TEST_ROOT from the parent environment cannot poison
   # runner cmdline matching. Runner-only fixtures still use STELLAR_*.
+  # Production: never honor fixture roots without MM_HERMETIC_TEST_MODE=1.
+  if ! dp_offline_hermetic_fixtures_enabled; then
+    printf '%s' ""
+    return 0
+  fi
   if [[ "${DP_OFFLINE_TEST_HANDOFF:-}" == "1" ]]; then
     printf '%s' "${TEST_ROOT:-${DP_OFFLINE_TEST_ROOT:-}}"
     return 0
@@ -6819,10 +6830,10 @@ EOF
 
 client_is_interactive_tty() {
   # Test overrides (fixture-only).
-  if [[ "${DP_OFFLINE_FORCE_NONINTERACTIVE:-}" == "1" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ "${DP_OFFLINE_FORCE_NONINTERACTIVE:-}" == "1" ]]; then
     return 1
   fi
-  if [[ "${DP_OFFLINE_FORCE_MONITOR:-}" == "1" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ "${DP_OFFLINE_FORCE_MONITOR:-}" == "1" ]]; then
     return 0
   fi
   [[ -t 0 && -t 1 ]]
@@ -7774,7 +7785,7 @@ commit_and_start() {
   fi
   remove_unused_lxd_before_dro
 
-  if [[ -n "$TEST_ROOT" && "${DP_OFFLINE_FAKE_FAIL_AFTER_UNHOLD:-}" == "1" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "$TEST_ROOT" && "${DP_OFFLINE_FAKE_FAIL_AFTER_UNHOLD:-}" == "1" ]]; then
     log ERROR "TEST: injected failure after unhold (before APT metadata / release upgrade)"
     restore_critical_os_holds_if_safe "injected_pre_upgrade_failure" || true
     restore_login_shells_from_backup "$stamp" "injected_pre_upgrade_failure" || true
@@ -7806,7 +7817,7 @@ commit_and_start() {
       fi
       die "$EC_DISTUPGRADE_SOURCE" "$err"
     fi
-    if [[ -z "$TEST_ROOT" ]] || [[ "${DP_OFFLINE_FAKE_MIRROR_TRUST:-}" != "1" ]]; then
+    if [[ -z "$TEST_ROOT" ]] || ! dp_offline_hermetic_fixtures_enabled || [[ "${DP_OFFLINE_FAKE_MIRROR_TRUST:-}" != "1" ]]; then
       if ! validate_target_pocket_components_from_mirror; then
         die "$EC_TARGET_POCKET" "FAIL_TARGET_POCKET_COMPONENT_EMPTY"
       fi
@@ -9572,7 +9583,12 @@ main() {
   fi
 
   # Test harness hooks - keep logical paths; hostpath() prefixes TEST_ROOT at access.
-  TEST_ROOT="${DP_OFFLINE_TEST_ROOT:-}"
+  # Dual-hermetic: MM_HERMETIC_TEST_MODE=1 required for any fixture control.
+  if ! dp_offline_enforce_production_fixture_policy; then
+    die "$EC_USAGE" "FIXTURE_ESCAPE_PRODUCTION_FORBIDDEN"
+  fi
+  SYSTEMCTL_BIN="$(dp_offline_resolve_systemctl_bin)"
+  TEST_ROOT="$(dp_offline_resolve_test_root)"
   STATE_ROOT="/opt/aelladata/os-upgrade/offline"
   STATE_FILE="${STATE_ROOT}/state"
   HISTORY_FILE="${STATE_ROOT}/hop_history"
@@ -9590,8 +9606,8 @@ main() {
   RUNNER_PATH="/usr/local/sbin/stellar-offline-os-upgrade-runner"
   POSTBOOT_PATH="/usr/local/sbin/stellar-offline-os-upgrade-postboot"
 
-  # Default Phase 1 mode (explicit env override for tests).
-  if [[ "${DP_OFFLINE_UPGRADE_MODE:-}" == "OS_ONLY_PHASE1" || "${DP_OFFLINE_UPGRADE_MODE:-}" == "os-only" ]]; then
+  # Default Phase 1 mode (explicit env override for hermetic tests only).
+  if dp_offline_hermetic_fixtures_enabled && [[ "${DP_OFFLINE_UPGRADE_MODE:-}" == "OS_ONLY_PHASE1" || "${DP_OFFLINE_UPGRADE_MODE:-}" == "os-only" ]]; then
     UPGRADE_MODE="OS_ONLY_PHASE1"
   fi
   UPGRADE_PHASE=1

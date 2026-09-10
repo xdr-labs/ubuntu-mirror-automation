@@ -522,6 +522,19 @@ def first_pool_filename_from_packages_gz(packages_gz_bytes):
 def render_script(template_path, replacements, aws_contract_body=""):
     with open(template_path, "r", encoding="utf-8") as fh:
         body = fh.read()
+    hermetic_token = "@@HERMETIC_ESCAPES_HELPER@@"
+    hermetic_path = os.path.join(
+        os.path.dirname(os.path.abspath(template_path)),
+        "lib",
+        "dp-offline-hermetic-escapes.sh",
+    )
+    if hermetic_token not in body:
+        raise BuildError("template missing token {}".format(hermetic_token))
+    if not os.path.isfile(hermetic_path):
+        raise BuildError("missing hermetic escapes helper: {}".format(hermetic_path))
+    with open(hermetic_path, "r", encoding="utf-8") as fh:
+        hermetic_body = fh.read().rstrip("\n") + "\n"
+    body = body.replace(hermetic_token, hermetic_body)
     helper_token = "@@DESTRUCTIVE_CONFIRMATION_HELPER@@"
     helper_path = os.path.join(
         os.path.dirname(os.path.abspath(template_path)),

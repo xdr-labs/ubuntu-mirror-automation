@@ -14,9 +14,12 @@ ACPS_CURL_TLS_ARGS=()
 ACPS_CURL_NETRC_FILE="${ACPS_CURL_NETRC_FILE:-}"
 ACPS_INSECURE_TLS="${ACPS_INSECURE_TLS:-0}"
 
-# Immutable production ACPS endpoint. Never honor ACPS_BASE_URL /
-# ACPS_BASE_URL_FIXED / ACPS_HOST / ACPS_PATH from the environment in production.
-ACPS_PRODUCTION_BASE_URL="${ACPS_PRODUCTION_BASE_URL:-https://acps.stellarcyber.ai/provision/aelladeb_py3}"
+# Immutable production ACPS endpoint — code-owned literal only.
+# Never honor ACPS_PRODUCTION_BASE_URL / ACPS_BASE_URL / ACPS_BASE_URL_FIXED /
+# ACPS_HOST / ACPS_PATH from the environment as the production trust authority.
+# Hermetic fixtures redirect via DP_PHASE2_SOURCE_BASE or ACPS_BASE_URL under
+# MM_HERMETIC_TEST_MODE=1, never by replacing this constant.
+ACPS_PRODUCTION_BASE_URL="https://acps.stellarcyber.ai/provision/aelladeb_py3"
 
 # Explicit hermetic-test boundary. Never document in GUI/help.
 # Production must not honor ACPS_INSECURE_TLS, DP_PHASE2_SOURCE_BASE,
