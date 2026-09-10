@@ -383,6 +383,167 @@ sys.exit(0 if ok else 1)
 PY
 
 # ---------------------------------------------------------------------------
+# 7b. Pool-path independence regression (shared tree validator)
+# ---------------------------------------------------------------------------
+# Binary package linux-aws may live under source-package pool dir linux-meta-aws.
+# Release gate must not reconstruct pool/main/<pkg[0]>/<pkg>/...
+echo "=== 7b. AWS tree validator pool-path independence ==="
+python3 - <<'PY' "$ROOT" || FAIL=1
+import hashlib, os, sys, tempfile
+sys.path.insert(0, os.path.join(sys.argv[1], "scripts", "lib"))
+import discovery_profiles as dp
+import aws_os_core_completeness as aws_c
+from collections import OrderedDict
+
+def ident(package, version, blob, arch="amd64"):
+    sha = hashlib.sha256(blob).hexdigest()
+    return OrderedDict([
+        ("package", package),
+        ("version", version),
+        ("architecture", arch),
+        ("sha256", sha),
+        ("filename", "%s_%s_%s.deb" % (package, version, arch)),
+        ("size_bytes", len(blob)),
+    ])
+
+release_by_hop = {
+    "xenial-to-bionic": ("5.4.0.1103.81", "5.4.0-1103-aws"),
+    "bionic-to-focal": ("5.15.0.1084.91~20.04.1", "5.15.0-1084-aws"),
+    "focal-to-jammy": ("6.8.0-1063.66~22.04.1", "6.8.0-1063-aws"),
+    "jammy-to-noble": ("7.0.0-1011.11~24.04.1", "7.0.0-1011-aws"),
+}
+
+tmp = tempfile.mkdtemp(prefix="um-pool-path-reg-")
+try:
+    hops = OrderedDict()
+    for hop in dp.HOPS:
+        ver, rel = release_by_hop[hop]
+        img = "linux-image-%s" % rel
+        la_blob = ("REG|%s|linux-aws|%s" % (hop, ver)).encode()
+        li_blob = ("REG|%s|linux-image-aws|%s" % (hop, ver)).encode()
+        vi_blob = ("REG|%s|%s|%s" % (hop, img, ver)).encode()
+        la = ident("linux-aws", ver, la_blob)
+        li = ident("linux-image-aws", ver, li_blob)
+        vi = ident(img, ver, vi_blob)
+        snap = None
+        if hop == "xenial-to-bionic":
+            snap = ident("snapd", "2.58+18.04.1", b"REG|x2b|snapd")
+        hops[hop] = OrderedDict([
+            ("hop", hop),
+            ("source_series", hop.split("-to-")[0]),
+            ("target_series", hop.split("-to-")[1]),
+            ("source_version_id", aws_c.HOP_SOURCE_VERSION_ID[hop]),
+            ("target_version_id", aws_c.HOP_TARGET_VERSION_ID[hop]),
+            ("linux_aws", la),
+            ("linux_image_aws", li),
+            ("expected_kernel_releases", [rel]),
+            ("versioned_images", [vi]),
+            ("boot_packages", []),
+            ("snapd", snap),
+        ])
+        # CRITICAL: plant under source-package-style pool dir, NOT binary pkg name.
+        ubuntu = os.path.join(tmp, "hops", hop, "ubuntu")
+        meta_pool = os.path.join(ubuntu, "pool", "main", "l", "linux-meta-aws")
+        os.makedirs(meta_pool)
+        open(os.path.join(meta_pool, la["filename"]), "wb").write(la_blob)
+        open(os.path.join(meta_pool, li["filename"]), "wb").write(li_blob)
+        img_pool = os.path.join(ubuntu, "pool", "main", "l", "linux-signed-aws")
+        os.makedirs(img_pool)
+        open(os.path.join(img_pool, vi["filename"]), "wb").write(vi_blob)
+        if snap:
+            snap_pool = os.path.join(ubuntu, "pool", "main", "s", "snapd")
+            os.makedirs(snap_pool)
+            open(os.path.join(snap_pool, snap["filename"]), "wb").write(b"REG|x2b|snapd")
+
+    contract = OrderedDict([
+        ("schema_version", aws_c.CONTRACT_SCHEMA_VERSION),
+        ("discovery_profiles", ["generic", "aws"]),
+        ("required_metapackages", list(aws_c.REQUIRED_AWS_METAPACKAGES)),
+        ("hops", hops),
+        ("by_target_version_id", OrderedDict(
+            (aws_c.HOP_TARGET_VERSION_ID[h], h) for h in dp.HOPS
+        )),
+    ])
+    aws_c.attach_contract_sha256(contract)
+    plan = {
+        "discovery_profiles": ["generic", "aws"],
+        "aws_semantic_contract": contract,
+        "aws_semantic_contract_sha256": contract["contract_sha256"],
+    }
+
+    ok, errors, detail = aws_c.validate_tree_aws_completeness(
+        tmp, plan=plan, require_aws_profile=True, verify_sha256=True,
+    )
+    if not ok:
+        print("  FAIL: source-package pool path should PASS: %s" % (errors[:5],))
+        sys.exit(1)
+    print("  PASS: linux-aws under linux-meta-aws pool dir validates")
+
+    # Negative: SHA mismatch must FAIL
+    bad_hop = "xenial-to-bionic"
+    bad_path = os.path.join(
+        tmp, "hops", bad_hop, "ubuntu", "pool", "main", "l", "linux-meta-aws",
+        hops[bad_hop]["linux_aws"]["filename"],
+    )
+    open(bad_path, "wb").write(b"TAMPERED-BYTES-NOT-MATCHING-CONTRACT-SHA")
+    ok2, errors2, _ = aws_c.validate_tree_aws_completeness(
+        tmp, plan=plan, require_aws_profile=True, verify_sha256=True,
+    )
+    if ok2:
+        print("  FAIL: SHA-mismatched identity should FAIL")
+        sys.exit(1)
+    if not any("sha256_mismatch" in e for e in errors2):
+        print("  FAIL: expected sha256_mismatch error, got: %s" % (errors2[:5],))
+        sys.exit(1)
+    print("  PASS: SHA-mismatched identity FAILS")
+
+    # Negative: absent identity must FAIL
+    os.remove(bad_path)
+    ok3, errors3, _ = aws_c.validate_tree_aws_completeness(
+        tmp, plan=plan, require_aws_profile=True, verify_sha256=True,
+    )
+    if ok3:
+        print("  FAIL: absent identity should FAIL")
+        sys.exit(1)
+    if not any("missing" in e for e in errors3):
+        print("  FAIL: expected missing error, got: %s" % (errors3[:5],))
+        sys.exit(1)
+    print("  PASS: absent identity FAILS")
+    print("POOL_PATH_ASSUMPTION_REGRESSION=PASS")
+finally:
+    import shutil
+    shutil.rmtree(tmp, ignore_errors=True)
+PY
+
+# ---------------------------------------------------------------------------
+# 7c. Release-gate harness against the tiny schema-v2 candidate
+# ---------------------------------------------------------------------------
+# Exercises the real run_release_gate.sh (shared AWS tree validator + Phase2
+# test fixture). Does NOT contact R2 or a DP. Does NOT build another candidate.
+echo "=== 7c. release gate harness (tiny schema-v2 candidate) ==="
+set +e
+bash "${ROOT}/tests/run_release_gate.sh" --os-core "$PKG" \
+  >"${TMP}/release-gate.log" 2>&1
+RG_RC=$?
+set -e
+tail -80 "${TMP}/release-gate.log" || true
+if [[ "$RG_RC" -eq 0 ]] \
+  && grep -q 'RELEASE_GATE_RESULT=PASS' "${TMP}/release-gate.log" \
+  && grep -q 'AWS_PHYSICAL_PRESENCE=PASS' "${TMP}/release-gate.log" \
+  && grep -q 'AWS_EXACT_SHA256=PASS' "${TMP}/release-gate.log" \
+  && grep -q 'PHASE2_INPUT_MODE=TEST_FIXTURE' "${TMP}/release-gate.log" \
+  && grep -q 'PHASE2_RELEASE_READINESS=NOT_TESTED' "${TMP}/release-gate.log" \
+  && grep -q 'POOL_PATH_RECONSTRUCTION=NO' "${TMP}/release-gate.log"; then
+  pass "release gate harness PASS"
+  echo "TINY_RELEASE_GATE_RESULT=PASS"
+  echo "RELEASE_GATE_HARNESS_INTEGRATION=PASS"
+else
+  fail "release gate harness (rc=${RG_RC})"
+  echo "TINY_RELEASE_GATE_RESULT=FAIL"
+  echo "RELEASE_GATE_HARNESS_INTEGRATION=FAIL"
+fi
+
+# ---------------------------------------------------------------------------
 # 8. Real engine_materialize_os_mirror onto empty Mirror
 # ---------------------------------------------------------------------------
 echo "=== 8. real engine_materialize_os_mirror ==="
@@ -572,10 +733,12 @@ echo "ROUNDTRIP_DURATION_SECONDS=${DURATION}"
 if [[ "$FAIL" -eq 0 ]]; then
   echo "PRODUCTION_LIFECYCLE_ROUNDTRIP=PASS"
   echo "REAL_PRODUCTION_LIFECYCLE_ROUNDTRIP=PASS"
+  echo "RELEASE_GATE_HARNESS_INTEGRATION=PASS"
   echo "ROUNDTRIP_RESULT=PASS"
   exit 0
 fi
 echo "PRODUCTION_LIFECYCLE_ROUNDTRIP=FAIL"
 echo "REAL_PRODUCTION_LIFECYCLE_ROUNDTRIP=FAIL"
+echo "RELEASE_GATE_HARNESS_INTEGRATION=FAIL"
 echo "ROUNDTRIP_RESULT=FAIL"
 exit 1
