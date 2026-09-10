@@ -7,6 +7,10 @@
 # NEVER contacts a real DP.
 # NEVER uploads or modifies production R2.
 # Does NOT build the multi-GB candidate; caller supplies an already-built artifact.
+#
+# Phase2 input is a TEST FIXTURE only (satisfies rebuild-publish-clients.sh's
+# unrelated wrapper dependency). This gate does NOT claim ACPS / Phase2 6.6.0
+# release readiness.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -33,6 +37,8 @@ OS_CORE_PY="${ROOT}/scripts/lib/os_core_package.py"
 COMMON="${ROOT}/scripts/lib/mirror_manager_common.sh"
 ENGINE="${ROOT}/scripts/lib/mirror_install_engine.sh"
 REBUILD="${ROOT}/scripts/rebuild-publish-clients.sh"
+# shellcheck source=lib/client_finalization_fixture.sh
+source "${ROOT}/tests/lib/client_finalization_fixture.sh"
 
 echo "=== run_release_gate ==="
 echo "REAL_DP_USED=NO"
@@ -120,39 +126,101 @@ set -e
 tail -40 "${TMP}/materialize.log" || true
 [[ "$MRC" -eq 0 ]] && pass "engine_materialize_os_mirror" || fail "materialize rc=${MRC}"
 
-echo "=== 3. verify generation tuple + AWS contract identities ==="
+echo "=== 3. verify generation tuple + AWS contract identities (shared tree validator) ==="
+# Do NOT reconstruct Debian pool paths from binary package names. Ubuntu pool
+# directories may be source-package based (e.g. linux-meta-aws). Reuse the same
+# production semantic validator used by OS Core / selective verification.
 python3 - <<'PY' "$MM_SELECTIVE_ROOT" "$ROOT" || FAIL=1
 import os, sys
 sys.path.insert(0, os.path.join(sys.argv[2], "scripts", "lib"))
 from aws_os_core_completeness import (
     load_verified_selective_generation,
     iter_contract_identities,
+    validate_tree_aws_completeness,
 )
+
 gen = load_verified_selective_generation(sys.argv[1], project_root=sys.argv[2])
 print("PLAN=%s" % gen["plan_checksum"])
 print("DISCOVERY=%s" % gen["discovery_artifact_checksum"])
 print("CONTRACT=%s" % gen["aws_semantic_contract_sha256"])
-contract = gen.get("contract") or {}
-missing = []
+plan = gen.get("plan")
+if not plan:
+    print("AWS_PHYSICAL_PRESENCE=FAIL reason=verified_plan_missing")
+    print("AWS_EXACT_SHA256=FAIL")
+    print("GENERATION_TUPLE=FAIL")
+    sys.exit(1)
+
+contract = gen.get("contract") or plan.get("aws_semantic_contract") or {}
+# Evidence only: hop/package/version/arch/sha — never reconstruct pool paths.
 for hop, hop_c in (contract.get("hops") or {}).items():
     for ident in iter_contract_identities(hop_c):
-        pkg = ident["package"]
-        ver = ident["version"]
-        arch = ident.get("architecture") or "amd64"
-        base = "%s_%s_%s.deb" % (pkg, ver, arch)
-        path = os.path.join(
-            sys.argv[1], "hops", hop, "ubuntu", "pool", "main", pkg[0], pkg, base
+        print(
+            "CONTRACT_IDENTITY hop=%s package=%s version=%s architecture=%s sha256=%s"
+            % (
+                hop,
+                ident.get("package"),
+                ident.get("version"),
+                ident.get("architecture") or "amd64",
+                (ident.get("sha256") or "")[:16],
+            )
         )
-        if not os.path.isfile(path):
-            missing.append("%s:%s" % (hop, base))
-if missing:
-    print("AWS_PHYSICAL_PRESENCE=FAIL missing=%s" % missing[:10])
+
+ok, errors, detail = validate_tree_aws_completeness(
+    sys.argv[1],
+    plan=plan,
+    require_aws_profile=True,
+    verify_sha256=True,
+)
+if not ok:
+    print("AWS_PHYSICAL_PRESENCE=FAIL")
+    print("AWS_EXACT_SHA256=FAIL")
+    print("GENERATION_TUPLE=FAIL")
+    for err in (errors or [])[:20]:
+        print("  aws_tree_error: %s" % err)
     sys.exit(1)
+
+# Presence + exact SHA both enforced by verify_sha256=True above.
 print("AWS_PHYSICAL_PRESENCE=PASS")
+print("AWS_EXACT_SHA256=PASS")
 print("GENERATION_TUPLE=PASS")
+print("SHARED_AWS_TREE_VALIDATOR=validate_tree_aws_completeness")
+print("POOL_PATH_RECONSTRUCTION=NO")
 PY
 
 echo "=== 4. real client finalization (local-fs, unreachable Mirror URL) ==="
+# Phase2 fixture satisfies rebuild-publish-clients.sh wrapper dependency only.
+# Populates the temporary release-gate Mirror — never production Phase2 data.
+client_fixture_populate_dp_phase2 "$MM_MIRROR_ROOT"
+echo "PHASE2_INPUT_MODE=TEST_FIXTURE"
+echo "PHASE2_RELEASE_READINESS=NOT_TESTED"
+
+# Tiny schema-v2 lifecycle candidates may omit signed release-upgrader tarballs;
+# real multi-GB candidates carry them in the OS Core payload. Plant fixtures only
+# when absent — never overwrite candidate-provided upgraders.
+UPGRADER_FIXTURE=0
+for codename in bionic focal jammy noble; do
+  utar="${MM_SELECTIVE_ROOT}/shared/offline/release-upgraders/${codename}/${codename}.tar.gz"
+  [[ -f "$utar" ]] || UPGRADER_FIXTURE=1
+done
+if [[ "$UPGRADER_FIXTURE" -eq 1 ]]; then
+  client_fixture_require
+  client_fixture_gen_keys "${TMP}/upgrader-fixture"
+  for codename in bionic focal jammy noble; do
+    utar="${MM_SELECTIVE_ROOT}/shared/offline/release-upgraders/${codename}/${codename}.tar.gz"
+    if [[ ! -f "$utar" ]]; then
+      client_fixture_populate_upgrader "$MM_SELECTIVE_ROOT" "$codename" \
+        "$CLIENT_FIXTURE_GPG_SEL"
+    fi
+  done
+  mkdir -p "${MM_SELECTIVE_ROOT}/shared/offline"
+  [[ -f "${MM_SELECTIVE_ROOT}/shared/offline/meta-release-lts" ]] \
+    || printf '# meta-release-lts fixture\n' \
+      >"${MM_SELECTIVE_ROOT}/shared/offline/meta-release-lts"
+  echo "RELEASE_UPGRADER_INPUT_MODE=TEST_FIXTURE"
+else
+  echo "RELEASE_UPGRADER_INPUT_MODE=FROM_CANDIDATE"
+fi
+
 MIRROR_URL="http://192.0.2.99"
 set +e
 env \
@@ -174,12 +242,52 @@ set -e
 tail -40 "${TMP}/client.log" || true
 if [[ "$CRC" -eq 0 ]] && grep -q 'REBUILD_PUBLISH_CLIENTS=PASS' "${TMP}/client.log"; then
   pass "client finalization"
+  echo "CLIENT_4_HOP_BUILD=PASS"
 else
   fail "client finalization rc=${CRC}"
+  echo "CLIENT_4_HOP_BUILD=FAIL"
+fi
+
+# Generation tuple on all four hop client manifests
+if [[ "$CRC" -eq 0 ]]; then
+  python3 - <<'PY' "$MM_CLIENT_ROOT" "$MM_SELECTIVE_ROOT" "$ROOT" || FAIL=1
+import json, os, sys
+sys.path.insert(0, os.path.join(sys.argv[3], "scripts", "lib"))
+from aws_os_core_completeness import load_verified_selective_generation
+gen = load_verified_selective_generation(sys.argv[2], project_root=sys.argv[3])
+plan_ck = gen["plan_checksum"]
+disc_ck = gen["discovery_artifact_checksum"]
+contract_ck = gen["aws_semantic_contract_sha256"]
+client_root = sys.argv[1]
+ok = True
+for hop in (
+    "xenial-to-bionic", "bionic-to-focal", "focal-to-jammy", "jammy-to-noble",
+):
+    manifest = os.path.join(client_root, hop, "client-manifest.json")
+    if not os.path.isfile(manifest):
+        print("CLIENT_GENERATION_TUPLE_MATCH=FAIL missing=%s" % hop)
+        ok = False
+        continue
+    m = json.load(open(manifest))
+    if (
+        m.get("plan_checksum") != plan_ck
+        or m.get("discovery_checksum") != disc_ck
+        or m.get("aws_semantic_contract_sha256") != contract_ck
+    ):
+        print("CLIENT_GENERATION_TUPLE_MATCH=FAIL hop=%s" % hop)
+        ok = False
+if ok:
+    print("CLIENT_GENERATION_TUPLE_MATCH=PASS")
+sys.exit(0 if ok else 1)
+PY
+else
+  echo "CLIENT_GENERATION_TUPLE_MATCH=FAIL"
 fi
 
 echo "CANDIDATE_SHA256=${CAND_SHA}"
 echo "CANDIDATE_BYTES=${CAND_BYTES}"
+echo "PHASE2_INPUT_MODE=TEST_FIXTURE"
+echo "PHASE2_RELEASE_READINESS=NOT_TESTED"
 if [[ "$FAIL" -eq 0 ]]; then
   echo "RELEASE_GATE_RESULT=PASS"
   exit 0
