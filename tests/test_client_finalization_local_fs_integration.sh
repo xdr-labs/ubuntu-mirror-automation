@@ -57,6 +57,7 @@ run_rebuild() {
     BASE_PATH="$MIRROR_ROOT" \
     CACHE_ROOT="$CACHE" \
     CONTENT_SOURCE=local-fs \
+    MM_HERMETIC_TEST_MODE=1 \
     CLIENT_BUILD_PIN_URL_ONLY=1 \
     SKIP_HTTP_VERIFY=1 \
     REQUIRE_SELECTIVE_READY=1 \
@@ -80,6 +81,7 @@ if command -v unshare >/dev/null 2>&1 && unshare -n true 2>/dev/null; then
     BASE_PATH="$MIRROR_ROOT" \
     CACHE_ROOT="$CACHE" \
     CONTENT_SOURCE=local-fs \
+    MM_HERMETIC_TEST_MODE=1 \
     CLIENT_BUILD_PIN_URL_ONLY=1 \
     SKIP_HTTP_VERIFY=1 \
     bash "${ROOT}/scripts/rebuild-publish-clients.sh" \
@@ -136,6 +138,7 @@ env \
   BASE_PATH="$MIRROR_ROOT" \
   CACHE_ROOT="$CACHE" \
   CONTENT_SOURCE=local-fs \
+  MM_HERMETIC_TEST_MODE=1 \
   CLIENT_BUILD_PIN_URL_ONLY=1 \
   SKIP_HTTP_VERIFY=1 \
   bash "${RUNTIME_ROOT}/scripts/rebuild-publish-clients.sh" \

@@ -18,6 +18,7 @@ export MM_CONFIG_DIR="$TMP/config"
 export MM_WORKFLOW_FILE="$MM_CONFIG_DIR/workflow.state"
 export MM_STATUS_FILE="$MM_CONFIG_DIR/status"
 export SKIP_MIRROR_HOST_VALIDATE=1
+export MM_HERMETIC_TEST_MODE=1
 mkdir -p "$MM_CONFIG_DIR"
 : >"$MM_STATUS_FILE"
 
@@ -41,6 +42,7 @@ GATE="${5:-}"
 export MM_WORKFLOW_FILE="$WF"
 export MM_CONFIG_DIR="$(dirname "$WF")"
 export SKIP_MIRROR_HOST_VALIDATE=1
+export MM_HERMETIC_TEST_MODE=1
 # shellcheck source=/dev/null
 source "${ROOT}/scripts/lib/mirror_workflow_state.sh"
 if [[ -n "$GATE" ]]; then

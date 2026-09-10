@@ -76,6 +76,13 @@ SKIP_BUILD="${SKIP_BUILD:-0}"
 SKIP_DEPLOY="${SKIP_DEPLOY:-0}"
 SKIP_HTTP_VERIFY="${SKIP_HTTP_VERIFY:-0}"
 REQUIRE_SELECTIVE_READY="${REQUIRE_SELECTIVE_READY:-1}"
+# Diagnostic skip REQUIRE_SELECTIVE_READY=0 is dual-hermetic only.
+if [[ "$REQUIRE_SELECTIVE_READY" != "1" ]]; then
+  if [[ "${MM_HERMETIC_TEST_MODE:-0}" != "1" ]]; then
+    echo "REQUIRE_SELECTIVE_READY=FAIL reason=skip_requires_MM_HERMETIC_TEST_MODE=1; forcing=1" >&2
+    REQUIRE_SELECTIVE_READY=1
+  fi
+fi
 CONTENT_SOURCE="${CONTENT_SOURCE:-local-fs}"
 
 HOPS=(
@@ -131,8 +138,14 @@ if [[ "$CONTENT_SOURCE" != "local-fs" && "$CONTENT_SOURCE" != "http" ]]; then
   exit 2
 fi
 # Authoritative production path always forces local-fs unless explicitly overridden
-# for diagnostics (CONTENT_SOURCE_FORCE=http).
-if [[ "${CONTENT_SOURCE_FORCE:-}" != "http" ]]; then
+# for hermetic diagnostics (CONTENT_SOURCE_FORCE=http + MM_HERMETIC_TEST_MODE=1).
+if [[ "${CONTENT_SOURCE_FORCE:-}" == "http" ]]; then
+  if [[ "${MM_HERMETIC_TEST_MODE:-0}" != "1" ]]; then
+    echo "CONTENT_SOURCE_FORCE=FAIL reason=requires_MM_HERMETIC_TEST_MODE=1" >&2
+    exit 2
+  fi
+  CONTENT_SOURCE=http
+else
   CONTENT_SOURCE=local-fs
 fi
 
@@ -172,11 +185,15 @@ chmod 0600 "$EVIDENCE_LOG" 2>/dev/null || true
 
 evidence() {
   # shellcheck disable=SC2034
-  local line
+  local line redacted
   line="$(printf '%s\n' "$*")"
-  # Prefer mm_redact when available from caller environment.
+  # Prefer mm_redact when available. On redaction failure NEVER write raw text.
   if declare -F mm_redact >/dev/null 2>&1; then
-    printf '%s\n' "$line" | mm_redact >>"$EVIDENCE_LOG" 2>/dev/null || printf '%s\n' "$line" >>"$EVIDENCE_LOG"
+    if redacted="$(printf '%s\n' "$line" | mm_redact 2>/dev/null)"; then
+      printf '%s\n' "$redacted" >>"$EVIDENCE_LOG"
+    else
+      printf '%s\n' "REDACTION_FAILED_OUTPUT_SUPPRESSED" >>"$EVIDENCE_LOG"
+    fi
   else
     printf '%s\n' "$line" >>"$EVIDENCE_LOG"
   fi
@@ -236,8 +253,12 @@ evidence_echo "CLIENT_BUILD_NETWORK_REQUIRED=NO"
 evidence_echo "CLIENT_FINALIZER_EVIDENCE_PATH=${EVIDENCE_LOG}"
 
 # Hermetic/local-fs builds may pin an unreachable documentation IP (RFC 5737)
-# without requiring that address on a local interface. Production leaves this unset.
+# without requiring that address on a local interface. Dual-hermetic gate required.
 if [[ "${CLIENT_BUILD_PIN_URL_ONLY:-0}" == "1" ]]; then
+  if [[ "${MM_HERMETIC_TEST_MODE:-0}" != "1" ]]; then
+    fail_build "" "mirror_resolve" \
+      "CLIENT_BUILD_PIN_URL_ONLY requires MM_HERMETIC_TEST_MODE=1" 1
+  fi
   pin_url="${RESOLVED_MIRROR_BASE_URL:-${MIRROR_HTTP_URL:-}}"
   pin_url="${pin_url%/}"
   if [[ -z "$pin_url" ]]; then
@@ -286,7 +307,8 @@ ready = os.path.isfile(os.path.join(sel, "state", "READY")) if sel_present else 
 plan = os.path.isfile(os.path.join(sel, "state", "plan.json")) if sel_present else False
 
 # Diagnostic/test-only: REQUIRE_SELECTIVE_READY=0 may skip when no verified
-# selective generation pair is present.
+# selective generation pair is present AND MM_HERMETIC_TEST_MODE=1 (dual gate;
+# shell forces REQUIRE_SELECTIVE_READY=1 when hermetic is absent).
 if require_ready != "1" and not (ready and plan) and not hermetic:
     print("CLIENT_PLAN_CHECKSUM=")
     print("CLIENT_DISCOVERY_ARTIFACT_CHECKSUM=")
@@ -789,7 +811,7 @@ if [[ -f "${ROOT}/scripts/lib/mirror_workflow_state.sh" ]]; then
     "$CLIENT_MIRROR_BASE_URL" \
     "$CLIENT_BUILD_CREATED_UTC" \
     "${CLIENT_LAUNCHER_SCHEMA_VERSION:-1}"
-  mm_wf_mark_client_set_published \
+  if ! mm_wf_mark_client_set_published \
     "$CLIENT_BUILD_GENERATION_ID" \
     "$LOCAL_KEY_FINGERPRINT" \
     "$CLIENT_BUILD_INPUT_SHA256" \
@@ -799,8 +821,14 @@ if [[ -f "${ROOT}/scripts/lib/mirror_workflow_state.sh" ]]; then
     "$CLIENT_PROVENANCE_SCHEMA_VERSION" \
     "${CLIENT_PLAN_CHECKSUM:-}" \
     "${CLIENT_DISCOVERY_ARTIFACT_CHECKSUM:-}" \
-    "${CLIENT_AWS_SEMANTIC_CONTRACT_SHA256:-}" \
-    || evidence_echo "WORKFLOW_STATE_UPDATE=SKIPPED"
+    "${CLIENT_AWS_SEMANTIC_CONTRACT_SHA256:-}"
+  then
+    evidence_echo "WORKFLOW_STATE_UPDATE=FAIL"
+    # Production FULL (and any mode that reached receipt write) must fail closed:
+    # do not leave REBUILD_PUBLISH_CLIENTS=PASS without a persisted workflow receipt.
+    fail_build "" "workflow_state" \
+      "WORKFLOW_STATE_UPDATE=FAIL required client-set receipt not persisted" 1
+  fi
   evidence_echo "CLIENT_SET_GENERATION_ID=${CLIENT_BUILD_GENERATION_ID}"
   evidence_echo "CLIENT_SIGNING_FINGERPRINT=${LOCAL_KEY_FINGERPRINT}"
   echo "CLIENT_SET_GENERATION_ID=${CLIENT_BUILD_GENERATION_ID}"

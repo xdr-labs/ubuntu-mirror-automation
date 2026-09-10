@@ -659,6 +659,7 @@ if command -v unshare >/dev/null 2>&1 && unshare -n true 2>/dev/null; then
     BASE_PATH="$MM_MIRROR_ROOT" \
     CACHE_ROOT="$CACHE" \
     CONTENT_SOURCE=local-fs \
+    MM_HERMETIC_TEST_MODE=1 \
     CLIENT_BUILD_PIN_URL_ONLY=1 \
     SKIP_HTTP_VERIFY=1 \
     REQUIRE_SELECTIVE_READY=1 \
@@ -677,6 +678,7 @@ else
     BASE_PATH="$MM_MIRROR_ROOT" \
     CACHE_ROOT="$CACHE" \
     CONTENT_SOURCE=local-fs \
+    MM_HERMETIC_TEST_MODE=1 \
     CLIENT_BUILD_PIN_URL_ONLY=1 \
     SKIP_HTTP_VERIFY=1 \
     REQUIRE_SELECTIVE_READY=1 \

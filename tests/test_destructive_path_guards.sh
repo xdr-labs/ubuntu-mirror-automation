@@ -63,6 +63,7 @@ out="$(
   CLIENT_HTTP_ROOT="$TMP/mirror/client" \
   SELECTIVE_ROOT="$TMP/mirror/selective" \
   ARTIFACT_DIR=/ \
+  MM_HERMETIC_TEST_MODE=1 \
   REQUIRE_SELECTIVE_READY=0 \
   SKIP_BUILD=1 \
   SKIP_DEPLOY=1 \

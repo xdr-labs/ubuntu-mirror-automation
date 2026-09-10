@@ -35,6 +35,7 @@ engine_rebuild_publish_local_client_set() {
   local staging_root signing_dir generation_id evidence_log
   local rc=0
   local child_out=""
+  local redacted=""
   local failed_hop="" failed_stage="" error_summary=""
 
   [[ -f "$rebuild" ]] || {
@@ -106,10 +107,12 @@ engine_rebuild_publish_local_client_set() {
   rc=$?
   set -e
 
-  # Persist child output (redacted) and surface key lines.
-  {
-    printf '%s\n' "$child_out"
-  } | mm_redact >>"$evidence_log" 2>/dev/null || printf '%s\n' "$child_out" >>"$evidence_log"
+  # Persist child output (redacted). On redaction failure NEVER write raw child_out.
+  if redacted="$(printf '%s\n' "$child_out" | mm_redact 2>/dev/null)"; then
+    printf '%s\n' "$redacted" >>"$evidence_log"
+  else
+    printf '%s\n' "REDACTION_FAILED_OUTPUT_SUPPRESSED" >>"$evidence_log"
+  fi
   chmod 0600 "$evidence_log" 2>/dev/null || true
 
   failed_hop="$(printf '%s\n' "$child_out" | sed -n 's/^CLIENT_BUILD_FAILED_HOP=//p' | tail -1)"

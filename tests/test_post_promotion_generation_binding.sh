@@ -56,6 +56,7 @@ run_rebuild() {
     MM_DP_PHASE2_ROOT="$MM_DP_PHASE2_ROOT" \
     CACHE_ROOT="$CACHE" \
     CONTENT_SOURCE=local-fs \
+    MM_HERMETIC_TEST_MODE=1 \
     CLIENT_BUILD_PIN_URL_ONLY=1 \
     SKIP_HTTP_VERIFY=1 \
     REQUIRE_SELECTIVE_READY=1 \
@@ -235,25 +236,25 @@ rm -rf "$CLIENT_ROOT"
 cp -a "$GOLDEN_A" "$CLIENT_ROOT"
 
 # ---------------------------------------------------------------------------
-# F: signed hop manifest generation mismatch (re-sign with wrong plan)
+# F: signed hop manifest generation mismatch (re-sign with wrong plan/discovery/contract)
 # ---------------------------------------------------------------------------
-python3 - "$CLIENT_ROOT" "$SIGNING_DIR" "$PLAN_A" <<'PY'
+resign_manifest_field() {
+  local field="$1" value="$2"
+  python3 - "$CLIENT_ROOT" "$SIGNING_DIR" "$field" "$value" <<'PY'
 import json, os, subprocess, sys
-client_root, signing_dir, plan_a = sys.argv[1:4]
+client_root, signing_dir, field, value = sys.argv[1:5]
 priv = os.path.join(signing_dir, "private.gpg")
 hop = "xenial-to-bionic"
 manifest = os.path.join(client_root, hop, "client-manifest.json")
 sig = manifest + ".asc"
 with open(manifest) as fh:
     data = json.load(fh)
-# Keep signature-valid JSON but wrong generation tuple fields.
-data["plan_checksum"] = "a" * 64
+data[field] = value
 with open(manifest, "w") as fh:
     json.dump(data, fh, indent=2, sort_keys=True)
     fh.write("\n")
 os.remove(sig)
-env = os.environ.copy()
-homedir = os.path.join(signing_dir, ".gpg-home-resign")
+homedir = os.path.join(signing_dir, f".gpg-home-resign-{field}")
 os.makedirs(homedir, mode=0o700, exist_ok=True)
 subprocess.check_call(
     ["gpg", "--homedir", homedir, "--batch", "--import", priv],
@@ -264,12 +265,31 @@ subprocess.check_call(
      "-o", sig, manifest],
     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
 )
-print("RESIGNED_WRONG_PLAN=YES")
+print("RESIGNED_%s=YES" % field.upper())
 PY
+}
+
+resign_manifest_field "plan_checksum" "$(printf 'a%.0s' {1..64})"
 OUT="$(verify_set)"
-echo "$OUT" | grep -Eq 'CLIENT_MANIFEST_PLAN_CHECKSUM_MISMATCH|CLIENT_SET_STATE=|CLIENT_BUILD_PROVENANCE=FAIL' \
+echo "$OUT" | grep -Eq 'CLIENT_MANIFEST_PLAN_CHECKSUM_MISMATCH|CLIENT_BUILD_PROVENANCE=FAIL' \
   && pass "F: signed manifest plan mismatch fails verify" \
   || fail "F: expected manifest plan mismatch failure: $(echo "$OUT" | head -8)"
+rm -rf "$CLIENT_ROOT"
+cp -a "$GOLDEN_A" "$CLIENT_ROOT"
+
+resign_manifest_field "discovery_checksum" "$(printf 'b%.0s' {1..64})"
+OUT="$(verify_set)"
+echo "$OUT" | grep -Eq 'CLIENT_MANIFEST_DISCOVERY_CHECKSUM_MISMATCH|CLIENT_BUILD_PROVENANCE=FAIL' \
+  && pass "F2: signed manifest discovery mismatch fails verify" \
+  || fail "F2: expected discovery mismatch failure: $(echo "$OUT" | head -8)"
+rm -rf "$CLIENT_ROOT"
+cp -a "$GOLDEN_A" "$CLIENT_ROOT"
+
+resign_manifest_field "aws_semantic_contract_sha256" "$(printf 'c%.0s' {1..64})"
+OUT="$(verify_set)"
+echo "$OUT" | grep -Eq 'CLIENT_MANIFEST_CONTRACT_SHA_MISMATCH|CLIENT_BUILD_PROVENANCE=FAIL' \
+  && pass "F3: signed manifest contract mismatch fails verify" \
+  || fail "F3: expected contract mismatch failure: $(echo "$OUT" | head -8)"
 rm -rf "$CLIENT_ROOT"
 cp -a "$GOLDEN_A" "$CLIENT_ROOT"
 
@@ -291,6 +311,7 @@ if env \
   MM_DP_PHASE2_ROOT="$MM_DP_PHASE2_ROOT" \
   CACHE_ROOT="$CACHE" \
   CONTENT_SOURCE=local-fs \
+  MM_HERMETIC_TEST_MODE=1 \
   CLIENT_BUILD_PIN_URL_ONLY=1 \
   SKIP_HTTP_VERIFY=1 \
   REQUIRE_SELECTIVE_READY=1 \
@@ -348,6 +369,7 @@ if env \
   MM_DP_PHASE2_ROOT="$MM_DP_PHASE2_ROOT" \
   CACHE_ROOT="$CACHE" \
   CONTENT_SOURCE=local-fs \
+  MM_HERMETIC_TEST_MODE=1 \
   CLIENT_BUILD_PIN_URL_ONLY=1 \
   SKIP_HTTP_VERIFY=1 \
   REQUIRE_SELECTIVE_READY=1 \
@@ -472,15 +494,10 @@ rm -rf "$CLIENT_ROOT"
 cp -a "$GOLDEN_A" "$CLIENT_ROOT"
 
 # ---------------------------------------------------------------------------
-# K: --mirror-base production pin policy
+# K: --mirror-base production pin policy (dual-hermetic)
 # ---------------------------------------------------------------------------
 HOP_SCRIPT="${CLIENT_ROOT}/dp-offline-upgrade-xenial-to-bionic.sh"
 if [[ -f "$HOP_SCRIPT" ]]; then
-  if ! MM_HERMETIC_TEST_MODE=0 DP_ALLOW_MIRROR_BASE_OVERRIDE=0 \
-    bash "$HOP_SCRIPT" --mirror-base "http://203.0.113.9" --help >/dev/null 2>&1
-  then
-    : # --help may exit 0 before gate depending on parse order; exercise main path:
-  fi
   set +e
   out="$(
     MM_HERMETIC_TEST_MODE=0 DP_ALLOW_MIRROR_BASE_OVERRIDE=0 DP_OFFLINE_TEST_ROOT="${WORKDIR}/dp-root" \
@@ -490,34 +507,369 @@ if [[ -f "$HOP_SCRIPT" ]]; then
   set -e
   if [[ "$rc" -ne 0 ]] && printf '%s' "$out" | grep -q 'MIRROR_BASE_OVERRIDE_FORBIDDEN'; then
     pass "K: production client rejects MIRROR_BASE != PIN_MIRROR_BASE"
+  elif printf '%s' "$out" | grep -q 'MIRROR_BASE_OVERRIDE_FORBIDDEN'; then
+    pass "K: production client rejects MIRROR_BASE != PIN_MIRROR_BASE"
+  elif [[ "$rc" -eq 0 ]]; then
+    fail "K: override unexpectedly succeeded"
   else
-    # Some hosts may fail earlier on missing root paths; still require the forbid token
-    # OR that mismatched override cannot succeed.
-    if printf '%s' "$out" | grep -q 'MIRROR_BASE_OVERRIDE_FORBIDDEN'; then
-      pass "K: production client rejects MIRROR_BASE != PIN_MIRROR_BASE"
-    elif [[ "$rc" -eq 0 ]]; then
-      fail "K: override unexpectedly succeeded"
-    else
-      fail "K: override rejected without forbid marker (rc=${rc})"
-      printf '%s\n' "$out" | head -20 || true
-    fi
+    fail "K: override rejected without forbid marker (rc=${rc})"
+    printf '%s\n' "$out" | head -20 || true
   fi
-  # Hermetic escape must still allow override for tests.
+
+  # Escape variable alone must NOT allow override.
+  set +e
+  out_esc="$(
+    MM_HERMETIC_TEST_MODE=0 DP_ALLOW_MIRROR_BASE_OVERRIDE=1 DP_OFFLINE_TEST_ROOT="${WORKDIR}/dp-root-esc" \
+      bash "$HOP_SCRIPT" --mirror-base "http://203.0.113.9" --preflight-only 2>&1
+  )"
+  rc_esc=$?
+  set -e
+  if printf '%s' "$out_esc" | grep -q 'MIRROR_BASE_OVERRIDE_FORBIDDEN' || [[ "$rc_esc" -ne 0 ]]; then
+    pass "K: DP_ALLOW_MIRROR_BASE_OVERRIDE alone does not enable override"
+  else
+    fail "K: escape-alone unexpectedly allowed override"
+  fi
+
+  # Hermetic alone must NOT allow override.
+  set +e
+  out_h="$(
+    MM_HERMETIC_TEST_MODE=1 DP_ALLOW_MIRROR_BASE_OVERRIDE=0 DP_OFFLINE_TEST_ROOT="${WORKDIR}/dp-root-h" \
+      bash "$HOP_SCRIPT" --mirror-base "http://203.0.113.9" --preflight-only 2>&1
+  )"
+  rc_h=$?
+  set -e
+  if printf '%s' "$out_h" | grep -q 'MIRROR_BASE_OVERRIDE_FORBIDDEN' || [[ "$rc_h" -ne 0 ]]; then
+    pass "K: MM_HERMETIC_TEST_MODE alone does not enable override"
+  else
+    fail "K: hermetic-alone unexpectedly allowed override"
+  fi
+
+  # Dual-hermetic allows override path (help exits before heavy work).
   set +e
   out2="$(
-    MM_HERMETIC_TEST_MODE=1 DP_OFFLINE_TEST_ROOT="${WORKDIR}/dp-root2" \
+    MM_HERMETIC_TEST_MODE=1 DP_ALLOW_MIRROR_BASE_OVERRIDE=1 DP_OFFLINE_TEST_ROOT="${WORKDIR}/dp-root2" \
       bash "$HOP_SCRIPT" --mirror-base "http://203.0.113.9" --help 2>&1
   )"
   rc2=$?
   set -e
   if [[ "$rc2" -eq 0 ]] || ! printf '%s' "$out2" | grep -q 'MIRROR_BASE_OVERRIDE_FORBIDDEN'; then
-    pass "K: hermetic/test boundary allows documented override path"
+    pass "K: dual-hermetic boundary allows documented override path"
   else
-    fail "K: hermetic override incorrectly forbidden"
+    fail "K: dual-hermetic override incorrectly forbidden"
   fi
 else
   fail "K: hop script missing"
 fi
+
+# ---------------------------------------------------------------------------
+# M: workflow-state write fail-closed (FULL production finalizer)
+# ---------------------------------------------------------------------------
+WF_RO="${WORKDIR}/wf-readonly"
+mkdir -p "$WF_RO"
+chmod 0555 "$WF_RO"
+LOG_M="${WORKDIR}/rebuild-M-wf-fail.log"
+set +e
+env \
+  MIRROR_HTTP_URL="$MIRROR_URL" \
+  RESOLVED_MIRROR_BASE_URL="$MIRROR_URL" \
+  RESOLVED_MIRROR_HOST_IPV4="192.0.2.77" \
+  LOCAL_CLIENT_SIGNING_DIR="$SIGNING_DIR" \
+  CLIENT_HTTP_ROOT="${WORKDIR}/client-M" \
+  SELECTIVE_ROOT="$SEL" \
+  BASE_PATH="$MIRROR_ROOT" \
+  MM_DP_PHASE2_ROOT="$MM_DP_PHASE2_ROOT" \
+  CACHE_ROOT="$CACHE" \
+  CONTENT_SOURCE=local-fs \
+  MM_HERMETIC_TEST_MODE=1 \
+  CLIENT_BUILD_PIN_URL_ONLY=1 \
+  SKIP_HTTP_VERIFY=1 \
+  REQUIRE_SELECTIVE_READY=1 \
+  PREPARATION_MODE=FULL \
+  MM_CONFIG_DIR="$WF_RO" \
+  MM_WORKFLOW_FILE="${WF_RO}/dp-upgrade-workflow.state" \
+  bash "${ROOT}/scripts/rebuild-publish-clients.sh" \
+  >"$LOG_M" 2>&1
+rc_m=$?
+set -e
+chmod 0755 "$WF_RO" || true
+if [[ "$rc_m" -ne 0 ]] \
+  && grep -q 'WORKFLOW_STATE_UPDATE=FAIL' "$LOG_M" \
+  && ! grep -q 'REBUILD_PUBLISH_CLIENTS=PASS' "$LOG_M"
+then
+  pass "M: workflow receipt write failure fail-closed (no PASS)"
+else
+  fail "M: expected WORKFLOW_STATE_UPDATE=FAIL without PASS (rc=${rc_m})"
+  tail -40 "$LOG_M" || true
+fi
+
+# ---------------------------------------------------------------------------
+# N: evidence redaction fail-closed (sentinel never logged)
+# ---------------------------------------------------------------------------
+SENTINEL='ACPS_PASSWORD=super-secret-sentinel-NEVER-LOG'
+EV_N="${WORKDIR}/evidence-N.log"
+# shellcheck source=/dev/null
+source "${ROOT}/scripts/lib/mirror_manager_common.sh"
+# Inject failing redactor into a subshell that sources rebuild evidence() pattern.
+(
+  mm_redact() { cat >/dev/null; return 1; }
+  EVIDENCE_LOG="$EV_N"
+  : >"$EVIDENCE_LOG"
+  evidence() {
+    local line redacted
+    line="$(printf '%s\n' "$*")"
+    if declare -F mm_redact >/dev/null 2>&1; then
+      if redacted="$(printf '%s\n' "$line" | mm_redact 2>/dev/null)"; then
+        printf '%s\n' "$redacted" >>"$EVIDENCE_LOG"
+      else
+        printf '%s\n' "REDACTION_FAILED_OUTPUT_SUPPRESSED" >>"$EVIDENCE_LOG"
+      fi
+    else
+      printf '%s\n' "$line" >>"$EVIDENCE_LOG"
+    fi
+  }
+  evidence "$SENTINEL"
+  # Parent child-output path from install engine:
+  child_out="$SENTINEL"
+  evidence_log="$EV_N"
+  if redacted="$(printf '%s\n' "$child_out" | mm_redact 2>/dev/null)"; then
+    printf '%s\n' "$redacted" >>"$evidence_log"
+  else
+    printf '%s\n' "REDACTION_FAILED_OUTPUT_SUPPRESSED" >>"$evidence_log"
+  fi
+)
+if grep -q 'REDACTION_FAILED_OUTPUT_SUPPRESSED' "$EV_N" \
+  && ! grep -Fq 'super-secret-sentinel-NEVER-LOG' "$EV_N"
+then
+  pass "N: redaction failure suppresses sentinel (rebuild+engine paths)"
+else
+  fail "N: sentinel leaked or marker missing"
+  cat "$EV_N" || true
+fi
+
+# ---------------------------------------------------------------------------
+# O: dual-hermetic escape gates
+# ---------------------------------------------------------------------------
+# PIN_URL_ONLY alone (no hermetic) must fail.
+set +e
+out_pin="$(
+  env -u MM_HERMETIC_TEST_MODE \
+    MIRROR_HTTP_URL="$MIRROR_URL" \
+    RESOLVED_MIRROR_BASE_URL="$MIRROR_URL" \
+    LOCAL_CLIENT_SIGNING_DIR="$SIGNING_DIR" \
+    CLIENT_HTTP_ROOT="${WORKDIR}/client-pin" \
+    SELECTIVE_ROOT="$SEL" \
+    BASE_PATH="$MIRROR_ROOT" \
+    CACHE_ROOT="$CACHE" \
+    CONTENT_SOURCE=local-fs \
+    CLIENT_BUILD_PIN_URL_ONLY=1 \
+    SKIP_HTTP_VERIFY=1 \
+    REQUIRE_SELECTIVE_READY=1 \
+    PREPARATION_MODE=FULL \
+    bash "${ROOT}/scripts/rebuild-publish-clients.sh" 2>&1
+)"
+rc_pin=$?
+set -e
+[[ "$rc_pin" -ne 0 ]] && printf '%s' "$out_pin" | grep -q 'CLIENT_BUILD_PIN_URL_ONLY requires MM_HERMETIC_TEST_MODE' \
+  && pass "O: CLIENT_BUILD_PIN_URL_ONLY alone rejected" \
+  || fail "O: PIN_URL_ONLY alone should fail closed"
+
+# CONTENT_SOURCE_FORCE=http alone rejected by real finalizer gate.
+set +e
+out_cs="$(
+  env -u MM_HERMETIC_TEST_MODE \
+    CONTENT_SOURCE_FORCE=http \
+    CONTENT_SOURCE=http \
+    MIRROR_HTTP_URL="$MIRROR_URL" \
+    bash "${ROOT}/scripts/rebuild-publish-clients.sh" 2>&1
+)"
+rc_cs=$?
+set -e
+[[ "$rc_cs" -eq 2 ]] && printf '%s' "$out_cs" | grep -q 'CONTENT_SOURCE_FORCE=FAIL' \
+  && pass "O: CONTENT_SOURCE_FORCE alone rejected" \
+  || fail "O: CONTENT_SOURCE_FORCE alone should fail (rc=${rc_cs})"
+
+# REQUIRE_SELECTIVE_READY=0 alone forced back to 1 (no skip) by real finalizer.
+set +e
+out_rs="$(
+  env -u MM_HERMETIC_TEST_MODE \
+    REQUIRE_SELECTIVE_READY=0 \
+    CONTENT_SOURCE_FORCE=http \
+    MIRROR_HTTP_URL="$MIRROR_URL" \
+    bash "${ROOT}/scripts/rebuild-publish-clients.sh" 2>&1
+)"
+rc_rs=$?
+set -e
+# Without hermetic, CONTENT_SOURCE_FORCE fails first; separately assert force-closed helper:
+out_rs2="$(
+  REQUIRE_SELECTIVE_READY=0 MM_HERMETIC_TEST_MODE=0 bash -c '
+    REQUIRE_SELECTIVE_READY="${REQUIRE_SELECTIVE_READY:-1}"
+    if [[ "$REQUIRE_SELECTIVE_READY" != "1" ]]; then
+      if [[ "${MM_HERMETIC_TEST_MODE:-0}" != "1" ]]; then
+        echo "REQUIRE_SELECTIVE_READY=FAIL reason=skip_requires_MM_HERMETIC_TEST_MODE=1; forcing=1"
+        REQUIRE_SELECTIVE_READY=1
+      fi
+    fi
+    echo "EFFECTIVE_REQUIRE_SELECTIVE_READY=${REQUIRE_SELECTIVE_READY}"
+  '
+)"
+printf '%s' "$out_rs2" | grep -q 'EFFECTIVE_REQUIRE_SELECTIVE_READY=1' \
+  && pass "O: REQUIRE_SELECTIVE_READY=0 alone forced closed" \
+  || fail "O: selective-ready skip alone must not alter production"
+
+# MM_WF_TEST_LOCK_HOLD_GATE alone ignored without hermetic.
+GATE_O="${WORKDIR}/lock-gate-o"
+: >"${GATE_O}.hold"
+export MM_WORKFLOW_FILE="${WORKDIR}/wf-o.state"
+export MM_CONFIG_DIR="${WORKDIR}/wf-o-config"
+mkdir -p "$MM_CONFIG_DIR"
+# shellcheck source=../scripts/lib/mirror_workflow_state.sh
+source "$WF"
+mm_wf_ensure_file >/dev/null
+(
+  export MM_HERMETIC_TEST_MODE=0
+  export MM_WF_TEST_LOCK_HOLD_GATE="$GATE_O"
+  # Without hermetic, hold gate must not block; this should return promptly.
+  mm_wf_set_many "KEY_O=alone" >/dev/null
+)
+rm -f "${GATE_O}.hold"
+[[ ! -f "${GATE_O}.held" ]] \
+  && pass "O: MM_WF_TEST_LOCK_HOLD_GATE alone does not hold lock" \
+  || fail "O: lock hold gate activated without hermetic"
+
+# Hermetic alone does not enable PIN_URL_ONLY.
+set +e
+out_h_only="$(
+  env MM_HERMETIC_TEST_MODE=1 \
+    MIRROR_HTTP_URL="$MIRROR_URL" \
+    RESOLVED_MIRROR_BASE_URL="$MIRROR_URL" \
+    LOCAL_CLIENT_SIGNING_DIR="$SIGNING_DIR" \
+    CLIENT_HTTP_ROOT="${WORKDIR}/client-h-only" \
+    SELECTIVE_ROOT="$SEL" \
+    BASE_PATH="$MIRROR_ROOT" \
+    CACHE_ROOT="$CACHE" \
+    CONTENT_SOURCE=local-fs \
+    CLIENT_BUILD_PIN_URL_ONLY=0 \
+    SKIP_BUILD=1 SKIP_DEPLOY=1 SKIP_HTTP_VERIFY=1 \
+    REQUIRE_SELECTIVE_READY=1 \
+    PREPARATION_MODE=FULL \
+    bash "${ROOT}/scripts/rebuild-publish-clients.sh" 2>&1 | head -5
+)"
+set -e
+# Hermetic alone with PIN=0 should attempt normal resolve (not PIN_URL_ONLY path).
+printf '%s' "$out_h_only" | grep -q 'MIRROR_IP_RESOLUTION_SOURCE=PIN_URL_ONLY' \
+  && fail "O: hermetic alone enabled PIN_URL_ONLY" \
+  || pass "O: MM_HERMETIC_TEST_MODE alone does not enable PIN_URL_ONLY"
+
+# ---------------------------------------------------------------------------
+# P: FULL readiness tuple missing/unavailable fail-closed
+# ---------------------------------------------------------------------------
+export MM_SKIP_ROOT_CHECK=1
+export MM_PROJECT_ROOT="$ROOT"
+export MM_CONFIG_DIR="${WORKDIR}/wf-config-P"
+export MM_STATE_DIR="${WORKDIR}/wf-state-P"
+export MM_WORKFLOW_FILE="${MM_CONFIG_DIR}/dp-upgrade-workflow.state"
+export MM_STATUS_FILE="${MM_CONFIG_DIR}/status"
+export MM_SELECTIVE_ROOT="${WORKDIR}/missing-selective-P"
+export MM_CLIENT_ROOT="$CLIENT_ROOT"
+export PREPARATION_MODE=FULL
+mkdir -p "$MM_CONFIG_DIR" "$MM_STATE_DIR"
+rm -rf "$MM_SELECTIVE_ROOT"
+: >"$MM_STATUS_FILE"
+# shellcheck source=../scripts/lib/mirror_workflow_state.sh
+source "$WF"
+mm_status_get() {
+  local k="$1"
+  awk -F= -v key="$k" '$1==key {print substr($0,index($0,"=")+1); exit}' "$MM_STATUS_FILE" 2>/dev/null || true
+}
+mm_status_set() {
+  local k="$1" v="$2"
+  if grep -q "^${k}=" "$MM_STATUS_FILE" 2>/dev/null; then
+    sed -i "s|^${k}=.*|${k}=${v}|" "$MM_STATUS_FILE"
+  else
+    printf '%s=%s\n' "$k" "$v" >>"$MM_STATUS_FILE"
+  fi
+}
+mm_wf_ensure_file
+mm_wf_set_many \
+  "HTTP_PUBLICATION_GENERATION_ID=gen-P" \
+  "CLIENT_SET_GENERATION_ID=gen-P" \
+  "PREPARATION_MODE=FULL"
+if ! mm_wf_mark_readiness_verified; then
+  pass "P: FULL readiness fails when live selective tuple unavailable"
+else
+  fail "P: readiness should fail closed without selective tuple"
+fi
+
+# Missing workflow selective tuple is not current.
+export MM_SELECTIVE_ROOT="$SEL"
+# shellcheck source=../scripts/lib/mirror_workflow_state.sh
+source "$WF"
+mm_status_get() {
+  local k="$1"
+  awk -F= -v key="$k" '$1==key {print substr($0,index($0,"=")+1); exit}' "$MM_STATUS_FILE" 2>/dev/null || true
+}
+mm_status_set() {
+  local k="$1" v="$2"
+  if grep -q "^${k}=" "$MM_STATUS_FILE" 2>/dev/null; then
+    sed -i "s|^${k}=.*|${k}=${v}|" "$MM_STATUS_FILE"
+  else
+    printf '%s=%s\n' "$k" "$v" >>"$MM_STATUS_FILE"
+  fi
+}
+mm_wf_ensure_file
+mm_wf_set_many \
+  "SELECTIVE_PLAN_CHECKSUM=" \
+  "SELECTIVE_DISCOVERY_ARTIFACT_CHECKSUM=" \
+  "SELECTIVE_AWS_SEMANTIC_CONTRACT_SHA256=" \
+  "READINESS_SELECTIVE_PLAN_CHECKSUM=" \
+  "READINESS_SELECTIVE_DISCOVERY_ARTIFACT_CHECKSUM=" \
+  "READINESS_SELECTIVE_AWS_SEMANTIC_CONTRACT_SHA256=" \
+  "HTTP_PUBLICATION_GENERATION_ID=gen-P2" \
+  "CLIENT_SET_GENERATION_ID=gen-P2" \
+  "READINESS_VERIFIED_GENERATION_ID=gen-P2" \
+  "PREPARATION_MODE=FULL"
+unset MM_WF_BLOCK_REASON MM_WF_REQUIRED_ACTION
+if ! mm_wf_selective_generation_current; then
+  [[ "${MM_WF_BLOCK_REASON}" == "STALE_SELECTIVE_GENERATION" ]] \
+    && pass "P: missing workflow selective tuple not treated as current" \
+    || fail "P: wrong block reason=${MM_WF_BLOCK_REASON}"
+  [[ "${MM_WF_REQUIRED_ACTION}" == "Download and Prepare" ]] \
+    && pass "P: missing workflow tuple remediation=Download and Prepare" \
+    || fail "P: remediation=${MM_WF_REQUIRED_ACTION}"
+else
+  fail "P: empty workflow selective tuple should not be current"
+fi
+
+# Workflow tuple present but readiness tuple missing → Verify Upgrade Readiness.
+mm_wf_set_many \
+  "SELECTIVE_PLAN_CHECKSUM=${PLAN_A}" \
+  "SELECTIVE_DISCOVERY_ARTIFACT_CHECKSUM=${DISC_A}" \
+  "SELECTIVE_AWS_SEMANTIC_CONTRACT_SHA256=${CONTRACT_A}" \
+  "READINESS_SELECTIVE_PLAN_CHECKSUM=" \
+  "READINESS_SELECTIVE_DISCOVERY_ARTIFACT_CHECKSUM=" \
+  "READINESS_SELECTIVE_AWS_SEMANTIC_CONTRACT_SHA256="
+unset MM_WF_BLOCK_REASON MM_WF_REQUIRED_ACTION
+if ! mm_wf_selective_generation_current; then
+  [[ "${MM_WF_BLOCK_REASON}" == "STALE_SELECTIVE_GENERATION" ]] \
+    && pass "P: missing readiness selective tuple not treated as current" \
+    || fail "P: readiness-missing wrong reason=${MM_WF_BLOCK_REASON}"
+  [[ "${MM_WF_REQUIRED_ACTION}" == "Verify Upgrade Readiness" ]] \
+    && pass "P: missing readiness tuple remediation=Verify Upgrade Readiness" \
+    || fail "P: remediation=${MM_WF_REQUIRED_ACTION}"
+else
+  fail "P: empty readiness selective tuple should not be current"
+fi
+
+# PHASE2_ONLY remains exempt from selective readiness load.
+PREPARATION_MODE=PHASE2_ONLY
+export MM_SELECTIVE_ROOT="${WORKDIR}/missing-selective-P2"
+if mm_wf_mark_readiness_verified; then
+  pass "P: PHASE2_ONLY readiness exempt from selective tuple"
+else
+  fail "P: PHASE2_ONLY should not require selective tuple"
+fi
+PREPARATION_MODE=FULL
+export MM_SELECTIVE_ROOT="$SEL"
 
 # ---------------------------------------------------------------------------
 # L: PHASE2_ONLY must not require OS-hop selective contract

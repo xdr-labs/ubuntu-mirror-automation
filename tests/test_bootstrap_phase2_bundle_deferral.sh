@@ -311,6 +311,7 @@ rebuild_out="$(
     PHASE2_TARGET_VERSION="$TARGET_VER" \
     CONTENT_SOURCE=local-fs \
     SKIP_HTTP_VERIFY=1 \
+    MM_HERMETIC_TEST_MODE=1 \
     CLIENT_BUILD_PIN_URL_ONLY=1 \
     REQUIRE_SELECTIVE_READY=1 \
     bash "${ROOT}/scripts/rebuild-publish-clients.sh" 2>&1

@@ -7556,8 +7556,9 @@ main() {
   # Production runtime pin: MIRROR_BASE must equal build-time PIN_MIRROR_BASE.
   # Arbitrary host override is forbidden outside an explicit hermetic/test boundary.
   if [[ "${MIRROR_BASE%/}" != "${PIN_MIRROR_BASE%/}" ]]; then
-    if [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" || "${DP_ALLOW_MIRROR_BASE_OVERRIDE:-0}" == "1" ]]; then
-      : # allowed under explicit test boundary
+    # Dual-hermetic: both MM_HERMETIC_TEST_MODE=1 and DP_ALLOW_MIRROR_BASE_OVERRIDE=1.
+    if [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" && "${DP_ALLOW_MIRROR_BASE_OVERRIDE:-0}" == "1" ]]; then
+      : # allowed under explicit dual-hermetic test boundary
     else
       die "$EC_USAGE" "MIRROR_BASE_OVERRIDE_FORBIDDEN: production requires MIRROR_BASE==PIN_MIRROR_BASE (got '${MIRROR_BASE}' pin='${PIN_MIRROR_BASE}')"
     fi

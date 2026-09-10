@@ -204,7 +204,8 @@ mm_wf_set_many() {
     return 1
   fi
   # Optional test gate: hold lock while ${gate}.hold exists (deterministic races).
-  if [[ -n "${MM_WF_TEST_LOCK_HOLD_GATE:-}" ]]; then
+  # Dual-hermetic: MM_HERMETIC_TEST_MODE=1 AND MM_WF_TEST_LOCK_HOLD_GATE must both be set.
+  if [[ -n "${MM_WF_TEST_LOCK_HOLD_GATE:-}" && "${MM_HERMETIC_TEST_MODE:-0}" == "1" ]]; then
     : >"${MM_WF_TEST_LOCK_HOLD_GATE}.held"
     while [[ -f "${MM_WF_TEST_LOCK_HOLD_GATE}.hold" ]]; do
       sleep 0.01
@@ -883,7 +884,11 @@ mm_wf_mark_client_set_published() {
     "READINESS_SELECTIVE_DISCOVERY_ARTIFACT_CHECKSUM=" \
     "READINESS_SELECTIVE_AWS_SEMANTIC_CONTRACT_SHA256=" \
     "COMMAND_FILE_GENERATION_ID=" \
-    "VERIFIED_UTC="
+    "VERIFIED_UTC=" \
+    || {
+      mm_wf_warn "WORKFLOW_STATE_UPDATE=FAIL reason=client_set_receipt_persist"
+      return 1
+    }
   if declare -F mm_status_set >/dev/null 2>&1; then
     mm_status_set WORKFLOW_STATE CLIENT_SET_PUBLISHED
     mm_status_set CLIENT_SET_GENERATION_ID "$client_gen"
@@ -933,7 +938,7 @@ mm_wf_mark_http_disabled() {
 }
 
 mm_wf_mark_readiness_verified() {
-  local pub_gen plan_ck disc_ck contract_sha
+  local pub_gen plan_ck disc_ck contract_sha mode
   pub_gen="$(mm_wf_get HTTP_PUBLICATION_GENERATION_ID)"
   [[ -n "$pub_gen" ]] || pub_gen="$(mm_wf_get CLIENT_SET_GENERATION_ID)"
   if [[ -z "$pub_gen" ]]; then
@@ -942,26 +947,41 @@ mm_wf_mark_readiness_verified() {
     mm_wf_warn "WORKFLOW_READINESS_SKIPPED reason=missing_publication_generation"
     return 0
   fi
-  # Snapshot the live selective generation tuple as a readiness receipt.
-  # Source of truth remains filesystem selective READY/plan; these are compared
-  # back to it on Menu 7 / process restart.
-  plan_ck="$(mm_wf_get SELECTIVE_PLAN_CHECKSUM)"
-  disc_ck="$(mm_wf_get SELECTIVE_DISCOVERY_ARTIFACT_CHECKSUM)"
-  contract_sha="$(mm_wf_get SELECTIVE_AWS_SEMANTIC_CONTRACT_SHA256)"
-  if [[ -z "$plan_ck$disc_ck$contract_sha" ]] || [[ "${PREPARATION_MODE:-FULL}" == "FULL" ]]; then
-    # Prefer live selective filesystem when available.
+  mode="${PREPARATION_MODE:-FULL}"
+  plan_ck=""
+  disc_ck=""
+  contract_sha=""
+  # FULL mode: readiness receipt must bind a non-empty live selective tuple.
+  # Never swallow mm_wf_load_live_selective_tuple failure. PHASE2_ONLY exempt.
+  if [[ "$mode" != "PHASE2_ONLY" ]]; then
     local live
-    live="$(mm_wf_load_live_selective_tuple 2>/dev/null || true)"
-    if [[ -n "$live" ]]; then
-      plan_ck="$(printf '%s\n' "$live" | awk -F= '$1=="SELECTIVE_PLAN_CHECKSUM"{print $2; exit}')"
-      disc_ck="$(printf '%s\n' "$live" | awk -F= '$1=="SELECTIVE_DISCOVERY_ARTIFACT_CHECKSUM"{print $2; exit}')"
-      contract_sha="$(printf '%s\n' "$live" | awk -F= '$1=="SELECTIVE_AWS_SEMANTIC_CONTRACT_SHA256"{print $2; exit}')"
-      mm_wf_set_many \
-        "SELECTIVE_PLAN_CHECKSUM=${plan_ck}" \
-        "SELECTIVE_DISCOVERY_ARTIFACT_CHECKSUM=${disc_ck}" \
-        "SELECTIVE_AWS_SEMANTIC_CONTRACT_SHA256=${contract_sha}" \
-        || true
+    if ! live="$(mm_wf_load_live_selective_tuple 2>/dev/null)"; then
+      mm_wf_warn "WORKFLOW_READINESS=FAIL reason=selective_tuple_unavailable"
+      if declare -F mm_status_set >/dev/null 2>&1; then
+        mm_status_set UPGRADE_READINESS FAIL
+        mm_status_set READINESS_RESULT FAIL
+      fi
+      return 1
     fi
+    plan_ck="$(printf '%s\n' "$live" | awk -F= '$1=="SELECTIVE_PLAN_CHECKSUM"{print $2; exit}')"
+    disc_ck="$(printf '%s\n' "$live" | awk -F= '$1=="SELECTIVE_DISCOVERY_ARTIFACT_CHECKSUM"{print $2; exit}')"
+    contract_sha="$(printf '%s\n' "$live" | awk -F= '$1=="SELECTIVE_AWS_SEMANTIC_CONTRACT_SHA256"{print $2; exit}')"
+    if [[ -z "$plan_ck" || -z "$disc_ck" || -z "$contract_sha" ]]; then
+      mm_wf_warn "WORKFLOW_READINESS=FAIL reason=selective_tuple_incomplete"
+      if declare -F mm_status_set >/dev/null 2>&1; then
+        mm_status_set UPGRADE_READINESS FAIL
+        mm_status_set READINESS_RESULT FAIL
+      fi
+      return 1
+    fi
+    mm_wf_set_many \
+      "SELECTIVE_PLAN_CHECKSUM=${plan_ck}" \
+      "SELECTIVE_DISCOVERY_ARTIFACT_CHECKSUM=${disc_ck}" \
+      "SELECTIVE_AWS_SEMANTIC_CONTRACT_SHA256=${contract_sha}" \
+      || {
+        mm_wf_warn "WORKFLOW_READINESS=FAIL reason=selective_tuple_persist"
+        return 1
+      }
   fi
   mm_wf_set_many \
     "WORKFLOW_STATE=READINESS_VERIFIED" \
@@ -970,7 +990,11 @@ mm_wf_mark_readiness_verified() {
     "READINESS_SELECTIVE_DISCOVERY_ARTIFACT_CHECKSUM=${disc_ck}" \
     "READINESS_SELECTIVE_AWS_SEMANTIC_CONTRACT_SHA256=${contract_sha}" \
     "COMMAND_FILE_GENERATION_ID=" \
-    "VERIFIED_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    "VERIFIED_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    || {
+      mm_wf_warn "WORKFLOW_READINESS=FAIL reason=readiness_receipt_persist"
+      return 1
+    }
   if declare -F mm_status_set >/dev/null 2>&1; then
     mm_status_set WORKFLOW_STATE READINESS_VERIFIED
     mm_status_set READINESS_VERIFIED_GENERATION_ID "$pub_gen"
@@ -1038,22 +1062,28 @@ mm_wf_selective_generation_current() {
     MM_WF_REQUIRED_ACTION="Download and Prepare"
     return 1
   fi
-  # Workflow client-set receipt must match live selective authority.
-  if [[ -n "$wf_plan$wf_disc$wf_contract" ]]; then
-    if [[ "$wf_plan" != "$live_plan" || "$wf_disc" != "$live_disc" || "$wf_contract" != "$live_contract" ]]; then
-      MM_WF_BLOCK_REASON="STALE_SELECTIVE_GENERATION"
-      # Client set belongs to another selective generation → rebuild clients.
-      MM_WF_REQUIRED_ACTION="Download and Prepare"
-      return 1
-    fi
+  # FULL mode: missing workflow/client selective tuple is not current.
+  if [[ -z "$wf_plan" || -z "$wf_disc" || -z "$wf_contract" ]]; then
+    MM_WF_BLOCK_REASON="STALE_SELECTIVE_GENERATION"
+    MM_WF_REQUIRED_ACTION="Download and Prepare"
+    return 1
   fi
-  # Readiness receipt must match the same live tuple (or re-verify readiness).
-  if [[ -n "$ready_plan$ready_disc$ready_contract" ]]; then
-    if [[ "$ready_plan" != "$live_plan" || "$ready_disc" != "$live_disc" || "$ready_contract" != "$live_contract" ]]; then
-      MM_WF_BLOCK_REASON="STALE_SELECTIVE_GENERATION"
-      MM_WF_REQUIRED_ACTION="Verify Upgrade Readiness"
-      return 1
-    fi
+  if [[ "$wf_plan" != "$live_plan" || "$wf_disc" != "$live_disc" || "$wf_contract" != "$live_contract" ]]; then
+    MM_WF_BLOCK_REASON="STALE_SELECTIVE_GENERATION"
+    # Client set belongs to another selective generation → rebuild clients.
+    MM_WF_REQUIRED_ACTION="Download and Prepare"
+    return 1
+  fi
+  # FULL mode: missing readiness selective tuple is not current.
+  if [[ -z "$ready_plan" || -z "$ready_disc" || -z "$ready_contract" ]]; then
+    MM_WF_BLOCK_REASON="STALE_SELECTIVE_GENERATION"
+    MM_WF_REQUIRED_ACTION="Verify Upgrade Readiness"
+    return 1
+  fi
+  if [[ "$ready_plan" != "$live_plan" || "$ready_disc" != "$live_disc" || "$ready_contract" != "$live_contract" ]]; then
+    MM_WF_BLOCK_REASON="STALE_SELECTIVE_GENERATION"
+    MM_WF_REQUIRED_ACTION="Verify Upgrade Readiness"
+    return 1
   fi
   return 0
 }
