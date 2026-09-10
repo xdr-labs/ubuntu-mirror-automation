@@ -53,6 +53,7 @@ CATEGORY_PATTERNS = {
         "client/dp-offline-upgrade-jammy-to-noble.sh.in",
         "client/dp-postboot-readiness-policy.sh.inc",
         "client/dp-postboot-aws-kernel-gate.sh.inc",
+        "client/dp-postboot-generic-kernel-gate.sh.inc",
         "client/dp-aws-semantic-contract.sh.inc",
         "client/dp-client-hop-launcher.sh.in",
     ),
@@ -68,6 +69,9 @@ CATEGORY_PATTERNS = {
         "client/lib/dp-phase2-operation-progress.sh",
         "client/lib/dp-phase2-bringup-lifecycle.sh",
         "client/lib/dp-phase2-ubuntu-prerequisites.sh",
+        "client/lib/dp-phase2-time-readiness.sh",
+        "client/lib/dp-phase2-post-bringup-migration.sh",
+        "client/lib/dp-phase2-cluster-validation.sh",
     ),
     "runner": ("client/dp-client-command-runner.sh",),
     "command_generators": (

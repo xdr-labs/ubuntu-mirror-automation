@@ -992,6 +992,8 @@ is_critical_os_hold_package() {
 
 @@AWS_KERNEL_GATE_LIB@@
 
+@@GENERIC_KERNEL_GATE_LIB@@
+
 @@SOURCE_PRODUCT_HELPER@@
 
 critical_holds_dir() {
@@ -2078,6 +2080,12 @@ check_os_baseline() {
     validate_aws_source_kernel_preflight "${PIN_SOURCE_VERSION}" || {
       log ERROR "AWS source kernel preflight failed; refusing destructive upgrade stages"
       return 1
+    }
+  fi
+  if declare -F persist_source_kernel_generic_baseline >/dev/null 2>&1; then
+    persist_source_kernel_generic_baseline || {
+      log ERROR "GENERIC_SOURCE_KERNEL_BASELINE=FAIL"
+      die "$EC_PREFLIGHT" "failed to persist generic source kernel baseline"
     }
   fi
   if declare -F persist_source_kernel_aws_baseline >/dev/null 2>&1; then
@@ -6962,6 +6970,40 @@ runner_collect_pre_dro_evidence() {
   log INFO "PRE_DRO_EVIDENCE=${dest}"
 }
 
+
+ensure_postboot_unit_enabled_before_reboot() {
+  local unit="${POSTBOOT_UNIT_NAME:-stellar-offline-os-upgrade-postboot.service}"
+  local unit_path="/etc/systemd/system/${unit}"
+  local en_state=""
+  log INFO "POSTBOOT_HANDOFF_CHECK=START unit=${unit}"
+  if [[ ! -f "$unit_path" ]]; then
+    log ERROR "POSTBOOT_UNIT_FILE_MISSING=${unit_path}"
+    return 1
+  fi
+  if ! systemctl daemon-reload; then
+    log ERROR "POSTBOOT_DAEMON_RELOAD=FAIL"
+    return 1
+  fi
+  log INFO "POSTBOOT_DAEMON_RELOAD=PASS"
+  if ! systemctl enable "$unit"; then
+    log ERROR "POSTBOOT_ENABLE=FAIL"
+    return 1
+  fi
+  log INFO "POSTBOOT_ENABLE=PASS"
+  en_state="$(systemctl is-enabled "$unit" 2>/dev/null || true)"
+  case "$en_state" in
+    enabled|enabled-runtime|static|indirect|alias)
+      log INFO "POSTBOOT_IS_ENABLED=${en_state}"
+      log INFO "POSTBOOT_ENABLE_VERIFIED=PASS"
+      log INFO "POSTBOOT_HANDOFF_READY=YES"
+      return 0
+      ;;
+  esac
+  log ERROR "POSTBOOT_IS_ENABLED_MISMATCH state=${en_state:-empty}"
+  log ERROR "POSTBOOT_ENABLE_VERIFIED=FAIL"
+  return 1
+}
+
 reboot_if_success() {
   write_state REBOOT_PENDING
   log INFO "CRITICAL_OS_HOLDS_REMAIN_UNHELD_THROUGH_OS_UPGRADE=YES"
@@ -7157,10 +7199,26 @@ main() {
       fail_stage 1 "AWS target kernel not ready before reboot"
     fi
   fi
+  if declare -F validate_generic_target_kernel_pre_reboot >/dev/null 2>&1; then
+    if ! validate_generic_target_kernel_pre_reboot "24.04"; then
+      log ERROR "PRE_REBOOT_GENERIC_TARGET_GATE=FAIL; refusing automatic reboot"
+      log ERROR "AUTOMATIC_REBOOT_NOT_STARTED=YES"
+      log ERROR "POSTBOOT_HANDOFF_READY=NO"
+      write_state FAILED
+      fail_stage 1 "generic target kernel not ready before reboot"
+    fi
+  fi
   RELEASE_UPGRADE_COMPLETED="true"
   persist_flags
   if [[ -z "$_TEST_PREFIX" ]]; then
-    systemctl enable stellar-offline-os-upgrade-postboot.service 2>/dev/null || true
+    if ! ensure_postboot_unit_enabled_before_reboot; then
+      log ERROR "AUTOMATIC_REBOOT_NOT_STARTED=YES"
+      log ERROR "POSTBOOT_HANDOFF_READY=NO"
+      write_state FAILED
+      fail_stage 1 "postboot unit not verified enabled before reboot"
+    fi
+  else
+    log INFO "POSTBOOT_ENABLE_VERIFIED=SKIP reason=TEST_ROOT"
   fi
   reboot_if_success
 }
@@ -7175,6 +7233,8 @@ RUNNER
 set -euo pipefail
 @@DURABLE_WRITE_HELPER@@
 @@AWS_KERNEL_GATE_LIB@@
+
+@@GENERIC_KERNEL_GATE_LIB@@
 STATE_ROOT="/opt/aelladata/os-upgrade/offline"
 STATE_FILE="${STATE_ROOT}/state"
 HISTORY_FILE="${STATE_ROOT}/hop_history"
@@ -7307,6 +7367,13 @@ main() {
     log ERROR "AWS kernel post-hop validation failed; refusing COMPLETED_NOBLE"
     write_state FAILED
     exit 1
+  fi
+  if declare -F validate_generic_running_kernel_postboot >/dev/null 2>&1; then
+    if ! validate_generic_running_kernel_postboot "24.04"; then
+      log ERROR "GENERIC_POST_HOP_KERNEL_GATE=FAIL"
+      write_state FAILED
+      exit 1
+    fi
   fi
   write_state COMPLETED_NOBLE
   mkdir -p /etc/motd.d 2>/dev/null || true

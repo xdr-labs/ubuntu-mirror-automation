@@ -33,6 +33,9 @@ PHASE2_HELPER_GENERATION_FILES=(
   lib/dp-phase2-operation-progress.sh
   lib/dp-phase2-bringup-lifecycle.sh
   lib/dp-phase2-ubuntu-prerequisites.sh
+  lib/dp-phase2-time-readiness.sh
+  lib/dp-phase2-post-bringup-migration.sh
+  lib/dp-phase2-cluster-validation.sh
 )
 
 _stage_generation_manifest_hash_for() {
@@ -105,6 +108,8 @@ _stage_verify_generation_unit || exit 1
 source "${_STAGE_LIB_DIR}/dp-offline-source-product-version.sh"
 # shellcheck source=/dev/null
 source "${_STAGE_LIB_DIR}/dp-phase2-operation-progress.sh"
+# shellcheck source=/dev/null
+source "${_STAGE_LIB_DIR}/dp-phase2-post-bringup-migration.sh"
 
 readonly MIN_SUPPORTED_SOURCE_DP_VERSION="6.2.0"
 # No built-in mirror address: the address is site-specific and a stale default
@@ -145,6 +150,14 @@ AELLA_OWNERSHIP_CHECK=""
 ARTIFACT_CACHE_RESULT=""
 ARTIFACT_CHECKSUM_RESULT=""
 PHASE2_STAGE_RESULT=""
+ARTIFACT_STAGING_RESULT=""
+BRINGUP_READINESS_RESULT=""
+PHASE2_REQUIRED_FREE_BYTES=""
+PHASE2_AVAILABLE_FREE_BYTES=""
+PHASE2_ESTIMATED_PEAK_BYTES=""
+PHASE2_DISK_PREFLIGHT=""
+POST_BRINGUP_MIGRATION=""
+REQUIRED_POST_BRINGUP_ACTION=""
 NTP_BRINGUP_READINESS="NOT_CHECKED"
 TIME_READINESS="NOT_CHECKED"
 CLOCK_SKEW_SECONDS=""
@@ -404,11 +417,59 @@ require_space() {
   [[ "$root_free" -ge "$MIN_ROOT_GIB" ]] || die "/ free ${root_free}GiB < ${MIN_ROOT_GIB}GiB"
 }
 
+free_bytes() {
+  local path="$1"
+  local kib
+  kib="$(df -Pk "$path" | awk 'NR==2 {print $4}')"
+  echo $((kib * 1024))
+}
+
+# Peak model after extract-into-candidate (no second full cp -a tree):
+#   verified bundle cache (C) + NEW_ART extract (~C) + existing ARTIFACT_DIR (A, if present)
+phase2_estimate_peak_bytes() {
+  local bundle_bytes="${1:-0}" existing_bytes=0 safety
+  safety=$((5 * 1024 * 1024 * 1024))
+  if [[ -d "$ARTIFACT_DIR" ]]; then
+    existing_bytes="$(du -sb "$ARTIFACT_DIR" 2>/dev/null | awk '{print $1}')"
+    [[ "$existing_bytes" =~ ^[0-9]+$ ]] || existing_bytes=0
+  fi
+  echo $((bundle_bytes + bundle_bytes + existing_bytes + safety))
+}
+
+require_phase2_dynamic_space() {
+  local cache_tar="${CACHE_DIR}/bundle.tar"
+  local bundle_bytes avail peak required
+  [[ -f "$cache_tar" ]] || die "verified bundle missing for disk preflight"
+  bundle_bytes="$(stat -c%s "$cache_tar" 2>/dev/null || echo 0)"
+  [[ "$bundle_bytes" =~ ^[0-9]+$ && "$bundle_bytes" -gt 0 ]] || die "bundle size unavailable for disk preflight"
+  avail="$(free_bytes /opt/aelladata)"
+  peak="$(phase2_estimate_peak_bytes "$bundle_bytes")"
+  # Bundle already occupies space; required additional free is peak - bundle.
+  required=$((peak - bundle_bytes))
+  [[ "$required" -lt "$bundle_bytes" ]] && required="$bundle_bytes"
+  PHASE2_ESTIMATED_PEAK_BYTES="$peak"
+  PHASE2_REQUIRED_FREE_BYTES="$required"
+  PHASE2_AVAILABLE_FREE_BYTES="$avail"
+  log "PHASE2_ESTIMATED_PEAK_BYTES=${PHASE2_ESTIMATED_PEAK_BYTES}"
+  log "PHASE2_REQUIRED_FREE_BYTES=${PHASE2_REQUIRED_FREE_BYTES}"
+  log "PHASE2_AVAILABLE_FREE_BYTES=${PHASE2_AVAILABLE_FREE_BYTES}"
+  if [[ "$avail" -lt "$required" ]]; then
+    PHASE2_DISK_PREFLIGHT="FAIL"
+    log "PHASE2_DISK_PREFLIGHT=FAIL"
+    die "insufficient /opt/aelladata free space for Phase 2 peak layout: available=${avail} required=${required}"
+  fi
+  PHASE2_DISK_PREFLIGHT="PASS"
+  log "PHASE2_DISK_PREFLIGHT=PASS"
+}
+
 resolve_aella_ownership() {
   id -u aella >/dev/null 2>&1 || die "aella account missing"
   local shell
   shell="$(getent passwd aella | awk -F: '{print $7}')"
-  [[ "$shell" == "/bin/bash" ]] || die "aella shell must be /bin/bash (got ${shell})"
+  if [[ "$shell" != "/bin/bash" ]]; then
+    die "PHASE2_AELLA_SHELL_PREFLIGHT=FAIL aella shell must be /bin/bash before Phase 2 staging/download (got ${shell:-empty}). Fix the aella login shell, then re-run staging — do not download the 30+ GiB bundle until this passes."
+  fi
+  log "PHASE2_AELLA_SHELL_PREFLIGHT=PASS shell=/bin/bash"
 
   AELLA_UID="$(id -u aella)"
   AELLA_PRIMARY_GID="$(id -g aella)"
@@ -988,309 +1049,9 @@ ensure_verified_bundle() {
   log "ARTIFACT_CHECKSUM_RESULT=PASS"
 }
 
-# --- Time readiness / NTP source classification (Phase 2 staging guidance) ---
-# Read-only. Does not configure NTP. Staging always places artifacts; bringup is never executed here.
-# INTERNAL NTP absence alone never sets BRINGUP_READY=NO.
-
-dp_phase2_max_clock_skew_seconds() {
-  local raw="${DP_MAX_CLOCK_SKEW_SECONDS:-300}"
-  if [[ "$raw" =~ ^[1-9][0-9]*$ ]]; then
-    printf '%s' "$raw"
-    return 0
-  fi
-  # Invalid values are rejected by check_ntp_bringup_readiness; keep a safe display default here.
-  printf '300'
-}
-
-dp_phase2_ipv4_is_loopback_or_linklocal() {
-  local ip="$1" a b
-  [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
-  IFS=. read -r a b _ _ <<<"$ip"
-  [[ "$a" == "127" ]] && return 0
-  [[ "$a" == "169" && "$b" == "254" ]] && return 0
-  return 1
-}
-
-dp_phase2_ipv4_is_internal_ntp() {
-  # RFC1918 only. Loopback/link-local are not valid NTP sources.
-  local ip="$1" a b
-  [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
-  dp_phase2_ipv4_is_loopback_or_linklocal "$ip" && return 1
-  IFS=. read -r a b _ _ <<<"$ip"
-  [[ "$a" == "10" ]] && return 0
-  [[ "$a" == "172" && "$b" -ge 16 && "$b" -le 31 ]] && return 0
-  [[ "$a" == "192" && "$b" == "168" ]] && return 0
-  return 1
-}
-
-dp_phase2_collect_ntp_sources() {
-  # Prints candidate server/pool tokens (IP or hostname), one per line.
-  local out conf line tok
-  out=""
-  if [[ -n "${DP_PHASE2_FAKE_NTPQ_PN:-}" ]]; then
-    out="${DP_PHASE2_FAKE_NTPQ_PN}"
-  elif command -v ntpq >/dev/null 2>&1; then
-    out="$(ntpq -pn 2>/dev/null || ntpq -p 2>/dev/null || true)"
-  fi
-  if [[ -n "$out" ]]; then
-    while IFS= read -r line || [[ -n "$line" ]]; do
-      [[ "$line" =~ [[:space:]]*remote[[:space:]]+refid ]] && continue
-      [[ "$line" =~ ^=+$ ]] && continue
-      [[ "$line" =~ ^[[:space:]]*$ ]] && continue
-      tok="$(printf '%s\n' "${line#"${line%%[![:space:]]*}"}" | awk '{print $1}')"
-      tok="${tok#[*+#\-x\. ]}"
-      [[ -n "$tok" && "$tok" != "remote" ]] || continue
-      printf '%s\n' "$tok"
-    done <<<"$out"
-  fi
-  conf="${DP_PHASE2_FAKE_NTP_CONF:-/etc/ntpsec/ntp.conf}"
-  if [[ -r "$conf" ]]; then
-    while IFS= read -r line || [[ -n "$line" ]]; do
-      [[ "$line" =~ ^[[:space:]]*# ]] && continue
-      if [[ "$line" =~ ^[[:space:]]*(server|pool)[[:space:]]+([^[:space:]]+) ]]; then
-        printf '%s\n' "${BASH_REMATCH[2]}"
-      fi
-    done <"$conf"
-  fi
-}
-
-classify_ntp_source_class() {
-  # Sets NTP_SOURCE_CLASS=INTERNAL|PUBLIC|UNKNOWN and INTERNAL_NTP_REQUIREMENT informational only.
-  local tok has_internal=0 has_public=0 has_any=0
-  NTP_SOURCE_CLASS="UNKNOWN"
-  INTERNAL_NTP_REQUIREMENT="NOT_EVALUATED"
-  while IFS= read -r tok || [[ -n "$tok" ]]; do
-    [[ -n "$tok" ]] || continue
-    has_any=1
-    if [[ "$tok" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-      if dp_phase2_ipv4_is_loopback_or_linklocal "$tok"; then
-        continue
-      fi
-      if dp_phase2_ipv4_is_internal_ntp "$tok"; then
-        has_internal=1
-      else
-        has_public=1
-      fi
-    else
-      # Hostname → treat as public NTP source candidate (not RFC1918 IP).
-      has_public=1
-    fi
-  done < <(dp_phase2_collect_ntp_sources | awk 'NF && !seen[$0]++')
-
-  if [[ "$has_internal" -eq 1 ]]; then
-    NTP_SOURCE_CLASS="INTERNAL"
-    INTERNAL_NTP_REQUIREMENT="SATISFIED"
-  elif [[ "$has_public" -eq 1 ]]; then
-    NTP_SOURCE_CLASS="PUBLIC"
-    INTERNAL_NTP_REQUIREMENT="NOT_SATISFIED"
-  elif [[ "$has_any" -eq 0 ]]; then
-    NTP_SOURCE_CLASS="UNKNOWN"
-    INTERNAL_NTP_REQUIREMENT="NOT_SATISFIED"
-  else
-    NTP_SOURCE_CLASS="UNKNOWN"
-    INTERNAL_NTP_REQUIREMENT="NOT_SATISFIED"
-  fi
-}
-
-dp_phase2_ntpq_selected_peer() {
-  local out line trimmed tally peer
-  NTP_SELECTED_PEER=""
-  if [[ -n "${DP_PHASE2_FAKE_NTPQ_PN:-}" ]]; then
-    out="${DP_PHASE2_FAKE_NTPQ_PN}"
-  elif command -v ntpq >/dev/null 2>&1; then
-    out="$(ntpq -pn 2>/dev/null || ntpq -p 2>/dev/null || true)"
-  else
-    return 1
-  fi
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    [[ "$line" =~ [[:space:]]*remote[[:space:]]+refid ]] && continue
-    [[ "$line" =~ ^=+$ ]] && continue
-    trimmed="${line#"${line%%[![:space:]]*}"}"
-    [[ -n "$trimmed" ]] || continue
-    tally="${trimmed:0:1}"
-    [[ "$tally" == "*" ]] || continue
-    peer="$(printf '%s\n' "$trimmed" | awk '{print $1}')"
-    peer="${peer:1}"
-    [[ -n "$peer" ]] || continue
-    NTP_SELECTED_PEER="$peer"
-    return 0
-  done <<<"$out"
-  return 1
-}
-
-dp_phase2_ntpq_leap_ok() {
-  local rv
-  if [[ -n "${DP_PHASE2_FAKE_NTPQ_RV:-}" ]]; then
-    rv="${DP_PHASE2_FAKE_NTPQ_RV}"
-  elif command -v ntpq >/dev/null 2>&1; then
-    rv="$(ntpq -c rv 2>/dev/null || true)"
-  else
-    return 1
-  fi
-  printf '%s\n' "$rv" | grep -qE '(^|[[:space:],])leap=00([[:space:],]|$)'
-}
-
-dp_phase2_timedatectl_synchronized() {
-  local td
-  if [[ -n "${DP_PHASE2_FAKE_TIMEDATECTL:-}" ]]; then
-    td="${DP_PHASE2_FAKE_TIMEDATECTL}"
-  elif command -v timedatectl >/dev/null 2>&1; then
-    td="$(timedatectl status 2>/dev/null || true)"
-  else
-    return 1
-  fi
-  # ntpsec often reports "NTP service: n/a" — that alone is not a failure.
-  printf '%s\n' "$td" | grep -qiE 'System clock synchronized:[[:space:]]*yes'
-}
-
-dp_phase2_ntpwait_ok() {
-  if [[ -n "${DP_PHASE2_FAKE_NTPWAIT_RC:-}" ]]; then
-    [[ "${DP_PHASE2_FAKE_NTPWAIT_RC}" == "0" ]]
-    return $?
-  fi
-  command -v ntpwait >/dev/null 2>&1 || return 1
-  ntpwait >/dev/null 2>&1
-}
-
-dp_phase2_clock_skew_from_ntpq_seconds() {
-  # Prints integer seconds (abs) from reachable peer offsets (ntpq offset is ms).
-  local out line trimmed reach offset abs_ms best_ms=""
-  if [[ -n "${DP_PHASE2_FAKE_NTPQ_PN:-}" ]]; then
-    out="${DP_PHASE2_FAKE_NTPQ_PN}"
-  elif command -v ntpq >/dev/null 2>&1; then
-    out="$(ntpq -pn 2>/dev/null || ntpq -p 2>/dev/null || true)"
-  else
-    return 1
-  fi
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    [[ "$line" =~ [[:space:]]*remote[[:space:]]+refid ]] && continue
-    [[ "$line" =~ ^=+$ ]] && continue
-    trimmed="${line#"${line%%[![:space:]]*}"}"
-    [[ -n "$trimmed" ]] || continue
-    reach="$(printf '%s\n' "$trimmed" | awk '{print $7}')"
-    offset="$(printf '%s\n' "$trimmed" | awk '{print $9}')"
-    [[ "$reach" =~ ^[0-9]+$ && "$reach" != "0" ]] || continue
-    [[ "$offset" =~ ^[+-]?[0-9]+([.][0-9]+)?$ ]] || continue
-    abs_ms="$(awk -v o="$offset" 'BEGIN { x=o+0; if (x<0) x=-x; printf "%d", x+0.5 }')"
-    if [[ -z "$best_ms" ]] || [[ "$abs_ms" -lt "$best_ms" ]]; then
-      best_ms="$abs_ms"
-    fi
-  done <<<"$out"
-  [[ -n "$best_ms" ]] || return 1
-  # ms → seconds (round)
-  awk -v ms="$best_ms" 'BEGIN { printf "%d", (ms/1000)+0.5 }'
-}
-
-dp_phase2_clock_skew_from_http_date_seconds() {
-  # Compare local UTC epoch to HTTP Date from internal mirror.
-  local url headers date_hdr remote_epoch local_epoch skew
-  url="${DP_PHASE2_TIME_REF_URL:-${MIRROR_URL}}"
-  url="${url%/}"
-  if [[ -n "${DP_PHASE2_FAKE_HTTP_DATE_EPOCH:-}" ]]; then
-    remote_epoch="${DP_PHASE2_FAKE_HTTP_DATE_EPOCH}"
-    [[ "$remote_epoch" =~ ^[0-9]+$ ]] || return 1
-  else
-    headers="$(curl -fsSI --connect-timeout 5 --max-time 10 "$url" 2>/dev/null || true)"
-    [[ -n "$headers" ]] || return 1
-    date_hdr="$(printf '%s\n' "$headers" | awk -F': ' 'BEGIN{IGNORECASE=1} /^Date:/ {sub(/\r$/,"",$2); print $2; exit}')"
-    [[ -n "$date_hdr" ]] || return 1
-    remote_epoch="$(date -u -d "$date_hdr" +%s 2>/dev/null || true)"
-    [[ "$remote_epoch" =~ ^[0-9]+$ ]] || return 1
-  fi
-  if [[ -n "${DP_PHASE2_FAKE_LOCAL_EPOCH:-}" ]]; then
-    local_epoch="${DP_PHASE2_FAKE_LOCAL_EPOCH}"
-  else
-    local_epoch="$(date -u +%s)"
-  fi
-  [[ "$local_epoch" =~ ^[0-9]+$ ]] || return 1
-  skew=$(( local_epoch - remote_epoch ))
-  [[ "$skew" -lt 0 ]] && skew=$(( -skew ))
-  printf '%s' "$skew"
-}
-
-check_ntp_bringup_readiness() {
-  # Time readiness is the bringup gate. NTP_SOURCE_CLASS is informational only.
-  local skew="" synced=0
-  TIME_READINESS="FAIL_TIME_UNVERIFIABLE"
-  BRINGUP_READY="NO"
-  CLOCK_SKEW_SECONDS=""
-  MAX_CLOCK_SKEW_SECONDS="$(dp_phase2_max_clock_skew_seconds)"
-  NTP_SELECTED_PEER=""
-  classify_ntp_source_class
-  log "NTP_SOURCE_CLASS=${NTP_SOURCE_CLASS}"
-  log "INTERNAL_NTP_REQUIREMENT=${INTERNAL_NTP_REQUIREMENT}"
-
-  _dp_phase2_warn_if_no_internal_ntp() {
-    if [[ "$NTP_SOURCE_CLASS" != "INTERNAL" ]]; then
-      log "WARNING: no internal NTP source detected; continuing because local clock readiness passed"
-    fi
-  }
-
-  if dp_phase2_ntpwait_ok; then
-    synced=1
-    dp_phase2_ntpq_selected_peer || true
-    TIME_READINESS="PASS_SYNCED"
-    BRINGUP_READY="YES"
-    NTP_BRINGUP_READINESS="PASS"
-    log "TIME_READINESS=PASS_SYNCED (ntpwait)"
-    _dp_phase2_warn_if_no_internal_ntp
-    log "BRINGUP_READY=YES"
-    return 0
-  fi
-
-  if dp_phase2_ntpq_selected_peer && dp_phase2_ntpq_leap_ok; then
-    synced=1
-  elif dp_phase2_timedatectl_synchronized; then
-    synced=1
-    dp_phase2_ntpq_selected_peer || true
-  fi
-
-  if [[ "$synced" -eq 1 ]]; then
-    TIME_READINESS="PASS_SYNCED"
-    BRINGUP_READY="YES"
-    NTP_BRINGUP_READINESS="PASS"
-    log "TIME_READINESS=PASS_SYNCED"
-    log "NTP_SELECTED_PEER=${NTP_SELECTED_PEER:-}"
-    _dp_phase2_warn_if_no_internal_ntp
-    log "BRINGUP_READY=YES"
-    return 0
-  fi
-
-  # Unsynchronized: evaluate clock skew against ntpq offsets, then HTTP Date.
-  skew="$(dp_phase2_clock_skew_from_ntpq_seconds 2>/dev/null || true)"
-  if [[ -z "$skew" ]]; then
-    skew="$(dp_phase2_clock_skew_from_http_date_seconds 2>/dev/null || true)"
-  fi
-
-  if [[ -n "$skew" && "$skew" =~ ^[0-9]+$ ]]; then
-    CLOCK_SKEW_SECONDS="$skew"
-    log "CLOCK_SKEW_SECONDS=${CLOCK_SKEW_SECONDS}"
-    log "MAX_CLOCK_SKEW_SECONDS=${MAX_CLOCK_SKEW_SECONDS}"
-    if [[ "$skew" -le "$MAX_CLOCK_SKEW_SECONDS" ]]; then
-      TIME_READINESS="PASS_WITH_WARNING"
-      BRINGUP_READY="YES"
-      NTP_BRINGUP_READINESS="PASS"
-      log "TIME_READINESS=PASS_WITH_WARNING"
-      log "WARNING: NTP sync unconfirmed; clock skew within tolerance — bringup guidance allowed"
-      _dp_phase2_warn_if_no_internal_ntp
-      log "BRINGUP_READY=YES"
-      return 0
-    fi
-    TIME_READINESS="FAIL_CLOCK_SKEW"
-    BRINGUP_READY="NO"
-    NTP_BRINGUP_READINESS="FAIL"
-    log "TIME_READINESS=FAIL_CLOCK_SKEW"
-    log "BRINGUP_READY=NO"
-    return 0
-  fi
-
-  TIME_READINESS="FAIL_TIME_UNVERIFIABLE"
-  BRINGUP_READY="NO"
-  NTP_BRINGUP_READINESS="FAIL"
-  log "TIME_READINESS=FAIL_TIME_UNVERIFIABLE"
-  log "BRINGUP_READY=NO"
-  return 0
-}
+# Time readiness helpers (shared with bringup lifecycle hard gate).
+# shellcheck source=/dev/null
+source "${_STAGE_LIB_DIR}/dp-phase2-time-readiness.sh"
 
 emit_final_report() {
   cat <<EOF
@@ -1309,6 +1070,16 @@ AELLA_OWNERSHIP_CHECK=${AELLA_OWNERSHIP_CHECK}
 ARTIFACT_CACHE_RESULT=${ARTIFACT_CACHE_RESULT}
 ARTIFACT_CHECKSUM_RESULT=${ARTIFACT_CHECKSUM_RESULT}
 PHASE2_STAGE_RESULT=${PHASE2_STAGE_RESULT}
+ARTIFACT_STAGING_RESULT=${ARTIFACT_STAGING_RESULT:-${PHASE2_STAGE_RESULT}}
+BRINGUP_READINESS_RESULT=${BRINGUP_READINESS_RESULT:-${BRINGUP_READY}}
+PHASE2_REQUIRED_FREE_BYTES=${PHASE2_REQUIRED_FREE_BYTES}
+PHASE2_AVAILABLE_FREE_BYTES=${PHASE2_AVAILABLE_FREE_BYTES}
+PHASE2_ESTIMATED_PEAK_BYTES=${PHASE2_ESTIMATED_PEAK_BYTES}
+PHASE2_DISK_PREFLIGHT=${PHASE2_DISK_PREFLIGHT}
+POST_BRINGUP_MIGRATION=${POST_BRINGUP_MIGRATION:-}
+REQUIRED_POST_BRINGUP_ACTION=${REQUIRED_POST_BRINGUP_ACTION:-}
+CLUSTER_VALIDATION=PENDING
+DP_UPGRADE_COMPLETE=NO
 TIME_READINESS=${TIME_READINESS}
 CLOCK_SKEW_SECONDS=${CLOCK_SKEW_SECONDS}
 MAX_CLOCK_SKEW_SECONDS=${MAX_CLOCK_SKEW_SECONDS}
@@ -1502,6 +1273,13 @@ install_bringup_lifecycle_wrapper() {
       "${_STAGE_LIB_DIR}/dp-phase2-ubuntu-prerequisites.sh" \
       "${BRINGUP_DIR}/lib/dp-phase2-ubuntu-prerequisites.sh"
   fi
+  local _extra
+  for _extra in dp-phase2-time-readiness.sh dp-phase2-post-bringup-migration.sh dp-phase2-cluster-validation.sh; do
+    if [[ -f "${_STAGE_LIB_DIR}/${_extra}" ]]; then
+      install -o root -g root -m 0600 "${_STAGE_LIB_DIR}/${_extra}" "${lib_dest}/${_extra}"
+      install -o root -g root -m 0644 "${_STAGE_LIB_DIR}/${_extra}" "${BRINGUP_DIR}/lib/${_extra}"
+    fi
+  done
 
   local bu bg
   bu="$(stat -c '%u' "$VENDOR_BRINGUP_INSTALLED")"
@@ -1574,19 +1352,25 @@ stage_main() {
   load_release_env_from_mirror
 
   CACHE_DIR="/opt/aelladata/.dp-phase2-cache/${TARGET_DP_VERSION}"
-  STAGE_ROOT="/opt/aelladata/.aelladeb_py3.stage.${RUN_ID}"
   acquire_stage_lock
   ensure_verified_bundle
+  require_phase2_dynamic_space
 
+  # Extract verified bundle directly into the candidate artifact tree (NEW_ART).
+  # Live ARTIFACT_DIR stays intact until atomic rename.
   ARTIFACT_MUTATION_ATTEMPTED="YES"
-  mkdir -p "$STAGE_ROOT"
+  NEW_ART="${ARTIFACT_DIR}.new.${RUN_ID}"
+  STAGE_ROOT="$NEW_ART"
+  rm -rf "$NEW_ART"
+  mkdir -p "$NEW_ART"
   local cache_tar="${CACHE_DIR}/bundle.tar"
   assert_safe_tar_list "$cache_tar"
 
   PHASE2_STAGE_PHASE="EXTRACT_BUNDLE"
   log "PHASE2_STAGE_PHASE=${PHASE2_STAGE_PHASE}"
-  if ! dp2_run_extract_with_progress phase2_tar_extract "$STAGE_ROOT" -- \
-      tar -xf "$cache_tar" -C "$STAGE_ROOT"
+  log "PHASE2_EXTRACT_LAYOUT=direct_into_candidate"
+  if ! dp2_run_extract_with_progress phase2_tar_extract "$NEW_ART" -- \
+      tar -xf "$cache_tar" -C "$NEW_ART"
   then
     die "bundle extraction failed"
   fi
@@ -1595,17 +1379,17 @@ stage_main() {
   log "PHASE2_STAGE_PHASE=${PHASE2_STAGE_PHASE}"
   local f
   for f in "${REQUIRED_BUNDLE_FILES[@]}"; do
-    [[ -f "${STAGE_ROOT}/${f}" ]] || die "missing extracted file ${f}"
-    [[ -s "${STAGE_ROOT}/${f}" ]] || die "zero-byte extracted file ${f}"
+    [[ -f "${NEW_ART}/${f}" ]] || die "missing extracted file ${f}"
+    [[ -s "${NEW_ART}/${f}" ]] || die "zero-byte extracted file ${f}"
   done
-  verify_sha1_pair "${STAGE_ROOT}/aelladeb_py3_common.tar.gz" "${STAGE_ROOT}/aelladeb_py3_common.tar.gz.sha1"
+  verify_sha1_pair "${NEW_ART}/aelladeb_py3_common.tar.gz" "${NEW_ART}/aelladeb_py3_common.tar.gz.sha1"
   verify_sha1_pair \
-    "${STAGE_ROOT}/aella-uvp-2404_${TARGET_DP_VERSION}ubuntu1_amd64.deb" \
-    "${STAGE_ROOT}/aella-uvp-2404_${TARGET_DP_VERSION}ubuntu1_amd64.deb.sha1"
-  verify_sha1_pair "${STAGE_ROOT}/bringup_py3_dp_after_os_upgrade.sh" "${STAGE_ROOT}/bringup_py3_dp_after_os_upgrade.sh.sha1"
+    "${NEW_ART}/aella-uvp-2404_${TARGET_DP_VERSION}ubuntu1_amd64.deb" \
+    "${NEW_ART}/aella-uvp-2404_${TARGET_DP_VERSION}ubuntu1_amd64.deb.sha1"
+  verify_sha1_pair "${NEW_ART}/bringup_py3_dp_after_os_upgrade.sh" "${NEW_ART}/bringup_py3_dp_after_os_upgrade.sh.sha1"
   verify_sha256_pair \
-    "${STAGE_ROOT}/images-${TARGET_DP_VERSION}.tar" \
-    "${STAGE_ROOT}/images-${TARGET_DP_VERSION}.tar.sha256"
+    "${NEW_ART}/images-${TARGET_DP_VERSION}.tar" \
+    "${NEW_ART}/images-${TARGET_DP_VERSION}.tar.sha256"
 
   install_bringup_lifecycle_wrapper
   if ! verify_installed_bringup_vendor_compat; then
@@ -1616,20 +1400,20 @@ stage_main() {
     die "installed vendor bringup is incompatible with --worker-password"
   fi
 
-  PHASE2_STAGE_PHASE="PUBLISH_ARTIFACTS"
+  PHASE2_STAGE_PHASE="TRIM_CANDIDATE_TO_ARTIFACTS"
   log "PHASE2_STAGE_PHASE=${PHASE2_STAGE_PHASE}"
-  NEW_ART="${ARTIFACT_DIR}.new.${RUN_ID}"
-  rm -rf "$NEW_ART"
-  mkdir -p "$NEW_ART"
-  _phase2_copy_artifacts() {
-    local f
-    for f in "${ARTIFACT_FILES[@]}"; do
-      cp -a "${STAGE_ROOT}/${f}" "${NEW_ART}/${f}"
-    done
-  }
-  if ! dp2_run_with_heartbeat phase2_artifact_copy "$NEW_ART" -- _phase2_copy_artifacts; then
-    die "artifact copy failed"
-  fi
+  local keep_list="" entry base
+  for f in "${ARTIFACT_FILES[@]}"; do
+    keep_list="${keep_list}
+${f}"
+  done
+  while IFS= read -r entry; do
+    [[ -n "$entry" ]] || continue
+    base="$(basename "$entry")"
+    if ! printf '%s\n' "$keep_list" | grep -Fxq "$base"; then
+      rm -rf "${NEW_ART:?}/${base}"
+    fi
+  done < <(find "$NEW_ART" -mindepth 1 -maxdepth 1 -printf '%f\n' 2>/dev/null || ls -A "$NEW_ART")
 
   PHASE2_STAGE_PHASE="APPLY_OWNERSHIP"
   log "PHASE2_STAGE_PHASE=${PHASE2_STAGE_PHASE}"
@@ -1685,7 +1469,7 @@ stage_main() {
   # Separate Phase 2 Ubuntu prerequisite artifact (not part of the 9 ACPS files).
   stage_phase2_ubuntu_prerequisites || die "PHASE2_PREREQ_STAGE=FAIL"
 
-  rm -rf "$STAGE_ROOT"
+  # Candidate already published or discarded; do not delete live ARTIFACT_DIR.
   STAGE_ROOT=""
 
   if [[ "$KEEP_CACHE" -eq 0 ]]; then
@@ -1700,7 +1484,12 @@ stage_main() {
   log "PHASE2_STAGE_PHASE=${PHASE2_STAGE_PHASE}"
   check_ntp_bringup_readiness || true
   PHASE2_STAGE_RESULT="PASS"
+  ARTIFACT_STAGING_RESULT="PASS"
+  BRINGUP_READINESS_RESULT="${BRINGUP_READY}"
   BRINGUP_EXECUTED="NO"
+  local mig
+  mig="$(p2b_decide_post_bringup_migration "$SOURCE_DP_VERSION" "$TARGET_DP_VERSION")"
+  p2b_persist_post_bringup_migration_decision "$SOURCE_DP_VERSION" "$TARGET_DP_VERSION" "$mig" || true
   emit_final_report
 }
 
