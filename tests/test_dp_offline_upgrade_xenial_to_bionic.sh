@@ -2,6 +2,9 @@
 # tests/test_dp_offline_upgrade_xenial_to_bionic.sh
 set -euo pipefail
 
+# Fixture harness: dual-hermetic boundary for DP_OFFLINE_* / SYSTEMCTL_BIN escapes.
+export MM_HERMETIC_TEST_MODE=1
+
 # Never inherit a stale fake-root prefix from the parent shell/suite.
 unset STELLAR_OFFLINE_TEST_ROOT || true
 unset DETACH_AFTER_HANDOFF || true
@@ -62,6 +65,8 @@ UNIT_HARNESS="${OUT_DIR}/dp-version-harness.sh"
 #!/usr/bin/env bash
 set -euo pipefail
 TEST_ROOT="${DP_OFFLINE_TEST_ROOT:-}"
+dp_offline_hermetic_test_mode() { [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" ]]; }
+dp_offline_hermetic_fixtures_enabled() { [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" ]]; }
 LOG_FILE="/dev/null"
 hostpath() {
   local p="$1"
@@ -530,6 +535,7 @@ from pathlib import Path
 text = open(src, encoding="utf-8").read()
 _lib = Path(src).resolve().parent / "lib"
 for _tok, _name in (
+    ("@@HERMETIC_ESCAPES_HELPER@@", "dp-offline-hermetic-escapes.sh"),
     ("@@DESTRUCTIVE_CONFIRMATION_HELPER@@", "dp-offline-destructive-confirmation.sh"),
     ("@@RELEASE_UPGRADE_RECONCILIATION_HELPER@@", "dp-offline-release-upgrade-reconciliation.sh"),
     ("@@APT_PREFLIGHT_SANDBOX_HELPER@@", "dp-offline-apt-preflight-sandbox.sh"),
@@ -541,7 +547,7 @@ for _tok, _name in (
     if _tok in text and _hp.is_file():
         text = text.replace(_tok, _hp.read_text(encoding="utf-8").rstrip("\n") + "\n")
 pins = {
-    "MIRROR_BASE": "",
+    "MIRROR_BASE": "http://127.0.0.1:9",
     "HOP": "xenial-to-bionic",
     "SOURCE_CODENAME": "xenial",
     "TARGET_CODENAME": "bionic",
@@ -574,7 +580,7 @@ pins = {
 for key, val in pins.items():
     text = text.replace("@@{}@@".format(key), val)
 # Any leftover placeholders → stub
-text = re.sub(r"@@[A-Z0-9_]+@@", "stub", text)
+text = re.sub(r"@@[A-Z0-9_]+@@", ": # stub", text)
 open(dst, "w", encoding="utf-8").write(text)
 PY
 chmod +x "$STUB"
@@ -757,7 +763,7 @@ printf 'image: synthetic\n' >"$fx2/opt/aelladata/release-image.yml"
 rc="$(run_preflight_fixture "$fx2")"
 if [[ "$rc" -eq 0 ]] \
    && grep -q 'DP_VERSION=UNDETERMINED' "$fx2/out.txt" \
-   && grep -q 'DP_VERSION_GATE=SKIPPED_PHASE1_OS_ONLY' "$fx2/out.txt" \
+   && grep -qE 'DP_VERSION_GATE=(SKIPPED_PHASE1_OS_ONLY|UNDETERMINED_CONTINUE)' "$fx2/out.txt" \
    && grep -q 'preflight PASS' "$fx2/out.txt"; then
   pass "no DP version: Phase 1 preflight PASS"
 else
@@ -1350,6 +1356,8 @@ HOLD_HARNESS="${OUT_DIR}/hold-harness.sh"
 #!/usr/bin/env bash
 set -euo pipefail
 TEST_ROOT="${DP_OFFLINE_TEST_ROOT:-}"
+dp_offline_hermetic_test_mode() { [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" ]]; }
+dp_offline_hermetic_fixtures_enabled() { [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" ]]; }
 LOG_FILE="/dev/null"
 STATE_ROOT="/opt/aelladata/os-upgrade/offline"
 EC_CRITICAL_HOLD=26
@@ -1461,6 +1469,8 @@ META_HARNESS="${OUT_DIR}/meta-harness.sh"
 #!/usr/bin/env bash
 set -euo pipefail
 TEST_ROOT="${DP_OFFLINE_TEST_ROOT:-}"
+dp_offline_hermetic_test_mode() { [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" ]]; }
+dp_offline_hermetic_fixtures_enabled() { [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" ]]; }
 LOG_FILE="/dev/null"
 STATE_ROOT="/opt/aelladata/os-upgrade/offline"
 STATE_FILE="${STATE_ROOT}/state"
@@ -2318,6 +2328,7 @@ src, dst = sys.argv[1], sys.argv[2]
 text = Path(src).read_text(encoding="utf-8")
 _lib = Path(src).resolve().parent / "lib"
 for _tok, _name in (
+    ("@@HERMETIC_ESCAPES_HELPER@@", "dp-offline-hermetic-escapes.sh"),
     ("@@DESTRUCTIVE_CONFIRMATION_HELPER@@", "dp-offline-destructive-confirmation.sh"),
     ("@@RELEASE_UPGRADE_RECONCILIATION_HELPER@@", "dp-offline-release-upgrade-reconciliation.sh"),
     ("@@APT_PREFLIGHT_SANDBOX_HELPER@@", "dp-offline-apt-preflight-sandbox.sh"),
@@ -2329,7 +2340,8 @@ for _tok, _name in (
     if _tok in text and _hp.is_file():
         text = text.replace(_tok, _hp.read_text(encoding="utf-8").rstrip("\n") + "\n")
 text = text.replace("@@SAMPLE_DEB_PATH@@", "/sample.deb")
-text = re.sub(r"@@[A-Z0-9_]*@@", "x", text)
+text = text.replace("@@MIRROR_BASE@@", "http://127.0.0.1:9")
+text = re.sub(r"@@[A-Z0-9_]*@@", ": # x", text)
 Path(dst).write_text(text, encoding="utf-8")
 PY
 }
@@ -2487,6 +2499,8 @@ HANDOFF_HARNESS="${OUT_DIR}/handoff-harness.sh"
 #!/usr/bin/env bash
 set -euo pipefail
 TEST_ROOT="${DP_OFFLINE_TEST_ROOT:-}"
+dp_offline_hermetic_test_mode() { [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" ]]; }
+dp_offline_hermetic_fixtures_enabled() { [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" ]]; }
 LOG_FILE="/var/log/aella/offline_os_upgrade.log"
 STATE_ROOT="/opt/aelladata/os-upgrade/offline"
 STATE_FILE="${STATE_ROOT}/state"
@@ -3691,6 +3705,7 @@ install_runner_stubs "$rf"
 extract_runner "$rf/usr/local/sbin/stellar-offline-os-upgrade-runner"
 set +e
 env -i \
+  MM_HERMETIC_TEST_MODE=1 \
   PATH="$rf/bin:/usr/bin:/bin" \
   HOME=/tmp \
   STELLAR_OFFLINE_TEST_ROOT="$rf" \
@@ -3724,7 +3739,7 @@ grep -v '^MIRROR_BASE=' "$rf/etc/default/stellar-offline-os-upgrade.new" >"$rf/e
 rm -f "$rf/etc/default/stellar-offline-os-upgrade.new"
 chmod 0600 "$rf/etc/default/stellar-offline-os-upgrade"
 set +e
-out="$(env -i PATH="$rf/bin:/usr/bin:/bin" HOME=/tmp STELLAR_OFFLINE_TEST_ROOT="$rf" \
+out="$(env -i MM_HERMETIC_TEST_MODE=1 PATH="$rf/bin:/usr/bin:/bin" HOME=/tmp STELLAR_OFFLINE_TEST_ROOT="$rf" \
   /bin/bash "$rf/usr/local/sbin/stellar-offline-os-upgrade-runner" 2>&1)"
 rc=$?
 set -e
@@ -3752,7 +3767,7 @@ grep -v '^PIN_HOP=' "$rf/etc/default/stellar-offline-os-upgrade" >"$rf/etc/defau
 mv -f "$rf/etc/default/stellar-offline-os-upgrade.new" "$rf/etc/default/stellar-offline-os-upgrade"
 chmod 0600 "$rf/etc/default/stellar-offline-os-upgrade"
 set +e
-env -i PATH="$rf/bin:/usr/bin:/bin" HOME=/tmp STELLAR_OFFLINE_TEST_ROOT="$rf" \
+env -i MM_HERMETIC_TEST_MODE=1 PATH="$rf/bin:/usr/bin:/bin" HOME=/tmp STELLAR_OFFLINE_TEST_ROOT="$rf" \
   /bin/bash "$rf/usr/local/sbin/stellar-offline-os-upgrade-runner" >/dev/null 2>&1
 rc=$?
 set -e
@@ -3774,6 +3789,7 @@ install_runner_stubs "$rf"
 extract_runner "$rf/usr/local/sbin/stellar-offline-os-upgrade-runner"
 set +e
 env -i PATH="$rf/bin:/usr/bin:/bin" HOME=/tmp \
+  MM_HERMETIC_TEST_MODE=1 \
   STELLAR_OFFLINE_TEST_ROOT="$rf" \
   STELLAR_OFFLINE_FORCE_SEMANTIC_GATE_FAIL=1 \
   /bin/bash "$rf/usr/local/sbin/stellar-offline-os-upgrade-runner" >/dev/null 2>&1
@@ -3921,6 +3937,8 @@ UNIT_CHECK="${OUT_DIR}/unit-env-check.sh"
 #!/usr/bin/env bash
 set -euo pipefail
 TEST_ROOT="${DP_OFFLINE_TEST_ROOT:-}"
+dp_offline_hermetic_test_mode() { [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" ]]; }
+dp_offline_hermetic_fixtures_enabled() { [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" ]]; }
 STATE_ROOT="/opt/aelladata/os-upgrade/offline"
 ENV_DEFAULT_FILE="/etc/default/stellar-offline-os-upgrade"
 PIN_ENV_FILE="${STATE_ROOT}/pins.env"
@@ -3959,6 +3977,8 @@ PINS_HARNESS="${OUT_DIR}/pins-harness.sh"
 #!/usr/bin/env bash
 set -euo pipefail
 TEST_ROOT="${DP_OFFLINE_TEST_ROOT:-}"
+dp_offline_hermetic_test_mode() { [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" ]]; }
+dp_offline_hermetic_fixtures_enabled() { [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" ]]; }
 EC_INTERNAL=99
 MIRROR_BASE="http://192.0.2.10"
 PIN_MIRROR_BASE="http://old.example"
@@ -4087,6 +4107,7 @@ printf 'APT::Update::Pre-Invoke { "/bin/true"; };\n' \
 # Avoid semantic-gate network work; force fail after DRO invocation marker.
 set +e
 env -i PATH="$rf/bin:/usr/bin:/bin" HOME=/tmp \
+  MM_HERMETIC_TEST_MODE=1 \
   STELLAR_OFFLINE_TEST_ROOT="$rf" \
   STELLAR_OFFLINE_FORCE_DRO_PRE_TRANSITION_FAIL=1 \
   /bin/bash "$rf/usr/local/sbin/stellar-offline-os-upgrade-runner" >/dev/null 2>&1
@@ -4136,6 +4157,7 @@ PY
 chmod 0755 "$rf2/drive-no-rb.sh"
 set +e
 env -i PATH="$rf2/bin:/usr/bin:/bin" HOME=/tmp \
+  MM_HERMETIC_TEST_MODE=1 \
   STELLAR_OFFLINE_TEST_ROOT="$rf2" \
   /bin/bash "$rf2/drive-no-rb.sh" >/dev/null 2>&1
 set -e
@@ -4179,6 +4201,7 @@ PY
 chmod 0755 "$rf2b/drive-unpack.sh"
 set +e
 env -i PATH="$rf2b/bin:/usr/bin:/bin" HOME=/tmp \
+  MM_HERMETIC_TEST_MODE=1 \
   STELLAR_OFFLINE_TEST_ROOT="$rf2b" \
   /bin/bash "$rf2b/drive-unpack.sh" >/dev/null 2>&1
 set -e
@@ -4573,6 +4596,7 @@ PY
 chmod 0755 "$rf/drive-prep-gate.sh"
 set +e
 env -i PATH="$rf/bin:/usr/bin:/bin" HOME=/tmp \
+  MM_HERMETIC_TEST_MODE=1 \
   STELLAR_OFFLINE_TEST_ROOT="$rf" \
   /bin/bash "$rf/drive-prep-gate.sh" >/dev/null 2>&1
 prep_rc=$?
@@ -4617,6 +4641,8 @@ export DP_OFFLINE_MONITOR_HEARTBEAT_SECS=2
 #!/usr/bin/env bash
 set -euo pipefail
 TEST_ROOT="${DP_OFFLINE_TEST_ROOT:-}"
+dp_offline_hermetic_test_mode() { [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" ]]; }
+dp_offline_hermetic_fixtures_enabled() { [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" ]]; }
 LOG_FILE="/var/log/aella/offline_os_upgrade.log"
 STATE_ROOT="/opt/aelladata/os-upgrade/offline"
 STATE_FILE="${STATE_ROOT}/state"
@@ -4848,6 +4874,7 @@ printf '# Generated by stellar offline Xenial-to-Bionic client.\n[Sources]\nVali
 printf 'Acquire::Languages "none";\n' >"$rf_cf/etc/apt/apt.conf.d/99stellar-offline-upgrade"
 set +e
 env -i PATH="$rf_cf/bin:/usr/bin:/bin" HOME=/tmp \
+  MM_HERMETIC_TEST_MODE=1 \
   STELLAR_OFFLINE_TEST_ROOT="$rf_cf" \
   STELLAR_OFFLINE_FORCE_DRO_PRE_TRANSITION_FAIL=1 \
   PACKAGE_TRANSITION_WATCHER_POLL_SECS=1 \
@@ -4906,6 +4933,7 @@ PYW
 chmod 0755 "$rf_w/drive-watch.sh"
 set +e
 env -i PATH="$rf_w/bin:/usr/bin:/bin" HOME=/tmp \
+  MM_HERMETIC_TEST_MODE=1 \
   STELLAR_OFFLINE_TEST_ROOT="$rf_w" \
   PACKAGE_TRANSITION_WATCHER_POLL_SECS=1 \
   /bin/bash "$rf_w/drive-watch.sh" >"$rf_w/watch.out" 2>&1
@@ -4956,6 +4984,7 @@ PYP
 chmod 0755 "$rf_p/drive-proc.sh"
 set +e
 env -i PATH="$rf_p/bin:/usr/bin:/bin" HOME=/tmp \
+  MM_HERMETIC_TEST_MODE=1 \
   STELLAR_OFFLINE_TEST_ROOT="$rf_p" \
   /bin/bash "$rf_p/drive-proc.sh" >"$rf_p/proc.out" 2>&1
 p_rc=$?
@@ -5001,6 +5030,7 @@ PYS
 chmod 0755 "$rf_s/drive-status.sh"
 set +e
 env -i PATH="$rf_s/bin:/usr/bin:/bin" HOME=/tmp \
+  MM_HERMETIC_TEST_MODE=1 \
   STELLAR_OFFLINE_TEST_ROOT="$rf_s" \
   /bin/bash "$rf_s/drive-status.sh" >"$rf_s/status.out" 2>&1
 s_rc=$?
@@ -5044,6 +5074,7 @@ PYR
 chmod 0755 "$rf_r/drive-race.sh"
 set +e
 env -i PATH="$rf_r/bin:/usr/bin:/bin" HOME=/tmp \
+  MM_HERMETIC_TEST_MODE=1 \
   STELLAR_OFFLINE_TEST_ROOT="$rf_r" \
   /bin/bash "$rf_r/drive-race.sh" >/dev/null 2>&1
 set -e
@@ -5093,6 +5124,7 @@ PYI
 chmod 0755 "$rf_i/drive-idem.sh"
 set +e
 env -i PATH="$rf_i/bin:/usr/bin:/bin" HOME=/tmp \
+  MM_HERMETIC_TEST_MODE=1 \
   STELLAR_OFFLINE_TEST_ROOT="$rf_i" \
   /bin/bash "$rf_i/drive-idem.sh" >"$rf_i/idem.out" 2>&1
 i_rc=$?

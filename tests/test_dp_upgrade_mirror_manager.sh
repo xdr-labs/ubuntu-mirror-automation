@@ -299,6 +299,7 @@ seed_client_files() {
 
 common_env() {
   export MM_SKIP_ROOT_CHECK=1
+  export MM_HERMETIC_TEST_MODE=1
   export MM_SKIP_HTTP_VALIDATE=1
   export MM_SKIP_NGINX_APPLY=1
   export MM_LOG_DIR="${WORKDIR}/logs"

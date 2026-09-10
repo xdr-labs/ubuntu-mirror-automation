@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 HELPERS = (
+    ("@@HERMETIC_ESCAPES_HELPER@@", "dp-offline-hermetic-escapes.sh"),
     ("@@DESTRUCTIVE_CONFIRMATION_HELPER@@", "dp-offline-destructive-confirmation.sh"),
     ("@@RELEASE_UPGRADE_RECONCILIATION_HELPER@@", "dp-offline-release-upgrade-reconciliation.sh"),
     ("@@APT_PREFLIGHT_SANDBOX_HELPER@@", "dp-offline-apt-preflight-sandbox.sh"),
@@ -21,12 +22,26 @@ HELPERS = (
     ("@@LXD_INVENTORY_HELPER@@", "dp-offline-lxd-inventory.sh"),
 )
 
+# Kernel gates live beside templates (not under client/lib/).
+# helpers-only expands GENERIC only. AWS remains build-time (build_client_*.py)
+# so fixture stubs that lack a full AWS package set are unchanged.
+GATE_INCLUDES = (
+    ("@@GENERIC_KERNEL_GATE_LIB@@", "dp-postboot-generic-kernel-gate.sh.inc"),
+)
+
 
 def load_helper(template_path, helper_name):
     helper_path = template_path.resolve().parent / "lib" / helper_name
     if not helper_path.is_file():
         raise SystemExit("missing helper {}: {}".format(helper_name, helper_path))
     return helper_path.read_text(encoding="utf-8").rstrip("\n") + "\n"
+
+
+def load_gate_include(template_path, include_name):
+    include_path = template_path.resolve().parent / include_name
+    if not include_path.is_file():
+        raise SystemExit("missing gate include {}: {}".format(include_name, include_path))
+    return include_path.read_text(encoding="utf-8").rstrip("\n") + "\n"
 
 
 def expand_helper_tokens(text, template_path, require_present=False):
@@ -40,6 +55,10 @@ def expand_helper_tokens(text, template_path, require_present=False):
                 )
             continue
         text = text.replace(token, load_helper(template_path, helper_name))
+    for token, include_name in GATE_INCLUDES:
+        if token not in text:
+            continue
+        text = text.replace(token, load_gate_include(template_path, include_name))
     return text
 
 

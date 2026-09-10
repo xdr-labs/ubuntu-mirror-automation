@@ -522,6 +522,19 @@ def first_pool_filename_from_packages_gz(packages_gz_bytes):
 def render_script(template_path, replacements, aws_contract_body=""):
     with open(template_path, "r", encoding="utf-8") as fh:
         body = fh.read()
+    hermetic_token = "@@HERMETIC_ESCAPES_HELPER@@"
+    hermetic_path = os.path.join(
+        os.path.dirname(os.path.abspath(template_path)),
+        "lib",
+        "dp-offline-hermetic-escapes.sh",
+    )
+    if hermetic_token not in body:
+        raise BuildError("template missing token {}".format(hermetic_token))
+    if not os.path.isfile(hermetic_path):
+        raise BuildError("missing hermetic escapes helper: {}".format(hermetic_path))
+    with open(hermetic_path, "r", encoding="utf-8") as fh:
+        hermetic_body = fh.read().rstrip("\n") + "\n"
+    body = body.replace(hermetic_token, hermetic_body)
     helper_token = "@@DESTRUCTIVE_CONFIRMATION_HELPER@@"
     helper_path = os.path.join(
         os.path.dirname(os.path.abspath(template_path)),
@@ -591,6 +604,17 @@ def render_script(template_path, replacements, aws_contract_body=""):
         aws_gate_body = fh.read().rstrip("\n") + "\n"
     aws_body = contract_text + aws_gate_body
     body = body.replace(aws_token, aws_body)
+
+    generic_token = "@@GENERIC_KERNEL_GATE_LIB@@"
+    generic_path = os.path.join(client_dir, "dp-postboot-generic-kernel-gate.sh.inc")
+    if generic_token not in body:
+        raise BuildError("template missing token {}".format(generic_token))
+    if not os.path.isfile(generic_path):
+        raise BuildError("missing generic kernel gate helper: {}".format(generic_path))
+    with open(generic_path, "r", encoding="utf-8") as fh:
+        generic_body = fh.read().rstrip("\n") + "\n"
+    body = body.replace(generic_token, generic_body)
+
     source_token = "@@SOURCE_PRODUCT_HELPER@@"
     if source_token in body:
         source_path = os.path.join(
@@ -797,6 +821,8 @@ def main(argv=None):
         mirror_base_url=mirror_base,
         signing_fingerprint=manifest_key_fpr or "",
         aws_semantic_contract_sha256=aws_contract_sha,
+        plan_checksum=plan_checksum,
+        discovery_artifact_checksum=discovery_checksum,
     )
 
     manifest = OrderedDict(

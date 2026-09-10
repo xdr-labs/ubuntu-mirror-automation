@@ -35,6 +35,7 @@ engine_rebuild_publish_local_client_set() {
   local staging_root signing_dir generation_id evidence_log
   local rc=0
   local child_out=""
+  local redacted=""
   local failed_hop="" failed_stage="" error_summary=""
 
   [[ -f "$rebuild" ]] || {
@@ -106,10 +107,12 @@ engine_rebuild_publish_local_client_set() {
   rc=$?
   set -e
 
-  # Persist child output (redacted) and surface key lines.
-  {
-    printf '%s\n' "$child_out"
-  } | mm_redact >>"$evidence_log" 2>/dev/null || printf '%s\n' "$child_out" >>"$evidence_log"
+  # Persist child output (redacted). On redaction failure NEVER write raw child_out.
+  if redacted="$(printf '%s\n' "$child_out" | mm_redact 2>/dev/null)"; then
+    printf '%s\n' "$redacted" >>"$evidence_log"
+  else
+    printf '%s\n' "REDACTION_FAILED_OUTPUT_SUPPRESSED" >>"$evidence_log"
+  fi
   chmod 0600 "$evidence_log" 2>/dev/null || true
 
   failed_hop="$(printf '%s\n' "$child_out" | sed -n 's/^CLIENT_BUILD_FAILED_HOP=//p' | tail -1)"
@@ -326,7 +329,8 @@ engine_assess_client_set_for_finalize() {
     --client-root "$root" \
     --expected-mirror "$mirror_url" \
     --expected-fingerprint "$expected_fpr" \
-    --expected-mode "${PREPARATION_MODE:-FULL}" 2>&1)"
+    --expected-mode "${PREPARATION_MODE:-FULL}" \
+    --selective-root "${MM_SELECTIVE_ROOT:-}" 2>&1)"
   provenance_rc=$?
   set -e
   state_line="$(printf '%s\n' "$provenance_out" | awk -F= '$1=="CLIENT_SET_STATE"{print $2; exit}')"
@@ -356,6 +360,7 @@ engine_assess_client_set_for_finalize() {
 engine_bind_reused_client_set_workflow() {
   local meta="${MM_CLIENT_ROOT}/client-set.env"
   local gen fpr input_sha source_rev runtime_sha command_ver schema_ver
+  local plan_ck disc_ck contract_sha
   [[ -f "$meta" ]] || return 1
   # Reject duplicate authoritative keys (no first/last-wins ambiguity).
   mm_parse_env_metadata_get "$meta" >/dev/null || return 1
@@ -367,8 +372,12 @@ engine_bind_reused_client_set_workflow() {
   runtime_sha="$(mm_parse_env_metadata_get "$meta" CLIENT_RUNTIME_MANIFEST_SHA256 2>/dev/null || true)"
   command_ver="$(mm_parse_env_metadata_get "$meta" CLIENT_COMMAND_BLOCK_VERSION 2>/dev/null || true)"
   schema_ver="$(mm_parse_env_metadata_get "$meta" CLIENT_PROVENANCE_SCHEMA_VERSION 2>/dev/null || true)"
+  plan_ck="$(mm_parse_env_metadata_get "$meta" CLIENT_PLAN_CHECKSUM 2>/dev/null || true)"
+  disc_ck="$(mm_parse_env_metadata_get "$meta" CLIENT_DISCOVERY_ARTIFACT_CHECKSUM 2>/dev/null || true)"
+  contract_sha="$(mm_parse_env_metadata_get "$meta" CLIENT_AWS_SEMANTIC_CONTRACT_SHA256 2>/dev/null || true)"
   [[ -n "$gen" && -n "$fpr" && -n "$input_sha" ]] || return 1
-  mm_wf_mark_client_set_published "$gen" "$fpr" "$input_sha" "$source_rev" "$runtime_sha" "$command_ver" "$schema_ver"
+  mm_wf_mark_client_set_published "$gen" "$fpr" "$input_sha" "$source_rev" "$runtime_sha" "$command_ver" "$schema_ver" \
+    "$plan_ck" "$disc_ck" "$contract_sha"
   mm_info "CLIENT_SET_WORKFLOW_REBOUND=PASS CLIENT_SET_GENERATION_ID=${gen}"
 }
 
@@ -382,7 +391,11 @@ engine_finalize_local_client_set() {
   local os_ready=NO
 
   mm_normalize_preparation_mode
+  # Dual-hermetic: verify-only is a test/fixture hook only.
   if [[ "${MM_CLIENT_FINALIZATION_MODE:-full}" == "verify-only" ]]; then
+    if [[ "${MM_HERMETIC_TEST_MODE:-0}" != "1" ]]; then
+      mm_die "MM_CLIENT_FINALIZATION_MODE=FAIL reason=verify-only_requires_MM_HERMETIC_TEST_MODE=1"
+    fi
     mm_info "CLIENT_FINALIZATION_MODE=verify-only"
     mm_set_phase "Verifying Local Client Files"
     if ! mm_check_client_files_ready; then
@@ -3390,7 +3403,11 @@ engine_enable_http_distribution() {
   else
     # Keep Enable HTTP aligned with Download-and-Prepare: verify-only fixtures
     # ship complete on-disk clients without selective hop trees for a rebuild.
+    # Dual-hermetic: verify-only requires MM_HERMETIC_TEST_MODE=1.
     if [[ "${MM_CLIENT_FINALIZATION_MODE:-full}" == "verify-only" ]]; then
+      if [[ "${MM_HERMETIC_TEST_MODE:-0}" != "1" ]]; then
+        mm_die "MM_CLIENT_FINALIZATION_MODE=FAIL reason=verify-only_requires_MM_HERMETIC_TEST_MODE=1"
+      fi
       mm_info "CLIENT_FINALIZATION_MODE=verify-only"
       if mm_client_files_ready "${MM_CLIENT_ROOT}"; then
         clients_on_disk=1

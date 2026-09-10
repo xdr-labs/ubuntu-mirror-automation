@@ -23,6 +23,20 @@ MM_CACHE_ROOT="${MM_CACHE_ROOT:-${MM_MIRROR_ROOT}/.install-cache}"
 MM_VERIFY_HTTP_BASE="${MM_VERIFY_HTTP_BASE:-http://127.0.0.1}"
 MM_SKIP_ROOT_CHECK="${MM_SKIP_ROOT_CHECK:-0}"
 
+# Dual-hermetic escape gate: production must never honor a single TEST/SKIP/ALLOW
+# variable alone. Requires MM_HERMETIC_TEST_MODE=1 AND the companion flag == 1
+# (or equal to an explicit expected value when provided as $2).
+mm_hermetic_test_mode() {
+  [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" ]]
+}
+
+mm_hermetic_escape_permitted() {
+  local flag_value="${1:-}"
+  local expect="${2:-1}"
+  mm_hermetic_test_mode || return 1
+  [[ -n "$flag_value" && "$flag_value" == "$expect" ]]
+}
+
 # Authoritative Mirror Host IPv4 resolution (single source of truth).
 # shellcheck source=mirror_host_ip.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/mirror_host_ip.sh"
@@ -33,8 +47,11 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/http_publication_permissio
 # shellcheck source=mirror_workflow_state.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/mirror_workflow_state.sh"
 
-# Fixed ACPS endpoint (not user-editable). Credentials come from GUI config only.
-ACPS_BASE_URL_FIXED="${ACPS_BASE_URL_FIXED:-https://acps.stellarcyber.ai/provision/aelladeb_py3}"
+# Immutable production ACPS endpoint (not env-overridable outside hermetic tests).
+# Credentials come from GUI config only. ACPS_BASE_URL_FIXED is a compatibility
+# alias kept equal to the constant for existing callers/tests.
+ACPS_PRODUCTION_BASE_URL="https://acps.stellarcyber.ai/provision/aelladeb_py3"
+ACPS_BASE_URL_FIXED="${ACPS_PRODUCTION_BASE_URL}"
 
 # Cloudflare R2 OS Core package URL — single code constant (custom domain).
 # Checksum sidecar is derived as "${OS_CORE_R2_URL}.sha256" (no separate constant).
@@ -83,7 +100,8 @@ mm_shell_quote() {
 }
 
 # Reject dangerous roots and paths that escape an approved root before rm -rf.
-# approved_root may be empty only when MM_ALLOW_ARBITRARY_TEST_ROOTS=1 (tests).
+# approved_root may be empty only when dual-hermetic
+# MM_HERMETIC_TEST_MODE=1 AND MM_ALLOW_ARBITRARY_TEST_ROOTS=1.
 mm_path_is_forbidden_root() {
   local p="$1"
   case "$p" in
@@ -142,7 +160,7 @@ mm_assert_safe_destructive_path() {
         return 1
         ;;
     esac
-  elif [[ "${MM_ALLOW_ARBITRARY_TEST_ROOTS:-0}" != "1" ]]; then
+  elif ! mm_hermetic_escape_permitted "${MM_ALLOW_ARBITRARY_TEST_ROOTS:-0}"; then
     printf 'DESTRUCTIVE_PATH=FAIL label=%s reason=approved_root_required path=%s\n' \
       "$label" "$resolved" >&2
     return 1
@@ -835,7 +853,8 @@ mm_acps_verify_payload_checksums() {
 }
 
 mm_require_root() {
-  if [[ "${MM_SKIP_ROOT_CHECK}" == "1" ]]; then
+  # Dual-hermetic: MM_HERMETIC_TEST_MODE=1 AND MM_SKIP_ROOT_CHECK=1.
+  if mm_hermetic_escape_permitted "${MM_SKIP_ROOT_CHECK:-0}"; then
     return 0
   fi
   if [[ "${EUID}" -ne 0 ]]; then
@@ -1853,26 +1872,37 @@ mm_record_download_validated() {
 }
 
 mm_record_http_validated() {
+  # Persist authoritative workflow receipt BEFORE publishing PASS status.
+  if declare -F mm_wf_mark_http_enabled >/dev/null 2>&1; then
+    if ! mm_wf_mark_http_enabled; then
+      mm_status_set HTTP_ENABLE_RESULT FAIL
+      mm_status_set HTTP_DISTRIBUTION DISABLED
+      mm_status_set HTTP_CONFIGURATION_READY FAIL
+      return 1
+    fi
+  fi
   mm_status_set HTTP_ENABLE_RESULT PASS
   mm_status_set HTTP_VALIDATED_AT "$(mm_ts)"
   mm_status_set HTTP_DISTRIBUTION ENABLED
   mm_status_set HTTP_CONFIGURATION_READY PASS
-  if declare -F mm_wf_mark_http_enabled >/dev/null 2>&1; then
-    mm_wf_mark_http_enabled
-  fi
 }
 
 mm_record_readiness_validated() {
   local fp
   fp="$(mm_artifact_fingerprint)"
+  # Persist authoritative workflow receipt BEFORE publishing PASS status.
+  if declare -F mm_wf_mark_readiness_verified >/dev/null 2>&1; then
+    if ! mm_wf_mark_readiness_verified; then
+      mm_status_set READINESS_RESULT FAIL
+      mm_status_set UPGRADE_READINESS FAIL
+      return 1
+    fi
+  fi
   mm_status_set READINESS_RESULT PASS
   mm_status_set READINESS_VALIDATED_AT "$(mm_ts)"
   mm_status_set READINESS_ARTIFACT_FINGERPRINT "$fp"
   mm_status_set READINESS_CONFIG_FINGERPRINT "$(mm_config_fingerprint)"
   mm_status_set UPGRADE_READINESS PASS
-  if declare -F mm_wf_mark_readiness_verified >/dev/null 2>&1; then
-    mm_wf_mark_readiness_verified
-  fi
 }
 
 mm_state_init() {
@@ -2369,7 +2399,8 @@ mm_client_set_current_source() {
     --client-root "$root" \
     --expected-mirror "$mirror" \
     --expected-fingerprint "$expected_fpr" \
-    --expected-mode "$mode" 2>&1)"
+    --expected-mode "$mode" \
+    --selective-root "${MM_SELECTIVE_ROOT:-${SELECTIVE_ROOT:-}}" 2>&1)"
   rc=$?
   set -e
   if [[ "$rc" -ne 0 ]]; then

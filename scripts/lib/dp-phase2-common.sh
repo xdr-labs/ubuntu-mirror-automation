@@ -52,7 +52,8 @@ dp2_ok() { dp2_log OK "$*"; }
 dp2_die() { dp2_error "$*"; exit 1; }
 
 dp2_require_root() {
-  if [[ "${DP_PHASE2_SKIP_ROOT_CHECK:-0}" == "1" ]]; then
+  # Dual-hermetic: MM_HERMETIC_TEST_MODE=1 AND DP_PHASE2_SKIP_ROOT_CHECK=1.
+  if [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" && "${DP_PHASE2_SKIP_ROOT_CHECK:-0}" == "1" ]]; then
     return 0
   fi
   [[ "${EUID}" -eq 0 ]] || dp2_die "ROOT_REQUIRED=FAIL must run as root"

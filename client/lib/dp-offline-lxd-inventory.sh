@@ -381,7 +381,10 @@ PY
 
 lxd_waitready_once() {
   local evid="$1" attempt="$2" out="${evid}/waitready-attempt-${attempt}.stdout" err="${evid}/waitready-attempt-${attempt}.stderr"
-  local start end rc mode="${DP_OFFLINE_FAKE_LXD_WAITREADY:-}"
+  local start end rc mode=""
+  if dp_offline_hermetic_fixtures_enabled; then
+    mode="${DP_OFFLINE_FAKE_LXD_WAITREADY:-}"
+  fi
   start="$(date +%s)"
   log INFO "LXD_WAITREADY_ATTEMPT=${attempt}"
   set +e
@@ -432,7 +435,7 @@ lxd_run_inventory_commands() {
   rm -f "${evid}/.has_running" "${evid}/.has_stopped" "${evid}/.has_images" "${evid}/.has_storage" 2>/dev/null || true
 
   # First-attempt-only timeout fixture (cold-start retry path).
-  if [[ "${DP_OFFLINE_FAKE_LXD_TIMEOUT:-0}" == "1" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ "${DP_OFFLINE_FAKE_LXD_TIMEOUT:-0}" == "1" ]]; then
     if [[ "${DP_OFFLINE_FAKE_LXD_TIMEOUT_ONCE:-1}" == "1" && "$attempt" -eq 1 ]]; then
       printf 'TIMEOUT=lxc list\n' >>"${evid}/errors.txt"
       printf 'ATTEMPT=%s\nCOMPLETE=0\n' "$attempt" >"${evid}/inventory-attempt-${attempt}.env"
@@ -444,7 +447,7 @@ lxd_run_inventory_commands() {
     fi
   fi
 
-  if [[ "${DP_OFFLINE_FAKE_LXD_JSON_PARSE_FAIL:-0}" == "1" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ "${DP_OFFLINE_FAKE_LXD_JSON_PARSE_FAIL:-0}" == "1" ]]; then
     printf 'PARSE_FAIL=instances.json\n' >>"${evid}/errors.txt"
     printf 'ATTEMPT=%s\nCOMPLETE=0\n' "$attempt" >"${evid}/inventory-attempt-${attempt}.env"
     return 1
@@ -643,7 +646,7 @@ collect_and_classify_lxd_inventory() {
   local stamp evid attempt=1 start rc=0 complete=0 cold=0 installed=0
   stamp="$(date -u '+%Y%m%dT%H%M%SZ')"; evid="$(hostpath "${STATE_ROOT}/evidence/lxd-inventory/${stamp}")"
   mkdir -p "$evid"; LXD_INVENTORY_EVIDENCE="${evid}/inventory.txt"; lxd_validate_inventory_timeouts
-  if [[ -n "${DP_OFFLINE_FAKE_LXD_CLASS:-}" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "${DP_OFFLINE_FAKE_LXD_CLASS:-}" ]]; then
     LXD_PREFLIGHT_CLASS="$DP_OFFLINE_FAKE_LXD_CLASS"
     case "$LXD_PREFLIGHT_CLASS" in LXD_NOT_INSTALLED|LXD_INSTALLED_UNUSED|LXD_IN_USE|LXD_AMBIGUOUS) ;; *) LXD_PREFLIGHT_CLASS=LXD_AMBIGUOUS ;; esac
     lxd_set_class_policy "$LXD_PREFLIGHT_CLASS"
@@ -706,7 +709,7 @@ collect_and_classify_lxd_inventory() {
   trap 'lxd_restore_runtime_state "'"$evid"'"' RETURN
   lxd_start_runtime_for_inventory || true
   # Fixtures without waitready binary: treat as ready unless hang/fail forced.
-  if [[ -z "${DP_OFFLINE_FAKE_LXD_WAITREADY:-}" && -n "${TEST_ROOT:-}" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -z "${DP_OFFLINE_FAKE_LXD_WAITREADY:-}" && -n "${TEST_ROOT:-}" ]]; then
     export DP_OFFLINE_FAKE_LXD_WAITREADY=ok
   fi
   start="$(date +%s)"
@@ -876,7 +879,7 @@ simulate_unused_lxd_removal() {
   local line pkg
 
   mkdir -p "$evid"
-  if [[ -n "${DP_OFFLINE_FAKE_LXD_REMOVAL_SIM:-}" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "${DP_OFFLINE_FAKE_LXD_REMOVAL_SIM:-}" ]]; then
     printf '%s\n' "$DP_OFFLINE_FAKE_LXD_REMOVAL_SIM" >"$sim"
   else
     set +e
@@ -958,7 +961,7 @@ scan_package_maintainer_network_risk() {
 
   # Also scan apt-cache show for remaining candidate descriptions (informational),
   # but only fail when an installed/candidate preinst would still run.
-  if [[ "${DP_OFFLINE_FAKE_LXD_NETWORK_RISK:-}" == "1" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ "${DP_OFFLINE_FAKE_LXD_NETWORK_RISK:-}" == "1" ]]; then
     hit=1
     printf 'HIT=FAKE_NETWORK_RISK\n' >>"${evid}/network-risk-scan.txt"
   fi
@@ -980,7 +983,10 @@ guard_lxd_target_transition() {
   local evid="$1"
   local sim="${evid}/target-plan-sim.txt"
   local selected=0 rc=0
-  local force_selected="${DP_OFFLINE_FAKE_LXD_TARGET_SELECTED:-}"
+  local force_selected=""
+  if dp_offline_hermetic_fixtures_enabled; then
+    force_selected="${DP_OFFLINE_FAKE_LXD_TARGET_SELECTED:-}"
+  fi
 
   mkdir -p "$evid"
   if [[ -n "$force_selected" ]]; then
@@ -1053,7 +1059,7 @@ remove_unused_lxd_before_dro() {
     die "$EC_LXD" "FAIL_LXD_REMOVAL_SIMULATION"
   fi
 
-  if [[ -n "${TEST_ROOT:-}" && -z "${DP_OFFLINE_FAKE_LXD_DO_REMOVE:-}" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "${TEST_ROOT:-}" && -z "${DP_OFFLINE_FAKE_LXD_DO_REMOVE:-}" ]]; then
     # Fixture path: record simulated success without mutating host.
     log INFO "LXD_REMOVAL_RESULT=PASS"
     log INFO "LXD_POST_REMOVAL_DPKG_AUDIT=PASS"

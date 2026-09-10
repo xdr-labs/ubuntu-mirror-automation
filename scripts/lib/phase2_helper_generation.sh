@@ -16,7 +16,10 @@ phase2_helper_generation_files() {
     lib/dp-offline-source-product-version.sh \
     lib/dp-phase2-operation-progress.sh \
     lib/dp-phase2-bringup-lifecycle.sh \
-    lib/dp-phase2-ubuntu-prerequisites.sh
+    lib/dp-phase2-ubuntu-prerequisites.sh \
+    lib/dp-phase2-time-readiness.sh \
+    lib/dp-phase2-post-bringup-migration.sh \
+    lib/dp-phase2-cluster-validation.sh
 }
 
 phase2_helper_generation_write() {
@@ -186,7 +189,7 @@ W=\$(mktemp -d)
 trap 'rm -rf "\$W"' EXIT
 cd "\$W"
 mkdir -p lib
-for F in "\$GEN" "\$SCRIPT" bringup_py3_dp_lifecycle.sh lib/dp-{offline-source-product-version,phase2-operation-progress,phase2-bringup-lifecycle,phase2-ubuntu-prerequisites}.sh; do
+for F in "\$GEN" "\$SCRIPT" bringup_py3_dp_lifecycle.sh lib/dp-{offline-source-product-version,phase2-operation-progress,phase2-bringup-lifecycle,phase2-ubuntu-prerequisites,phase2-time-readiness,phase2-post-bringup-migration,phase2-cluster-validation}.sh; do
   curl -fsSLo "\$F" "\$MIRROR/client/\$F" || exit 1
 done
 printf '%s  %s\\n' "\$H" "\$GEN" | sha256sum -c -
@@ -251,7 +254,7 @@ W=\$(mktemp -d)
 trap 'rm -rf "\$W"' EXIT
 cd "\$W"
 mkdir -p lib
-for F in "\$GEN" "\$SCRIPT" bringup_py3_dp_lifecycle.sh lib/dp-{offline-source-product-version,phase2-operation-progress,phase2-bringup-lifecycle,phase2-ubuntu-prerequisites}.sh; do
+for F in "\$GEN" "\$SCRIPT" bringup_py3_dp_lifecycle.sh lib/dp-{offline-source-product-version,phase2-operation-progress,phase2-bringup-lifecycle,phase2-ubuntu-prerequisites,phase2-time-readiness,phase2-post-bringup-migration,phase2-cluster-validation}.sh; do
   curl -fsSLo "\$F" "\$MIRROR/client/\$F" || exit 1
 done
 printf '%s  %s\\n' "\$H" "\$GEN" | sha256sum -c -

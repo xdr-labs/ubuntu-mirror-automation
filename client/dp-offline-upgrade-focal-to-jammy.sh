@@ -284,8 +284,134 @@ CLIENT_HANDOFF_RESULT=""
 CLIENT_EXIT_REASON=""
 MONITOR_RESULT=""
 
-# systemctl binary (overridable in fixture tests)
+# systemctl binary (fixture override requires MM_HERMETIC_TEST_MODE=1)
 SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
+# shellcheck shell=bash
+# Shared hermetic fixture-escape policy for offline OS upgrade clients.
+# Injected into single-file clients at build / stub-render time.
+# Compatible with Bash 4.3+ and safe under `set -Eeuo pipefail`.
+#
+# Contract:
+# - Production must never honor test/fixture controls from the environment alone.
+# - Fixture behavior requires MM_HERMETIC_TEST_MODE=1 AND the specific control.
+# - Call dp_offline_enforce_production_fixture_policy early in main() before
+#   TEST_ROOT / SYSTEMCTL_BIN fixture paths take effect.
+
+dp_offline_hermetic_test_mode() {
+  [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" ]]
+}
+
+# True when hermetic fixtures are permitted (companion flag checked by caller).
+dp_offline_hermetic_fixtures_enabled() {
+  dp_offline_hermetic_test_mode
+}
+
+# Category-C fixture controls: alter trust, identity, topology, confirmation,
+# package mutation, systemctl behavior, or upgrade success/failure semantics.
+# Keep this list the single inventory shared by all four hop clients.
+dp_offline_category_c_fixture_vars() {
+  printf '%s\n' \
+    DP_OFFLINE_TEST_ROOT \
+    STELLAR_OFFLINE_TEST_ROOT \
+    DP_OFFLINE_TEST_HANDOFF \
+    DP_OFFLINE_FAKE_DP_VERSION \
+    DP_OFFLINE_FAKE_ROLE \
+    DP_OFFLINE_FAKE_MIRROR_TRUST \
+    DP_OFFLINE_FAKE_CONFIRM \
+    DP_OFFLINE_FAKE_KERNEL \
+    DP_OFFLINE_FAKE_UNHOLD_FAIL \
+    DP_OFFLINE_FAKE_UNHOLD_STILL_HELD \
+    DP_OFFLINE_FAKE_HOLD_FAIL \
+    DP_OFFLINE_FAKE_SHELL_CHANGE_FAIL \
+    DP_OFFLINE_FAKE_SHELL_CHANGE_FAIL_USER \
+    DP_OFFLINE_FAKE_SHELL_CHSH_FAIL \
+    DP_OFFLINE_FAKE_SHELL_NOOP_SUCCESS \
+    DP_OFFLINE_FAKE_FAIL_AFTER_UNHOLD \
+    DP_OFFLINE_FORCE_NONINTERACTIVE \
+    DP_OFFLINE_FORCE_MONITOR \
+    DP_OFFLINE_UPGRADE_MODE \
+    STELLAR_OFFLINE_FORCE_SEMANTIC_GATE_FAIL \
+    STELLAR_OFFLINE_FORCE_DRO_PRE_TRANSITION_FAIL \
+    STELLAR_OFFLINE_SMOKE_STOP_BEFORE_DRO \
+    DP_OFFLINE_FAKE_PYTHON2_CLASS \
+    DP_OFFLINE_FAKE_PYTHON2_PACKAGES \
+    DP_OFFLINE_FAKE_PYTHON2_RDEPENDS \
+    DP_OFFLINE_FAKE_PYTHON2_NO_CANDIDATE \
+    DP_OFFLINE_FAKE_PYTHON2_PRODUCT_REMOVE \
+    DP_OFFLINE_FAKE_PYTHON2_SIM_PLAN \
+    DP_OFFLINE_FAKE_LXD_CLASS \
+    DP_OFFLINE_FAKE_LXD_CONTAINERS \
+    DP_OFFLINE_FAKE_LXD_IMAGES \
+    DP_OFFLINE_FAKE_LXD_STORAGE \
+    DP_OFFLINE_FAKE_LXD_WAITREADY \
+    DP_OFFLINE_FAKE_LXD_TIMEOUT \
+    DP_OFFLINE_FAKE_LXD_JSON_PARSE \
+    DP_OFFLINE_FAKE_LXD_REMOVAL_SIM \
+    DP_OFFLINE_FAKE_LXD_NETWORK_RISK \
+    DP_OFFLINE_FAKE_LXD_TARGET_SELECTED \
+    DP_OFFLINE_FAKE_LXD_DO_REMOVE \
+    STELLAR_OFFLINE_FAKE_NTP_UID_PROCS \
+    STELLAR_OFFLINE_FAKE_NTP_UID_PROCS_AFTER_STOP \
+    STELLAR_OFFLINE_FAKE_LEGACY_NTP_PACKAGE \
+    STELLAR_OFFLINE_FAKE_NTPSEC_PACKAGE \
+    STELLAR_OFFLINE_FAKE_LEGACY_NTP_UNIT_FRAGMENT \
+    STELLAR_OFFLINE_FAKE_LEGACY_NTP_UNIT_OWNED \
+    STELLAR_OFFLINE_FAKE_LEGACY_NTP_ACTIVE \
+    STELLAR_OFFLINE_FAKE_DEFAULT_ROUTE \
+    STELLAR_OFFLINE_FAKE_SYSTEMCTL_STOP \
+    DP_OFFLINE_FAKE_LXD_WAITREADY_DELAY_SECS \
+    DP_OFFLINE_FAKE_LXD_TIMEOUT_ONCE \
+    DP_OFFLINE_FAKE_LXD_JSON_PARSE_FAIL
+}
+
+# Resolve TEST_ROOT only under hermetic fixtures.
+dp_offline_resolve_test_root() {
+  if dp_offline_hermetic_fixtures_enabled; then
+    printf '%s' "${DP_OFFLINE_TEST_ROOT:-}"
+  else
+    printf '%s' ""
+  fi
+}
+
+# Resolve SYSTEMCTL_BIN: production always uses systemctl; fixture override
+# requires hermetic mode.
+dp_offline_resolve_systemctl_bin() {
+  if dp_offline_hermetic_fixtures_enabled; then
+    printf '%s' "${SYSTEMCTL_BIN:-systemctl}"
+  else
+    printf '%s' "systemctl"
+  fi
+}
+
+# Fail closed in production when any Category-C fixture control is present, or
+# when SYSTEMCTL_BIN is overridden away from the default binary name.
+dp_offline_enforce_production_fixture_policy() {
+  if dp_offline_hermetic_test_mode; then
+    return 0
+  fi
+
+  local var val bad=""
+  while IFS= read -r var; do
+    [[ -n "$var" ]] || continue
+    # Bash 4.3-safe indirect expansion.
+    eval "val=\${${var}-}"
+    if [[ -n "$val" ]]; then
+      bad="${bad}${bad:+ }${var}"
+    fi
+  done < <(dp_offline_category_c_fixture_vars)
+
+  if [[ -n "${SYSTEMCTL_BIN:-}" && "${SYSTEMCTL_BIN}" != "systemctl" ]]; then
+    bad="${bad}${bad:+ }SYSTEMCTL_BIN"
+  fi
+
+  if [[ -n "$bad" ]]; then
+    printf 'ERROR: FIXTURE_ESCAPE_PRODUCTION_FORBIDDEN vars=%s (require MM_HERMETIC_TEST_MODE=1)\n' "$bad" >&2
+    return 1
+  fi
+
+  SYSTEMCTL_BIN="systemctl"
+  return 0
+}
 HANDOFF_WAIT_SECS="${HANDOFF_WAIT_SECS:-15}"
 HANDOFF_POLL_SECS="${HANDOFF_POLL_SECS:-1}"
 HANDOFF_CONFIRMED=0
@@ -471,7 +597,7 @@ Phase 1 OS-only offline upgrade: Ubuntu ${PIN_SOURCE_VERSION} → ${PIN_TARGET_V
 Does not start subsequent hops or DP product validation/bringup.
 
 Options:
-  --mirror-base URL   Override pinned mirror base (default: ${PIN_MIRROR_BASE})
+  --mirror-base URL   Must equal pinned mirror base (hermetic/test override only)
   --mode os-only      Phase 1 OS-only mode (default; product gates skipped)
   --detach            Start under systemd and return immediately without
                       attaching the local progress monitor
@@ -917,7 +1043,7 @@ detect_dp_version() {
   DP_VERSION_DETECT_STATUS="undetermined"
   DP_VERSION_CLI_STATUS=""
 
-  if [[ -n "${DP_OFFLINE_FAKE_DP_VERSION:-}" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "${DP_OFFLINE_FAKE_DP_VERSION:-}" ]]; then
     DP_VERSION="$DP_OFFLINE_FAKE_DP_VERSION"
     DP_VERSION_SOURCE="FAKE"
     DP_VERSION_MATCHED_RECORDS=1
@@ -1000,7 +1126,7 @@ detect_dp_topology() {
   DP_TOPOLOGY_CLI_STATUS=""
   DP_TOPOLOGY_SUPPORTED=""
 
-  if [[ -n "${DP_OFFLINE_FAKE_ROLE:-}" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "${DP_OFFLINE_FAKE_ROLE:-}" ]]; then
     DP_TOPOLOGY="$(canonicalize_dp_topology "$DP_OFFLINE_FAKE_ROLE")"
     DP_TOPOLOGY_SOURCE="FAKE"
     DP_TOPOLOGY_CONSISTENCY="PASS"
@@ -2349,10 +2475,10 @@ test_root_set_held_packages() {
 apt_mark_unhold_pkg() {
   local pkg="$1"
   if [[ -n "$TEST_ROOT" ]]; then
-    if [[ "${DP_OFFLINE_FAKE_UNHOLD_FAIL:-}" == "$pkg" || "${DP_OFFLINE_FAKE_UNHOLD_FAIL:-}" == "all" ]]; then
+    if dp_offline_hermetic_fixtures_enabled && [[ "${DP_OFFLINE_FAKE_UNHOLD_FAIL:-}" == "$pkg" || "${DP_OFFLINE_FAKE_UNHOLD_FAIL:-}" == "all" ]]; then
       return 1
     fi
-    if [[ "${DP_OFFLINE_FAKE_UNHOLD_STILL_HELD:-}" == "1" || "${DP_OFFLINE_FAKE_UNHOLD_STILL_HELD:-}" == "$pkg" ]]; then
+    if dp_offline_hermetic_fixtures_enabled && [[ "${DP_OFFLINE_FAKE_UNHOLD_STILL_HELD:-}" == "1" || "${DP_OFFLINE_FAKE_UNHOLD_STILL_HELD:-}" == "$pkg" ]]; then
       # Command "succeeds" but selection remains hold - verification must catch this.
       return 0
     fi
@@ -2372,7 +2498,7 @@ apt_mark_unhold_pkg() {
 apt_mark_hold_pkg() {
   local pkg="$1"
   if [[ -n "$TEST_ROOT" ]]; then
-    if [[ "${DP_OFFLINE_FAKE_HOLD_FAIL:-}" == "$pkg" || "${DP_OFFLINE_FAKE_HOLD_FAIL:-}" == "all" ]]; then
+    if dp_offline_hermetic_fixtures_enabled && [[ "${DP_OFFLINE_FAKE_HOLD_FAIL:-}" == "$pkg" || "${DP_OFFLINE_FAKE_HOLD_FAIL:-}" == "all" ]]; then
       return 1
     fi
     local cur
@@ -5064,6 +5190,238 @@ run_product_post_upgrade() {
   return 0
 }
 
+#!/usr/bin/env bash
+# Generic/virtual kernel continuity gate for OS hops (non-AWS).
+# shellcheck shell=bash
+#
+# Complements (does not replace) the AWS exact-contract gate.
+# Goals: reject target userspace + stale source running kernel as success.
+# Does NOT hardcode laboratory-specific generic ABI package versions.
+
+generic_gate_log() {
+  local level="$1"; shift
+  if declare -F log >/dev/null 2>&1; then
+    log "$level" "$*"
+  else
+    printf '%s: %s\n' "$level" "$*"
+  fi
+}
+
+generic_gate_hp() {
+  local p="$1"
+  if [[ -n "${TEST_ROOT:-}" ]]; then
+    printf '%s%s' "${TEST_ROOT%/}" "$p"
+  elif [[ -n "${DP_POSTBOOT_TEST_ROOT:-}" ]]; then
+    printf '%s%s' "${DP_POSTBOOT_TEST_ROOT%/}" "$p"
+  else
+    printf '%s' "$p"
+  fi
+}
+
+generic_running_kernel_release() {
+  local kr
+  kr="$(uname -r 2>/dev/null || true)"
+  if [[ -n "${TEST_ROOT:-}${DP_POSTBOOT_TEST_ROOT:-}" && -n "${DP_OFFLINE_FAKE_KERNEL:-}" ]]; then
+    kr="$DP_OFFLINE_FAKE_KERNEL"
+  fi
+  printf '%s' "$kr"
+}
+
+generic_kernel_flavor() {
+  local kr="${1:-}"
+  [[ -n "$kr" ]] || kr="$(generic_running_kernel_release)"
+  case "$kr" in
+    *-aws) printf 'aws' ;;
+    *-generic-lpae) printf 'generic-lpae' ;;
+    *-generic) printf 'generic' ;;
+    *-virtual) printf 'virtual' ;;
+    *) printf 'other' ;;
+  esac
+}
+
+generic_pkg_installed() {
+  local pkg="$1" status
+  status="$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null || true)"
+  [[ "$status" == *"install ok installed"* ]]
+}
+
+# Map Ubuntu VERSION_ID → acceptable running-kernel series patterns (ERE).
+# Intentionally series-based, not exact ABI pins.
+generic_target_kernel_series_ere() {
+  case "${1:-}" in
+    18.04) printf '%s' '^(4\.15[.-].*-generic(-lpae)?|4\.1[6-9][.-].*-generic(-lpae)?|5\.[0-9]+[.-].*-generic(-lpae)?)$' ;;
+    20.04) printf '%s' '^(5\.4[.-].*-generic(-lpae)?|5\.[5-9][.-].*-generic(-lpae)?|5\.[1-9][0-9][.-].*-generic(-lpae)?)$' ;;
+    22.04) printf '%s' '^(5\.15[.-].*-generic(-lpae)?|5\.1[6-9][.-].*-generic(-lpae)?|5\.[2-9][0-9][.-].*-generic(-lpae)?|6\.[0-9]+[.-].*-generic(-lpae)?)$' ;;
+    24.04) printf '%s' '^(6\.[8-9][.-].*-generic(-lpae)?|6\.[1-9][0-9][.-].*-generic(-lpae)?|7\.[0-9]+[.-].*-generic(-lpae)?)$' ;;
+    *) return 1 ;;
+  esac
+}
+
+generic_is_aws_profile() {
+  # detect_aws_upgrade_profile is an output classifier: it prints "aws" or
+  # "other" and returns 0 for both. Classify on OUTPUT, never exit status.
+  local profile flavor
+  if declare -F detect_aws_upgrade_profile >/dev/null 2>&1; then
+    profile="$(detect_aws_upgrade_profile 2>/dev/null || true)"
+    [[ "$profile" == "aws" ]]
+    return $?
+  fi
+  flavor="$(generic_kernel_flavor)"
+  [[ "$flavor" == "aws" ]]
+}
+
+persist_source_kernel_generic_baseline() {
+  local holds_dir flavor kr
+  holds_dir="${HOLDS_DIR:-${STATE_ROOT:-/opt/aelladata/os-upgrade/offline}/critical-holds}"
+  flavor="$(generic_kernel_flavor)"
+  kr="$(generic_running_kernel_release)"
+  mkdir -p "$(generic_gate_hp "$holds_dir")" 2>/dev/null || true
+  if declare -F durable_atomic_write_string >/dev/null 2>&1; then
+    durable_atomic_write_string "generic_src_flavor" "$(generic_gate_hp "${holds_dir}/source_kernel_flavor")" "${flavor}"$'\n' 0644 || true
+    durable_atomic_write_string "generic_src_kr" "$(generic_gate_hp "${holds_dir}/source_kernel_release")" "${kr}"$'\n' 0644 || true
+  else
+    printf '%s\n' "$flavor" >"$(generic_gate_hp "${holds_dir}/source_kernel_flavor")"
+    printf '%s\n' "$kr" >"$(generic_gate_hp "${holds_dir}/source_kernel_release")"
+  fi
+  generic_gate_log INFO "SOURCE_KERNEL_FLAVOR=${flavor}"
+  generic_gate_log INFO "SOURCE_KERNEL_RELEASE=${kr}"
+  generic_gate_log INFO "GENERIC_SOURCE_KERNEL_BASELINE=PASS"
+  return 0
+}
+
+# PRE-REBOOT: target kernel image + matching initrd exist; not merely source kernel.
+# Arg: target Ubuntu VERSION_ID
+validate_generic_target_kernel_pre_reboot() {
+  local target_ver="${1:-}"
+  local holds_dir src_kr flavor boot_dir found=0 kr img initrd
+  if generic_is_aws_profile; then
+    generic_gate_log INFO "PRE_REBOOT_GENERIC_TARGET_GATE=SKIP reason=aws_profile"
+    return 0
+  fi
+  holds_dir="${HOLDS_DIR:-${STATE_ROOT:-/opt/aelladata/os-upgrade/offline}/critical-holds}"
+  src_kr=""
+  if [[ -f "$(generic_gate_hp "${holds_dir}/source_kernel_release")" ]]; then
+    src_kr="$(tr -d '\r\n' <"$(generic_gate_hp "${holds_dir}/source_kernel_release")" || true)"
+  fi
+  flavor="$(generic_kernel_flavor "${src_kr}")"
+  case "$flavor" in
+    generic|generic-lpae|virtual|other)
+      ;;
+    aws)
+      generic_gate_log INFO "PRE_REBOOT_GENERIC_TARGET_GATE=SKIP reason=aws_flavor"
+      return 0
+      ;;
+  esac
+
+  # Prefer metapackage presence without pinning exact ABI.
+  if ! generic_pkg_installed linux-image-generic \
+    && ! generic_pkg_installed linux-image-virtual \
+    && ! generic_pkg_installed linux-generic; then
+    generic_gate_log ERROR "PRE_REBOOT_GENERIC_TARGET_GATE=FAIL reason=target_generic_metapackage_missing"
+    generic_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED=YES"
+    generic_gate_log ERROR "POSTBOOT_HANDOFF_READY=NO"
+    return 1
+  fi
+
+  boot_dir="$(generic_gate_hp /boot)"
+  # Look for installed versioned generic/virtual images that are not the source release.
+  while IFS= read -r img; do
+    [[ -n "$img" ]] || continue
+    kr="${img#linux-image-}"
+    case "$kr" in
+      *-generic|*-generic-lpae|*-virtual) ;;
+      *) continue ;;
+    esac
+    if [[ -n "$src_kr" && "$kr" == "$src_kr" ]]; then
+      continue
+    fi
+    # Series coherence when target VERSION_ID known
+    if [[ -n "$target_ver" ]]; then
+      local ere
+      ere="$(generic_target_kernel_series_ere "$target_ver" || true)"
+      if [[ -n "$ere" ]] && ! printf '%s' "$kr" | grep -Eq "$ere"; then
+        continue
+      fi
+    fi
+    initrd="${boot_dir}/initrd.img-${kr}"
+    if [[ -f "${boot_dir}/vmlinuz-${kr}" && -s "${boot_dir}/vmlinuz-${kr}" \
+      && -f "$initrd" && -s "$initrd" ]]; then
+      found=1
+      generic_gate_log INFO "PRE_REBOOT_GENERIC_TARGET_KERNEL=${kr}"
+      break
+    fi
+  done < <(dpkg-query -W -f='${Package}\n' 'linux-image-*' 2>/dev/null | grep -E '^linux-image-[0-9]' || true)
+
+  if [[ "$found" -ne 1 ]]; then
+    generic_gate_log ERROR "PRE_REBOOT_GENERIC_TARGET_GATE=FAIL reason=no_target_series_vmlinuz_initrd source_kernel=${src_kr:-unknown}"
+    generic_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED=YES"
+    generic_gate_log ERROR "POSTBOOT_HANDOFF_READY=NO"
+    return 1
+  fi
+  generic_gate_log INFO "PRE_REBOOT_GENERIC_TARGET_GATE=PASS"
+  return 0
+}
+
+# POSTBOOT: running kernel must not equal source; must match target series/flavor.
+# Arg: target Ubuntu VERSION_ID
+validate_generic_running_kernel_postboot() {
+  local target_ver="${1:-}"
+  local holds_dir src_kr kr flavor ere img_pkg
+  if generic_is_aws_profile; then
+    generic_gate_log INFO "GENERIC_POST_HOP_KERNEL_GATE=SKIP reason=aws_profile"
+    return 0
+  fi
+  holds_dir="${HOLDS_DIR:-${STATE_ROOT:-/opt/aelladata/os-upgrade/offline}/critical-holds}"
+  src_kr=""
+  if [[ -f "$(generic_gate_hp "${holds_dir}/source_kernel_release")" ]]; then
+    src_kr="$(tr -d '\r\n' <"$(generic_gate_hp "${holds_dir}/source_kernel_release")" || true)"
+  fi
+  kr="$(generic_running_kernel_release)"
+  flavor="$(generic_kernel_flavor "$kr")"
+  if [[ -z "$kr" ]]; then
+    generic_gate_log ERROR "GENERIC_POST_HOP_KERNEL_GATE=FAIL reason=running_kernel_unavailable"
+    return 1
+  fi
+  if [[ -n "$src_kr" && "$kr" == "$src_kr" ]]; then
+    generic_gate_log ERROR "GENERIC_POST_HOP_KERNEL_GATE=FAIL reason=running_kernel_still_source kernel=${kr}"
+    return 1
+  fi
+  case "$flavor" in
+    generic|generic-lpae|virtual) ;;
+    aws)
+      generic_gate_log INFO "GENERIC_POST_HOP_KERNEL_GATE=SKIP reason=aws_flavor"
+      return 0
+      ;;
+    *)
+      generic_gate_log ERROR "GENERIC_POST_HOP_KERNEL_GATE=FAIL reason=unexpected_flavor flavor=${flavor} kernel=${kr}"
+      return 1
+      ;;
+  esac
+  ere="$(generic_target_kernel_series_ere "$target_ver" || true)"
+  if [[ -z "$ere" ]]; then
+    generic_gate_log ERROR "GENERIC_POST_HOP_KERNEL_GATE=FAIL reason=unknown_target_version ${target_ver}"
+    return 1
+  fi
+  if ! printf '%s' "$kr" | grep -Eq "$ere"; then
+    generic_gate_log ERROR "GENERIC_POST_HOP_KERNEL_GATE=FAIL reason=kernel_not_target_series kernel=${kr} target=${target_ver}"
+    return 1
+  fi
+  img_pkg="linux-image-${kr}"
+  if ! generic_pkg_installed "$img_pkg"; then
+    generic_gate_log ERROR "GENERIC_POST_HOP_KERNEL_GATE=FAIL reason=running_image_package_missing package=${img_pkg}"
+    return 1
+  fi
+  # OS VERSION_ID must match hop target when readable.
+  local vid
+  vid="$(grep -E '^VERSION_ID=' "$(generic_gate_hp /etc/os-release)" 2>/dev/null | cut -d= -f2 | tr -d '"' || true)"
+  if [[ -n "$target_ver" && -n "$vid" && "$vid" != "$target_ver" ]]; then
+    generic_gate_log ERROR "GENERIC_POST_HOP_KERNEL_GATE=FAIL reason=os_version_mismatch expected=${target_ver} got=${vid}"
+    return 1
+  fi
+  generic_gate_log INFO "GENERIC_POST_HOP_KERNEL_GATE=PASS kernel=${kr} flavor=${flavor}"
+  return 0
+}
+
 kernel_flavor() {
   local k
   k="$(uname -r 2>/dev/null || true)"
@@ -5690,7 +6048,7 @@ python2_pkg_installed_p() {
 collect_python2_inventory() {
   # Sets PYTHON2_* evidence paths and classification. Never mutates packages.
   local stamp evid
-  if [[ -z "${TEST_ROOT:-}" && -n "${DP_OFFLINE_TEST_ROOT:-}" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -z "${TEST_ROOT:-}" && -n "${DP_OFFLINE_TEST_ROOT:-}" ]]; then
     TEST_ROOT="$DP_OFFLINE_TEST_ROOT"
   fi
   stamp="$(date -u '+%Y%m%dT%H%M%SZ' 2>/dev/null || date +%Y%m%d%H%M%S)"
@@ -5708,7 +6066,7 @@ collect_python2_inventory() {
     printf 'POLICY=PHASE1_OS_ONLY_NO_AUTO_PURGE\n'
   } >"$PYTHON2_INVENTORY_EVIDENCE"
 
-  if [[ -n "${DP_OFFLINE_FAKE_PYTHON2_CLASS:-}" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "${DP_OFFLINE_FAKE_PYTHON2_CLASS:-}" ]]; then
     PYTHON2_PREFLIGHT_CLASS="$DP_OFFLINE_FAKE_PYTHON2_CLASS"
     case "$PYTHON2_PREFLIGHT_CLASS" in
       PYTHON2_ABSENT)
@@ -6287,7 +6645,10 @@ PY
 
 lxd_waitready_once() {
   local evid="$1" attempt="$2" out="${evid}/waitready-attempt-${attempt}.stdout" err="${evid}/waitready-attempt-${attempt}.stderr"
-  local start end rc mode="${DP_OFFLINE_FAKE_LXD_WAITREADY:-}"
+  local start end rc mode=""
+  if dp_offline_hermetic_fixtures_enabled; then
+    mode="${DP_OFFLINE_FAKE_LXD_WAITREADY:-}"
+  fi
   start="$(date +%s)"
   log INFO "LXD_WAITREADY_ATTEMPT=${attempt}"
   set +e
@@ -6338,7 +6699,7 @@ lxd_run_inventory_commands() {
   rm -f "${evid}/.has_running" "${evid}/.has_stopped" "${evid}/.has_images" "${evid}/.has_storage" 2>/dev/null || true
 
   # First-attempt-only timeout fixture (cold-start retry path).
-  if [[ "${DP_OFFLINE_FAKE_LXD_TIMEOUT:-0}" == "1" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ "${DP_OFFLINE_FAKE_LXD_TIMEOUT:-0}" == "1" ]]; then
     if [[ "${DP_OFFLINE_FAKE_LXD_TIMEOUT_ONCE:-1}" == "1" && "$attempt" -eq 1 ]]; then
       printf 'TIMEOUT=lxc list\n' >>"${evid}/errors.txt"
       printf 'ATTEMPT=%s\nCOMPLETE=0\n' "$attempt" >"${evid}/inventory-attempt-${attempt}.env"
@@ -6350,7 +6711,7 @@ lxd_run_inventory_commands() {
     fi
   fi
 
-  if [[ "${DP_OFFLINE_FAKE_LXD_JSON_PARSE_FAIL:-0}" == "1" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ "${DP_OFFLINE_FAKE_LXD_JSON_PARSE_FAIL:-0}" == "1" ]]; then
     printf 'PARSE_FAIL=instances.json\n' >>"${evid}/errors.txt"
     printf 'ATTEMPT=%s\nCOMPLETE=0\n' "$attempt" >"${evid}/inventory-attempt-${attempt}.env"
     return 1
@@ -6549,7 +6910,7 @@ collect_and_classify_lxd_inventory() {
   local stamp evid attempt=1 start rc=0 complete=0 cold=0 installed=0
   stamp="$(date -u '+%Y%m%dT%H%M%SZ')"; evid="$(hostpath "${STATE_ROOT}/evidence/lxd-inventory/${stamp}")"
   mkdir -p "$evid"; LXD_INVENTORY_EVIDENCE="${evid}/inventory.txt"; lxd_validate_inventory_timeouts
-  if [[ -n "${DP_OFFLINE_FAKE_LXD_CLASS:-}" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "${DP_OFFLINE_FAKE_LXD_CLASS:-}" ]]; then
     LXD_PREFLIGHT_CLASS="$DP_OFFLINE_FAKE_LXD_CLASS"
     case "$LXD_PREFLIGHT_CLASS" in LXD_NOT_INSTALLED|LXD_INSTALLED_UNUSED|LXD_IN_USE|LXD_AMBIGUOUS) ;; *) LXD_PREFLIGHT_CLASS=LXD_AMBIGUOUS ;; esac
     lxd_set_class_policy "$LXD_PREFLIGHT_CLASS"
@@ -6612,7 +6973,7 @@ collect_and_classify_lxd_inventory() {
   trap 'lxd_restore_runtime_state "'"$evid"'"' RETURN
   lxd_start_runtime_for_inventory || true
   # Fixtures without waitready binary: treat as ready unless hang/fail forced.
-  if [[ -z "${DP_OFFLINE_FAKE_LXD_WAITREADY:-}" && -n "${TEST_ROOT:-}" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -z "${DP_OFFLINE_FAKE_LXD_WAITREADY:-}" && -n "${TEST_ROOT:-}" ]]; then
     export DP_OFFLINE_FAKE_LXD_WAITREADY=ok
   fi
   start="$(date +%s)"
@@ -6782,7 +7143,7 @@ simulate_unused_lxd_removal() {
   local line pkg
 
   mkdir -p "$evid"
-  if [[ -n "${DP_OFFLINE_FAKE_LXD_REMOVAL_SIM:-}" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "${DP_OFFLINE_FAKE_LXD_REMOVAL_SIM:-}" ]]; then
     printf '%s\n' "$DP_OFFLINE_FAKE_LXD_REMOVAL_SIM" >"$sim"
   else
     set +e
@@ -6864,7 +7225,7 @@ scan_package_maintainer_network_risk() {
 
   # Also scan apt-cache show for remaining candidate descriptions (informational),
   # but only fail when an installed/candidate preinst would still run.
-  if [[ "${DP_OFFLINE_FAKE_LXD_NETWORK_RISK:-}" == "1" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ "${DP_OFFLINE_FAKE_LXD_NETWORK_RISK:-}" == "1" ]]; then
     hit=1
     printf 'HIT=FAKE_NETWORK_RISK\n' >>"${evid}/network-risk-scan.txt"
   fi
@@ -6886,7 +7247,10 @@ guard_lxd_target_transition() {
   local evid="$1"
   local sim="${evid}/target-plan-sim.txt"
   local selected=0 rc=0
-  local force_selected="${DP_OFFLINE_FAKE_LXD_TARGET_SELECTED:-}"
+  local force_selected=""
+  if dp_offline_hermetic_fixtures_enabled; then
+    force_selected="${DP_OFFLINE_FAKE_LXD_TARGET_SELECTED:-}"
+  fi
 
   mkdir -p "$evid"
   if [[ -n "$force_selected" ]]; then
@@ -6959,7 +7323,7 @@ remove_unused_lxd_before_dro() {
     die "$EC_LXD" "FAIL_LXD_REMOVAL_SIMULATION"
   fi
 
-  if [[ -n "${TEST_ROOT:-}" && -z "${DP_OFFLINE_FAKE_LXD_DO_REMOVE:-}" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "${TEST_ROOT:-}" && -z "${DP_OFFLINE_FAKE_LXD_DO_REMOVE:-}" ]]; then
     # Fixture path: record simulated success without mutating host.
     log INFO "LXD_REMOVAL_RESULT=PASS"
     log INFO "LXD_POST_REMOVAL_DPKG_AUDIT=PASS"
@@ -7128,7 +7492,7 @@ run_os_preflight() {
   fi
 
   # Stub-pin fixtures skip live mirror/GPG so OS-only preflight can PASS in tests.
-  if [[ -n "$TEST_ROOT" && ( "$PIN_KEY_FINGERPRINT" == "DEADBEEF" || "${DP_OFFLINE_FAKE_MIRROR_TRUST:-}" == "1" ) ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "$TEST_ROOT" && ( "$PIN_KEY_FINGERPRINT" == "DEADBEEF" || "${DP_OFFLINE_FAKE_MIRROR_TRUST:-}" == "1" ) ]]; then
     log INFO "MIRROR_TRUST_GATE=SKIPPED_TEST_FIXTURE"
     log INFO "SOURCE_OS=${PIN_SOURCE_VERSION}"
     log INFO "SOURCE_CODENAME=${PIN_SOURCE_CODENAME}"
@@ -7336,7 +7700,7 @@ EOF
   if [[ "$SKIP_CONFIRM" -eq 1 ]]; then
     die "$EC_CONFIRM" "SKIP_CONFIRM is not allowed outside TEST_ROOT"
   fi
-  if [[ -n "$TEST_ROOT" && "${DP_OFFLINE_FAKE_CONFIRM:-}" == "$PIN_CONFIRM_PHRASE" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "$TEST_ROOT" && "${DP_OFFLINE_FAKE_CONFIRM:-}" == "$PIN_CONFIRM_PHRASE" ]]; then
     return 0
   fi
   require_destructive_confirmation "$PIN_CONFIRM_PHRASE" || die "$EC_CONFIRM" "confirmation rejected"
@@ -7558,7 +7922,7 @@ install_legacy_apt_keyring() {
   fpr="$(printf '%s' "$fpr" | tr '[:lower:]' '[:upper:]')"
   log INFO "LEGACY_APT_KEYRING_PATH=${LEGACY_APT_KEYRING_PATH}"
   log INFO "LEGACY_APT_KEY_FINGERPRINT=${fpr}"
-  if [[ -n "$TEST_ROOT" && ( "$PIN_KEY_FINGERPRINT" == "DEADBEEF" || "${DP_OFFLINE_FAKE_MIRROR_TRUST:-}" == "1" ) ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "$TEST_ROOT" && ( "$PIN_KEY_FINGERPRINT" == "DEADBEEF" || "${DP_OFFLINE_FAKE_MIRROR_TRUST:-}" == "1" ) ]]; then
     log WARN "TEST_ROOT: skipping legacy key fingerprint hard-match"
     log INFO "LEGACY_APT_KEY_FINGERPRINT_MATCH=PASS"
   elif [[ -z "$fpr" || "$fpr" != "$PIN_KEY_FINGERPRINT" ]]; then
@@ -7590,7 +7954,7 @@ install_legacy_apt_keyring() {
   installed_fpr="$(gpg --no-default-keyring --keyring "$dest" --with-colons --fingerprint 2>/dev/null \
     | awk -F: '/^fpr:/ {print $10; exit}' || true)"
   installed_fpr="$(printf '%s' "$installed_fpr" | tr '[:lower:]' '[:upper:]')"
-  if [[ -n "$TEST_ROOT" && ( "$PIN_KEY_FINGERPRINT" == "DEADBEEF" || "${DP_OFFLINE_FAKE_MIRROR_TRUST:-}" == "1" ) ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "$TEST_ROOT" && ( "$PIN_KEY_FINGERPRINT" == "DEADBEEF" || "${DP_OFFLINE_FAKE_MIRROR_TRUST:-}" == "1" ) ]]; then
     log INFO "LEGACY_APT_KEY_INSTALL=PASS"
   elif [[ -z "$installed_fpr" || "$installed_fpr" != "$PIN_KEY_FINGERPRINT" ]]; then
     log ERROR "FAIL_LEGACY_APT_KEYRING_POSTINSTALL_VALIDATION"
@@ -8924,7 +9288,7 @@ build_runtime_meta_release_content() {
   local dest="$2"
   local offline_meta
   offline_meta="$work/meta-release-lts"
-  if [[ -n "$TEST_ROOT" && ( "$PIN_KEY_FINGERPRINT" == "DEADBEEF" || "${DP_OFFLINE_FAKE_MIRROR_TRUST:-}" == "1" ) ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "$TEST_ROOT" && ( "$PIN_KEY_FINGERPRINT" == "DEADBEEF" || "${DP_OFFLINE_FAKE_MIRROR_TRUST:-}" == "1" ) ]]; then
     cat >"$dest" <<EOF
 Dist: ${PIN_TARGET_CODENAME}
 Name: Ubuntu ${PIN_TARGET_VERSION} LTS
@@ -9063,6 +9427,132 @@ install_runner_and_units() {
 # stellar-offline-os-upgrade-runner - Focal→Jammy detached upgrade
 # Bash 4.3 compatible. Does not inherit client shell env; loads EnvironmentFile.
 set -eo pipefail
+# shellcheck shell=bash
+# Shared hermetic fixture-escape policy for offline OS upgrade clients.
+# Injected into single-file clients at build / stub-render time.
+# Compatible with Bash 4.3+ and safe under `set -Eeuo pipefail`.
+#
+# Contract:
+# - Production must never honor test/fixture controls from the environment alone.
+# - Fixture behavior requires MM_HERMETIC_TEST_MODE=1 AND the specific control.
+# - Call dp_offline_enforce_production_fixture_policy early in main() before
+#   TEST_ROOT / SYSTEMCTL_BIN fixture paths take effect.
+
+dp_offline_hermetic_test_mode() {
+  [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" ]]
+}
+
+# True when hermetic fixtures are permitted (companion flag checked by caller).
+dp_offline_hermetic_fixtures_enabled() {
+  dp_offline_hermetic_test_mode
+}
+
+# Category-C fixture controls: alter trust, identity, topology, confirmation,
+# package mutation, systemctl behavior, or upgrade success/failure semantics.
+# Keep this list the single inventory shared by all four hop clients.
+dp_offline_category_c_fixture_vars() {
+  printf '%s\n' \
+    DP_OFFLINE_TEST_ROOT \
+    STELLAR_OFFLINE_TEST_ROOT \
+    DP_OFFLINE_TEST_HANDOFF \
+    DP_OFFLINE_FAKE_DP_VERSION \
+    DP_OFFLINE_FAKE_ROLE \
+    DP_OFFLINE_FAKE_MIRROR_TRUST \
+    DP_OFFLINE_FAKE_CONFIRM \
+    DP_OFFLINE_FAKE_KERNEL \
+    DP_OFFLINE_FAKE_UNHOLD_FAIL \
+    DP_OFFLINE_FAKE_UNHOLD_STILL_HELD \
+    DP_OFFLINE_FAKE_HOLD_FAIL \
+    DP_OFFLINE_FAKE_SHELL_CHANGE_FAIL \
+    DP_OFFLINE_FAKE_SHELL_CHANGE_FAIL_USER \
+    DP_OFFLINE_FAKE_SHELL_CHSH_FAIL \
+    DP_OFFLINE_FAKE_SHELL_NOOP_SUCCESS \
+    DP_OFFLINE_FAKE_FAIL_AFTER_UNHOLD \
+    DP_OFFLINE_FORCE_NONINTERACTIVE \
+    DP_OFFLINE_FORCE_MONITOR \
+    DP_OFFLINE_UPGRADE_MODE \
+    STELLAR_OFFLINE_FORCE_SEMANTIC_GATE_FAIL \
+    STELLAR_OFFLINE_FORCE_DRO_PRE_TRANSITION_FAIL \
+    STELLAR_OFFLINE_SMOKE_STOP_BEFORE_DRO \
+    DP_OFFLINE_FAKE_PYTHON2_CLASS \
+    DP_OFFLINE_FAKE_PYTHON2_PACKAGES \
+    DP_OFFLINE_FAKE_PYTHON2_RDEPENDS \
+    DP_OFFLINE_FAKE_PYTHON2_NO_CANDIDATE \
+    DP_OFFLINE_FAKE_PYTHON2_PRODUCT_REMOVE \
+    DP_OFFLINE_FAKE_PYTHON2_SIM_PLAN \
+    DP_OFFLINE_FAKE_LXD_CLASS \
+    DP_OFFLINE_FAKE_LXD_CONTAINERS \
+    DP_OFFLINE_FAKE_LXD_IMAGES \
+    DP_OFFLINE_FAKE_LXD_STORAGE \
+    DP_OFFLINE_FAKE_LXD_WAITREADY \
+    DP_OFFLINE_FAKE_LXD_TIMEOUT \
+    DP_OFFLINE_FAKE_LXD_JSON_PARSE \
+    DP_OFFLINE_FAKE_LXD_REMOVAL_SIM \
+    DP_OFFLINE_FAKE_LXD_NETWORK_RISK \
+    DP_OFFLINE_FAKE_LXD_TARGET_SELECTED \
+    DP_OFFLINE_FAKE_LXD_DO_REMOVE \
+    STELLAR_OFFLINE_FAKE_NTP_UID_PROCS \
+    STELLAR_OFFLINE_FAKE_NTP_UID_PROCS_AFTER_STOP \
+    STELLAR_OFFLINE_FAKE_LEGACY_NTP_PACKAGE \
+    STELLAR_OFFLINE_FAKE_NTPSEC_PACKAGE \
+    STELLAR_OFFLINE_FAKE_LEGACY_NTP_UNIT_FRAGMENT \
+    STELLAR_OFFLINE_FAKE_LEGACY_NTP_UNIT_OWNED \
+    STELLAR_OFFLINE_FAKE_LEGACY_NTP_ACTIVE \
+    STELLAR_OFFLINE_FAKE_DEFAULT_ROUTE \
+    STELLAR_OFFLINE_FAKE_SYSTEMCTL_STOP \
+    DP_OFFLINE_FAKE_LXD_WAITREADY_DELAY_SECS \
+    DP_OFFLINE_FAKE_LXD_TIMEOUT_ONCE \
+    DP_OFFLINE_FAKE_LXD_JSON_PARSE_FAIL
+}
+
+# Resolve TEST_ROOT only under hermetic fixtures.
+dp_offline_resolve_test_root() {
+  if dp_offline_hermetic_fixtures_enabled; then
+    printf '%s' "${DP_OFFLINE_TEST_ROOT:-}"
+  else
+    printf '%s' ""
+  fi
+}
+
+# Resolve SYSTEMCTL_BIN: production always uses systemctl; fixture override
+# requires hermetic mode.
+dp_offline_resolve_systemctl_bin() {
+  if dp_offline_hermetic_fixtures_enabled; then
+    printf '%s' "${SYSTEMCTL_BIN:-systemctl}"
+  else
+    printf '%s' "systemctl"
+  fi
+}
+
+# Fail closed in production when any Category-C fixture control is present, or
+# when SYSTEMCTL_BIN is overridden away from the default binary name.
+dp_offline_enforce_production_fixture_policy() {
+  if dp_offline_hermetic_test_mode; then
+    return 0
+  fi
+
+  local var val bad=""
+  while IFS= read -r var; do
+    [[ -n "$var" ]] || continue
+    # Bash 4.3-safe indirect expansion.
+    eval "val=\${${var}-}"
+    if [[ -n "$val" ]]; then
+      bad="${bad}${bad:+ }${var}"
+    fi
+  done < <(dp_offline_category_c_fixture_vars)
+
+  if [[ -n "${SYSTEMCTL_BIN:-}" && "${SYSTEMCTL_BIN}" != "systemctl" ]]; then
+    bad="${bad}${bad:+ }SYSTEMCTL_BIN"
+  fi
+
+  if [[ -n "$bad" ]]; then
+    printf 'ERROR: FIXTURE_ESCAPE_PRODUCTION_FORBIDDEN vars=%s (require MM_HERMETIC_TEST_MODE=1)\n' "$bad" >&2
+    return 1
+  fi
+
+  SYSTEMCTL_BIN="systemctl"
+  return 0
+}
 # Shared durable atomic write helpers for offline OS-upgrade clients.
 # shellcheck shell=bash
 # Injected at build time via the DURABLE_WRITE_HELPER template token.
@@ -9279,7 +9769,11 @@ atomic_write_file() {
 
 
 # Optional fake-root prefix for fixture tests only (never set by production unit).
-_TEST_PREFIX="${STELLAR_OFFLINE_TEST_ROOT:-}"
+# Requires MM_HERMETIC_TEST_MODE=1; production ignores STELLAR_OFFLINE_TEST_ROOT.
+_TEST_PREFIX=""
+if dp_offline_hermetic_fixtures_enabled; then
+  _TEST_PREFIX="${STELLAR_OFFLINE_TEST_ROOT:-}"
+fi
 _hp() {
   if [[ -n "$_TEST_PREFIX" ]]; then
     printf '%s%s' "$_TEST_PREFIX" "$1"
@@ -10819,6 +11313,40 @@ runner_collect_pre_dro_evidence() {
   log INFO "PRE_DRO_EVIDENCE=${dest}"
 }
 
+
+ensure_postboot_unit_enabled_before_reboot() {
+  local unit="${POSTBOOT_UNIT_NAME:-stellar-offline-os-upgrade-postboot.service}"
+  local unit_path="/etc/systemd/system/${unit}"
+  local en_state=""
+  log INFO "POSTBOOT_HANDOFF_CHECK=START unit=${unit}"
+  if [[ ! -f "$unit_path" ]]; then
+    log ERROR "POSTBOOT_UNIT_FILE_MISSING=${unit_path}"
+    return 1
+  fi
+  if ! systemctl daemon-reload; then
+    log ERROR "POSTBOOT_DAEMON_RELOAD=FAIL"
+    return 1
+  fi
+  log INFO "POSTBOOT_DAEMON_RELOAD=PASS"
+  if ! systemctl enable "$unit"; then
+    log ERROR "POSTBOOT_ENABLE=FAIL"
+    return 1
+  fi
+  log INFO "POSTBOOT_ENABLE=PASS"
+  en_state="$(systemctl is-enabled "$unit" 2>/dev/null || true)"
+  case "$en_state" in
+    enabled|enabled-runtime|static|indirect|alias)
+      log INFO "POSTBOOT_IS_ENABLED=${en_state}"
+      log INFO "POSTBOOT_ENABLE_VERIFIED=PASS"
+      log INFO "POSTBOOT_HANDOFF_READY=YES"
+      return 0
+      ;;
+  esac
+  log ERROR "POSTBOOT_IS_ENABLED_MISMATCH state=${en_state:-empty}"
+  log ERROR "POSTBOOT_ENABLE_VERIFIED=FAIL"
+  return 1
+}
+
 reboot_if_success() {
   write_state REBOOT_PENDING
   log INFO "CRITICAL_OS_HOLDS_REMAIN_UNHELD_THROUGH_OS_UPGRADE=YES"
@@ -10880,7 +11408,7 @@ main() {
   load_release_upgrade_flag
   assert_no_external_apt
 
-  if [[ "${STELLAR_OFFLINE_SMOKE_STOP_BEFORE_DRO:-}" == "1" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ "${STELLAR_OFFLINE_SMOKE_STOP_BEFORE_DRO:-}" == "1" ]]; then
     set_stage "META_RELEASE_VALIDATION"
     validate_meta_release_before_dro
     set_stage "PRE_DRO_REPOSITORY_SEMANTIC_GATE"
@@ -10894,7 +11422,7 @@ main() {
     exit 0
   fi
 
-  if [[ "${STELLAR_OFFLINE_FORCE_SEMANTIC_GATE_FAIL:-}" == "1" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ "${STELLAR_OFFLINE_FORCE_SEMANTIC_GATE_FAIL:-}" == "1" ]]; then
     set_stage "PRE_DRO_REPOSITORY_SEMANTIC_GATE"
     fail_stage 1 "FAIL_INJECTED_PRE_DRO_SEMANTIC_GATE"
   fi
@@ -10954,7 +11482,7 @@ main() {
   mark_release_upgrade_process_spawned
   start_package_transition_watcher
   # Test-only: fail after invocation, before any package mutation.
-  if [[ "${STELLAR_OFFLINE_FORCE_DRO_PRE_TRANSITION_FAIL:-}" == "1" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ "${STELLAR_OFFLINE_FORCE_DRO_PRE_TRANSITION_FAIL:-}" == "1" ]]; then
     FAILURE_CLASS="PRE_MUTATION_SOURCE_REWRITE"
     mkdir -p "$(_hp /var/log/dist-upgrade)"
     printf 'E:The repository http://archive.ubuntu.com/ubuntu jammy Release\n' \
@@ -10997,10 +11525,26 @@ main() {
   if [[ ! -d /boot ]] || ! ls /boot/vmlinu* >/dev/null 2>&1; then
     fail_stage 1 "kernel/initramfs missing under /boot"
   fi
+  if declare -F validate_generic_target_kernel_pre_reboot >/dev/null 2>&1; then
+    if ! validate_generic_target_kernel_pre_reboot "22.04"; then
+      log ERROR "PRE_REBOOT_GENERIC_TARGET_GATE=FAIL; refusing automatic reboot"
+      log ERROR "AUTOMATIC_REBOOT_NOT_STARTED=YES"
+      log ERROR "POSTBOOT_HANDOFF_READY=NO"
+      write_state FAILED
+      fail_stage 1 "generic target kernel not ready before reboot"
+    fi
+  fi
   RELEASE_UPGRADE_COMPLETED="true"
   persist_flags
   if [[ -z "$_TEST_PREFIX" ]]; then
-    systemctl enable stellar-offline-os-upgrade-postboot.service 2>/dev/null || true
+    if ! ensure_postboot_unit_enabled_before_reboot; then
+      log ERROR "AUTOMATIC_REBOOT_NOT_STARTED=YES"
+      log ERROR "POSTBOOT_HANDOFF_READY=NO"
+      write_state FAILED
+      fail_stage 1 "postboot unit not verified enabled before reboot"
+    fi
+  else
+    log INFO "POSTBOOT_ENABLE_VERIFIED=SKIP reason=TEST_ROOT"
   fi
   reboot_if_success
 }
@@ -11316,6 +11860,13 @@ main() {
       log INFO "NONINTERACTIVE_CONFFILE_POLICY_REMOVED=YES reason=postboot"
     fi
   fi
+  if declare -F validate_generic_running_kernel_postboot >/dev/null 2>&1; then
+    if ! validate_generic_running_kernel_postboot "22.04"; then
+      log ERROR "GENERIC_POST_HOP_KERNEL_GATE=FAIL"
+      write_state FAILED
+      exit 1
+    fi
+  fi
   write_state COMPLETED_JAMMY
   mkdir -p /etc/motd.d 2>/dev/null || true
   cat >"$MOTD" <<EOF
@@ -11420,7 +11971,7 @@ write_pins_env() {
   fi
   COMMIT_STAMP="$stamp"
   COMMIT_BACKUP_PATH="${BACKUP_ROOT}/${stamp}"
-  # Keep PIN_MIRROR_BASE in sync with runtime --mirror-base override.
+  # Persist runtime MIRROR_BASE; production requires it equal PIN_MIRROR_BASE.
   PIN_MIRROR_BASE="${MIRROR_BASE}"
 
   env_path="$(hostpath "$ENV_DEFAULT_FILE")"
@@ -11561,6 +12112,11 @@ fixture_test_root_prefix() {
   # Handoff fixtures set TEST_ROOT + DP_OFFLINE_TEST_HANDOFF=1. Prefer those so a
   # stale STELLAR_OFFLINE_TEST_ROOT from the parent environment cannot poison
   # runner cmdline matching. Runner-only fixtures still use STELLAR_*.
+  # Production: never honor fixture roots without MM_HERMETIC_TEST_MODE=1.
+  if ! dp_offline_hermetic_fixtures_enabled; then
+    printf '%s' ""
+    return 0
+  fi
   if [[ "${DP_OFFLINE_TEST_HANDOFF:-}" == "1" ]]; then
     printf '%s' "${TEST_ROOT:-${DP_OFFLINE_TEST_ROOT:-}}"
     return 0
@@ -11805,10 +12361,10 @@ EOF
 
 client_is_interactive_tty() {
   # Test overrides (fixture-only).
-  if [[ "${DP_OFFLINE_FORCE_NONINTERACTIVE:-}" == "1" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ "${DP_OFFLINE_FORCE_NONINTERACTIVE:-}" == "1" ]]; then
     return 1
   fi
-  if [[ "${DP_OFFLINE_FORCE_MONITOR:-}" == "1" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ "${DP_OFFLINE_FORCE_MONITOR:-}" == "1" ]]; then
     return 0
   fi
   [[ -t 0 && -t 1 ]]
@@ -12760,7 +13316,7 @@ commit_and_start() {
   fi
   remove_unused_lxd_before_dro
 
-  if [[ -n "$TEST_ROOT" && "${DP_OFFLINE_FAKE_FAIL_AFTER_UNHOLD:-}" == "1" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "$TEST_ROOT" && "${DP_OFFLINE_FAKE_FAIL_AFTER_UNHOLD:-}" == "1" ]]; then
     log ERROR "TEST: injected failure after unhold (before APT metadata / release upgrade)"
     restore_critical_os_holds_if_safe "injected_pre_upgrade_failure" || true
     die "$EC_INTERNAL" "FAIL_INJECTED_AFTER_UNHOLD"
@@ -12791,7 +13347,7 @@ commit_and_start() {
       fi
       die "$EC_DISTUPGRADE_SOURCE" "$err"
     fi
-    if [[ -z "$TEST_ROOT" ]] || [[ "${DP_OFFLINE_FAKE_MIRROR_TRUST:-}" != "1" ]]; then
+    if [[ -z "$TEST_ROOT" ]] || ! dp_offline_hermetic_fixtures_enabled || [[ "${DP_OFFLINE_FAKE_MIRROR_TRUST:-}" != "1" ]]; then
       if ! validate_target_pocket_components_from_mirror; then
         die "$EC_TARGET_POCKET" "FAIL_TARGET_POCKET_COMPONENT_EMPTY"
       fi
@@ -15409,8 +15965,25 @@ main() {
     esac
   done
 
+
+  # Production runtime pin: MIRROR_BASE must equal build-time PIN_MIRROR_BASE.
+  # Arbitrary host override is forbidden outside an explicit hermetic/test boundary.
+  if [[ "${MIRROR_BASE%/}" != "${PIN_MIRROR_BASE%/}" ]]; then
+    # Dual-hermetic: both MM_HERMETIC_TEST_MODE=1 and DP_ALLOW_MIRROR_BASE_OVERRIDE=1.
+    if [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" && "${DP_ALLOW_MIRROR_BASE_OVERRIDE:-0}" == "1" ]]; then
+      : # allowed under explicit dual-hermetic test boundary
+    else
+      die "$EC_USAGE" "MIRROR_BASE_OVERRIDE_FORBIDDEN: production requires MIRROR_BASE==PIN_MIRROR_BASE (got '${MIRROR_BASE}' pin='${PIN_MIRROR_BASE}')"
+    fi
+  fi
+
   # Test harness hooks - keep logical paths; hostpath() prefixes TEST_ROOT at access.
-  TEST_ROOT="${DP_OFFLINE_TEST_ROOT:-}"
+  # Dual-hermetic: MM_HERMETIC_TEST_MODE=1 required for any fixture control.
+  if ! dp_offline_enforce_production_fixture_policy; then
+    die "$EC_USAGE" "FIXTURE_ESCAPE_PRODUCTION_FORBIDDEN"
+  fi
+  SYSTEMCTL_BIN="$(dp_offline_resolve_systemctl_bin)"
+  TEST_ROOT="$(dp_offline_resolve_test_root)"
   STATE_ROOT="/opt/aelladata/os-upgrade/offline"
   STATE_FILE="${STATE_ROOT}/state"
   HISTORY_FILE="${STATE_ROOT}/hop_history"
@@ -15428,8 +16001,8 @@ main() {
   RUNNER_PATH="/usr/local/sbin/stellar-offline-os-upgrade-runner"
   POSTBOOT_PATH="/usr/local/sbin/stellar-offline-os-upgrade-postboot"
 
-  # Default Phase 1 mode (explicit env override for tests).
-  if [[ "${DP_OFFLINE_UPGRADE_MODE:-}" == "OS_ONLY_PHASE1" || "${DP_OFFLINE_UPGRADE_MODE:-}" == "os-only" ]]; then
+  # Default Phase 1 mode (explicit env override for hermetic tests only).
+  if dp_offline_hermetic_fixtures_enabled && [[ "${DP_OFFLINE_UPGRADE_MODE:-}" == "OS_ONLY_PHASE1" || "${DP_OFFLINE_UPGRADE_MODE:-}" == "os-only" ]]; then
     UPGRADE_MODE="OS_ONLY_PHASE1"
   fi
   UPGRADE_PHASE=1

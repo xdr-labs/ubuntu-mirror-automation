@@ -5,6 +5,7 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 export MM_SKIP_ROOT_CHECK=1
+export MM_HERMETIC_TEST_MODE=1
 export MM_ALLOW_ARBITRARY_TEST_ROOTS=0
 # shellcheck source=/dev/null
 source "${ROOT}/scripts/lib/mirror_manager_common.sh"
@@ -63,6 +64,7 @@ out="$(
   CLIENT_HTTP_ROOT="$TMP/mirror/client" \
   SELECTIVE_ROOT="$TMP/mirror/selective" \
   ARTIFACT_DIR=/ \
+  MM_HERMETIC_TEST_MODE=1 \
   REQUIRE_SELECTIVE_READY=0 \
   SKIP_BUILD=1 \
   SKIP_DEPLOY=1 \
@@ -75,5 +77,51 @@ set -e
 echo "$out" | grep -q 'DESTRUCTIVE_PATH=FAIL\|ARTIFACT_DIR_UNSAFE' \
   || { echo "FAIL missing unsafe marker"; echo "$out"; exit 1; }
 echo "PASS ARTIFACT_DIR=/ rejected by rebuild-publish-clients"
+
+# CLIENT_HTTP_ROOT must not accept an unrelated tree in production
+set +e
+out="$(
+  BASE_PATH="$TMP/mirror" \
+  CACHE_ROOT="$TMP/mirror/.install-cache" \
+  CLIENT_HTTP_ROOT="$TMP/unrelated/client" \
+  SELECTIVE_ROOT="$TMP/mirror/selective" \
+  ARTIFACT_DIR="$TMP/mirror/.install-cache/client-build/genx" \
+  MM_HERMETIC_TEST_MODE=0 \
+  REQUIRE_SELECTIVE_READY=1 \
+  SKIP_BUILD=1 \
+  SKIP_DEPLOY=1 \
+  SKIP_HTTP_VERIFY=1 \
+  bash "${ROOT}/scripts/rebuild-publish-clients.sh" --skip-build --skip-deploy --skip-http-verify 2>&1
+)"
+rc=$?
+set -e
+[[ "$rc" -ne 0 ]] || { echo "FAIL unrelated CLIENT_HTTP_ROOT accepted in production"; echo "$out"; exit 1; }
+echo "$out" | grep -qE 'CLIENT_HTTP_ROOT=FAIL|CLIENT_HTTP_ROOT_UNSAFE|outside_approved_root|must_equal_BASE_PATH' \
+  || { echo "FAIL missing CLIENT_HTTP_ROOT containment marker"; echo "$out"; exit 1; }
+echo "PASS unrelated CLIENT_HTTP_ROOT rejected in production"
+
+# Valid BASE_PATH/client is accepted (guard only; skip build/deploy)
+mkdir -p "$TMP/mirror/client" "$TMP/mirror/selective/state" "$TMP/mirror/.install-cache/client-build"
+printf 'READY\n' >"$TMP/mirror/selective/state/READY"
+set +e
+out="$(
+  BASE_PATH="$TMP/mirror" \
+  CACHE_ROOT="$TMP/mirror/.install-cache" \
+  CLIENT_HTTP_ROOT="$TMP/mirror/client" \
+  SELECTIVE_ROOT="$TMP/mirror/selective" \
+  ARTIFACT_DIR="$TMP/mirror/.install-cache/client-build/geny" \
+  MM_HERMETIC_TEST_MODE=1 \
+  REQUIRE_SELECTIVE_READY=0 \
+  SKIP_BUILD=1 \
+  SKIP_DEPLOY=1 \
+  SKIP_HTTP_VERIFY=1 \
+  bash "${ROOT}/scripts/rebuild-publish-clients.sh" --skip-build --skip-deploy --skip-http-verify 2>&1
+)"
+rc=$?
+set -e
+# May fail later for missing selective content; must not fail the CLIENT_HTTP_ROOT guard.
+echo "$out" | grep -qE 'CLIENT_HTTP_ROOT=FAIL|CLIENT_HTTP_ROOT_UNSAFE' \
+  && { echo "FAIL valid CLIENT_HTTP_ROOT rejected"; echo "$out"; exit 1; }
+echo "PASS valid BASE_PATH/client not rejected by containment guard"
 
 echo "PASS test_destructive_path_guards"

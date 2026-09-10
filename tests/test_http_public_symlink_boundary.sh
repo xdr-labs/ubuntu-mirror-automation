@@ -44,6 +44,42 @@ mm_normalize_http_public_tree_permissions "$SELECTIVE" selective \
   || fail "selective ubuntu alias should be allowed"
 pass "positive: selective ubuntu alias allowed"
 
+# --- Canonical containment negatives for selective/ubuntu ---
+assert_ubuntu_symlink_rejected() {
+  local label="$1"
+  local target="$2"
+  local setup_cmd="${3:-}"
+  rm -f "${SELECTIVE}/ubuntu"
+  if [[ -n "$setup_cmd" ]]; then
+    eval "$setup_cmd"
+  fi
+  ln -sfn "$target" "${SELECTIVE}/ubuntu"
+  set +e
+  mm_verify_http_public_entry_types "$SELECTIVE" selective >"${TMP}/sym.${label}" 2>&1
+  local rc=$?
+  set -e
+  [[ "$rc" -ne 0 ]] || fail "ubuntu symlink must reject: ${label} target=${target}"
+  rm -f "${SELECTIVE}/ubuntu"
+  pass "negative: ubuntu symlink rejected (${label})"
+}
+
+assert_ubuntu_symlink_rejected "dotdot_escape" "hops/../ubuntu"
+assert_ubuntu_symlink_rejected "nested_dotdot" "hops/jammy-to-noble/../../ubuntu"
+assert_ubuntu_symlink_rejected "absolute_outside" "/etc/passwd"
+mkdir -p "${TMP}/outside/ubuntu"
+assert_ubuntu_symlink_rejected "chained_outside" "hops/jammy-to-noble/ubuntu" \
+  "rm -rf '${SELECTIVE}/hops/jammy-to-noble/ubuntu'; ln -sfn '${TMP}/outside/ubuntu' '${SELECTIVE}/hops/jammy-to-noble/ubuntu'"
+# Restore real hop ubuntu after chained test
+rm -rf "${SELECTIVE}/hops/jammy-to-noble/ubuntu"
+mkdir -p "${SELECTIVE}/hops/jammy-to-noble/ubuntu"
+chmod 0755 "${SELECTIVE}/hops/jammy-to-noble/ubuntu"
+assert_ubuntu_symlink_rejected "unknown_hop" "hops/evil-hop/ubuntu" \
+  "mkdir -p '${SELECTIVE}/hops/evil-hop/ubuntu'"
+assert_ubuntu_symlink_rejected "broken_target" "hops/jammy-to-noble/missing-ubuntu"
+
+# Restore valid alias for later tests
+ln -sfn hops/jammy-to-noble/ubuntu "${SELECTIVE}/ubuntu"
+
 # Negative: unexpected symlink in client
 ln -sfn /etc/passwd "${CLIENT}/evil-link"
 set +e

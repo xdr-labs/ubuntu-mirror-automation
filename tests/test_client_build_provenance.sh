@@ -62,6 +62,7 @@ run_rebuild() {
     MM_DP_PHASE2_ROOT="${MM_DP_PHASE2_ROOT:-${MIRROR_ROOT}/dp-phase2}" \
     CACHE_ROOT="$CACHE" \
     CONTENT_SOURCE=local-fs \
+    MM_HERMETIC_TEST_MODE=1 \
     CLIENT_BUILD_PIN_URL_ONLY=1 \
     SKIP_HTTP_VERIFY=1 \
     REQUIRE_SELECTIVE_READY=1 \
@@ -91,7 +92,8 @@ classify_client() {
     --client-root "$client_root" \
     --expected-mirror "$mirror" \
     --expected-fingerprint "$fpr_local" \
-    --expected-mode FULL 2>&1
+    --expected-mode FULL \
+    --selective-root "${SEL:-}" 2>&1
 }
 
 make_scratch() {
@@ -153,6 +155,7 @@ echo "$OUT" | grep -q 'CLIENT_SET_ACTION=REUSE_CURRENT' \
 # --- engine_assess_client_set_for_finalize (production path) ---
 export MM_PROJECT_ROOT="$ROOT"
 export MM_SKIP_ROOT_CHECK=1
+export MM_HERMETIC_TEST_MODE=1
 export MM_MIRROR_ROOT="$MIRROR_ROOT"
 export MM_CLIENT_ROOT="$CLIENT_ROOT"
 export MM_CONFIG_DIR="${WORKDIR}/config"

@@ -1164,6 +1164,10 @@ ${common_label}:
 Run the same steps on every DP node being upgraded:
 DL master, all DL workers, DA master, and all DA workers.
 
+OS-HOP SERIALIZATION (CRITICAL):
+DO NOT RUN OS-HOP UPGRADES ON MULTIPLE DP NODES IN PARALLEL.
+Only one DP node should be in an OS-hop mutation/reboot cycle at a time.
+
 ${bringup_label}:
 Run only on the cluster masters.
 
@@ -1352,6 +1356,11 @@ ${snap_line}
 STEP 1 — VERIFY UBUNTU 24.04 AND PREREQUISITES
 ----------------------------------------------
 
+Required before downloading/staging the Phase 2 bundle (~30+ GiB):
+- Ubuntu 24.04 Noble
+- aella account login shell must be /bin/bash (Phase2-only hosts are not auto-fixed)
+- free space floors (root ≥20GiB, /opt/aelladata ≥70GiB)
+
 Copy and paste the following entire line into the DP terminal:
 
 ${prereq_cmd}
@@ -1407,8 +1416,14 @@ Do not run \`resume\` directly in the Linux bash shell.
 STEP 5 — VERIFY DP HEALTH
 -------------------------
 
+BRINGUP_RESULT=PASS means the bringup process succeeded.
+It does NOT mean DP_UPGRADE_COMPLETE=YES.
+
 After resume (when required), wait for the DP services to start.
-Then run \`aella_cli\` and select or enter \`show status\`.
+Then run:
+  sudo bash /home/aella/bringup_py3_dp_after_os_upgrade.sh --validate-cluster
+
+Also run \`aella_cli\` and select or enter \`show status\`.
 
 Confirm that:
 - All pods are running
@@ -1416,6 +1431,12 @@ Confirm that:
 - All host services are ready
 - License is valid
 - System Ready (or the normal ready state for this role)
+
+If SOURCE DP was 6.2 / 6.3 / 6.4, a post-bringup schema migration may be REQUIRED
+(operator-run; not auto-executed). Follow POST_BRINGUP_MIGRATION guidance from staging.
+
+Only when cluster checks pass (and any required migration is recorded PASS):
+  sudo bash /home/aella/bringup_py3_dp_after_os_upgrade.sh --record-cluster-validation PASS
 
 EOF
   else

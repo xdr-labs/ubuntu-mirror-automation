@@ -113,7 +113,10 @@ mirror_host_list_global_ipv4_all() {
 mirror_host_validate_ipv4_on_host() {
   local want="${1:-}" have
   mirror_host_is_usable_ipv4 "$want" || return 1
-  [[ "${SKIP_MIRROR_HOST_VALIDATE:-0}" == "1" ]] && return 0
+  # Dual-hermetic: MM_HERMETIC_TEST_MODE=1 AND SKIP_MIRROR_HOST_VALIDATE=1.
+  if [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" && "${SKIP_MIRROR_HOST_VALIDATE:-0}" == "1" ]]; then
+    return 0
+  fi
   while IFS= read -r have; do
     [[ "$have" == "$want" ]] && return 0
   done < <(mirror_host_list_global_ipv4_all || true)

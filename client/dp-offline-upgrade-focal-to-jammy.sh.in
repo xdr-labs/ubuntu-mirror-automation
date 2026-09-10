@@ -148,8 +148,9 @@ CLIENT_HANDOFF_RESULT=""
 CLIENT_EXIT_REASON=""
 MONITOR_RESULT=""
 
-# systemctl binary (overridable in fixture tests)
+# systemctl binary (fixture override requires MM_HERMETIC_TEST_MODE=1)
 SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
+@@HERMETIC_ESCAPES_HELPER@@
 HANDOFF_WAIT_SECS="${HANDOFF_WAIT_SECS:-15}"
 HANDOFF_POLL_SECS="${HANDOFF_POLL_SECS:-1}"
 HANDOFF_CONFIRMED=0
@@ -335,7 +336,7 @@ Phase 1 OS-only offline upgrade: Ubuntu ${PIN_SOURCE_VERSION} → ${PIN_TARGET_V
 Does not start subsequent hops or DP product validation/bringup.
 
 Options:
-  --mirror-base URL   Override pinned mirror base (default: ${PIN_MIRROR_BASE})
+  --mirror-base URL   Must equal pinned mirror base (hermetic/test override only)
   --mode os-only      Phase 1 OS-only mode (default; product gates skipped)
   --detach            Start under systemd and return immediately without
                       attaching the local progress monitor
@@ -781,7 +782,7 @@ detect_dp_version() {
   DP_VERSION_DETECT_STATUS="undetermined"
   DP_VERSION_CLI_STATUS=""
 
-  if [[ -n "${DP_OFFLINE_FAKE_DP_VERSION:-}" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "${DP_OFFLINE_FAKE_DP_VERSION:-}" ]]; then
     DP_VERSION="$DP_OFFLINE_FAKE_DP_VERSION"
     DP_VERSION_SOURCE="FAKE"
     DP_VERSION_MATCHED_RECORDS=1
@@ -864,7 +865,7 @@ detect_dp_topology() {
   DP_TOPOLOGY_CLI_STATUS=""
   DP_TOPOLOGY_SUPPORTED=""
 
-  if [[ -n "${DP_OFFLINE_FAKE_ROLE:-}" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "${DP_OFFLINE_FAKE_ROLE:-}" ]]; then
     DP_TOPOLOGY="$(canonicalize_dp_topology "$DP_OFFLINE_FAKE_ROLE")"
     DP_TOPOLOGY_SOURCE="FAKE"
     DP_TOPOLOGY_CONSISTENCY="PASS"
@@ -989,6 +990,8 @@ is_critical_os_hold_package() {
 
 @@AWS_KERNEL_GATE_LIB@@
 
+@@GENERIC_KERNEL_GATE_LIB@@
+
 @@SOURCE_PRODUCT_HELPER@@
 
 critical_holds_dir() {
@@ -1065,10 +1068,10 @@ test_root_set_held_packages() {
 apt_mark_unhold_pkg() {
   local pkg="$1"
   if [[ -n "$TEST_ROOT" ]]; then
-    if [[ "${DP_OFFLINE_FAKE_UNHOLD_FAIL:-}" == "$pkg" || "${DP_OFFLINE_FAKE_UNHOLD_FAIL:-}" == "all" ]]; then
+    if dp_offline_hermetic_fixtures_enabled && [[ "${DP_OFFLINE_FAKE_UNHOLD_FAIL:-}" == "$pkg" || "${DP_OFFLINE_FAKE_UNHOLD_FAIL:-}" == "all" ]]; then
       return 1
     fi
-    if [[ "${DP_OFFLINE_FAKE_UNHOLD_STILL_HELD:-}" == "1" || "${DP_OFFLINE_FAKE_UNHOLD_STILL_HELD:-}" == "$pkg" ]]; then
+    if dp_offline_hermetic_fixtures_enabled && [[ "${DP_OFFLINE_FAKE_UNHOLD_STILL_HELD:-}" == "1" || "${DP_OFFLINE_FAKE_UNHOLD_STILL_HELD:-}" == "$pkg" ]]; then
       # Command "succeeds" but selection remains hold - verification must catch this.
       return 0
     fi
@@ -1088,7 +1091,7 @@ apt_mark_unhold_pkg() {
 apt_mark_hold_pkg() {
   local pkg="$1"
   if [[ -n "$TEST_ROOT" ]]; then
-    if [[ "${DP_OFFLINE_FAKE_HOLD_FAIL:-}" == "$pkg" || "${DP_OFFLINE_FAKE_HOLD_FAIL:-}" == "all" ]]; then
+    if dp_offline_hermetic_fixtures_enabled && [[ "${DP_OFFLINE_FAKE_HOLD_FAIL:-}" == "$pkg" || "${DP_OFFLINE_FAKE_HOLD_FAIL:-}" == "all" ]]; then
       return 1
     fi
     local cur
@@ -2048,6 +2051,12 @@ check_os_baseline() {
       return 1
     }
   fi
+  if declare -F persist_source_kernel_generic_baseline >/dev/null 2>&1; then
+    persist_source_kernel_generic_baseline || {
+      log ERROR "GENERIC_SOURCE_KERNEL_BASELINE=FAIL"
+      die "$EC_PREFLIGHT" "failed to persist generic source kernel baseline"
+    }
+  fi
   if declare -F persist_source_kernel_aws_baseline >/dev/null 2>&1; then
     persist_source_kernel_aws_baseline || {
       log ERROR "AWS source kernel baseline persistence failed; refusing hop"
@@ -2529,7 +2538,7 @@ python2_pkg_installed_p() {
 collect_python2_inventory() {
   # Sets PYTHON2_* evidence paths and classification. Never mutates packages.
   local stamp evid
-  if [[ -z "${TEST_ROOT:-}" && -n "${DP_OFFLINE_TEST_ROOT:-}" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -z "${TEST_ROOT:-}" && -n "${DP_OFFLINE_TEST_ROOT:-}" ]]; then
     TEST_ROOT="$DP_OFFLINE_TEST_ROOT"
   fi
   stamp="$(date -u '+%Y%m%dT%H%M%SZ' 2>/dev/null || date +%Y%m%d%H%M%S)"
@@ -2547,7 +2556,7 @@ collect_python2_inventory() {
     printf 'POLICY=PHASE1_OS_ONLY_NO_AUTO_PURGE\n'
   } >"$PYTHON2_INVENTORY_EVIDENCE"
 
-  if [[ -n "${DP_OFFLINE_FAKE_PYTHON2_CLASS:-}" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "${DP_OFFLINE_FAKE_PYTHON2_CLASS:-}" ]]; then
     PYTHON2_PREFLIGHT_CLASS="$DP_OFFLINE_FAKE_PYTHON2_CLASS"
     case "$PYTHON2_PREFLIGHT_CLASS" in
       PYTHON2_ABSENT)
@@ -2836,7 +2845,7 @@ run_os_preflight() {
   fi
 
   # Stub-pin fixtures skip live mirror/GPG so OS-only preflight can PASS in tests.
-  if [[ -n "$TEST_ROOT" && ( "$PIN_KEY_FINGERPRINT" == "DEADBEEF" || "${DP_OFFLINE_FAKE_MIRROR_TRUST:-}" == "1" ) ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "$TEST_ROOT" && ( "$PIN_KEY_FINGERPRINT" == "DEADBEEF" || "${DP_OFFLINE_FAKE_MIRROR_TRUST:-}" == "1" ) ]]; then
     log INFO "MIRROR_TRUST_GATE=SKIPPED_TEST_FIXTURE"
     log INFO "SOURCE_OS=${PIN_SOURCE_VERSION}"
     log INFO "SOURCE_CODENAME=${PIN_SOURCE_CODENAME}"
@@ -2975,7 +2984,7 @@ EOF
   if [[ "$SKIP_CONFIRM" -eq 1 ]]; then
     die "$EC_CONFIRM" "SKIP_CONFIRM is not allowed outside TEST_ROOT"
   fi
-  if [[ -n "$TEST_ROOT" && "${DP_OFFLINE_FAKE_CONFIRM:-}" == "$PIN_CONFIRM_PHRASE" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "$TEST_ROOT" && "${DP_OFFLINE_FAKE_CONFIRM:-}" == "$PIN_CONFIRM_PHRASE" ]]; then
     return 0
   fi
   require_destructive_confirmation "$PIN_CONFIRM_PHRASE" || die "$EC_CONFIRM" "confirmation rejected"
@@ -3236,7 +3245,7 @@ install_legacy_apt_keyring() {
   fpr="$(printf '%s' "$fpr" | tr '[:lower:]' '[:upper:]')"
   log INFO "LEGACY_APT_KEYRING_PATH=${LEGACY_APT_KEYRING_PATH}"
   log INFO "LEGACY_APT_KEY_FINGERPRINT=${fpr}"
-  if [[ -n "$TEST_ROOT" && ( "$PIN_KEY_FINGERPRINT" == "DEADBEEF" || "${DP_OFFLINE_FAKE_MIRROR_TRUST:-}" == "1" ) ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "$TEST_ROOT" && ( "$PIN_KEY_FINGERPRINT" == "DEADBEEF" || "${DP_OFFLINE_FAKE_MIRROR_TRUST:-}" == "1" ) ]]; then
     log WARN "TEST_ROOT: skipping legacy key fingerprint hard-match"
     log INFO "LEGACY_APT_KEY_FINGERPRINT_MATCH=PASS"
   elif [[ -z "$fpr" || "$fpr" != "$PIN_KEY_FINGERPRINT" ]]; then
@@ -3268,7 +3277,7 @@ install_legacy_apt_keyring() {
   installed_fpr="$(gpg --no-default-keyring --keyring "$dest" --with-colons --fingerprint 2>/dev/null \
     | awk -F: '/^fpr:/ {print $10; exit}' || true)"
   installed_fpr="$(printf '%s' "$installed_fpr" | tr '[:lower:]' '[:upper:]')"
-  if [[ -n "$TEST_ROOT" && ( "$PIN_KEY_FINGERPRINT" == "DEADBEEF" || "${DP_OFFLINE_FAKE_MIRROR_TRUST:-}" == "1" ) ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "$TEST_ROOT" && ( "$PIN_KEY_FINGERPRINT" == "DEADBEEF" || "${DP_OFFLINE_FAKE_MIRROR_TRUST:-}" == "1" ) ]]; then
     log INFO "LEGACY_APT_KEY_INSTALL=PASS"
   elif [[ -z "$installed_fpr" || "$installed_fpr" != "$PIN_KEY_FINGERPRINT" ]]; then
     log ERROR "FAIL_LEGACY_APT_KEYRING_POSTINSTALL_VALIDATION"
@@ -4602,7 +4611,7 @@ build_runtime_meta_release_content() {
   local dest="$2"
   local offline_meta
   offline_meta="$work/meta-release-lts"
-  if [[ -n "$TEST_ROOT" && ( "$PIN_KEY_FINGERPRINT" == "DEADBEEF" || "${DP_OFFLINE_FAKE_MIRROR_TRUST:-}" == "1" ) ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "$TEST_ROOT" && ( "$PIN_KEY_FINGERPRINT" == "DEADBEEF" || "${DP_OFFLINE_FAKE_MIRROR_TRUST:-}" == "1" ) ]]; then
     cat >"$dest" <<EOF
 Dist: ${PIN_TARGET_CODENAME}
 Name: Ubuntu ${PIN_TARGET_VERSION} LTS
@@ -4793,10 +4802,15 @@ install_runner_and_units() {
 # stellar-offline-os-upgrade-runner - Focal→Jammy detached upgrade
 # Bash 4.3 compatible. Does not inherit client shell env; loads EnvironmentFile.
 set -eo pipefail
+@@HERMETIC_ESCAPES_HELPER@@
 @@DURABLE_WRITE_HELPER@@
 
 # Optional fake-root prefix for fixture tests only (never set by production unit).
-_TEST_PREFIX="${STELLAR_OFFLINE_TEST_ROOT:-}"
+# Requires MM_HERMETIC_TEST_MODE=1; production ignores STELLAR_OFFLINE_TEST_ROOT.
+_TEST_PREFIX=""
+if dp_offline_hermetic_fixtures_enabled; then
+  _TEST_PREFIX="${STELLAR_OFFLINE_TEST_ROOT:-}"
+fi
 _hp() {
   if [[ -n "$_TEST_PREFIX" ]]; then
     printf '%s%s' "$_TEST_PREFIX" "$1"
@@ -6336,6 +6350,40 @@ runner_collect_pre_dro_evidence() {
   log INFO "PRE_DRO_EVIDENCE=${dest}"
 }
 
+
+ensure_postboot_unit_enabled_before_reboot() {
+  local unit="${POSTBOOT_UNIT_NAME:-stellar-offline-os-upgrade-postboot.service}"
+  local unit_path="/etc/systemd/system/${unit}"
+  local en_state=""
+  log INFO "POSTBOOT_HANDOFF_CHECK=START unit=${unit}"
+  if [[ ! -f "$unit_path" ]]; then
+    log ERROR "POSTBOOT_UNIT_FILE_MISSING=${unit_path}"
+    return 1
+  fi
+  if ! systemctl daemon-reload; then
+    log ERROR "POSTBOOT_DAEMON_RELOAD=FAIL"
+    return 1
+  fi
+  log INFO "POSTBOOT_DAEMON_RELOAD=PASS"
+  if ! systemctl enable "$unit"; then
+    log ERROR "POSTBOOT_ENABLE=FAIL"
+    return 1
+  fi
+  log INFO "POSTBOOT_ENABLE=PASS"
+  en_state="$(systemctl is-enabled "$unit" 2>/dev/null || true)"
+  case "$en_state" in
+    enabled|enabled-runtime|static|indirect|alias)
+      log INFO "POSTBOOT_IS_ENABLED=${en_state}"
+      log INFO "POSTBOOT_ENABLE_VERIFIED=PASS"
+      log INFO "POSTBOOT_HANDOFF_READY=YES"
+      return 0
+      ;;
+  esac
+  log ERROR "POSTBOOT_IS_ENABLED_MISMATCH state=${en_state:-empty}"
+  log ERROR "POSTBOOT_ENABLE_VERIFIED=FAIL"
+  return 1
+}
+
 reboot_if_success() {
   write_state REBOOT_PENDING
   log INFO "CRITICAL_OS_HOLDS_REMAIN_UNHELD_THROUGH_OS_UPGRADE=YES"
@@ -6397,7 +6445,7 @@ main() {
   load_release_upgrade_flag
   assert_no_external_apt
 
-  if [[ "${STELLAR_OFFLINE_SMOKE_STOP_BEFORE_DRO:-}" == "1" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ "${STELLAR_OFFLINE_SMOKE_STOP_BEFORE_DRO:-}" == "1" ]]; then
     set_stage "META_RELEASE_VALIDATION"
     validate_meta_release_before_dro
     set_stage "PRE_DRO_REPOSITORY_SEMANTIC_GATE"
@@ -6411,7 +6459,7 @@ main() {
     exit 0
   fi
 
-  if [[ "${STELLAR_OFFLINE_FORCE_SEMANTIC_GATE_FAIL:-}" == "1" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ "${STELLAR_OFFLINE_FORCE_SEMANTIC_GATE_FAIL:-}" == "1" ]]; then
     set_stage "PRE_DRO_REPOSITORY_SEMANTIC_GATE"
     fail_stage 1 "FAIL_INJECTED_PRE_DRO_SEMANTIC_GATE"
   fi
@@ -6471,7 +6519,7 @@ main() {
   mark_release_upgrade_process_spawned
   start_package_transition_watcher
   # Test-only: fail after invocation, before any package mutation.
-  if [[ "${STELLAR_OFFLINE_FORCE_DRO_PRE_TRANSITION_FAIL:-}" == "1" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ "${STELLAR_OFFLINE_FORCE_DRO_PRE_TRANSITION_FAIL:-}" == "1" ]]; then
     FAILURE_CLASS="PRE_MUTATION_SOURCE_REWRITE"
     mkdir -p "$(_hp /var/log/dist-upgrade)"
     printf 'E:The repository http://archive.ubuntu.com/ubuntu jammy Release\n' \
@@ -6521,10 +6569,26 @@ main() {
       fail_stage 1 "AWS target kernel not ready before reboot"
     fi
   fi
+  if declare -F validate_generic_target_kernel_pre_reboot >/dev/null 2>&1; then
+    if ! validate_generic_target_kernel_pre_reboot "22.04"; then
+      log ERROR "PRE_REBOOT_GENERIC_TARGET_GATE=FAIL; refusing automatic reboot"
+      log ERROR "AUTOMATIC_REBOOT_NOT_STARTED=YES"
+      log ERROR "POSTBOOT_HANDOFF_READY=NO"
+      write_state FAILED
+      fail_stage 1 "generic target kernel not ready before reboot"
+    fi
+  fi
   RELEASE_UPGRADE_COMPLETED="true"
   persist_flags
   if [[ -z "$_TEST_PREFIX" ]]; then
-    systemctl enable stellar-offline-os-upgrade-postboot.service 2>/dev/null || true
+    if ! ensure_postboot_unit_enabled_before_reboot; then
+      log ERROR "AUTOMATIC_REBOOT_NOT_STARTED=YES"
+      log ERROR "POSTBOOT_HANDOFF_READY=NO"
+      write_state FAILED
+      fail_stage 1 "postboot unit not verified enabled before reboot"
+    fi
+  else
+    log INFO "POSTBOOT_ENABLE_VERIFIED=SKIP reason=TEST_ROOT"
   fi
   reboot_if_success
 }
@@ -6538,6 +6602,8 @@ set -euo pipefail
 @@DURABLE_WRITE_HELPER@@
 
 @@AWS_KERNEL_GATE_LIB@@
+
+@@GENERIC_KERNEL_GATE_LIB@@
 STATE_ROOT="/opt/aelladata/os-upgrade/offline"
 STATE_FILE="${STATE_ROOT}/state"
 HISTORY_FILE="${STATE_ROOT}/hop_history"
@@ -6633,6 +6699,13 @@ main() {
     log ERROR "AWS kernel post-hop validation failed; refusing COMPLETED_JAMMY"
     write_state FAILED
     exit 1
+  fi
+  if declare -F validate_generic_running_kernel_postboot >/dev/null 2>&1; then
+    if ! validate_generic_running_kernel_postboot "22.04"; then
+      log ERROR "GENERIC_POST_HOP_KERNEL_GATE=FAIL"
+      write_state FAILED
+      exit 1
+    fi
   fi
   write_state COMPLETED_JAMMY
   mkdir -p /etc/motd.d 2>/dev/null || true
@@ -6738,7 +6811,7 @@ write_pins_env() {
   fi
   COMMIT_STAMP="$stamp"
   COMMIT_BACKUP_PATH="${BACKUP_ROOT}/${stamp}"
-  # Keep PIN_MIRROR_BASE in sync with runtime --mirror-base override.
+  # Persist runtime MIRROR_BASE; production requires it equal PIN_MIRROR_BASE.
   PIN_MIRROR_BASE="${MIRROR_BASE}"
 
   env_path="$(hostpath "$ENV_DEFAULT_FILE")"
@@ -6879,6 +6952,11 @@ fixture_test_root_prefix() {
   # Handoff fixtures set TEST_ROOT + DP_OFFLINE_TEST_HANDOFF=1. Prefer those so a
   # stale STELLAR_OFFLINE_TEST_ROOT from the parent environment cannot poison
   # runner cmdline matching. Runner-only fixtures still use STELLAR_*.
+  # Production: never honor fixture roots without MM_HERMETIC_TEST_MODE=1.
+  if ! dp_offline_hermetic_fixtures_enabled; then
+    printf '%s' ""
+    return 0
+  fi
   if [[ "${DP_OFFLINE_TEST_HANDOFF:-}" == "1" ]]; then
     printf '%s' "${TEST_ROOT:-${DP_OFFLINE_TEST_ROOT:-}}"
     return 0
@@ -7123,10 +7201,10 @@ EOF
 
 client_is_interactive_tty() {
   # Test overrides (fixture-only).
-  if [[ "${DP_OFFLINE_FORCE_NONINTERACTIVE:-}" == "1" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ "${DP_OFFLINE_FORCE_NONINTERACTIVE:-}" == "1" ]]; then
     return 1
   fi
-  if [[ "${DP_OFFLINE_FORCE_MONITOR:-}" == "1" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ "${DP_OFFLINE_FORCE_MONITOR:-}" == "1" ]]; then
     return 0
   fi
   [[ -t 0 && -t 1 ]]
@@ -8078,7 +8156,7 @@ commit_and_start() {
   fi
   remove_unused_lxd_before_dro
 
-  if [[ -n "$TEST_ROOT" && "${DP_OFFLINE_FAKE_FAIL_AFTER_UNHOLD:-}" == "1" ]]; then
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "$TEST_ROOT" && "${DP_OFFLINE_FAKE_FAIL_AFTER_UNHOLD:-}" == "1" ]]; then
     log ERROR "TEST: injected failure after unhold (before APT metadata / release upgrade)"
     restore_critical_os_holds_if_safe "injected_pre_upgrade_failure" || true
     restore_login_shells_from_backup "$stamp" "injected_pre_upgrade_failure" || true
@@ -8110,7 +8188,7 @@ commit_and_start() {
       fi
       die "$EC_DISTUPGRADE_SOURCE" "$err"
     fi
-    if [[ -z "$TEST_ROOT" ]] || [[ "${DP_OFFLINE_FAKE_MIRROR_TRUST:-}" != "1" ]]; then
+    if [[ -z "$TEST_ROOT" ]] || ! dp_offline_hermetic_fixtures_enabled || [[ "${DP_OFFLINE_FAKE_MIRROR_TRUST:-}" != "1" ]]; then
       if ! validate_target_pocket_components_from_mirror; then
         die "$EC_TARGET_POCKET" "FAIL_TARGET_POCKET_COMPONENT_EMPTY"
       fi
@@ -9871,8 +9949,25 @@ main() {
     esac
   done
 
+
+  # Production runtime pin: MIRROR_BASE must equal build-time PIN_MIRROR_BASE.
+  # Arbitrary host override is forbidden outside an explicit hermetic/test boundary.
+  if [[ "${MIRROR_BASE%/}" != "${PIN_MIRROR_BASE%/}" ]]; then
+    # Dual-hermetic: both MM_HERMETIC_TEST_MODE=1 and DP_ALLOW_MIRROR_BASE_OVERRIDE=1.
+    if [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" && "${DP_ALLOW_MIRROR_BASE_OVERRIDE:-0}" == "1" ]]; then
+      : # allowed under explicit dual-hermetic test boundary
+    else
+      die "$EC_USAGE" "MIRROR_BASE_OVERRIDE_FORBIDDEN: production requires MIRROR_BASE==PIN_MIRROR_BASE (got '${MIRROR_BASE}' pin='${PIN_MIRROR_BASE}')"
+    fi
+  fi
+
   # Test harness hooks - keep logical paths; hostpath() prefixes TEST_ROOT at access.
-  TEST_ROOT="${DP_OFFLINE_TEST_ROOT:-}"
+  # Dual-hermetic: MM_HERMETIC_TEST_MODE=1 required for any fixture control.
+  if ! dp_offline_enforce_production_fixture_policy; then
+    die "$EC_USAGE" "FIXTURE_ESCAPE_PRODUCTION_FORBIDDEN"
+  fi
+  SYSTEMCTL_BIN="$(dp_offline_resolve_systemctl_bin)"
+  TEST_ROOT="$(dp_offline_resolve_test_root)"
   STATE_ROOT="/opt/aelladata/os-upgrade/offline"
   STATE_FILE="${STATE_ROOT}/state"
   HISTORY_FILE="${STATE_ROOT}/hop_history"
@@ -9890,8 +9985,8 @@ main() {
   RUNNER_PATH="/usr/local/sbin/stellar-offline-os-upgrade-runner"
   POSTBOOT_PATH="/usr/local/sbin/stellar-offline-os-upgrade-postboot"
 
-  # Default Phase 1 mode (explicit env override for tests).
-  if [[ "${DP_OFFLINE_UPGRADE_MODE:-}" == "OS_ONLY_PHASE1" || "${DP_OFFLINE_UPGRADE_MODE:-}" == "os-only" ]]; then
+  # Default Phase 1 mode (explicit env override for hermetic tests only).
+  if dp_offline_hermetic_fixtures_enabled && [[ "${DP_OFFLINE_UPGRADE_MODE:-}" == "OS_ONLY_PHASE1" || "${DP_OFFLINE_UPGRADE_MODE:-}" == "os-only" ]]; then
     UPGRADE_MODE="OS_ONLY_PHASE1"
   fi
   UPGRADE_PHASE=1

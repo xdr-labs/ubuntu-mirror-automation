@@ -39,11 +39,26 @@ fi
 
 # shellcheck source=/dev/null
 source "${LIB_DIR}/dp-phase2-bringup-lifecycle.sh"
+if [[ -f "${LIB_DIR}/dp-phase2-time-readiness.sh" ]]; then
+  # shellcheck source=/dev/null
+  source "${LIB_DIR}/dp-phase2-time-readiness.sh"
+fi
+if [[ -f "${LIB_DIR}/dp-phase2-post-bringup-migration.sh" ]]; then
+  # shellcheck source=/dev/null
+  source "${LIB_DIR}/dp-phase2-post-bringup-migration.sh"
+fi
+if [[ -f "${LIB_DIR}/dp-phase2-cluster-validation.sh" ]]; then
+  # shellcheck source=/dev/null
+  source "${LIB_DIR}/dp-phase2-cluster-validation.sh"
+fi
 
 ATTACH_MONITOR=1
 STATUS_ONLY=0
 DIAGNOSE_ONLY=0
 WORKER_MODE=0
+RECORD_MIGRATION=""
+RECORD_CLUSTER_VALIDATION=""
+RUN_CLUSTER_VALIDATION=0
 TARGET_VERSION=""
 WORKER_PASSWORD_FILE=""
 WORKER_PASSWORD_FILE_OWNED=NO
@@ -133,6 +148,11 @@ Options:
   --detach            Return immediately after verified worker handoff
   --status            Read-only lifecycle status
   --diagnose          Read-only diagnostics (status + log tail + markers)
+  --record-post-bringup-migration PASS|FAIL
+                      Record operator result of skipped-version schema migration
+  --record-cluster-validation PASS|FAIL|PENDING
+                      Record operator cluster readiness confirmation
+  --validate-cluster  Emit aella_cli/kubectl/helm status surfaces (does not auto-PASS)
   --worker-mode       Internal: run as lifecycle worker (do not use interactively)
   -h, --help          Show help
 
@@ -161,6 +181,20 @@ parse_args() {
         ;;
       --diagnose)
         DIAGNOSE_ONLY=1
+        shift
+        ;;
+      --record-post-bringup-migration)
+        RECORD_MIGRATION="${2:-}"
+        [[ -n "$RECORD_MIGRATION" ]] || { echo "ERROR: --record-post-bringup-migration requires PASS|FAIL" >&2; exit 1; }
+        shift 2
+        ;;
+      --record-cluster-validation)
+        RECORD_CLUSTER_VALIDATION="${2:-}"
+        [[ -n "$RECORD_CLUSTER_VALIDATION" ]] || { echo "ERROR: --record-cluster-validation requires PASS|FAIL|PENDING" >&2; exit 1; }
+        shift 2
+        ;;
+      --validate-cluster)
+        RUN_CLUSTER_VALIDATION=1
         shift
         ;;
       --worker-mode|--lifecycle-worker)
@@ -347,6 +381,29 @@ start_or_monitor() {
 
   [[ -n "$TARGET_VERSION" ]] || p2b_lifecycle_die "--version is required to start bringup"
 
+  # Hard gate: staging may have completed with BRINGUP_READY=NO; never start vendor
+  # bringup when time readiness fails. Detached worker must not launch before this.
+  if declare -F p2b_emit_mtu_warning >/dev/null 2>&1; then
+    p2b_emit_mtu_warning || true
+  fi
+  # Load INTERNAL mirror URL persisted by stage-dp-phase2 (separate process; no MIRROR_URL).
+  if declare -F dp_phase2_load_time_ref_url >/dev/null 2>&1; then
+    dp_phase2_load_time_ref_url || true
+  fi
+  if declare -F dp_phase2_bringup_time_gate >/dev/null 2>&1; then
+    if ! dp_phase2_bringup_time_gate; then
+      echo "BRINGUP_READINESS_RESULT=NO"
+      echo "VENDOR_BRINGUP_EXECUTED=NO"
+      echo "ARTIFACT_STAGING_RESULT=NOT_CHECKED_HERE"
+      p2b_lifecycle_die "bringup blocked: TIME_READINESS=${TIME_READINESS:-UNKNOWN} (fix clock skew / unverifiable time before vendor bringup)"
+    fi
+  else
+    p2b_lifecycle_die "bringup blocked: time readiness helper missing"
+  fi
+  echo "BRINGUP_TIME_GATE=PASS"
+  echo "BRINGUP_READINESS_RESULT=YES"
+  echo "TIME_READINESS=${TIME_READINESS}"
+
   run_id="$(p2b_new_run_id)"
   started="$(p2b_utc_now)"
   p2b_ensure_dir
@@ -356,6 +413,12 @@ start_or_monitor() {
   if [[ -f "${LIB_DIR}/dp-phase2-ubuntu-prerequisites.sh" ]]; then
     cp -a "${LIB_DIR}/dp-phase2-ubuntu-prerequisites.sh" "${d}/lib/" 2>/dev/null || true
   fi
+  local _extra
+  for _extra in dp-phase2-time-readiness.sh dp-phase2-post-bringup-migration.sh dp-phase2-cluster-validation.sh; do
+    if [[ -f "${LIB_DIR}/${_extra}" ]]; then
+      cp -a "${LIB_DIR}/${_extra}" "${d}/lib/" 2>/dev/null || true
+    fi
+  done
   chmod 0700 "$d" "${d}/lib" 2>/dev/null || true
 
   printf '%s\n' "$run_id" | p2b_atomic_write "${d}/run-id"
@@ -441,6 +504,32 @@ main() {
   if [[ "$DIAGNOSE_ONLY" -eq 1 ]]; then
     print_diagnose
     exit 0
+  fi
+  if [[ -n "$RECORD_MIGRATION" ]]; then
+    declare -F p2b_record_post_bringup_migration >/dev/null 2>&1 \
+      || p2b_lifecycle_die "post-bringup migration helper missing"
+    p2b_record_post_bringup_migration "$RECORD_MIGRATION"
+    exit $?
+  fi
+  if [[ -n "$RECORD_CLUSTER_VALIDATION" ]]; then
+    declare -F p2b_record_cluster_validation >/dev/null 2>&1 \
+      || p2b_lifecycle_die "cluster validation helper missing"
+    p2b_record_cluster_validation "$RECORD_CLUSTER_VALIDATION"
+    # Recompute DP_UPGRADE_COMPLETE when possible.
+    if declare -F p2b_emit_completion_semantics >/dev/null 2>&1; then
+      p2b_status_snapshot || true
+      local bp=NO
+      if p2b_current_run_completion_coherent; then bp=YES; fi
+      p2b_load_cluster_validation || true
+      p2b_emit_completion_semantics "$bp" "${CLUSTER_VALIDATION:-PENDING}"
+    fi
+    exit $?
+  fi
+  if [[ "$RUN_CLUSTER_VALIDATION" -eq 1 ]]; then
+    declare -F p2b_run_cluster_validation_surface >/dev/null 2>&1 \
+      || p2b_lifecycle_die "cluster validation helper missing"
+    p2b_run_cluster_validation_surface
+    exit $?
   fi
 
   if [[ "$WORKER_MODE" -eq 1 ]]; then

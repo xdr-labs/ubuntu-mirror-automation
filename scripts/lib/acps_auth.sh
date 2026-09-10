@@ -14,8 +14,16 @@ ACPS_CURL_TLS_ARGS=()
 ACPS_CURL_NETRC_FILE="${ACPS_CURL_NETRC_FILE:-}"
 ACPS_INSECURE_TLS="${ACPS_INSECURE_TLS:-0}"
 
+# Immutable production ACPS endpoint — code-owned literal only.
+# Never honor ACPS_PRODUCTION_BASE_URL / ACPS_BASE_URL / ACPS_BASE_URL_FIXED /
+# ACPS_HOST / ACPS_PATH from the environment as the production trust authority.
+# Hermetic fixtures redirect via DP_PHASE2_SOURCE_BASE or ACPS_BASE_URL under
+# MM_HERMETIC_TEST_MODE=1, never by replacing this constant.
+ACPS_PRODUCTION_BASE_URL="https://acps.stellarcyber.ai/provision/aelladeb_py3"
+
 # Explicit hermetic-test boundary. Never document in GUI/help.
-# Production must not honor ACPS_INSECURE_TLS or DP_PHASE2_SOURCE_BASE.
+# Production must not honor ACPS_INSECURE_TLS, DP_PHASE2_SOURCE_BASE,
+# ACPS_* URL overrides, or ACPS_AUTH_RUN_DIR.
 _acps_hermetic_test_mode() {
   [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" ]]
 }
@@ -51,16 +59,43 @@ _acps_auth_info() {
   fi
 }
 
-acps_auth_run_dir() {
-  local d
-  if [[ -n "${ACPS_AUTH_RUN_DIR:-}" ]]; then
-    d="$ACPS_AUTH_RUN_DIR"
-  elif [[ -d /run && -w /run ]]; then
-    d="/run/ubuntu-mirror-acps.$$"
-  else
-    d="${TMPDIR:-/tmp}/ubuntu-mirror-acps.$$"
+# Reject production env attempts to redirect the fixed ACPS destination.
+_acps_reject_production_url_override() {
+  local canon="$ACPS_PRODUCTION_BASE_URL"
+  if [[ -n "${ACPS_BASE_URL:-}" && "${ACPS_BASE_URL}" != "$canon" ]]; then
+    _acps_auth_die "ACPS_BASE_URL=FAIL reason=production_forbidden"
   fi
-  mkdir -p "$d" || return 1
+  if [[ -n "${ACPS_BASE_URL_FIXED:-}" && "${ACPS_BASE_URL_FIXED}" != "$canon" ]]; then
+    _acps_auth_die "ACPS_BASE_URL_FIXED=FAIL reason=production_forbidden"
+  fi
+  if [[ -n "${ACPS_HOST:-}" && "${ACPS_HOST}" != "acps.stellarcyber.ai" ]]; then
+    _acps_auth_die "ACPS_HOST=FAIL reason=production_forbidden"
+  fi
+  if [[ -n "${ACPS_PATH:-}" && "${ACPS_PATH}" != "/provision/aelladeb_py3" ]]; then
+    _acps_auth_die "ACPS_PATH=FAIL reason=production_forbidden"
+  fi
+}
+
+acps_auth_run_dir() {
+  local d=""
+  # Caller-selected run dirs are hermetic-only; production never chmod/mkdir
+  # an arbitrary externally provided path for credential material.
+  if [[ -n "${ACPS_AUTH_RUN_DIR:-}" ]]; then
+    if ! _acps_hermetic_test_mode; then
+      _acps_auth_die "ACPS_AUTH_RUN_DIR=FAIL reason=production_forbidden"
+    fi
+    d="$ACPS_AUTH_RUN_DIR"
+    mkdir -p "$d" || return 1
+    chmod 0700 "$d" || return 1
+    printf '%s\n' "$d"
+    return 0
+  fi
+  if [[ -d /run && -w /run ]]; then
+    d="$(mktemp -d /run/ubuntu-mirror-acps.XXXXXX 2>/dev/null || true)"
+  fi
+  if [[ -z "$d" ]]; then
+    d="$(mktemp -d "${TMPDIR:-/tmp}/ubuntu-mirror-acps.XXXXXX")" || return 1
+  fi
   chmod 0700 "$d" || return 1
   printf '%s\n' "$d"
 }
@@ -72,11 +107,19 @@ acps_cleanup_curl_auth() {
   if [[ -n "$f" ]]; then
     d="$(dirname "$f")"
     rm -f "$f" 2>/dev/null || true
-    if [[ "$d" == /run/ubuntu-mirror-acps.* || "$d" == "${TMPDIR:-/tmp}/ubuntu-mirror-acps."* ]]; then
-      rmdir "$d" 2>/dev/null || true
-    elif [[ -n "${ACPS_AUTH_RUN_DIR:-}" && "$d" == "$ACPS_AUTH_RUN_DIR" ]]; then
-      : # caller-owned run dir; leave directory
-    fi
+    case "$d" in
+      /run/ubuntu-mirror-acps.*|"${TMPDIR:-/tmp}"/ubuntu-mirror-acps.*)
+        rmdir "$d" 2>/dev/null || true
+        ;;
+      *)
+        if [[ -n "${ACPS_AUTH_RUN_DIR:-}" && "$d" == "$ACPS_AUTH_RUN_DIR" ]] \
+          && _acps_hermetic_test_mode; then
+          : # hermetic caller-owned run dir; leave directory
+        else
+          rmdir "$d" 2>/dev/null || true
+        fi
+        ;;
+    esac
   fi
   ACPS_CURL_NETRC_FILE=""
 }
@@ -119,7 +162,22 @@ acps_setup_curl_auth() {
     ACPS_EFFECTIVE_BASE="${DP_PHASE2_SOURCE_BASE}"
     return 0
   fi
-  ACPS_EFFECTIVE_BASE="${ACPS_BASE_URL:-${ACPS_BASE_URL_FIXED:-}}"
+
+  if _acps_hermetic_test_mode; then
+    # Hermetic fixtures may redirect via ACPS_BASE_URL / FIXED / HOST+PATH.
+    if [[ -n "${ACPS_BASE_URL:-}" ]]; then
+      ACPS_EFFECTIVE_BASE="${ACPS_BASE_URL}"
+    elif [[ -n "${ACPS_BASE_URL_FIXED:-}" ]]; then
+      ACPS_EFFECTIVE_BASE="${ACPS_BASE_URL_FIXED}"
+    elif [[ -n "${ACPS_HOST:-}" || -n "${ACPS_PATH:-}" ]]; then
+      ACPS_EFFECTIVE_BASE="https://${ACPS_HOST:-acps.stellarcyber.ai}${ACPS_PATH:-/provision/aelladeb_py3}"
+    else
+      ACPS_EFFECTIVE_BASE="${ACPS_PRODUCTION_BASE_URL}"
+    fi
+  else
+    _acps_reject_production_url_override
+    ACPS_EFFECTIVE_BASE="${ACPS_PRODUCTION_BASE_URL}"
+  fi
   [[ -n "${ACPS_EFFECTIVE_BASE}" ]] || _acps_auth_die "ACPS_BASE_URL=FAIL missing"
 
   # Accept either naming convention (GUI: USERNAME/PASSWORD; standalone:

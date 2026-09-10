@@ -259,30 +259,95 @@ mm_assert_nginx_publication_ancestors() {
 }
 
 # Fail closed on unexpected special entries in public HTTP trees.
-# Selective may intentionally contain the ubuntu → hops/... alias symlink.
+# Selective may intentionally contain the ubuntu → hops/<known-hop>/ubuntu alias.
 # client/ and phase2 version trees must not contain symlinks, hardlinks to
 # outside inodes beyond normal files, or device/FIFO/socket nodes.
+_mm_http_known_selective_hop() {
+  case "$1" in
+    xenial-to-bionic|bionic-to-focal|focal-to-jammy|jammy-to-noble) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Validate selective/ubuntu alias: relative, known hop, canonically contained,
+# resolves to <root>/hops/<hop>/ubuntu, and target exists (not broken).
+_mm_http_validate_selective_ubuntu_symlink() {
+  local root="$1"
+  local path="$2"
+  local target hop expected resolved root_resolved
+
+  target="$(readlink -n "$path" 2>/dev/null || true)"
+  [[ -n "$target" ]] || {
+    printf 'empty_ubuntu_symlink_target:%s\n' "$path"
+    return 1
+  }
+  # Reject absolute targets and any lexical ".." traversal.
+  case "$target" in
+    /*|*".."*)
+      printf 'unsafe_ubuntu_symlink_target:%s->%s\n' "$path" "$target"
+      return 1
+      ;;
+  esac
+  case "$target" in
+    hops/*/ubuntu)
+      hop="${target#hops/}"
+      hop="${hop%/ubuntu}"
+      ;;
+    *)
+      printf 'unexpected_ubuntu_symlink_target:%s->%s\n' "$path" "$target"
+      return 1
+      ;;
+  esac
+  # Single path segment only (no nested hops/a/b/ubuntu).
+  if [[ -z "$hop" || "$hop" == */* || "$hop" == *".."* ]]; then
+    printf 'unexpected_ubuntu_symlink_hop:%s->%s\n' "$path" "$target"
+    return 1
+  fi
+  _mm_http_known_selective_hop "$hop" || {
+    printf 'unknown_ubuntu_symlink_hop:%s->%s\n' "$path" "$target"
+    return 1
+  }
+  # Broken link / missing target fails closed.
+  [[ -e "$path" ]] || {
+    printf 'broken_ubuntu_symlink:%s->%s\n' "$path" "$target"
+    return 1
+  }
+  root_resolved="$(realpath -m "$root" 2>/dev/null || printf '%s' "$root")"
+  root_resolved="${root_resolved%/}"
+  # Lexical expected path under the selective root (do not realpath through a
+  # malicious hops/<hop>/ubuntu symlink — that would collapse escapes).
+  expected="${root_resolved}/hops/${hop}/ubuntu"
+  resolved="$(realpath -m "$path" 2>/dev/null || true)"
+  [[ -n "$resolved" ]] || {
+    printf 'unresolvable_ubuntu_symlink:%s->%s\n' "$path" "$target"
+    return 1
+  }
+  if [[ "$resolved" != "$expected" ]]; then
+    printf 'ubuntu_symlink_escape:%s->%s resolved=%s expected=%s\n' \
+      "$path" "$target" "$resolved" "$expected"
+    return 1
+  fi
+  return 0
+}
+
 mm_http_verify_public_entry_types() {
   local root="${1:-}"
   local kind="${2:-client}"
   local path base target count=0
   local -a bad=()
+  local err
 
   [[ -n "$root" && -d "$root" ]] || return 1
 
   while IFS= read -r -d '' path; do
     base="$(basename "$path")"
     if [[ "$kind" == "selective" && "$base" == "ubuntu" && "$(dirname "$path")" == "$root" ]]; then
-      # Documented alias: selective/ubuntu → hops/<hop>/ubuntu
+      # Documented alias: selective/ubuntu → hops/<known-hop>/ubuntu
       if [[ -L "$path" ]]; then
-        target="$(readlink -n "$path" 2>/dev/null || true)"
-        case "$target" in
-          hops/*/ubuntu|hops/*/*/ubuntu) continue ;;
-          *)
-            bad+=("unexpected_ubuntu_symlink_target:${path}->${target}")
-            continue
-            ;;
-        esac
+        if ! err="$(_mm_http_validate_selective_ubuntu_symlink "$root" "$path")"; then
+          bad+=("${err}")
+        fi
+        continue
       fi
       continue
     fi

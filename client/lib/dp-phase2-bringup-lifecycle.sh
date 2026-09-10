@@ -689,6 +689,20 @@ AELLA_CLI_READY=$([ "$do_not" = YES ] && echo NO || echo YES)
 DO_NOT_RUN_AELLA_CLI_YET=${do_not}
 BRINGUP_LOG=${BRINGUP_LOG}
 EOF
+  local bp=NO
+  if [[ "$result" == "PASS" ]]; then bp=YES; fi
+  if declare -F p2b_load_cluster_validation >/dev/null 2>&1; then
+    p2b_load_cluster_validation || true
+  fi
+  if declare -F p2b_emit_completion_semantics >/dev/null 2>&1; then
+    p2b_emit_completion_semantics "$bp" "${CLUSTER_VALIDATION:-PENDING}"
+  else
+    cat <<EOF
+BRINGUP_PROCESS_SUCCESS=${bp}
+CLUSTER_VALIDATION=${CLUSTER_VALIDATION:-PENDING}
+DP_UPGRADE_COMPLETE=NO
+EOF
+  fi
 }
 
 p2b_archive_failed_run() {
@@ -739,12 +753,76 @@ p2b_worker_main() {
   d="$(p2b_dir)"
   p2b_resolve_lifecycle_password_ownership
   trap 'p2b_cleanup_lifecycle_owned_worker_password' EXIT
+  # Worker re-exec may need helpers from the lifecycle lib dir.
+  local _wlib
+  for _wlib in \
+    "${d}/lib/dp-phase2-time-readiness.sh" \
+    "${LIB_DIR:-}/dp-phase2-time-readiness.sh" \
+    "/home/aella/lib/dp-phase2-time-readiness.sh"
+  do
+    if [[ -f "$_wlib" ]]; then
+      # shellcheck source=/dev/null
+      source "$_wlib"
+      break
+    fi
+  done
+  for _wlib in \
+    "${d}/lib/dp-phase2-post-bringup-migration.sh" \
+    "${LIB_DIR:-}/dp-phase2-post-bringup-migration.sh" \
+    "/home/aella/lib/dp-phase2-post-bringup-migration.sh"
+  do
+    if [[ -f "$_wlib" ]]; then
+      # shellcheck source=/dev/null
+      source "$_wlib"
+      break
+    fi
+  done
+  for _wlib in \
+    "${d}/lib/dp-phase2-cluster-validation.sh" \
+    "${LIB_DIR:-}/dp-phase2-cluster-validation.sh" \
+    "/home/aella/lib/dp-phase2-cluster-validation.sh"
+  do
+    if [[ -f "$_wlib" ]]; then
+      # shellcheck source=/dev/null
+      source "$_wlib"
+      break
+    fi
+  done
   run_id="$(p2b_read_file "${d}/run-id")"
   target="$(p2b_read_file "${d}/target-version")"
   logf="$(p2b_read_file "${d}/log-path")"
   [[ -n "$logf" ]] || logf="${PHASE2_BRINGUP_LOG_DEFAULT}"
   started="$(p2b_read_file "${d}/started-at")"
   mkdir -p "$(dirname "$logf")" 2>/dev/null || true
+
+  # Re-check time gate inside the detached worker before any vendor execution.
+  # Use the same persisted PHASE2_TIME_REF_URL that the parent pre-detach gate used.
+  if declare -F dp_phase2_load_time_ref_url >/dev/null 2>&1; then
+    dp_phase2_load_time_ref_url || true
+  fi
+  if declare -F dp_phase2_bringup_time_gate >/dev/null 2>&1; then
+    if ! dp_phase2_bringup_time_gate >>"$logf" 2>&1; then
+      rc=1
+      {
+        echo "BRINGUP_TERMINAL_STATE=FAILED"
+        echo "BRINGUP_RESULT=FAIL"
+        echo "FAILURE_REASON=BRINGUP_TIME_GATE"
+        echo "TIME_READINESS=${TIME_READINESS:-UNKNOWN}"
+        echo "VENDOR_BRINGUP_EXECUTED=NO"
+        echo "BRINGUP_EXIT_CODE=${rc}"
+        echo "BRINGUP_RUN_ID=${run_id}"
+        echo "BRINGUP_COMPLETION_SENTINEL=FAIL"
+      } | p2b_atomic_write "${d}/completion.sentinel"
+      completed="$(p2b_utc_now)"
+      p2b_write_result_env "$run_id" "$$" "$target" "$started" "$completed" "$rc" "FAIL" "FAILED" "$logf"
+      p2b_write_state "FAILED"
+      p2b_cleanup_lifecycle_owned_worker_password
+      exit "$rc"
+    fi
+  else
+    rc=1
+    p2b_fail_run "$d" "$run_id" "$$" "$target" "$started" "$logf" "$rc" "BRINGUP_TIME_GATE_HELPER_MISSING"
+  fi
 
   # Record log byte offset so completion markers can be scoped to this run.
   if [[ -f "$logf" ]]; then
@@ -1020,16 +1098,20 @@ BRINGUP_RESULT=PASS
 BRINGUP_STATE=COMPLETED
 BRINGUP_COMPLETION_SENTINEL=PASS
 BRINGUP_EXIT_CODE=0
+BRINGUP_PROCESS_SUCCESS=YES
+CLUSTER_VALIDATION=PENDING
+DP_UPGRADE_COMPLETE=NO
 AELLA_CLI_AVAILABLE=YES
 AELLA_CLI_PATH=${AELLA_CLI_PATH}
 AELLA_CLI_READY=YES
 DO_NOT_RUN_AELLA_CLI_YET=NO
 NEXT_COMMAND=sudo ${AELLA_CLI_PATH}
 
-After bringup completes, run:
-  sudo ${AELLA_CLI_PATH}
+After bringup process success, cluster readiness is NOT yet complete.
+Run:
+  sudo bash ${P2B_WRAPPER_PATH:-/home/aella/bringup_py3_dp_after_os_upgrade.sh} --validate-cluster
 
-Then inside the CLI:
+Then inside aella_cli:
   show status
 
 If the status contains:
@@ -1039,8 +1121,15 @@ then run:
   resume
   show status
 
+Only after cluster nodes/pods are ready, and any REQUIRED post-bringup
+migration is recorded PASS, record:
+  sudo bash ${P2B_WRAPPER_PATH:-/home/aella/bringup_py3_dp_after_os_upgrade.sh} --record-cluster-validation PASS
+
 DP_RESUME_AUTOMATIC=NO
 EOF
+        if declare -F p2b_emit_completion_semantics >/dev/null 2>&1; then
+          p2b_emit_completion_semantics YES PENDING
+        fi
         return 0
       fi
       p2b_write_state "FAILED"
