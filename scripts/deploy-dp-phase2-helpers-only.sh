@@ -262,6 +262,9 @@ verify_helpers_http() {
     lib/dp-phase2-operation-progress.sh
     lib/dp-phase2-bringup-lifecycle.sh
     lib/dp-phase2-ubuntu-prerequisites.sh
+    lib/dp-phase2-time-readiness.sh
+    lib/dp-phase2-post-bringup-migration.sh
+    lib/dp-phase2-cluster-validation.sh
   )
   for name in "${unit_scripts[@]}"; do
     for u in \

@@ -114,6 +114,7 @@ UM_RUNTIME_CLIENT_FILES=(
   dp-client-hop-launcher.sh.in
   dp-postboot-readiness-policy.sh.inc
   dp-postboot-aws-kernel-gate.sh.inc
+  dp-postboot-generic-kernel-gate.sh.inc
   dp-aws-semantic-contract.sh.inc
   stage-dp-phase2.sh
   stage-dp-phase2-6.6.0.sh
@@ -128,9 +129,13 @@ UM_RUNTIME_CLIENT_LIB_FILES=(
   dp-offline-release-upgrade-reconciliation.sh
   dp-offline-apt-preflight-sandbox.sh
   dp-offline-source-product-version.sh
+  dp-offline-hermetic-escapes.sh
   dp-phase2-operation-progress.sh
   dp-phase2-bringup-lifecycle.sh
   dp-phase2-ubuntu-prerequisites.sh
+  dp-phase2-time-readiness.sh
+  dp-phase2-post-bringup-migration.sh
+  dp-phase2-cluster-validation.sh
   dp-offline-durable-write.sh
   dp-offline-lxd-inventory.sh
 )

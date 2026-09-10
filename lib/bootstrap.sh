@@ -458,7 +458,10 @@ um_bootstrap_publish_phase2_helpers_only() {
       dp-offline-source-product-version.sh \
       dp-phase2-operation-progress.sh \
       dp-phase2-bringup-lifecycle.sh \
-      dp-phase2-ubuntu-prerequisites.sh
+      dp-phase2-ubuntu-prerequisites.sh \
+      dp-phase2-time-readiness.sh \
+      dp-phase2-post-bringup-migration.sh \
+      dp-phase2-cluster-validation.sh
     do
       if [[ -f "${src_root}/client/lib/${f}" ]]; then
         install -m 0755 "${src_root}/client/lib/${f}" "${stage}/lib/${f}"

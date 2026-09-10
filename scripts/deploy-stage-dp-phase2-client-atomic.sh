@@ -44,6 +44,9 @@ PHASE2_CLIENT_UNIT_LIBS=(
   lib/dp-phase2-operation-progress.sh
   lib/dp-phase2-bringup-lifecycle.sh
   lib/dp-phase2-ubuntu-prerequisites.sh
+  lib/dp-phase2-time-readiness.sh
+  lib/dp-phase2-post-bringup-migration.sh
+  lib/dp-phase2-cluster-validation.sh
 )
 
 [[ "$(id -u)" -eq 0 || ( "${MM_HERMETIC_TEST_MODE:-0}" == "1" && "${DP_PHASE2_SKIP_ROOT_CHECK:-0}" == "1" ) ]] || {
