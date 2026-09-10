@@ -386,6 +386,10 @@ start_or_monitor() {
   if declare -F p2b_emit_mtu_warning >/dev/null 2>&1; then
     p2b_emit_mtu_warning || true
   fi
+  # Load INTERNAL mirror URL persisted by stage-dp-phase2 (separate process; no MIRROR_URL).
+  if declare -F dp_phase2_load_time_ref_url >/dev/null 2>&1; then
+    dp_phase2_load_time_ref_url || true
+  fi
   if declare -F dp_phase2_bringup_time_gate >/dev/null 2>&1; then
     if ! dp_phase2_bringup_time_gate; then
       echo "BRINGUP_READINESS_RESULT=NO"

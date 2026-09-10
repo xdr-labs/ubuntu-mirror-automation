@@ -77,7 +77,10 @@ p2b_persist_post_bringup_migration_decision() {
   local dest parent tmp
   dest="$(p2b_migration_env_path)"
   parent="$(dirname "$dest")"
-  mkdir -p "$parent"
+  if ! mkdir -p "$parent"; then
+    echo "ERROR: POST_BRINGUP_MIGRATION_PERSIST=FAIL reason=mkdir path=${parent}" >&2
+    return 1
+  fi
   chmod 0700 "$parent" 2>/dev/null || true
   [[ -n "$decision" ]] || decision="$(p2b_decide_post_bringup_migration "$source" "$target")"
   tmp="${dest}.tmp.$$.${RANDOM:-0}"
@@ -92,9 +95,17 @@ p2b_persist_post_bringup_migration_decision() {
     echo "REQUIRED_POST_BRINGUP_ACTION=${req_action}"
     echo "POST_BRINGUP_MIGRATION_OPERATOR_COMMAND=sudo bash /opt/aelladata/da-upgrade/scripts/upgrade_script.sh ${target}"
     echo "POST_BRINGUP_MIGRATION_RECORD_COMMAND=sudo bash /home/aella/bringup_py3_dp_after_os_upgrade.sh --record-post-bringup-migration PASS|FAIL"
-  } >"$tmp"
+  } >"$tmp" || {
+    rm -f "$tmp"
+    echo "ERROR: POST_BRINGUP_MIGRATION_PERSIST=FAIL reason=write path=${dest}" >&2
+    return 1
+  }
   chmod 0600 "$tmp" 2>/dev/null || true
-  mv -f "$tmp" "$dest"
+  if ! mv -f "$tmp" "$dest"; then
+    rm -f "$tmp"
+    echo "ERROR: POST_BRINGUP_MIGRATION_PERSIST=FAIL reason=rename path=${dest}" >&2
+    return 1
+  fi
   POST_BRINGUP_MIGRATION="$decision"
   REQUIRED_POST_BRINGUP_ACTION="$req_action"
   return 0

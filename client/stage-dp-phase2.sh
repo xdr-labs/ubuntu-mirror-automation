@@ -1482,6 +1482,12 @@ ${f}"
 
   PHASE2_STAGE_PHASE="TIME_READINESS"
   log "PHASE2_STAGE_PHASE=${PHASE2_STAGE_PHASE}"
+  # Persist trusted INTERNAL mirror URL for bringup-time HTTP-Date fallback.
+  # Lifecycle wrapper is a separate process and does not inherit MIRROR_URL.
+  if [[ -n "${MIRROR_URL:-}" ]] && declare -F dp_phase2_persist_time_ref_url >/dev/null 2>&1; then
+    dp_phase2_persist_time_ref_url "$MIRROR_URL" \
+      || log "WARNING: PHASE2_TIME_REF_URL_PERSIST=FAIL (HTTP-Date fallback may be unavailable at bringup)"
+  fi
   check_ntp_bringup_readiness || true
   PHASE2_STAGE_RESULT="PASS"
   ARTIFACT_STAGING_RESULT="PASS"
@@ -1489,7 +1495,19 @@ ${f}"
   BRINGUP_EXECUTED="NO"
   local mig
   mig="$(p2b_decide_post_bringup_migration "$SOURCE_DP_VERSION" "$TARGET_DP_VERSION")"
-  p2b_persist_post_bringup_migration_decision "$SOURCE_DP_VERSION" "$TARGET_DP_VERSION" "$mig" || true
+  if ! p2b_persist_post_bringup_migration_decision "$SOURCE_DP_VERSION" "$TARGET_DP_VERSION" "$mig"; then
+    if [[ "$mig" == "REQUIRED" ]]; then
+      PHASE2_STAGE_RESULT="FAIL"
+      ARTIFACT_STAGING_RESULT="FAIL"
+      POST_BRINGUP_MIGRATION="REQUIRED"
+      REQUIRED_POST_BRINGUP_ACTION="YES"
+      log "ERROR: POST_BRINGUP_MIGRATION_PERSIST=FAIL decision=REQUIRED"
+      log "ERROR: DP_UPGRADE_COMPLETE=NO"
+      log "ERROR: REMEDIATION=Ensure $(p2b_migration_env_path) is writable, then re-run staging so the required post-bringup migration decision is persisted. Do not treat bringup process PASS as upgrade complete. Do not auto-run upgrade_script.sh."
+      die "required post-bringup migration decision could not be persisted"
+    fi
+    log "WARNING: POST_BRINGUP_MIGRATION_PERSIST=FAIL decision=${mig} (non-required; continuing)"
+  fi
   emit_final_report
 }
 

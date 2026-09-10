@@ -5289,9 +5289,13 @@ generic_target_kernel_series_ere() {
 }
 
 generic_is_aws_profile() {
-  local flavor
+  # detect_aws_upgrade_profile is an output classifier: it prints "aws" or
+  # "other" and returns 0 for both. Classify on OUTPUT, never exit status.
+  local profile flavor
   if declare -F detect_aws_upgrade_profile >/dev/null 2>&1; then
-    detect_aws_upgrade_profile >/dev/null 2>&1 && return 0
+    profile="$(detect_aws_upgrade_profile 2>/dev/null || true)"
+    [[ "$profile" == "aws" ]]
+    return $?
   fi
   flavor="$(generic_kernel_flavor)"
   [[ "$flavor" == "aws" ]]

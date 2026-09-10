@@ -796,6 +796,10 @@ p2b_worker_main() {
   mkdir -p "$(dirname "$logf")" 2>/dev/null || true
 
   # Re-check time gate inside the detached worker before any vendor execution.
+  # Use the same persisted PHASE2_TIME_REF_URL that the parent pre-detach gate used.
+  if declare -F dp_phase2_load_time_ref_url >/dev/null 2>&1; then
+    dp_phase2_load_time_ref_url || true
+  fi
   if declare -F dp_phase2_bringup_time_gate >/dev/null 2>&1; then
     if ! dp_phase2_bringup_time_gate >>"$logf" 2>&1; then
       rc=1

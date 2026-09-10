@@ -7,6 +7,65 @@ if ! declare -F log >/dev/null 2>&1; then
   log() { printf '%s\n' "$*"; }
 fi
 
+# Persisted INTERNAL mirror URL for HTTP-Date fallback across staging→bringup
+# process boundaries (lifecycle wrapper is a new process; MIRROR_URL is often unset).
+PHASE2_TIME_REF_ENV_DEFAULT="${PHASE2_TIME_REF_ENV_DEFAULT:-/opt/aelladata/os-upgrade/offline/phase2-bringup/time-ref.env}"
+
+dp_phase2_time_ref_env_path() {
+  if [[ -n "${PHASE2_TIME_REF_ENV:-}" ]]; then
+    printf '%s' "$PHASE2_TIME_REF_ENV"
+    return 0
+  fi
+  if declare -F p2b_dir >/dev/null 2>&1; then
+    printf '%s/time-ref.env' "$(p2b_dir)"
+    return 0
+  fi
+  printf '%s' "$PHASE2_TIME_REF_ENV_DEFAULT"
+}
+
+# Persist trusted INTERNAL mirror URL used during Phase 2 staging.
+# Arg: mirror URL (required non-empty).
+dp_phase2_persist_time_ref_url() {
+  local url="${1:-}" dest parent tmp
+  [[ -n "$url" ]] || return 1
+  url="${url%/}"
+  dest="$(dp_phase2_time_ref_env_path)"
+  parent="$(dirname "$dest")"
+  mkdir -p "$parent" || return 1
+  chmod 0700 "$parent" 2>/dev/null || true
+  tmp="${dest}.tmp.$$.${RANDOM:-0}"
+  {
+    echo "PHASE2_TIME_REF_URL=${url}"
+    echo "PHASE2_TIME_REF_PERSISTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  } >"$tmp" || { rm -f "$tmp"; return 1; }
+  chmod 0600 "$tmp" 2>/dev/null || true
+  mv -f "$tmp" "$dest" || { rm -f "$tmp"; return 1; }
+  DP_PHASE2_TIME_REF_URL="$url"
+  log "PHASE2_TIME_REF_URL_PERSISTED=${dest}"
+  return 0
+}
+
+# Load persisted time reference into DP_PHASE2_TIME_REF_URL when unset.
+# Nounset-safe. Never requires MIRROR_URL to be defined.
+dp_phase2_load_time_ref_url() {
+  local dest line key val
+  if [[ -n "${DP_PHASE2_TIME_REF_URL:-}" ]]; then
+    return 0
+  fi
+  dest="$(dp_phase2_time_ref_env_path)"
+  [[ -f "$dest" ]] || return 1
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" == *=* ]] || continue
+    key="${line%%=*}"
+    val="${line#*=}"
+    if [[ "$key" == "PHASE2_TIME_REF_URL" && -n "$val" ]]; then
+      DP_PHASE2_TIME_REF_URL="$val"
+      return 0
+    fi
+  done <"$dest"
+  return 1
+}
+
 # --- Time readiness / NTP source classification (Phase 2 staging guidance) ---
 # Read-only. Does not configure NTP. Staging always places artifacts; bringup is never executed here.
 # INTERNAL NTP absence alone never sets BRINGUP_READY=NO.
@@ -202,9 +261,11 @@ dp_phase2_clock_skew_from_ntpq_seconds() {
 
 dp_phase2_clock_skew_from_http_date_seconds() {
   # Compare local UTC epoch to HTTP Date from internal mirror.
+  # Nounset-safe: never dereference unbound MIRROR_URL.
   local url headers date_hdr remote_epoch local_epoch skew
-  url="${DP_PHASE2_TIME_REF_URL:-${MIRROR_URL}}"
+  url="${DP_PHASE2_TIME_REF_URL:-${MIRROR_URL:-}}"
   url="${url%/}"
+  [[ -n "$url" ]] || return 1
   if [[ -n "${DP_PHASE2_FAKE_HTTP_DATE_EPOCH:-}" ]]; then
     remote_epoch="${DP_PHASE2_FAKE_HTTP_DATE_EPOCH}"
     [[ "$remote_epoch" =~ ^[0-9]+$ ]] || return 1
@@ -314,7 +375,10 @@ check_ntp_bringup_readiness() {
 
 # Hard gate for vendor bringup start. Returns 0 only when bringup is allowed.
 # Sets ARTIFACT_STAGING_RESULT-compatible TIME_* globals via check_ntp_bringup_readiness.
+# Loads persisted PHASE2_TIME_REF_URL before evaluation so HTTP-Date fallback works
+# without requiring the operator to re-pass --mirror-url.
 dp_phase2_bringup_time_gate() {
+  dp_phase2_load_time_ref_url || true
   check_ntp_bringup_readiness || true
   case "${TIME_READINESS:-}" in
     PASS_SYNCED|PASS_WITH_WARNING)
@@ -324,7 +388,7 @@ dp_phase2_bringup_time_gate() {
       fi
       ;;
   esac
-  printf '%s\n' "BRINGUP_TIME_GATE=FAIL TIME_READINESS=${TIME_READINESS:-UNKNOWN} BRINGUP_READY=${BRINGUP_READY:-NO}"
+  printf '%s\n' "BRINGUP_TIME_GATE=FAIL TIME_READINESS=${TIME_READINESS:-UNKNOWN} BRINGUP_READY=${BRINGUP_READY:-NO} VENDOR_BRINGUP_EXECUTED=NO"
   return 1
 }
 

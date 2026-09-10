@@ -40,6 +40,8 @@ p2b_run_cluster_validation_surface() {
   # Collect vendor-native status surfaces for operator review. Does not invent
   # a new definition of cluster health. Returns 0 after emitting evidence.
   local cli="${AELLA_CLI_PATH:-}"
+  local admin_kubeconfig="${DP_PHASE2_ADMIN_KUBECONFIG:-/etc/kubernetes/admin.conf}"
+  local kubectl_env=()
   echo "CLUSTER_VALIDATION_SURFACE=START"
   if [[ -z "$cli" ]] && declare -F p2b_discover_aella_cli >/dev/null 2>&1; then
     p2b_discover_aella_cli || true
@@ -57,13 +59,25 @@ p2b_run_cluster_validation_surface() {
     echo "CLUSTER_CHECK=aella_cli_show_status"
     echo "AELLA_CLI_SHOW_STATUS=UNAVAILABLE"
   fi
+  if [[ -n "${DP_PHASE2_FAKE_K8S:-}" ]]; then
+    :
+  elif [[ -f "$admin_kubeconfig" ]]; then
+    # Vendor procedures use admin.conf explicitly. Do not mutate the caller's
+    # kubeconfig; only prefix the read-only kubectl/helm validation surface.
+    kubectl_env=(env "KUBECONFIG=${admin_kubeconfig}")
+    echo "CLUSTER_VALIDATION_KUBECONFIG=${admin_kubeconfig}"
+  else
+    echo "CLUSTER_VALIDATION_KUBECONFIG_MISSING=${admin_kubeconfig}"
+  fi
   for cmd in "kubectl get nodes" "kubectl get pods -A" "helm list -A"; do
     echo "CLUSTER_CHECK=${cmd// /_}"
     if [[ -n "${DP_PHASE2_FAKE_K8S:-}" ]]; then
       printf '%s\n' "${DP_PHASE2_FAKE_K8S}"
+    elif [[ "${#kubectl_env[@]}" -eq 0 && ! -f "$admin_kubeconfig" ]]; then
+      echo "CLUSTER_CHECK_RESULT=ADMIN_KUBECONFIG_MISSING path=${admin_kubeconfig}"
     elif command -v "${cmd%% *}" >/dev/null 2>&1; then
       # shellcheck disable=SC2086
-      $cmd 2>/dev/null || echo "CLUSTER_CHECK_RESULT=UNAVAILABLE"
+      "${kubectl_env[@]}" $cmd 2>/dev/null || echo "CLUSTER_CHECK_RESULT=UNAVAILABLE"
     else
       echo "CLUSTER_CHECK_RESULT=COMMAND_MISSING"
     fi
