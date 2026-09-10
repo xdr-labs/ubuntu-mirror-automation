@@ -2448,6 +2448,10 @@ def atomic_publish(selective_root, require_verify_pass=True, http_base='http://1
         ('discovery_artifact_checksum',
          plan.get('discovery_artifact_checksum')
          or verify_result.get('discovery_artifact_checksum')),
+        ('aws_semantic_contract_sha256',
+         plan.get('aws_semantic_contract_sha256')
+         or verify_result.get('aws_semantic_contract_sha256')
+         or ((plan.get('aws_semantic_contract') or {}).get('contract_sha256'))),
         ('errors', []),
         ('gates', post.get('gates') or (
             {'post_publish_http': 'SKIPPED'} if not run_post_publish

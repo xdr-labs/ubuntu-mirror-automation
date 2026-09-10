@@ -58,6 +58,8 @@ UM_RUNTIME_SCRIPT_LIB_PYTHON_MODULES=(
   client_build_repository.py
   client_build_provenance.py
   assert_client_executable_shebang.py
+  aws_os_core_completeness.py
+  discovery_profiles.py
 )
 
 # ---------------------------------------------------------------------------
@@ -111,6 +113,8 @@ UM_RUNTIME_CLIENT_FILES=(
   dp-offline-upgrade-jammy-to-noble.sh.in
   dp-client-hop-launcher.sh.in
   dp-postboot-readiness-policy.sh.inc
+  dp-postboot-aws-kernel-gate.sh.inc
+  dp-aws-semantic-contract.sh.inc
   stage-dp-phase2.sh
   stage-dp-phase2-6.6.0.sh
   stage-dp-phase2-6.5.0.sh
@@ -177,6 +181,8 @@ UM_RUNTIME_PYTHON_IMPORT_MODULES=(
   client_build_provenance
   assert_client_executable_shebang
   atomic_dir_swap
+  aws_os_core_completeness
+  discovery_profiles
 )
 
 # shellcheck disable=SC2034

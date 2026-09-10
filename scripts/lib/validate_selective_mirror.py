@@ -40,6 +40,17 @@ EXTERNAL_HOSTS = (
     'old-releases.ubuntu.com', 'changelogs.ubuntu.com',
 )
 
+try:
+    from aws_os_core_completeness import (
+        validate_plan_aws_completeness,
+        validate_tree_aws_completeness,
+    )
+except ImportError:  # pragma: no cover
+    from scripts.lib.aws_os_core_completeness import (  # type: ignore
+        validate_plan_aws_completeness,
+        validate_tree_aws_completeness,
+    )
+
 # Core package version fingerprints used to detect suite contamination.
 # Patterns are matched against the Debian version string (prefix / substring).
 SERIES_CORE_VERSION_OK = {
@@ -1012,6 +1023,30 @@ def validate_tree(plan_path, selective_root, mirror_root=None, run_apt=False,
     gate('unresolved_files', counts.get('unresolved_files', 1) == 0)
     gate('unresolved_urls', counts.get('unresolved_deb_payloads', 1) == 0)
 
+    # Semantic AWS coverage: when the plan includes the aws discovery profile,
+    # required linux-aws family packages must be present in the plan and tree.
+    aws_plan_ok, aws_plan_errs, aws_plan_detail = validate_plan_aws_completeness(plan)
+    gate(
+        'aws_plan_semantic_completeness',
+        aws_plan_ok,
+        '; '.join(aws_plan_errs) if aws_plan_errs else 'ok',
+        target_type='plan',
+        expected_result='PASS_OR_SKIP',
+        actual_result=aws_plan_detail.get('result'),
+    )
+    aws_tree_ok, aws_tree_errs, aws_tree_detail = validate_tree_aws_completeness(
+        live, plan=plan, verify_sha256=True,
+    )
+    gate(
+        'aws_tree_semantic_completeness',
+        aws_tree_ok,
+        '; '.join(aws_tree_errs) if aws_tree_errs else 'ok',
+        filesystem_path=live,
+        target_type='staging_root',
+        expected_result='PASS_OR_SKIP',
+        actual_result=aws_tree_detail.get('result'),
+    )
+
     gate('tree_present', os.path.isdir(live), live,
          filesystem_path=live, target_type='staging_root')
     # Explicitly ignore published/current for pre-publish
@@ -1395,6 +1430,7 @@ def validate_tree(plan_path, selective_root, mirror_root=None, run_apt=False,
         ('discovery_artifact_checksum', plan.get('discovery_artifact_checksum')),
         ('selective_plan_checksum', plan.get('plan_checksum')),
         ('plan_checksum', plan.get('plan_checksum')),
+        ('aws_semantic_contract_sha256', plan.get('aws_semantic_contract_sha256')),
         ('repository_content_checksum', content_checksum),
         ('staging_root', staging),
         ('snapshot_root', live),
@@ -1452,6 +1488,11 @@ def write_ready(path, result, publish_result=None):
         'selective_plan_checksum=%s' % result.get('selective_plan_checksum'),
         'plan_checksum=%s' % (
             result.get('plan_checksum') or result.get('selective_plan_checksum') or ''
+        ),
+        'aws_semantic_contract_sha256=%s' % (
+            result.get('aws_semantic_contract_sha256')
+            or pub.get('aws_semantic_contract_sha256')
+            or ''
         ),
         'repository_content_checksum=%s' % result.get('repository_content_checksum'),
         'verify_result_checksum=%s' % (

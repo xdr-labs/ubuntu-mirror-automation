@@ -52,6 +52,8 @@ CATEGORY_PATTERNS = {
         "client/dp-offline-upgrade-focal-to-jammy.sh.in",
         "client/dp-offline-upgrade-jammy-to-noble.sh.in",
         "client/dp-postboot-readiness-policy.sh.inc",
+        "client/dp-postboot-aws-kernel-gate.sh.inc",
+        "client/dp-aws-semantic-contract.sh.inc",
         "client/dp-client-hop-launcher.sh.in",
     ),
     "helpers": (
@@ -100,6 +102,7 @@ ENV_FIELDS = (
     "CLIENT_TEMPLATES_SHA256",
     "CLIENT_SHARED_HELPERS_SHA256",
     "CLIENT_RUNNER_SHA256",
+    "CLIENT_AWS_SEMANTIC_CONTRACT_SHA256",
 )
 
 # Legacy alias kept for older metadata readers.
@@ -167,7 +170,12 @@ def _git_tree_state(root):
     return "unknown"
 
 
-def compute_provenance(project_root, mirror_base_url="", signing_fingerprint=""):
+def compute_provenance(
+    project_root,
+    mirror_base_url="",
+    signing_fingerprint="",
+    aws_semantic_contract_sha256="",
+):
     root = os.path.abspath(project_root)
     cat = {}
     for name, values in CATEGORY_PATTERNS.items():
@@ -175,6 +183,7 @@ def compute_provenance(project_root, mirror_base_url="", signing_fingerprint="")
     file_digest = _canonical_digest(root, all_input_files())
     mirror = (mirror_base_url or "").rstrip("/")
     fpr = (signing_fingerprint or "").upper().replace(" ", "")
+    contract_sha = (aws_semantic_contract_sha256 or "").strip().lower()
     # Build-input digest: file contents + explicit field separators for pins.
     # No timestamps, temp paths, generated outputs, private keys, or inodes.
     binder = hashlib.sha256()
@@ -188,6 +197,8 @@ def compute_provenance(project_root, mirror_base_url="", signing_fingerprint="")
     binder.update(mirror.encode("utf-8") + b"\n")
     binder.update(b"CLIENT_SIGNING_FINGERPRINT\0")
     binder.update(fpr.encode("utf-8") + b"\n")
+    binder.update(b"CLIENT_AWS_SEMANTIC_CONTRACT_SHA256\0")
+    binder.update(contract_sha.encode("utf-8") + b"\n")
     binder.update(b"PHASE1_HOP_DEFINITIONS\0")
     for hopdef in PHASE1_HOP_DEFINITIONS:
         binder.update(hopdef.encode("utf-8") + b"\n")
@@ -205,6 +216,7 @@ def compute_provenance(project_root, mirror_base_url="", signing_fingerprint="")
         "CLIENT_LAUNCHER_SCHEMA_VERSION": LAUNCHER_SCHEMA_VERSION,
         "CLIENT_MIRROR_BASE_URL": mirror,
         "CLIENT_SIGNING_FINGERPRINT": fpr,
+        "CLIENT_AWS_SEMANTIC_CONTRACT_SHA256": contract_sha,
         "CLIENT_BUILD_CREATED_UTC": created,
         "CLIENT_RUNTIME_MANIFEST_SHA256": _sha_file(
             os.path.join(root, "lib/runtime_manifest.sh")
@@ -319,12 +331,33 @@ def classify_client_set(project_root, client_root, expected_mirror="", expected_
     mirror = (expected_mirror or meta_mirror).rstrip("/")
     fpr = (expected_fingerprint or meta_fpr).upper().replace(" ", "")
     if expected_fingerprint and meta_fpr and meta_fpr != fpr:
-        current = compute_provenance(project_root, mirror_base_url=mirror, signing_fingerprint=fpr)
+        current = compute_provenance(
+            project_root,
+            mirror_base_url=mirror,
+            signing_fingerprint=fpr,
+            aws_semantic_contract_sha256=metadata.get(
+                "CLIENT_AWS_SEMANTIC_CONTRACT_SHA256", ""
+            ),
+        )
         return ("STALE_SIGNING_IDENTITY", "REBUILD_SIGN_PUBLISH", current, "signing_fingerprint_mismatch")
     if expected_mirror and meta_mirror and meta_mirror != mirror:
-        current = compute_provenance(project_root, mirror_base_url=mirror, signing_fingerprint=fpr)
+        current = compute_provenance(
+            project_root,
+            mirror_base_url=mirror,
+            signing_fingerprint=fpr,
+            aws_semantic_contract_sha256=metadata.get(
+                "CLIENT_AWS_SEMANTIC_CONTRACT_SHA256", ""
+            ),
+        )
         return ("STALE_BUILD_INPUT", "REBUILD_SIGN_PUBLISH", current, "mirror_mismatch")
-    current = compute_provenance(project_root, mirror_base_url=mirror, signing_fingerprint=fpr)
+    current = compute_provenance(
+        project_root,
+        mirror_base_url=mirror,
+        signing_fingerprint=fpr,
+        aws_semantic_contract_sha256=metadata.get(
+            "CLIENT_AWS_SEMANTIC_CONTRACT_SHA256", ""
+        ),
+    )
 
     if metadata.get("CLIENT_PROVENANCE_SCHEMA_VERSION", "") != current["CLIENT_PROVENANCE_SCHEMA_VERSION"]:
         return ("STALE_BUILD_INPUT", "REBUILD_SIGN_PUBLISH", current, "schema_mismatch")
@@ -517,6 +550,7 @@ def main(argv=None):
     p_compute.add_argument("--project-root", required=True)
     p_compute.add_argument("--mirror-base-url", default="")
     p_compute.add_argument("--signing-fingerprint", default="")
+    p_compute.add_argument("--aws-semantic-contract-sha256", default="")
     p_compute.add_argument("--format", choices=("env", "json"), default="env")
     p_list = sub.add_parser("list-files")
     p_classify = sub.add_parser("classify-client-set")
@@ -542,6 +576,10 @@ def main(argv=None):
                 args.project_root,
                 mirror_base_url=args.mirror_base_url,
                 signing_fingerprint=args.signing_fingerprint,
+                aws_semantic_contract_sha256=getattr(
+                    args, "aws_semantic_contract_sha256", ""
+                )
+                or "",
             )
             if args.format == "json":
                 print(json.dumps(values, sort_keys=True, indent=2))

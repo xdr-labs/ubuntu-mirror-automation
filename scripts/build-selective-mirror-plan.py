@@ -92,6 +92,22 @@ except ImportError:  # pragma: no cover
         normalize_mirror_host,
         parse_discovery_root_args,
     )
+try:
+    from aws_os_core_completeness import (  # noqa: E402
+        attach_contract_sha256,
+        build_aws_semantic_contract,
+        require_production_discovery_profiles,
+        validate_plan_aws_completeness,
+        write_aws_semantic_contract_bash,
+    )
+except ImportError:  # pragma: no cover
+    from scripts.lib.aws_os_core_completeness import (  # type: ignore
+        attach_contract_sha256,
+        build_aws_semantic_contract,
+        require_production_discovery_profiles,
+        validate_plan_aws_completeness,
+        write_aws_semantic_contract_bash,
+    )
 
 
 def eprint(*args, **kwargs):
@@ -944,6 +960,40 @@ def build_plan(discovery_root, seed_root, profile_name='offline-upgrade-selectiv
     if not meta_release_required:
         errors.append('meta-release required')
 
+    # Discovery-derived AWS semantic contract (exact package/version/arch/sha).
+    # Built from the same generic∪aws union rows used for the selective plan.
+    aws_semantic_contract = OrderedDict()
+    aws_semantic_contract_sha = ''
+    if 'aws' in roots or aws_kernel_packages:
+        aws_semantic_contract, contract_errs = build_aws_semantic_contract(
+            package_rows_out,
+            discovery_profiles=list(roots.keys()),
+        )
+        if contract_errs:
+            errors.extend(contract_errs)
+        if aws_semantic_contract and aws_semantic_contract.get('hops'):
+            attach_contract_sha256(aws_semantic_contract)
+            aws_semantic_contract_sha = (
+                aws_semantic_contract.get('contract_sha256') or ''
+            )
+
+    # When aws discovery is included, fail closed if the union drops AWS kernels
+    # (or xenial→bionic snapd required by AWS discovery). Generic-only plans are
+    # unchanged here; production plan-selective forces aws into discovery_roots.
+    aws_ok, aws_errs, _aws_details = validate_plan_aws_completeness(
+        {
+            'profile_name': profile_name,
+            'discovery_profiles': list(roots.keys()),
+            'counts': {'aws_kernel_package_rows': len(aws_kernel_packages)},
+            'aws_kernel_packages_sample': aws_kernel_packages[:40],
+            'aws_semantic_contract': aws_semantic_contract,
+            'debs': list(debs.values()),
+        },
+        package_rows=package_rows_out,
+    )
+    if not aws_ok:
+        errors.extend(aws_errs)
+
     validation = 'PASS' if not errors else 'FAIL'
 
     hop_summaries = OrderedDict()
@@ -1030,6 +1080,8 @@ def build_plan(discovery_root, seed_root, profile_name='offline-upgrade-selectiv
             ('aws_kernel_package_rows', len(aws_kernel_packages)),
         ])),
         ('aws_kernel_packages_sample', aws_kernel_packages[:40]),
+        ('aws_semantic_contract', aws_semantic_contract),
+        ('aws_semantic_contract_sha256', aws_semantic_contract_sha),
         ('target_pocket_provenance', count_packages_by_pocket(package_rows_out, 'bionic')),
         ('unresolved_target_pocket_rows', unresolved_target_pockets[:50]),
         ('sizes', OrderedDict([
@@ -1112,6 +1164,14 @@ def main(argv=None):
     )
     root_args = args.discovery_root or [default_root]
     roots = parse_discovery_root_args(root_args)
+
+    # Production CLI fail-closed: require generic+aws unless hermetic dual escape.
+    # Keep build_plan() usable as a library for hermetic/unit fixtures.
+    ok_profiles, profile_err = require_production_discovery_profiles(list(roots.keys()))
+    if not ok_profiles:
+        eprint('ERROR: %s' % profile_err)
+        return 2
+
     primary_root = next(iter(roots.values()))
     out_dir = args.output_dir or os.path.join(primary_root, 'analysis')
     seed_root = '' if args.skip_seed_probe else args.seed_root
@@ -1153,6 +1213,16 @@ def main(argv=None):
         ],
         urls,
     )
+
+    contract = plan.get('aws_semantic_contract') or {}
+    if contract.get('hops'):
+        contract_bash = os.path.join(out_dir, 'aws-semantic-contract.sh.inc')
+        write_aws_semantic_contract_bash(contract_bash, contract)
+        print('aws_semantic_contract=%s' % contract_bash)
+        print(
+            'aws_semantic_contract_sha256=%s'
+            % (plan.get('aws_semantic_contract_sha256') or contract.get('contract_sha256') or '')
+        )
 
     print('validation_result=%s' % plan['validation_result'])
     print('discovery_profiles=%s' % ','.join(plan.get('discovery_profiles') or []))

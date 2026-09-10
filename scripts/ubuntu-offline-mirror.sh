@@ -1533,21 +1533,43 @@ cmd_plan_selective_impl() {
 
   log "Building selective mirror plan from ${DISCOVERY_ROOT}"
   local -a disc_args=()
+  local generic_prof="${PROJECT_ROOT}/artifacts/upgrade-discovery-profiles/generic"
+  local aws_prof="${PROJECT_ROOT}/artifacts/upgrade-discovery-profiles/aws"
+  # Hermetic escape requires BOTH flags. UM_ALLOW_GENERIC_ONLY_DISCOVERY alone
+  # must not re-enable production generic-only OS Core defects.
+  local hermetic_generic_only=0
+  if [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" && "${UM_ALLOW_GENERIC_ONLY_DISCOVERY:-0}" == "1" ]]; then
+    hermetic_generic_only=1
+  fi
   if [[ -n "${DISCOVERY_ROOTS:-}" ]]; then
     # Space-separated profile=path entries, e.g.
     # DISCOVERY_ROOTS="generic=/path/generic aws=/path/aws"
     local entry
+    local has_aws_root=0
+    local has_generic_root=0
     for entry in ${DISCOVERY_ROOTS}; do
       disc_args+=(--discovery-root "$entry")
+      case "$entry" in
+        aws=*) has_aws_root=1 ;;
+        generic=*) has_generic_root=1 ;;
+      esac
     done
-  elif [[ -d "${PROJECT_ROOT}/artifacts/upgrade-discovery-profiles/generic" \
-       && -d "${PROJECT_ROOT}/artifacts/upgrade-discovery-profiles/aws" ]]; then
+    if [[ "$hermetic_generic_only" -ne 1 ]]; then
+      if [[ "$has_generic_root" -ne 1 || "$has_aws_root" -ne 1 ]]; then
+        die "plan-selective FAIL: DISCOVERY_ROOTS must include both generic=<path> and aws=<path> (got generic=${has_generic_root} aws=${has_aws_root}); set MM_HERMETIC_TEST_MODE=1 and UM_ALLOW_GENERIC_ONLY_DISCOVERY=1 together only for hermetic fixtures"
+      fi
+    fi
+  elif [[ -d "$generic_prof" && -d "$aws_prof" ]]; then
     disc_args+=(
-      --discovery-root "generic=${PROJECT_ROOT}/artifacts/upgrade-discovery-profiles/generic"
-      --discovery-root "aws=${PROJECT_ROOT}/artifacts/upgrade-discovery-profiles/aws"
+      --discovery-root "generic=${generic_prof}"
+      --discovery-root "aws=${aws_prof}"
     )
-  else
+    log "DISCOVERY_PROFILES=generic,aws (mandatory union for AWS DP coverage)"
+  elif [[ "$hermetic_generic_only" -eq 1 ]]; then
     disc_args+=(--discovery-root "$DISCOVERY_ROOT")
+    warn "DISCOVERY_PROFILES=generic-only (MM_HERMETIC_TEST_MODE=1 + UM_ALLOW_GENERIC_ONLY_DISCOVERY=1)"
+  else
+    die "plan-selective FAIL: missing mandatory generic+aws discovery profiles (generic=${generic_prof} aws=${aws_prof}); refusing bare/generic-only/aws-only selective plan"
   fi
   set +e
   python3 "$py" \
@@ -1558,10 +1580,25 @@ cmd_plan_selective_impl() {
     --profile-name offline-upgrade-selective
   local rc=$?
   set -e
-  if [[ -f "$SELECTIVE_PLAN" ]]; then
-    cp -f "$SELECTIVE_PLAN" "${SELECTIVE_MIRROR_ROOT}/state/plan.json" 2>/dev/null || true
-  fi
   [[ "$rc" -eq 0 ]] || die "plan-selective FAIL"
+  [[ -f "$SELECTIVE_PLAN" ]] || die "plan-selective FAIL: plan missing after PASS: $SELECTIVE_PLAN"
+  # Invalidate READY, then atomically publish plan+contract state (fail closed).
+  # Never leave READY for generation A with plan/contract for generation B.
+  PYTHONPATH="${PROJECT_ROOT}/scripts/lib${PYTHONPATH:+:$PYTHONPATH}" \
+    python3 -c "
+import sys
+from aws_os_core_completeness import publish_selective_generation_state
+try:
+    gen = publish_selective_generation_state(sys.argv[1], sys.argv[2])
+except Exception as exc:
+    sys.stderr.write('SELECTIVE_GENERATION_STATE_PUBLISH=FAIL detail=%s\n' % exc)
+    sys.exit(1)
+print('SELECTIVE_GENERATION_STATE_PUBLISH=PASS')
+print('PLAN_CHECKSUM=%s' % gen['plan_checksum'])
+print('DISCOVERY_ARTIFACT_CHECKSUM=%s' % gen['discovery_artifact_checksum'])
+print('AWS_SEMANTIC_CONTRACT_SHA256=%s' % gen['aws_semantic_contract_sha256'])
+" "$SELECTIVE_MIRROR_ROOT" "$SELECTIVE_PLAN" \
+    || die "plan-selective FAIL: generation state publish"
   ok "plan-selective PASS → ${SELECTIVE_PLAN}"
 }
 
@@ -1648,8 +1685,19 @@ cmd_verify_selective_impl() {
   local py hop="${1:-}"
   py="$(resolve_validate_selective_py)" || { error "validate_selective_mirror.py not found"; return 1; }
   [[ -f "$SELECTIVE_PLAN" ]] || { error "plan missing; run plan-selective first"; return 1; }
-  mkdir -p "${SELECTIVE_MIRROR_ROOT}/state" 2>/dev/null || true
-  cp -f "$SELECTIVE_PLAN" "${SELECTIVE_MIRROR_ROOT}/state/plan.json" 2>/dev/null || true
+  # Fail-closed generation state publish (invalidates READY; refreshes plan+contract).
+  PYTHONPATH="${PROJECT_ROOT}/scripts/lib${PYTHONPATH:+:$PYTHONPATH}" \
+    python3 -c "
+import sys
+from aws_os_core_completeness import publish_selective_generation_state
+try:
+    publish_selective_generation_state(sys.argv[1], sys.argv[2])
+except Exception as exc:
+    sys.stderr.write('SELECTIVE_GENERATION_STATE_PUBLISH=FAIL detail=%s\n' % exc)
+    sys.exit(1)
+print('SELECTIVE_GENERATION_STATE_PUBLISH=PASS')
+" "$SELECTIVE_MIRROR_ROOT" "$SELECTIVE_PLAN" \
+    || { error "verify-selective FAIL: generation state publish"; return 1; }
   # Pre-publish only: validates staging. Never depends on production nginx
   # or selective/current (those are post-publish smoke tests inside publish-selective).
   local args=(

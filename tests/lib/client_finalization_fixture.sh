@@ -142,12 +142,98 @@ client_fixture_build_selective() {
     client_fixture_populate_upgrader "$sel" "$target" "$CLIENT_FIXTURE_GPG_SEL"
   done
 
-  # READY with package-like provenance fields (64-hex)
-  cat >"${sel}/state/READY" <<EOF
-selective_plan_checksum=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-discovery_artifact_checksum=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-os_core_provenance_source=PACKAGE_MANIFEST_AND_PAYLOAD_SHA256
-EOF
+  # Verified selective generation: plan.json + AWS contract + READY tuple.
+  # Client builders require load_verified_selective_generation() (contract-bound).
+  local repo_root
+  repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+  python3 - "$sel" "$repo_root" <<'PY'
+import os, sys, json, hashlib
+from collections import OrderedDict
+sel, root = sys.argv[1], sys.argv[2]
+sys.path.insert(0, os.path.join(root, "scripts", "lib"))
+import discovery_profiles as dp
+import aws_os_core_completeness as aws_c
+
+def ident(package, version, blob):
+    sha = hashlib.sha256(blob).hexdigest()
+    return OrderedDict([
+        ("package", package),
+        ("version", version),
+        ("architecture", "amd64"),
+        ("sha256", sha),
+        ("filename", "%s_%s_amd64.deb" % (package, version)),
+        ("size_bytes", len(blob)),
+    ])
+
+release_by_hop = {
+    "xenial-to-bionic": ("5.4.0.1103.81", "5.4.0-1103-aws"),
+    "bionic-to-focal": ("5.15.0.1084.91~20.04.1", "5.15.0-1084-aws"),
+    "focal-to-jammy": ("6.8.0-1063.66~22.04.1", "6.8.0-1063-aws"),
+    "jammy-to-noble": ("7.0.0-1011.11~24.04.1", "7.0.0-1011-aws"),
+}
+hops = OrderedDict()
+for hop in dp.HOPS:
+    ver, rel = release_by_hop[hop]
+    img = "linux-image-%s" % rel
+    la = ident("linux-aws", ver, ("CF|%s|linux-aws|%s" % (hop, ver)).encode())
+    li = ident("linux-image-aws", ver, ("CF|%s|linux-image-aws|%s" % (hop, ver)).encode())
+    vi = ident(img, ver, ("CF|%s|%s|%s" % (hop, img, ver)).encode())
+    snap = None
+    if hop == "xenial-to-bionic":
+        snap = ident("snapd", "2.58+18.04.1", b"CF|x2b|snapd")
+    hops[hop] = OrderedDict([
+        ("hop", hop),
+        ("source_series", hop.split("-to-")[0]),
+        ("target_series", hop.split("-to-")[1]),
+        ("source_version_id", aws_c.HOP_SOURCE_VERSION_ID[hop]),
+        ("target_version_id", aws_c.HOP_TARGET_VERSION_ID[hop]),
+        ("linux_aws", la),
+        ("linux_image_aws", li),
+        ("expected_kernel_releases", [rel]),
+        ("versioned_images", [vi]),
+        ("boot_packages", []),
+        ("snapd", snap),
+    ])
+contract = OrderedDict([
+    ("schema_version", aws_c.CONTRACT_SCHEMA_VERSION),
+    ("discovery_profiles", ["generic", "aws"]),
+    ("required_metapackages", list(aws_c.REQUIRED_AWS_METAPACKAGES)),
+    ("hops", hops),
+    ("by_target_version_id", OrderedDict(
+        (aws_c.HOP_TARGET_VERSION_ID[h], h) for h in dp.HOPS
+    )),
+])
+aws_c.attach_contract_sha256(contract)
+plan_ck = hashlib.sha256(b"client-fixture-plan").hexdigest()
+disc_ck = hashlib.sha256(b"client-fixture-discovery").hexdigest()
+state = os.path.join(sel, "state")
+os.makedirs(state, exist_ok=True)
+plan = {
+    "schema_version": 1,
+    "profile_name": "offline-upgrade-selective",
+    "discovery_profiles": ["generic", "aws"],
+    "aws_semantic_contract": contract,
+    "aws_semantic_contract_sha256": contract["contract_sha256"],
+    "plan_checksum": plan_ck,
+    "discovery_artifact_checksum": disc_ck,
+    "validation_result": "PASS",
+    "debs": [],
+}
+with open(os.path.join(state, "plan.json"), "w") as fh:
+    json.dump(plan, fh, indent=2, sort_keys=True)
+    fh.write("\n")
+aws_c.write_aws_semantic_contract_bash(
+    os.path.join(state, "aws-semantic-contract.sh.inc"), contract,
+)
+aws_c.write_ready_generation_marker(
+    os.path.join(state, "READY"),
+    plan_ck, disc_ck, contract["contract_sha256"],
+)
+# Prove generation loads.
+aws_c.load_verified_selective_generation(sel, project_root=root)
+print("CLIENT_FIXTURE_GENERATION=PASS")
+print("CLIENT_FIXTURE_CONTRACT_SHA=%s" % contract["contract_sha256"])
+PY
 }
 
 # Install a minimal runtime tree mirroring bootstrap layout under $work/runtime

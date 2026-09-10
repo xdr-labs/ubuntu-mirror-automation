@@ -25,6 +25,7 @@ if _LIB_DIR not in sys.path:
 import client_build_repository as cbr
 import client_build_provenance as cbp
 import assert_client_executable_shebang as aces
+import aws_os_core_completeness as aws_c
 
 
 HOP = "focal-to-jammy"
@@ -531,15 +532,22 @@ def assert_no_b2f_residuals(label, body):
     """Fail closed if Bionic→Focal current-hop literals leaked into F2J artifacts.
 
     Note: previous-hop name bionic-to-focal is allowed in handoff constants.
+    Discovery-bound AWS_C_HOP assignments legitimately name every hop in the
+    embedded semantic contract and must not trip this residual scan.
     """
-    m = FORBIDDEN_B2F_RESIDUAL_RE.search(body)
+    scan = re.sub(
+        r"(?m)^(\s*AWS_C_HOP=)'[^']*'",
+        r"\1'__aws_contract_hop__'",
+        body or "",
+    )
+    m = FORBIDDEN_B2F_RESIDUAL_RE.search(scan)
     if m:
         raise BuildError(
             "{} contains forbidden B2F residual {!r}".format(label, m.group(0))
         )
 
 
-def render_script(template_path, replacements):
+def render_script(template_path, replacements, aws_contract_body=""):
     with open(template_path, "r", encoding="utf-8") as fh:
         body = fh.read()
     helper_token = "@@DESTRUCTIVE_CONFIRMATION_HELPER@@"
@@ -595,6 +603,22 @@ def render_script(template_path, replacements):
         durable_body = fh.read().rstrip("\n") + "\n"
     body = body.replace(durable_token, durable_body)
 
+    aws_token = "@@AWS_KERNEL_GATE_LIB@@"
+    client_dir = os.path.dirname(os.path.abspath(template_path))
+    aws_path = os.path.join(client_dir, "dp-postboot-aws-kernel-gate.sh.inc")
+    if aws_token not in body:
+        raise BuildError("template missing token {}".format(aws_token))
+    if not os.path.isfile(aws_path):
+        raise BuildError("missing AWS kernel gate helper: {}".format(aws_path))
+    if not aws_contract_body:
+        raise BuildError(
+            "missing AWS semantic contract body (plan-bound contract required)"
+        )
+    contract_text = aws_contract_body.rstrip("\n") + "\n"
+    with open(aws_path, "r", encoding="utf-8") as fh:
+        aws_gate_body = fh.read().rstrip("\n") + "\n"
+    aws_body = contract_text + aws_gate_body
+    body = body.replace(aws_token, aws_body)
     source_token = "@@SOURCE_PRODUCT_HELPER@@"
     if source_token in body:
         source_path = os.path.join(
@@ -757,13 +781,18 @@ def main(argv=None):
     up_tar_sha = sha256_file(upgrader_tar)
     up_gpg_sha = sha256_file(upgrader_gpg)
 
-    ready = cbr.validate_ready_provenance(ready_path)
-    plan_checksum = (
-        ready.get("selective_plan_checksum")
-        or ready.get("plan_checksum")
-        or ""
-    )
-    discovery_checksum = ready.get("discovery_artifact_checksum") or ""
+    cbr.validate_ready_provenance(ready_path)
+    try:
+        gen = aws_c.load_verified_selective_generation(
+            selective_root, project_root=project_root
+        )
+    except ValueError as exc:
+        raise BuildError("Selective generation binding failed: {}".format(exc))
+    plan_checksum = gen.get("plan_checksum") or ""
+    discovery_checksum = gen.get("discovery_artifact_checksum") or ""
+    aws_contract_body = gen["bash"]
+    aws_contract_sha = gen["aws_semantic_contract_sha256"]
+    print("AWS_SEMANTIC_CONTRACT_SHA256={}".format(aws_contract_sha))
 
     generated_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     repo_base = "{}/hops/{}/ubuntu".format(mirror_base, HOP)
@@ -795,6 +824,7 @@ def main(argv=None):
         project_root,
         mirror_base_url=mirror_base,
         signing_fingerprint=manifest_key_fpr or "",
+        aws_semantic_contract_sha256=aws_contract_sha,
     )
 
     manifest = OrderedDict(
@@ -837,6 +867,7 @@ def main(argv=None):
             ("sample_deb_url", sample_deb_url),
             ("plan_checksum", plan_checksum),
             ("discovery_checksum", discovery_checksum),
+            ("aws_semantic_contract_sha256", aws_contract_sha),
             ("confirm_phrase", CONFIRM_PHRASE),
             ("client_provenance_schema_version", build_provenance["CLIENT_PROVENANCE_SCHEMA_VERSION"]),
             ("client_build_input_sha256", build_provenance["CLIENT_BUILD_INPUT_SHA256"]),
@@ -950,7 +981,7 @@ def main(argv=None):
         "PROFILE_NAME": PROFILE_NAME,
     }
 
-    script_body = render_script(template, replacements)
+    script_body = render_script(template, replacements, aws_contract_body=aws_contract_body)
     aces.assert_client_executable_shebangs(script_body, 'focal-to-jammy')
     assert_no_b2f_residuals("rendered script", script_body)
     assert_no_b2f_residuals("meta-release", meta_text)
