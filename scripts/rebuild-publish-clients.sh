@@ -69,7 +69,29 @@ _rpc_assert_safe_destructive_path() {
 }
 
 BASE_PATH="${BASE_PATH:-/var/spool/apt-mirror}"
-CLIENT_HTTP_ROOT="${CLIENT_HTTP_ROOT:-${BASE_PATH}/client}"
+# Canonicalize BASE_PATH early; production CLIENT_HTTP_ROOT must equal BASE_PATH/client.
+if [[ -e "$BASE_PATH" || -d "$(dirname "$BASE_PATH")" ]]; then
+  BASE_PATH="$(realpath -m "$BASE_PATH" 2>/dev/null || printf '%s' "$BASE_PATH")"
+fi
+BASE_PATH="${BASE_PATH%/}"
+_EXPECTED_CLIENT_HTTP_ROOT="${BASE_PATH}/client"
+CLIENT_HTTP_ROOT="${CLIENT_HTTP_ROOT:-${_EXPECTED_CLIENT_HTTP_ROOT}}"
+if [[ -e "$CLIENT_HTTP_ROOT" || -d "$(dirname "$CLIENT_HTTP_ROOT")" ]]; then
+  CLIENT_HTTP_ROOT="$(realpath -m "$CLIENT_HTTP_ROOT" 2>/dev/null || printf '%s' "$CLIENT_HTTP_ROOT")"
+fi
+CLIENT_HTTP_ROOT="${CLIENT_HTTP_ROOT%/}"
+_EXPECTED_CLIENT_HTTP_ROOT="$(realpath -m "${_EXPECTED_CLIENT_HTTP_ROOT}" 2>/dev/null || printf '%s' "${_EXPECTED_CLIENT_HTTP_ROOT}")"
+_EXPECTED_CLIENT_HTTP_ROOT="${_EXPECTED_CLIENT_HTTP_ROOT%/}"
+if [[ "$CLIENT_HTTP_ROOT" != "${_EXPECTED_CLIENT_HTTP_ROOT}" ]]; then
+  if [[ "${MM_HERMETIC_TEST_MODE:-0}" != "1" ]]; then
+    echo "CLIENT_HTTP_ROOT=FAIL reason=must_equal_BASE_PATH/client path=${CLIENT_HTTP_ROOT} expected=${_EXPECTED_CLIENT_HTTP_ROOT}" >&2
+    exit 1
+  fi
+  # Hermetic fixtures may use an alternate client root; still depth/forbidden-guard it.
+  _CLIENT_HTTP_APPROVED_ROOT="$CLIENT_HTTP_ROOT"
+else
+  _CLIENT_HTTP_APPROVED_ROOT="${_EXPECTED_CLIENT_HTTP_ROOT}"
+fi
 SELECTIVE_ROOT="${SELECTIVE_ROOT:-${SELECTIVE_MIRROR_ROOT:-${BASE_PATH}/selective}}"
 CACHE_ROOT="${CACHE_ROOT:-${BASE_PATH}/.install-cache}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
@@ -108,7 +130,7 @@ Environment:
   RESOLVED_MIRROR_HOST_IPV4   override host IPv4
   MIRROR_HTTP_URL             runtime URL pin only (not content acquisition)
   LOCAL_CLIENT_SIGNING_DIR    key directory (default /etc/ubuntu-mirror/client-signing)
-  CLIENT_HTTP_ROOT            nginx /client/ destination
+  CLIENT_HTTP_ROOT            nginx /client/ destination (production: BASE_PATH/client)
   ARTIFACT_DIR                override staging (default: cache/client-build/<run-id>)
   CONTENT_SOURCE              local-fs (default) or http (diagnostic only)
   CLIENT_FINALIZATION_EVIDENCE_LOG  optional persistent evidence path
@@ -162,7 +184,7 @@ fi
 # Fail closed before any key/signing/publish work if ARTIFACT_DIR is unsafe.
 _rpc_assert_safe_destructive_path "$ARTIFACT_DIR" "${CACHE_ROOT}/client-build" ARTIFACT_DIR \
   || { echo "ARTIFACT_DIR_UNSAFE=${ARTIFACT_DIR}" >&2; exit 1; }
-_rpc_assert_safe_destructive_path "$CLIENT_HTTP_ROOT" "$(dirname "$CLIENT_HTTP_ROOT")" CLIENT_HTTP_ROOT \
+_rpc_assert_safe_destructive_path "$CLIENT_HTTP_ROOT" "${_CLIENT_HTTP_APPROVED_ROOT}" CLIENT_HTTP_ROOT \
   || { echo "CLIENT_HTTP_ROOT_UNSAFE=${CLIENT_HTTP_ROOT}" >&2; exit 1; }
 
 EVIDENCE_LOG="${CLIENT_FINALIZATION_EVIDENCE_LOG:-}"
@@ -407,7 +429,7 @@ hop_script_name() { printf 'dp-offline-upgrade-%s.sh\n' "$1"; }
 _approved_artifact_root="${CACHE_ROOT}/client-build"
 _rpc_assert_safe_destructive_path "$ARTIFACT_DIR" "$_approved_artifact_root" ARTIFACT_DIR \
   || { echo "ARTIFACT_DIR_UNSAFE=${ARTIFACT_DIR}" >&2; exit 1; }
-_rpc_assert_safe_destructive_path "$CLIENT_HTTP_ROOT" "$(dirname "$CLIENT_HTTP_ROOT")" CLIENT_HTTP_ROOT \
+_rpc_assert_safe_destructive_path "$CLIENT_HTTP_ROOT" "${_CLIENT_HTTP_APPROVED_ROOT}" CLIENT_HTTP_ROOT \
   || { echo "CLIENT_HTTP_ROOT_UNSAFE=${CLIENT_HTTP_ROOT}" >&2; exit 1; }
 rm -rf "$ARTIFACT_DIR"
 mkdir -p "$ARTIFACT_DIR"

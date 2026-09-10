@@ -26,6 +26,7 @@ trap cleanup EXIT
 
 export MM_PROJECT_ROOT="$ROOT"
 export MM_SKIP_ROOT_CHECK=1
+export MM_HERMETIC_TEST_MODE=1
 export MM_MIRROR_ROOT="${TMP}/mirror"
 export MM_CACHE_ROOT="${MM_MIRROR_ROOT}/.install-cache"
 export MM_STATE_ROOT="${TMP}/state"

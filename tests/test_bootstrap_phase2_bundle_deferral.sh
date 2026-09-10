@@ -56,6 +56,7 @@ run_deploy() {
     INSTALL_LIB_DIR="${base}/usr/local/lib/ubuntu-mirror" \
     INSTALL_BIN_DIR="${base}/usr/local/bin" \
     SKIP_MIRROR_HOST_VALIDATE=1 \
+    MM_HERMETIC_TEST_MODE=1 \
     UM_BOOTSTRAP_ALLOW_SIGNING_DIR_OVERRIDE=0 \
     PHASE2_TARGET_VERSION="$TARGET_VER" \
     TARGET_DP_VERSION="$TARGET_VER" \
@@ -224,6 +225,7 @@ out4="$(
     INSTALL_LIB_DIR="${FIX4}/usr/local/lib/ubuntu-mirror" \
     INSTALL_BIN_DIR="${FIX4}/usr/local/bin" \
     SKIP_MIRROR_HOST_VALIDATE=1 \
+    MM_HERMETIC_TEST_MODE=1 \
     UM_BOOTSTRAP_ALLOW_SIGNING_DIR_OVERRIDE=1 \
     LOCAL_CLIENT_SIGNING_DIR="$SIGN4" \
     PHASE2_TARGET_VERSION="$TARGET_VER" \

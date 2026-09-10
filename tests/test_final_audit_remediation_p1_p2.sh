@@ -15,10 +15,9 @@ echo "=== test_final_audit_remediation_p1_p2 ==="
 # ---------- P1: production ACPS test escapes ----------
 # shellcheck source=/dev/null
 source "${ROOT}/scripts/lib/acps_auth.sh"
-unset DP_PHASE2_SOURCE_BASE || true
+unset DP_PHASE2_SOURCE_BASE ACPS_BASE_URL ACPS_BASE_URL_FIXED ACPS_HOST ACPS_PATH || true
 export ACPS_INSECURE_TLS=1
 export MM_HERMETIC_TEST_MODE=0
-export ACPS_BASE_URL="https://acps.example.test/provision"
 export ACPS_USERNAME=u
 export ACPS_PASSWORD=p
 set +e

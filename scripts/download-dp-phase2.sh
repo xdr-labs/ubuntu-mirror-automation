@@ -22,17 +22,21 @@ source "${SCRIPT_DIR}/lib/acps_auth.sh"
 # Never hardcode username/password in this repository.
 # Never enable set -x; never print ACPS_PASS / ACPS_PASSWORD.
 # Auth uses mode-0600 netrc (never curl -u). TLS verify ON unless
-# ACPS_INSECURE_TLS=1 explicitly opts into -k.
+# ACPS_INSECURE_TLS=1 explicitly opts into -k (hermetic only).
+# Production destination is fixed inside acps_auth.sh; env ACPS_HOST /
+# ACPS_PATH / ACPS_BASE_URL / ACPS_BASE_URL_FIXED cannot redirect it.
 # ---------------------------------------------------------------------------
-ACPS_HOST="${ACPS_HOST:-acps.stellarcyber.ai}"
-ACPS_PATH="${ACPS_PATH:-/provision/aelladeb_py3}"
-ACPS_BASE_URL="${ACPS_BASE_URL:-https://${ACPS_HOST}${ACPS_PATH}}"
-ACPS_BASE_URL_FIXED="${ACPS_BASE_URL_FIXED:-$ACPS_BASE_URL}"
 ACPS_USER="${ACPS_USER:-${ACPS_USERNAME:-}}"
 ACPS_PASS="${ACPS_PASS:-${ACPS_PASSWORD:-}}"
 ACPS_USERNAME="${ACPS_USERNAME:-${ACPS_USER:-}}"
 ACPS_PASSWORD="${ACPS_PASSWORD:-${ACPS_PASS:-}}"
 ACPS_INSECURE_TLS="${ACPS_INSECURE_TLS:-0}"
+# Compatibility aliases for status/logging only — not authoritative for auth.
+ACPS_HOST="${ACPS_HOST:-acps.stellarcyber.ai}"
+ACPS_PATH="${ACPS_PATH:-/provision/aelladeb_py3}"
+ACPS_BASE_URL="${ACPS_BASE_URL:-}"
+ACPS_BASE_URL_FIXED="${ACPS_BASE_URL_FIXED:-}"
+ACPS_PRODUCTION_BASE_URL="${ACPS_PRODUCTION_BASE_URL:-https://acps.stellarcyber.ai/provision/aelladeb_py3}"
 
 _load_acps_credentials_from_gui_config() {
   local cfg="${DP_UPGRADE_MIRROR_CONFIG:-/etc/ubuntu-mirror/dp-upgrade-mirror.conf}"
@@ -201,8 +205,8 @@ FILE_COUNT=${DP_PHASE2_FILE_COUNT}
 BUNDLE_NAME=${bundle_name}
 STABLE_BUNDLE_NAME=$(dp2_stable_bundle_name)
 IMAGE_LIST_COUNT=${list_count}
-SOURCE_HOST=${ACPS_HOST}
-SOURCE_PATH=${ACPS_PATH}
+SOURCE_HOST=$(printf '%s' "${ACPS_EFFECTIVE_BASE:-${ACPS_PRODUCTION_BASE_URL}}" | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##' | cut -d/ -f1)
+SOURCE_PATH=/$(printf '%s' "${ACPS_EFFECTIVE_BASE:-${ACPS_PRODUCTION_BASE_URL}}" | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##' | cut -d/ -f2-)
 VERIFICATION_RESULT=PASS
 EOF
   if dp2_release_has_secret "${release_dir}/release.env"; then

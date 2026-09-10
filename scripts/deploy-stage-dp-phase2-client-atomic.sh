@@ -46,7 +46,7 @@ PHASE2_CLIENT_UNIT_LIBS=(
   lib/dp-phase2-ubuntu-prerequisites.sh
 )
 
-[[ "$(id -u)" -eq 0 || "${DP_PHASE2_SKIP_ROOT_CHECK:-0}" == "1" ]] || {
+[[ "$(id -u)" -eq 0 || ( "${MM_HERMETIC_TEST_MODE:-0}" == "1" && "${DP_PHASE2_SKIP_ROOT_CHECK:-0}" == "1" ) ]] || {
   echo "must run as root" >&2
   exit 1
 }

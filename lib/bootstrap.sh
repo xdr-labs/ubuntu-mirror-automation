@@ -93,7 +93,19 @@ um_bootstrap_os_gate() {
   id="${ID:-}"
   version_id="${VERSION_ID:-}"
   if [[ "${UM_BOOTSTRAP_ALLOW_UNSUPPORTED_OS:-0}" == "1" ]]; then
-    um_warn "OS_GATE=SKIPPED_TEST_ONLY id=${id} version=${version_id} arch=${arch}"
+    if [[ "${MM_HERMETIC_TEST_MODE:-0}" != "1" ]]; then
+      if declare -F um_die >/dev/null 2>&1; then
+        um_die "UM_BOOTSTRAP_ALLOW_UNSUPPORTED_OS=FAIL reason=production_forbidden"
+      fi
+      printf 'ERROR: UM_BOOTSTRAP_ALLOW_UNSUPPORTED_OS=FAIL reason=production_forbidden\n' >&2
+      return 1
+    fi
+    if declare -F um_warn >/dev/null 2>&1; then
+      um_warn "OS_GATE=SKIPPED_TEST_ONLY id=${id} version=${version_id} arch=${arch}"
+    else
+      printf 'WARN: OS_GATE=SKIPPED_TEST_ONLY id=%s version=%s arch=%s\n' \
+        "$id" "$version_id" "$arch" >&2
+    fi
     return 0
   fi
   if [[ "$id" != "ubuntu" || "$version_id" != "24.04" ]]; then
@@ -511,8 +523,7 @@ um_bootstrap_deploy_client_http_artifacts() {
     existing_ip="$(mirror_host_read_conf_field "${confdir}/dp-upgrade-mirror.conf" MIRROR_SERVER_IP || true)"
     existing_url="$(mirror_host_read_conf_field "${confdir}/dp-upgrade-mirror.conf" MIRROR_HTTP_URL || true)"
     if [[ -n "$existing_ip" ]] && ! mirror_host_is_placeholder_value "$existing_ip"; then
-      if mirror_host_validate_ipv4_on_host "$existing_ip" 2>/dev/null \
-        || [[ "${SKIP_MIRROR_HOST_VALIDATE:-0}" == "1" ]]; then
+      if mirror_host_validate_ipv4_on_host "$existing_ip" 2>/dev/null; then
         mirror_base="$(mirror_base_url_from_ipv4 "$existing_ip")"
         RESOLVED_MIRROR_HOST_IPV4="$existing_ip"
         RESOLVED_MIRROR_BASE_URL="$mirror_base"

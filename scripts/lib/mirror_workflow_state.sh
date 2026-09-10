@@ -910,7 +910,11 @@ mm_wf_mark_http_enabled() {
     "READINESS_VERIFIED_GENERATION_ID=" \
     "COMMAND_FILE_GENERATION_ID=" \
     "HTTP_REENABLE_REQUIRED=" \
-    "VERIFIED_UTC="
+    "VERIFIED_UTC=" \
+    || {
+      mm_wf_warn "WORKFLOW_HTTP=FAIL reason=http_enabled_persist"
+      return 1
+    }
   if declare -F mm_status_set >/dev/null 2>&1; then
     mm_status_set WORKFLOW_STATE HTTP_ENABLED
     mm_status_set HTTP_PUBLICATION_GENERATION_ID "$pub_gen"
@@ -942,10 +946,13 @@ mm_wf_mark_readiness_verified() {
   pub_gen="$(mm_wf_get HTTP_PUBLICATION_GENERATION_ID)"
   [[ -n "$pub_gen" ]] || pub_gen="$(mm_wf_get CLIENT_SET_GENERATION_ID)"
   if [[ -z "$pub_gen" ]]; then
-    # Status-file-only callers (unit tests / partial UI paths) may validate
-    # readiness before a generation-bound HTTP publication exists.
-    mm_wf_warn "WORKFLOW_READINESS_SKIPPED reason=missing_publication_generation"
-    return 0
+    # Fail closed: never skip the authoritative readiness receipt.
+    mm_wf_warn "WORKFLOW_READINESS=FAIL reason=missing_publication_generation"
+    if declare -F mm_status_set >/dev/null 2>&1; then
+      mm_status_set UPGRADE_READINESS FAIL
+      mm_status_set READINESS_RESULT FAIL
+    fi
+    return 1
   fi
   mode="${PREPARATION_MODE:-FULL}"
   plan_ck=""

@@ -16,6 +16,7 @@ export MM_STATUS_FILE="$MM_CONFIG_DIR/status"
 export MM_CONFIG_FILE="$MM_CONFIG_DIR/dp-upgrade-mirror.conf"
 export MM_PROJECT_ROOT="$ROOT"
 export SKIP_MIRROR_HOST_VALIDATE=1
+export MM_HERMETIC_TEST_MODE=1
 mkdir -p "$MM_CONFIG_DIR"
 : >"$MM_STATUS_FILE"
 
@@ -79,7 +80,12 @@ else
 fi
 
 # Empty publication generation must not mark readiness PASS.
-mm_wf_mark_readiness_verified >/dev/null
+set +e
+mm_wf_mark_readiness_verified >/dev/null 2>&1
+empty_ready_rc=$?
+set -e
+[[ "$empty_ready_rc" -ne 0 ]] && pass "empty pub gen readiness mark fails closed" \
+  || fail "empty pub gen readiness mark unexpectedly succeeded"
 expect_eq "empty pub gen does not set WORKFLOW_STATE=READINESS_VERIFIED" \
   "$(mm_wf_get WORKFLOW_STATE)" "HTTP_ENABLED"
 expect_eq "empty pub gen leaves READINESS_VERIFIED_GENERATION_ID empty" \

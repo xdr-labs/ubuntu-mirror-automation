@@ -391,7 +391,11 @@ engine_finalize_local_client_set() {
   local os_ready=NO
 
   mm_normalize_preparation_mode
+  # Dual-hermetic: verify-only is a test/fixture hook only.
   if [[ "${MM_CLIENT_FINALIZATION_MODE:-full}" == "verify-only" ]]; then
+    if [[ "${MM_HERMETIC_TEST_MODE:-0}" != "1" ]]; then
+      mm_die "MM_CLIENT_FINALIZATION_MODE=FAIL reason=verify-only_requires_MM_HERMETIC_TEST_MODE=1"
+    fi
     mm_info "CLIENT_FINALIZATION_MODE=verify-only"
     mm_set_phase "Verifying Local Client Files"
     if ! mm_check_client_files_ready; then
@@ -3399,7 +3403,11 @@ engine_enable_http_distribution() {
   else
     # Keep Enable HTTP aligned with Download-and-Prepare: verify-only fixtures
     # ship complete on-disk clients without selective hop trees for a rebuild.
+    # Dual-hermetic: verify-only requires MM_HERMETIC_TEST_MODE=1.
     if [[ "${MM_CLIENT_FINALIZATION_MODE:-full}" == "verify-only" ]]; then
+      if [[ "${MM_HERMETIC_TEST_MODE:-0}" != "1" ]]; then
+        mm_die "MM_CLIENT_FINALIZATION_MODE=FAIL reason=verify-only_requires_MM_HERMETIC_TEST_MODE=1"
+      fi
       mm_info "CLIENT_FINALIZATION_MODE=verify-only"
       if mm_client_files_ready "${MM_CLIENT_ROOT}"; then
         clients_on_disk=1

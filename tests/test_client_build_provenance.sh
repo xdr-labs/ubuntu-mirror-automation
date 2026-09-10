@@ -155,6 +155,7 @@ echo "$OUT" | grep -q 'CLIENT_SET_ACTION=REUSE_CURRENT' \
 # --- engine_assess_client_set_for_finalize (production path) ---
 export MM_PROJECT_ROOT="$ROOT"
 export MM_SKIP_ROOT_CHECK=1
+export MM_HERMETIC_TEST_MODE=1
 export MM_MIRROR_ROOT="$MIRROR_ROOT"
 export MM_CLIENT_ROOT="$CLIENT_ROOT"
 export MM_CONFIG_DIR="${WORKDIR}/config"

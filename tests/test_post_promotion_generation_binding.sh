@@ -388,6 +388,7 @@ fi
 # H/J: workflow readiness staleness + process restart reload
 # ---------------------------------------------------------------------------
 export MM_SKIP_ROOT_CHECK=1
+export MM_HERMETIC_TEST_MODE=1
 export MM_PROJECT_ROOT="$ROOT"
 export MM_CONFIG_DIR="${WORKDIR}/wf-config"
 export MM_STATE_DIR="${WORKDIR}/wf-state"
@@ -656,7 +657,7 @@ out_pin="$(
     MIRROR_HTTP_URL="$MIRROR_URL" \
     RESOLVED_MIRROR_BASE_URL="$MIRROR_URL" \
     LOCAL_CLIENT_SIGNING_DIR="$SIGNING_DIR" \
-    CLIENT_HTTP_ROOT="${WORKDIR}/client-pin" \
+    CLIENT_HTTP_ROOT="${MIRROR_ROOT}/client" \
     SELECTIVE_ROOT="$SEL" \
     BASE_PATH="$MIRROR_ROOT" \
     CACHE_ROOT="$CACHE" \
@@ -743,7 +744,7 @@ out_h_only="$(
     MIRROR_HTTP_URL="$MIRROR_URL" \
     RESOLVED_MIRROR_BASE_URL="$MIRROR_URL" \
     LOCAL_CLIENT_SIGNING_DIR="$SIGNING_DIR" \
-    CLIENT_HTTP_ROOT="${WORKDIR}/client-h-only" \
+    CLIENT_HTTP_ROOT="${MIRROR_ROOT}/client" \
     SELECTIVE_ROOT="$SEL" \
     BASE_PATH="$MIRROR_ROOT" \
     CACHE_ROOT="$CACHE" \
@@ -764,6 +765,7 @@ printf '%s' "$out_h_only" | grep -q 'MIRROR_IP_RESOLUTION_SOURCE=PIN_URL_ONLY' \
 # P: FULL readiness tuple missing/unavailable fail-closed
 # ---------------------------------------------------------------------------
 export MM_SKIP_ROOT_CHECK=1
+export MM_HERMETIC_TEST_MODE=1
 export MM_PROJECT_ROOT="$ROOT"
 export MM_CONFIG_DIR="${WORKDIR}/wf-config-P"
 export MM_STATE_DIR="${WORKDIR}/wf-state-P"

@@ -131,7 +131,7 @@ preflight() {
   local ready_tmp
   ready_tmp="$(mktemp)"
   cp -a "$READY_PATH" "$ready_tmp"
-  if ! DP_PHASE2_SKIP_ROOT_CHECK=1 \
+  if ! MM_HERMETIC_TEST_MODE=1 DP_PHASE2_SKIP_ROOT_CHECK=1 \
       DP_PHASE2_ROOT="$candidate_root" \
       READY_PATH="$ready_tmp" \
       bash "$PUBLISHER" "$TARGET_DP_VERSION" >/dev/null; then
@@ -319,7 +319,7 @@ verify_helpers_http() {
 
 # ---- main ----
 if [[ "$MODE" != "verify-only" ]]; then
-  [[ "$(id -u)" -eq 0 || "${DP_PHASE2_SKIP_ROOT_CHECK:-0}" == "1" ]] || {
+  [[ "$(id -u)" -eq 0 || ( "${MM_HERMETIC_TEST_MODE:-0}" == "1" && "${DP_PHASE2_SKIP_ROOT_CHECK:-0}" == "1" ) ]] || {
     echo "must run as root" >&2
     exit 1
   }

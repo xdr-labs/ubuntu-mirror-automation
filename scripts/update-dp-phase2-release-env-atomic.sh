@@ -20,8 +20,13 @@ CURRENT="${ROOT}/${TARGET_DP_VERSION}/current"
 ENV_PATH="${CURRENT}/release.env"
 READY_PATH="${READY_PATH:-/var/spool/apt-mirror/selective/state/READY}"
 
-if [[ "${DP_PHASE2_SKIP_ROOT_CHECK:-0}" != "1" ]]; then
-  [[ "$(id -u)" -eq 0 ]] || { echo "must run as root" >&2; exit 1; }
+if [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" && "${DP_PHASE2_SKIP_ROOT_CHECK:-0}" == "1" ]]; then
+  :
+elif [[ "$(id -u)" -eq 0 ]]; then
+  :
+else
+  echo "must run as root" >&2
+  exit 1
 fi
 
 [[ -L "$CURRENT" || -d "$CURRENT" ]] || { echo "missing current release: ${CURRENT}" >&2; exit 1; }
