@@ -128,6 +128,12 @@ CLIENT_SOURCE_REVISION=
 CLIENT_RUNTIME_MANIFEST_SHA256=
 CLIENT_COMMAND_BLOCK_VERSION=
 CLIENT_PROVENANCE_SCHEMA_VERSION=
+SELECTIVE_PLAN_CHECKSUM=
+SELECTIVE_DISCOVERY_ARTIFACT_CHECKSUM=
+SELECTIVE_AWS_SEMANTIC_CONTRACT_SHA256=
+READINESS_SELECTIVE_PLAN_CHECKSUM=
+READINESS_SELECTIVE_DISCOVERY_ARTIFACT_CHECKSUM=
+READINESS_SELECTIVE_AWS_SEMANTIC_CONTRACT_SHA256=
 HTTP_PUBLICATION_GENERATION_ID=
 READINESS_VERIFIED_GENERATION_ID=
 COMMAND_FILE_GENERATION_ID=
@@ -223,6 +229,11 @@ mm_wf_set_many() {
       CLIENT_SIGNING_FINGERPRINT CLIENT_BUILD_INPUT_SHA256 \
       CLIENT_SOURCE_REVISION CLIENT_RUNTIME_MANIFEST_SHA256 \
       CLIENT_COMMAND_BLOCK_VERSION CLIENT_PROVENANCE_SCHEMA_VERSION \
+      SELECTIVE_PLAN_CHECKSUM SELECTIVE_DISCOVERY_ARTIFACT_CHECKSUM \
+      SELECTIVE_AWS_SEMANTIC_CONTRACT_SHA256 \
+      READINESS_SELECTIVE_PLAN_CHECKSUM \
+      READINESS_SELECTIVE_DISCOVERY_ARTIFACT_CHECKSUM \
+      READINESS_SELECTIVE_AWS_SEMANTIC_CONTRACT_SHA256 \
       HTTP_PUBLICATION_GENERATION_ID \
       READINESS_VERIFIED_GENERATION_ID COMMAND_FILE_GENERATION_ID \
       OPERATION_START_CONFIG_SHA256 \
@@ -823,6 +834,12 @@ mm_wf_mark_prepared() {
     "CLIENT_SET_GENERATION_ID=" \
     "HTTP_PUBLICATION_GENERATION_ID=" \
     "READINESS_VERIFIED_GENERATION_ID=" \
+    "SELECTIVE_PLAN_CHECKSUM=" \
+    "SELECTIVE_DISCOVERY_ARTIFACT_CHECKSUM=" \
+    "SELECTIVE_AWS_SEMANTIC_CONTRACT_SHA256=" \
+    "READINESS_SELECTIVE_PLAN_CHECKSUM=" \
+    "READINESS_SELECTIVE_DISCOVERY_ARTIFACT_CHECKSUM=" \
+    "READINESS_SELECTIVE_AWS_SEMANTIC_CONTRACT_SHA256=" \
     "COMMAND_FILE_GENERATION_ID=" \
     "OPERATION_START_CONFIG_SHA256=" \
     "VERIFIED_UTC="
@@ -837,6 +854,7 @@ mm_wf_mark_prepared() {
 
 mm_wf_mark_client_set_published() {
   local client_gen fpr input_sha source_rev runtime_sha command_ver schema_ver
+  local plan_ck disc_ck contract_sha
   client_gen="${1:-$(mm_wf_new_generation_id)}"
   fpr="${2:-}"
   input_sha="${3:-}"
@@ -844,6 +862,9 @@ mm_wf_mark_client_set_published() {
   runtime_sha="${5:-}"
   command_ver="${6:-SUBSHELL_V2}"
   schema_ver="${7:-1}"
+  plan_ck="${8:-}"
+  disc_ck="${9:-}"
+  contract_sha="${10:-}"
   mm_wf_set_many \
     "WORKFLOW_STATE=CLIENT_SET_PUBLISHED" \
     "CLIENT_SET_GENERATION_ID=${client_gen}" \
@@ -853,8 +874,14 @@ mm_wf_mark_client_set_published() {
     "CLIENT_RUNTIME_MANIFEST_SHA256=${runtime_sha}" \
     "CLIENT_COMMAND_BLOCK_VERSION=${command_ver}" \
     "CLIENT_PROVENANCE_SCHEMA_VERSION=${schema_ver}" \
+    "SELECTIVE_PLAN_CHECKSUM=${plan_ck}" \
+    "SELECTIVE_DISCOVERY_ARTIFACT_CHECKSUM=${disc_ck}" \
+    "SELECTIVE_AWS_SEMANTIC_CONTRACT_SHA256=${contract_sha}" \
     "HTTP_PUBLICATION_GENERATION_ID=" \
     "READINESS_VERIFIED_GENERATION_ID=" \
+    "READINESS_SELECTIVE_PLAN_CHECKSUM=" \
+    "READINESS_SELECTIVE_DISCOVERY_ARTIFACT_CHECKSUM=" \
+    "READINESS_SELECTIVE_AWS_SEMANTIC_CONTRACT_SHA256=" \
     "COMMAND_FILE_GENERATION_ID=" \
     "VERIFIED_UTC="
   if declare -F mm_status_set >/dev/null 2>&1; then
@@ -864,7 +891,7 @@ mm_wf_mark_client_set_published() {
     mm_status_set CLIENT_BUILD_INPUT_SHA256 "$input_sha"
     mm_status_set UPGRADE_READINESS FAIL
   fi
-  mm_wf_info "WORKFLOW_STATE=CLIENT_SET_PUBLISHED CLIENT_SET_GENERATION_ID=${client_gen} CLIENT_BUILD_INPUT_SHA256=${input_sha}"
+  mm_wf_info "WORKFLOW_STATE=CLIENT_SET_PUBLISHED CLIENT_SET_GENERATION_ID=${client_gen} CLIENT_BUILD_INPUT_SHA256=${input_sha} SELECTIVE_AWS_SEMANTIC_CONTRACT_SHA256=${contract_sha}"
 }
 
 mm_wf_mark_http_enabled() {
@@ -906,7 +933,7 @@ mm_wf_mark_http_disabled() {
 }
 
 mm_wf_mark_readiness_verified() {
-  local pub_gen
+  local pub_gen plan_ck disc_ck contract_sha
   pub_gen="$(mm_wf_get HTTP_PUBLICATION_GENERATION_ID)"
   [[ -n "$pub_gen" ]] || pub_gen="$(mm_wf_get CLIENT_SET_GENERATION_ID)"
   if [[ -z "$pub_gen" ]]; then
@@ -915,9 +942,33 @@ mm_wf_mark_readiness_verified() {
     mm_wf_warn "WORKFLOW_READINESS_SKIPPED reason=missing_publication_generation"
     return 0
   fi
+  # Snapshot the live selective generation tuple as a readiness receipt.
+  # Source of truth remains filesystem selective READY/plan; these are compared
+  # back to it on Menu 7 / process restart.
+  plan_ck="$(mm_wf_get SELECTIVE_PLAN_CHECKSUM)"
+  disc_ck="$(mm_wf_get SELECTIVE_DISCOVERY_ARTIFACT_CHECKSUM)"
+  contract_sha="$(mm_wf_get SELECTIVE_AWS_SEMANTIC_CONTRACT_SHA256)"
+  if [[ -z "$plan_ck$disc_ck$contract_sha" ]] || [[ "${PREPARATION_MODE:-FULL}" == "FULL" ]]; then
+    # Prefer live selective filesystem when available.
+    local live
+    live="$(mm_wf_load_live_selective_tuple 2>/dev/null || true)"
+    if [[ -n "$live" ]]; then
+      plan_ck="$(printf '%s\n' "$live" | awk -F= '$1=="SELECTIVE_PLAN_CHECKSUM"{print $2; exit}')"
+      disc_ck="$(printf '%s\n' "$live" | awk -F= '$1=="SELECTIVE_DISCOVERY_ARTIFACT_CHECKSUM"{print $2; exit}')"
+      contract_sha="$(printf '%s\n' "$live" | awk -F= '$1=="SELECTIVE_AWS_SEMANTIC_CONTRACT_SHA256"{print $2; exit}')"
+      mm_wf_set_many \
+        "SELECTIVE_PLAN_CHECKSUM=${plan_ck}" \
+        "SELECTIVE_DISCOVERY_ARTIFACT_CHECKSUM=${disc_ck}" \
+        "SELECTIVE_AWS_SEMANTIC_CONTRACT_SHA256=${contract_sha}" \
+        || true
+    fi
+  fi
   mm_wf_set_many \
     "WORKFLOW_STATE=READINESS_VERIFIED" \
     "READINESS_VERIFIED_GENERATION_ID=${pub_gen}" \
+    "READINESS_SELECTIVE_PLAN_CHECKSUM=${plan_ck}" \
+    "READINESS_SELECTIVE_DISCOVERY_ARTIFACT_CHECKSUM=${disc_ck}" \
+    "READINESS_SELECTIVE_AWS_SEMANTIC_CONTRACT_SHA256=${contract_sha}" \
     "COMMAND_FILE_GENERATION_ID=" \
     "VERIFIED_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   if declare -F mm_status_set >/dev/null 2>&1; then
@@ -926,7 +977,85 @@ mm_wf_mark_readiness_verified() {
     mm_status_set UPGRADE_READINESS PASS
     mm_status_set READINESS_RESULT PASS
   fi
-  mm_wf_ok "UPGRADE_READINESS=PASS READINESS_VERIFIED_GENERATION_ID=${pub_gen}"
+  mm_wf_ok "UPGRADE_READINESS=PASS READINESS_VERIFIED_GENERATION_ID=${pub_gen} SELECTIVE_AWS_SEMANTIC_CONTRACT_SHA256=${contract_sha}"
+}
+
+# Load live selective generation tuple from filesystem authority.
+# Prints SELECTIVE_*= lines; returns non-zero on failure.
+# PHASE2_ONLY skips OS-hop selective requirements.
+mm_wf_load_live_selective_tuple() {
+  local mode="${PREPARATION_MODE:-FULL}"
+  local sel root
+  if [[ "$mode" == "PHASE2_ONLY" ]]; then
+    return 1
+  fi
+  sel="${MM_SELECTIVE_ROOT:-${SELECTIVE_ROOT:-${SELECTIVE_MIRROR_ROOT:-/var/spool/apt-mirror/selective}}}"
+  root="${MM_PROJECT_ROOT:-}"
+  if [[ -z "$root" && -n "${BASH_SOURCE[0]:-}" ]]; then
+    root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+  fi
+  [[ -n "$root" && -d "$sel" ]] || return 1
+  python3 - "$sel" "$root" <<'PY'
+import os, sys
+sys.path.insert(0, os.path.join(sys.argv[2], "scripts", "lib"))
+from aws_os_core_completeness import load_verified_selective_generation
+gen = load_verified_selective_generation(sys.argv[1], project_root=sys.argv[2])
+if gen.get("hermetic_fixture"):
+    sys.exit(3)
+print("SELECTIVE_PLAN_CHECKSUM=%s" % (gen.get("plan_checksum") or ""))
+print("SELECTIVE_DISCOVERY_ARTIFACT_CHECKSUM=%s" % (gen.get("discovery_artifact_checksum") or ""))
+print("SELECTIVE_AWS_SEMANTIC_CONTRACT_SHA256=%s" % (gen.get("aws_semantic_contract_sha256") or ""))
+PY
+}
+
+# Compare workflow receipts + live selective filesystem authority.
+# Sets MM_WF_BLOCK_REASON / MM_WF_REQUIRED_ACTION on mismatch.
+mm_wf_selective_generation_current() {
+  local mode="${PREPARATION_MODE:-FULL}"
+  local live live_plan live_disc live_contract
+  local wf_plan wf_disc wf_contract
+  local ready_plan ready_disc ready_contract
+  if [[ "$mode" == "PHASE2_ONLY" ]]; then
+    return 0
+  fi
+  live="$(mm_wf_load_live_selective_tuple 2>/dev/null)" || {
+    MM_WF_BLOCK_REASON="STALE_SELECTIVE_GENERATION"
+    MM_WF_REQUIRED_ACTION="Download and Prepare"
+    return 1
+  }
+  live_plan="$(printf '%s\n' "$live" | awk -F= '$1=="SELECTIVE_PLAN_CHECKSUM"{print $2; exit}')"
+  live_disc="$(printf '%s\n' "$live" | awk -F= '$1=="SELECTIVE_DISCOVERY_ARTIFACT_CHECKSUM"{print $2; exit}')"
+  live_contract="$(printf '%s\n' "$live" | awk -F= '$1=="SELECTIVE_AWS_SEMANTIC_CONTRACT_SHA256"{print $2; exit}')"
+  wf_plan="$(mm_wf_get SELECTIVE_PLAN_CHECKSUM)"
+  wf_disc="$(mm_wf_get SELECTIVE_DISCOVERY_ARTIFACT_CHECKSUM)"
+  wf_contract="$(mm_wf_get SELECTIVE_AWS_SEMANTIC_CONTRACT_SHA256)"
+  ready_plan="$(mm_wf_get READINESS_SELECTIVE_PLAN_CHECKSUM)"
+  ready_disc="$(mm_wf_get READINESS_SELECTIVE_DISCOVERY_ARTIFACT_CHECKSUM)"
+  ready_contract="$(mm_wf_get READINESS_SELECTIVE_AWS_SEMANTIC_CONTRACT_SHA256)"
+
+  if [[ -z "$live_plan" || -z "$live_disc" || -z "$live_contract" ]]; then
+    MM_WF_BLOCK_REASON="STALE_SELECTIVE_GENERATION"
+    MM_WF_REQUIRED_ACTION="Download and Prepare"
+    return 1
+  fi
+  # Workflow client-set receipt must match live selective authority.
+  if [[ -n "$wf_plan$wf_disc$wf_contract" ]]; then
+    if [[ "$wf_plan" != "$live_plan" || "$wf_disc" != "$live_disc" || "$wf_contract" != "$live_contract" ]]; then
+      MM_WF_BLOCK_REASON="STALE_SELECTIVE_GENERATION"
+      # Client set belongs to another selective generation → rebuild clients.
+      MM_WF_REQUIRED_ACTION="Download and Prepare"
+      return 1
+    fi
+  fi
+  # Readiness receipt must match the same live tuple (or re-verify readiness).
+  if [[ -n "$ready_plan$ready_disc$ready_contract" ]]; then
+    if [[ "$ready_plan" != "$live_plan" || "$ready_disc" != "$live_disc" || "$ready_contract" != "$live_contract" ]]; then
+      MM_WF_BLOCK_REASON="STALE_SELECTIVE_GENERATION"
+      MM_WF_REQUIRED_ACTION="Verify Upgrade Readiness"
+      return 1
+    fi
+  fi
+  return 0
 }
 
 mm_wf_mark_commands_generated() {
@@ -1080,6 +1209,18 @@ mm_wf_commands_preflight() {
     MM_WF_REQUIRED_ACTION="Download and Prepare"
     return 1
   fi
+
+  # FULL mode: Menu 7 must bind to the live selective generation tuple, not
+  # only generation IDs. PHASE2_ONLY skips OS-hop selective requirements.
+  if [[ "$mode" == "FULL" ]]; then
+    if ! mm_wf_selective_generation_current; then
+      # MM_WF_BLOCK_REASON / MM_WF_REQUIRED_ACTION already set.
+      [[ -n "${MM_WF_BLOCK_REASON:-}" ]] || MM_WF_BLOCK_REASON="STALE_SELECTIVE_GENERATION"
+      [[ -n "${MM_WF_REQUIRED_ACTION:-}" ]] || MM_WF_REQUIRED_ACTION="Download and Prepare"
+      return 1
+    fi
+  fi
+
   if declare -F mm_client_set_current_source >/dev/null 2>&1; then
     if ! mm_client_set_current_source "${MM_CLIENT_ROOT:-}" >/dev/null 2>&1; then
       MM_WF_BLOCK_REASON="STALE_CLIENT_BUILD_INPUT"
@@ -1527,6 +1668,9 @@ mm_wf_write_client_set_metadata() {
   local schema_ver="${14:-1}" tree_state="${15:-}" mirror_pin="${16:-${mirror_url}}"
   local created_utc="${17:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
   local launcher_schema="${18:-${CLIENT_LAUNCHER_SCHEMA_VERSION:-1}}"
+  local plan_ck="${19:-${CLIENT_PLAN_CHECKSUM:-}}"
+  local disc_ck="${20:-${CLIENT_DISCOVERY_ARTIFACT_CHECKSUM:-}}"
+  local contract_sha="${21:-${CLIENT_AWS_SEMANTIC_CONTRACT_SHA256:-}}"
   local meta="${dest}/client-set.env"
   local hop lname lsha meta_key wname wsha wkey
   cat >"${meta}.tmp" <<EOF
@@ -1547,6 +1691,9 @@ CLIENT_RUNNER_SHA256=${runner_sha}
 CLIENT_COMMAND_BLOCK_VERSION=${command_ver}
 CLIENT_LAUNCHER_SCHEMA_VERSION=${launcher_schema}
 CLIENT_MIRROR_BASE_URL=${mirror_pin}
+CLIENT_PLAN_CHECKSUM=${plan_ck}
+CLIENT_DISCOVERY_ARTIFACT_CHECKSUM=${disc_ck}
+CLIENT_AWS_SEMANTIC_CONTRACT_SHA256=${contract_sha}
 CLIENT_BUILD_CREATED_UTC=${created_utc}
 CREATED_UTC=${created_utc}
 EOF

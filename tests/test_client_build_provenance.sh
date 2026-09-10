@@ -91,7 +91,8 @@ classify_client() {
     --client-root "$client_root" \
     --expected-mirror "$mirror" \
     --expected-fingerprint "$fpr_local" \
-    --expected-mode FULL 2>&1
+    --expected-mode FULL \
+    --selective-root "${SEL:-}" 2>&1
 }
 
 make_scratch() {

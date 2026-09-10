@@ -326,7 +326,8 @@ engine_assess_client_set_for_finalize() {
     --client-root "$root" \
     --expected-mirror "$mirror_url" \
     --expected-fingerprint "$expected_fpr" \
-    --expected-mode "${PREPARATION_MODE:-FULL}" 2>&1)"
+    --expected-mode "${PREPARATION_MODE:-FULL}" \
+    --selective-root "${MM_SELECTIVE_ROOT:-}" 2>&1)"
   provenance_rc=$?
   set -e
   state_line="$(printf '%s\n' "$provenance_out" | awk -F= '$1=="CLIENT_SET_STATE"{print $2; exit}')"
@@ -356,6 +357,7 @@ engine_assess_client_set_for_finalize() {
 engine_bind_reused_client_set_workflow() {
   local meta="${MM_CLIENT_ROOT}/client-set.env"
   local gen fpr input_sha source_rev runtime_sha command_ver schema_ver
+  local plan_ck disc_ck contract_sha
   [[ -f "$meta" ]] || return 1
   # Reject duplicate authoritative keys (no first/last-wins ambiguity).
   mm_parse_env_metadata_get "$meta" >/dev/null || return 1
@@ -367,8 +369,12 @@ engine_bind_reused_client_set_workflow() {
   runtime_sha="$(mm_parse_env_metadata_get "$meta" CLIENT_RUNTIME_MANIFEST_SHA256 2>/dev/null || true)"
   command_ver="$(mm_parse_env_metadata_get "$meta" CLIENT_COMMAND_BLOCK_VERSION 2>/dev/null || true)"
   schema_ver="$(mm_parse_env_metadata_get "$meta" CLIENT_PROVENANCE_SCHEMA_VERSION 2>/dev/null || true)"
+  plan_ck="$(mm_parse_env_metadata_get "$meta" CLIENT_PLAN_CHECKSUM 2>/dev/null || true)"
+  disc_ck="$(mm_parse_env_metadata_get "$meta" CLIENT_DISCOVERY_ARTIFACT_CHECKSUM 2>/dev/null || true)"
+  contract_sha="$(mm_parse_env_metadata_get "$meta" CLIENT_AWS_SEMANTIC_CONTRACT_SHA256 2>/dev/null || true)"
   [[ -n "$gen" && -n "$fpr" && -n "$input_sha" ]] || return 1
-  mm_wf_mark_client_set_published "$gen" "$fpr" "$input_sha" "$source_rev" "$runtime_sha" "$command_ver" "$schema_ver"
+  mm_wf_mark_client_set_published "$gen" "$fpr" "$input_sha" "$source_rev" "$runtime_sha" "$command_ver" "$schema_ver" \
+    "$plan_ck" "$disc_ck" "$contract_sha"
   mm_info "CLIENT_SET_WORKFLOW_REBOUND=PASS CLIENT_SET_GENERATION_ID=${gen}"
 }
 

@@ -2369,7 +2369,8 @@ mm_client_set_current_source() {
     --client-root "$root" \
     --expected-mirror "$mirror" \
     --expected-fingerprint "$expected_fpr" \
-    --expected-mode "$mode" 2>&1)"
+    --expected-mode "$mode" \
+    --selective-root "${MM_SELECTIVE_ROOT:-${SELECTIVE_ROOT:-}}" 2>&1)"
   rc=$?
   set -e
   if [[ "$rc" -ne 0 ]]; then

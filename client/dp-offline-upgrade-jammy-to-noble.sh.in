@@ -337,7 +337,7 @@ Phase 1 OS-only offline upgrade: Ubuntu ${PIN_SOURCE_VERSION} → ${PIN_TARGET_V
 Does not start subsequent hops or DP product validation/bringup.
 
 Options:
-  --mirror-base URL   Override pinned mirror base (default: ${PIN_MIRROR_BASE})
+  --mirror-base URL   Must equal pinned mirror base (hermetic/test override only)
   --mode os-only      Phase 1 OS-only mode (default; product gates skipped)
   --detach            Start under systemd and return immediately without
                       attaching the local progress monitor
@@ -7445,7 +7445,7 @@ write_pins_env() {
   fi
   COMMIT_STAMP="$stamp"
   COMMIT_BACKUP_PATH="${BACKUP_ROOT}/${stamp}"
-  # Keep PIN_MIRROR_BASE in sync with runtime --mirror-base override.
+  # Persist runtime MIRROR_BASE; production requires it equal PIN_MIRROR_BASE.
   PIN_MIRROR_BASE="${MIRROR_BASE}"
 
   env_path="$(hostpath "$ENV_DEFAULT_FILE")"
@@ -10578,6 +10578,17 @@ main() {
         ;;
     esac
   done
+
+
+  # Production runtime pin: MIRROR_BASE must equal build-time PIN_MIRROR_BASE.
+  # Arbitrary host override is forbidden outside an explicit hermetic/test boundary.
+  if [[ "${MIRROR_BASE%/}" != "${PIN_MIRROR_BASE%/}" ]]; then
+    if [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" || "${DP_ALLOW_MIRROR_BASE_OVERRIDE:-0}" == "1" ]]; then
+      : # allowed under explicit test boundary
+    else
+      die "$EC_USAGE" "MIRROR_BASE_OVERRIDE_FORBIDDEN: production requires MIRROR_BASE==PIN_MIRROR_BASE (got '${MIRROR_BASE}' pin='${PIN_MIRROR_BASE}')"
+    fi
+  fi
 
   # Test harness hooks - keep logical paths; hostpath() prefixes TEST_ROOT at access.
   TEST_ROOT="${DP_OFFLINE_TEST_ROOT:-}"

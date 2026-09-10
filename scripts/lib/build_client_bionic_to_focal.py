@@ -799,6 +799,8 @@ def main(argv=None):
         mirror_base_url=mirror_base,
         signing_fingerprint=manifest_key_fpr or "",
         aws_semantic_contract_sha256=aws_contract_sha,
+        plan_checksum=plan_checksum,
+        discovery_artifact_checksum=discovery_checksum,
     )
 
     manifest = OrderedDict(

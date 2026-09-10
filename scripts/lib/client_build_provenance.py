@@ -102,6 +102,8 @@ ENV_FIELDS = (
     "CLIENT_TEMPLATES_SHA256",
     "CLIENT_SHARED_HELPERS_SHA256",
     "CLIENT_RUNNER_SHA256",
+    "CLIENT_PLAN_CHECKSUM",
+    "CLIENT_DISCOVERY_ARTIFACT_CHECKSUM",
     "CLIENT_AWS_SEMANTIC_CONTRACT_SHA256",
 )
 
@@ -175,6 +177,8 @@ def compute_provenance(
     mirror_base_url="",
     signing_fingerprint="",
     aws_semantic_contract_sha256="",
+    plan_checksum="",
+    discovery_artifact_checksum="",
 ):
     root = os.path.abspath(project_root)
     cat = {}
@@ -184,6 +188,8 @@ def compute_provenance(
     mirror = (mirror_base_url or "").rstrip("/")
     fpr = (signing_fingerprint or "").upper().replace(" ", "")
     contract_sha = (aws_semantic_contract_sha256 or "").strip().lower()
+    plan_ck = (plan_checksum or "").strip().lower()
+    disc_ck = (discovery_artifact_checksum or "").strip().lower()
     # Build-input digest: file contents + explicit field separators for pins.
     # No timestamps, temp paths, generated outputs, private keys, or inodes.
     binder = hashlib.sha256()
@@ -197,6 +203,10 @@ def compute_provenance(
     binder.update(mirror.encode("utf-8") + b"\n")
     binder.update(b"CLIENT_SIGNING_FINGERPRINT\0")
     binder.update(fpr.encode("utf-8") + b"\n")
+    binder.update(b"CLIENT_PLAN_CHECKSUM\0")
+    binder.update(plan_ck.encode("utf-8") + b"\n")
+    binder.update(b"CLIENT_DISCOVERY_ARTIFACT_CHECKSUM\0")
+    binder.update(disc_ck.encode("utf-8") + b"\n")
     binder.update(b"CLIENT_AWS_SEMANTIC_CONTRACT_SHA256\0")
     binder.update(contract_sha.encode("utf-8") + b"\n")
     binder.update(b"PHASE1_HOP_DEFINITIONS\0")
@@ -216,6 +226,8 @@ def compute_provenance(
         "CLIENT_LAUNCHER_SCHEMA_VERSION": LAUNCHER_SCHEMA_VERSION,
         "CLIENT_MIRROR_BASE_URL": mirror,
         "CLIENT_SIGNING_FINGERPRINT": fpr,
+        "CLIENT_PLAN_CHECKSUM": plan_ck,
+        "CLIENT_DISCOVERY_ARTIFACT_CHECKSUM": disc_ck,
         "CLIENT_AWS_SEMANTIC_CONTRACT_SHA256": contract_sha,
         "CLIENT_BUILD_CREATED_UTC": created,
         "CLIENT_RUNTIME_MANIFEST_SHA256": _sha_file(
@@ -229,6 +241,53 @@ def compute_provenance(
         ),
         "CLIENT_FILE_CONTENT_SHA256": file_digest,
     }
+
+
+def resolve_selective_root(selective_root=""):
+    """Resolve selective root from explicit arg or production env defaults."""
+    candidates = (
+        selective_root,
+        os.environ.get("SELECTIVE_ROOT", ""),
+        os.environ.get("SELECTIVE_MIRROR_ROOT", ""),
+        os.environ.get("MM_SELECTIVE_ROOT", ""),
+        "/var/spool/apt-mirror/selective",
+    )
+    for cand in candidates:
+        cand = (cand or "").strip()
+        if cand:
+            return os.path.abspath(cand)
+    return ""
+
+
+def _hermetic_test_boundary():
+    return (
+        os.environ.get("MM_HERMETIC_TEST_MODE", "") == "1"
+        and os.environ.get("UM_ALLOW_GENERIC_ONLY_DISCOVERY", "") == "1"
+    )
+
+
+def load_current_selective_generation(project_root, selective_root=""):
+    """Load CURRENT verified selective generation independently of client metadata.
+
+    Production FULL authority is selective READY + plan.json + embedded contract.
+    Never trust CLIENT_* metadata as the sole expected-generation source.
+    """
+    root = os.path.abspath(project_root)
+    sel = resolve_selective_root(selective_root)
+    if not sel:
+        raise RuntimeError("SELECTIVE_GENERATION_ROOT_MISSING")
+    lib = os.path.join(root, "scripts", "lib")
+    if lib not in sys.path:
+        sys.path.insert(0, lib)
+    from aws_os_core_completeness import load_verified_selective_generation
+
+    return load_verified_selective_generation(sel, project_root=root)
+
+
+def requires_selective_generation_binding(expected_mode=""):
+    """OS-hop selective binding applies to FULL (and empty/default), not PHASE2_ONLY."""
+    mode = (expected_mode or os.environ.get("PREPARATION_MODE", "") or "FULL").strip()
+    return mode != "PHASE2_ONLY"
 
 
 def parse_env_file(path):
@@ -312,8 +371,20 @@ class ClientSetDecision(Exception):
         )
 
 
-def classify_client_set(project_root, client_root, expected_mirror="", expected_fingerprint="", expected_mode=""):
-    """Return (state, action, provenance_or_None, reason)."""
+def classify_client_set(
+    project_root,
+    client_root,
+    expected_mirror="",
+    expected_fingerprint="",
+    expected_mode="",
+    selective_root="",
+):
+    """Return (state, action, provenance_or_None, reason).
+
+    CURRENT_VERIFIED authority for FULL mode comes from the live selective
+    generation (READY + plan.json + contract), never solely from client-set
+    metadata being validated.
+    """
     root = os.path.abspath(client_root)
     meta_path = os.path.join(root, "client-set.env")
     if not os.path.isfile(meta_path):
@@ -330,14 +401,55 @@ def classify_client_set(project_root, client_root, expected_mirror="", expected_
     meta_fpr = metadata.get("CLIENT_SIGNING_FINGERPRINT", "").upper().replace(" ", "")
     mirror = (expected_mirror or meta_mirror).rstrip("/")
     fpr = (expected_fingerprint or meta_fpr).upper().replace(" ", "")
+
+    plan_ck = ""
+    disc_ck = ""
+    contract_sha = ""
+    selective_gen = None
+    bind_selective = requires_selective_generation_binding(expected_mode)
+    if bind_selective:
+        try:
+            selective_gen = load_current_selective_generation(
+                project_root, selective_root=selective_root
+            )
+        except Exception as exc:
+            # Fail closed: never classify CURRENT_VERIFIED from client metadata alone.
+            return (
+                "STALE_BUILD_INPUT",
+                "REBUILD_SIGN_PUBLISH",
+                None,
+                "selective_generation_unavailable:%s" % str(exc).replace("\n", " "),
+            )
+        plan_ck = (selective_gen.get("plan_checksum") or "").strip().lower()
+        disc_ck = (selective_gen.get("discovery_artifact_checksum") or "").strip().lower()
+        contract_sha = (
+            selective_gen.get("aws_semantic_contract_sha256") or ""
+        ).strip().lower()
+        if selective_gen.get("hermetic_fixture"):
+            # Hermetic dual-escape: empty plan/discovery, fixture contract only.
+            if not _hermetic_test_boundary():
+                return (
+                    "STALE_BUILD_INPUT",
+                    "REBUILD_SIGN_PUBLISH",
+                    None,
+                    "hermetic_selective_escape_without_test_boundary",
+                )
+        elif not contract_sha:
+            return (
+                "STALE_BUILD_INPUT",
+                "REBUILD_SIGN_PUBLISH",
+                None,
+                "selective_generation_contract_empty",
+            )
+
     if expected_fingerprint and meta_fpr and meta_fpr != fpr:
         current = compute_provenance(
             project_root,
             mirror_base_url=mirror,
             signing_fingerprint=fpr,
-            aws_semantic_contract_sha256=metadata.get(
-                "CLIENT_AWS_SEMANTIC_CONTRACT_SHA256", ""
-            ),
+            aws_semantic_contract_sha256=contract_sha,
+            plan_checksum=plan_ck,
+            discovery_artifact_checksum=disc_ck,
         )
         return ("STALE_SIGNING_IDENTITY", "REBUILD_SIGN_PUBLISH", current, "signing_fingerprint_mismatch")
     if expected_mirror and meta_mirror and meta_mirror != mirror:
@@ -345,19 +457,61 @@ def classify_client_set(project_root, client_root, expected_mirror="", expected_
             project_root,
             mirror_base_url=mirror,
             signing_fingerprint=fpr,
-            aws_semantic_contract_sha256=metadata.get(
-                "CLIENT_AWS_SEMANTIC_CONTRACT_SHA256", ""
-            ),
+            aws_semantic_contract_sha256=contract_sha,
+            plan_checksum=plan_ck,
+            discovery_artifact_checksum=disc_ck,
         )
         return ("STALE_BUILD_INPUT", "REBUILD_SIGN_PUBLISH", current, "mirror_mismatch")
+
     current = compute_provenance(
         project_root,
         mirror_base_url=mirror,
         signing_fingerprint=fpr,
-        aws_semantic_contract_sha256=metadata.get(
-            "CLIENT_AWS_SEMANTIC_CONTRACT_SHA256", ""
-        ),
+        aws_semantic_contract_sha256=contract_sha,
+        plan_checksum=plan_ck,
+        discovery_artifact_checksum=disc_ck,
     )
+
+    if bind_selective and selective_gen is not None:
+        meta_contract = (
+            metadata.get("CLIENT_AWS_SEMANTIC_CONTRACT_SHA256", "") or ""
+        ).strip().lower()
+        meta_plan = (metadata.get("CLIENT_PLAN_CHECKSUM", "") or "").strip().lower()
+        meta_disc = (
+            metadata.get("CLIENT_DISCOVERY_ARTIFACT_CHECKSUM", "") or ""
+        ).strip().lower()
+        if meta_contract != contract_sha:
+            return (
+                "STALE_BUILD_INPUT",
+                "REBUILD_SIGN_PUBLISH",
+                current,
+                "aws_semantic_contract_mismatch",
+            )
+        # Prefer explicit plan/discovery fields when present; empty legacy metadata
+        # is still caught via CLIENT_BUILD_INPUT_SHA256 after plan/discovery entered
+        # the binder, and via signed hop manifests below.
+        if meta_plan and meta_plan != plan_ck:
+            return (
+                "STALE_BUILD_INPUT",
+                "REBUILD_SIGN_PUBLISH",
+                current,
+                "plan_checksum_mismatch",
+            )
+        if meta_disc and meta_disc != disc_ck:
+            return (
+                "STALE_BUILD_INPUT",
+                "REBUILD_SIGN_PUBLISH",
+                current,
+                "discovery_artifact_checksum_mismatch",
+            )
+        if not selective_gen.get("hermetic_fixture"):
+            if not meta_plan or not meta_disc:
+                return (
+                    "STALE_BUILD_INPUT",
+                    "REBUILD_SIGN_PUBLISH",
+                    current,
+                    "client_set_selective_tuple_metadata_missing",
+                )
 
     if metadata.get("CLIENT_PROVENANCE_SCHEMA_VERSION", "") != current["CLIENT_PROVENANCE_SCHEMA_VERSION"]:
         return ("STALE_BUILD_INPUT", "REBUILD_SIGN_PUBLISH", current, "schema_mismatch")
@@ -378,14 +532,28 @@ def classify_client_set(project_root, client_root, expected_mirror="", expected_
         return ("STALE_BUILD_INPUT", "REBUILD_SIGN_PUBLISH", current, "mode_mismatch")
 
     try:
-        verify_client_set_integrity(root, current, expected_mirror=mirror, expected_fingerprint=fpr)
+        verify_client_set_integrity(
+            root,
+            current,
+            expected_mirror=mirror,
+            expected_fingerprint=fpr,
+            selective_generation=selective_gen if bind_selective else None,
+            require_selective_binding=bind_selective,
+        )
     except Exception as exc:
         return ("INVALID", "REBUILD_SIGN_PUBLISH", current, str(exc))
 
     return ("CURRENT_VERIFIED", "REUSE_CURRENT", current, "exact_match")
 
 
-def verify_client_set_integrity(root, current, expected_mirror="", expected_fingerprint=""):
+def verify_client_set_integrity(
+    root,
+    current,
+    expected_mirror="",
+    expected_fingerprint="",
+    selective_generation=None,
+    require_selective_binding=False,
+):
     keyring = os.path.join(root, "public-keyring.gpg")
     fpr = _fingerprint(keyring)
     if expected_fingerprint and fpr != expected_fingerprint.upper():
@@ -395,6 +563,34 @@ def verify_client_set_integrity(root, current, expected_mirror="", expected_fing
 
     meta_path = os.path.join(root, "client-set.env")
     disk_meta = parse_env_file(meta_path) if os.path.isfile(meta_path) else {}
+
+    expected_plan = ""
+    expected_disc = ""
+    expected_contract = ""
+    if require_selective_binding:
+        if selective_generation is None:
+            raise RuntimeError("CLIENT_SET_SELECTIVE_GENERATION_REQUIRED")
+        expected_plan = (selective_generation.get("plan_checksum") or "").strip().lower()
+        expected_disc = (
+            selective_generation.get("discovery_artifact_checksum") or ""
+        ).strip().lower()
+        expected_contract = (
+            selective_generation.get("aws_semantic_contract_sha256") or ""
+        ).strip().lower()
+        meta_contract = (
+            disk_meta.get("CLIENT_AWS_SEMANTIC_CONTRACT_SHA256", "") or ""
+        ).strip().lower()
+        if meta_contract != expected_contract:
+            raise RuntimeError("CLIENT_SET_CONTRACT_SHA_MISMATCH")
+        meta_plan = (disk_meta.get("CLIENT_PLAN_CHECKSUM", "") or "").strip().lower()
+        meta_disc = (
+            disk_meta.get("CLIENT_DISCOVERY_ARTIFACT_CHECKSUM", "") or ""
+        ).strip().lower()
+        if not selective_generation.get("hermetic_fixture"):
+            if meta_plan != expected_plan:
+                raise RuntimeError("CLIENT_SET_PLAN_CHECKSUM_MISMATCH")
+            if meta_disc != expected_disc:
+                raise RuntimeError("CLIENT_SET_DISCOVERY_CHECKSUM_MISMATCH")
 
     _verify_sidecar(root, "dp-client-command-runner.sh")
     runner_manifest = os.path.join(root, "runner-manifest")
@@ -478,6 +674,25 @@ def verify_client_set_integrity(root, current, expected_mirror="", expected_fing
                 raise RuntimeError(
                     "CLIENT_MANIFEST_PROVENANCE_MISMATCH hop=%s field=%s" % (hop, json_key)
                 )
+        if require_selective_binding and selective_generation is not None:
+            if not selective_generation.get("hermetic_fixture"):
+                man_plan = str(data.get("plan_checksum", "") or "").strip().lower()
+                man_disc = str(data.get("discovery_checksum", "") or "").strip().lower()
+                man_contract = str(
+                    data.get("aws_semantic_contract_sha256", "") or ""
+                ).strip().lower()
+                if man_plan != expected_plan:
+                    raise RuntimeError(
+                        "CLIENT_MANIFEST_PLAN_CHECKSUM_MISMATCH hop=%s" % hop
+                    )
+                if man_disc != expected_disc:
+                    raise RuntimeError(
+                        "CLIENT_MANIFEST_DISCOVERY_CHECKSUM_MISMATCH hop=%s" % hop
+                    )
+                if man_contract != expected_contract:
+                    raise RuntimeError(
+                        "CLIENT_MANIFEST_CONTRACT_SHA_MISMATCH hop=%s" % hop
+                    )
     _verify_sidecar(root, "upgrade-phase2.sh")
     phase2_wrapper = os.path.join(root, "upgrade-phase2.sh")
     with open(phase2_wrapper, "r", encoding="utf-8", errors="replace") as fh:
@@ -524,9 +739,21 @@ def verify_client_set_integrity(root, current, expected_mirror="", expected_fing
     return current
 
 
-def verify_client_set(project_root, client_root, expected_mirror="", expected_fingerprint="", expected_mode=""):
+def verify_client_set(
+    project_root,
+    client_root,
+    expected_mirror="",
+    expected_fingerprint="",
+    expected_mode="",
+    selective_root="",
+):
     state, action, current, reason = classify_client_set(
-        project_root, client_root, expected_mirror, expected_fingerprint, expected_mode
+        project_root,
+        client_root,
+        expected_mirror,
+        expected_fingerprint,
+        expected_mode,
+        selective_root=selective_root,
     )
     if state != "CURRENT_VERIFIED":
         raise RuntimeError(
@@ -551,6 +778,8 @@ def main(argv=None):
     p_compute.add_argument("--mirror-base-url", default="")
     p_compute.add_argument("--signing-fingerprint", default="")
     p_compute.add_argument("--aws-semantic-contract-sha256", default="")
+    p_compute.add_argument("--plan-checksum", default="")
+    p_compute.add_argument("--discovery-artifact-checksum", default="")
     p_compute.add_argument("--format", choices=("env", "json"), default="env")
     p_list = sub.add_parser("list-files")
     p_classify = sub.add_parser("classify-client-set")
@@ -559,12 +788,14 @@ def main(argv=None):
     p_classify.add_argument("--expected-mirror", default="")
     p_classify.add_argument("--expected-fingerprint", default="")
     p_classify.add_argument("--expected-mode", default="")
+    p_classify.add_argument("--selective-root", default="")
     p_verify = sub.add_parser("verify-client-set")
     p_verify.add_argument("--project-root", required=True)
     p_verify.add_argument("--client-root", required=True)
     p_verify.add_argument("--expected-mirror", default="")
     p_verify.add_argument("--expected-fingerprint", default="")
     p_verify.add_argument("--expected-mode", default="")
+    p_verify.add_argument("--selective-root", default="")
     args = parser.parse_args(argv)
     try:
         if args.command == "list-files":
@@ -580,6 +811,11 @@ def main(argv=None):
                     args, "aws_semantic_contract_sha256", ""
                 )
                 or "",
+                plan_checksum=getattr(args, "plan_checksum", "") or "",
+                discovery_artifact_checksum=getattr(
+                    args, "discovery_artifact_checksum", ""
+                )
+                or "",
             )
             if args.format == "json":
                 print(json.dumps(values, sort_keys=True, indent=2))
@@ -593,6 +829,7 @@ def main(argv=None):
                 args.expected_mirror,
                 args.expected_fingerprint,
                 args.expected_mode,
+                selective_root=getattr(args, "selective_root", "") or "",
             )
             print("CLIENT_SET_STATE=%s" % state)
             print("CLIENT_SET_ACTION=%s" % action)
@@ -612,6 +849,7 @@ def main(argv=None):
             args.expected_mirror,
             args.expected_fingerprint,
             args.expected_mode,
+            selective_root=getattr(args, "selective_root", "") or "",
         )
         emit_env(values)
         print("CLIENT_BUILD_PROVENANCE=PASS")

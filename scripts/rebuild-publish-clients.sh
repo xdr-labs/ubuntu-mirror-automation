@@ -264,30 +264,87 @@ evidence_echo "LOCAL_SIGNING_KEY_PATH=${LOCAL_SIGNING_PRIVATE_KEY}"
 evidence_echo "LOCAL_PUBLIC_KEY_PATH=${LOCAL_SIGNING_PUBLIC_KEY}"
 evidence_echo "LOCAL_KEY_FINGERPRINT=${LOCAL_KEY_FINGERPRINT}"
 
-# Bind the selective AWS semantic contract into client build-input provenance so
-# hop manifests (which always include the contract SHA) match client-set.env.
+# Bind the CURRENT verified selective generation into client build-input
+# provenance. FULL production must fail closed on missing/malformed generation;
+# never swallow load failures into an empty contract SHA.
+CLIENT_PLAN_CHECKSUM=""
+CLIENT_DISCOVERY_ARTIFACT_CHECKSUM=""
 CLIENT_AWS_SEMANTIC_CONTRACT_SHA256=""
-if [[ -n "${SELECTIVE_ROOT:-}" && -d "${SELECTIVE_ROOT}" ]]; then
-  CLIENT_AWS_SEMANTIC_CONTRACT_SHA256="$(
-    python3 - <<'PY' "$SELECTIVE_ROOT" "$ROOT" 2>/dev/null || true
+_load_gen_env="$(mktemp)"
+if ! python3 - <<'PY' "$SELECTIVE_ROOT" "$ROOT" "$REQUIRE_SELECTIVE_READY" >"$_load_gen_env"
 import os, sys
-sys.path.insert(0, os.path.join(sys.argv[2], "scripts", "lib"))
+sel, root, require_ready = sys.argv[1], sys.argv[2], sys.argv[3]
+sys.path.insert(0, os.path.join(root, "scripts", "lib"))
+from aws_os_core_completeness import load_verified_selective_generation
+
+hermetic = (
+    os.environ.get("MM_HERMETIC_TEST_MODE", "") == "1"
+    and os.environ.get("UM_ALLOW_GENERIC_ONLY_DISCOVERY", "") == "1"
+)
+sel_present = bool(sel) and os.path.isdir(sel)
+ready = os.path.isfile(os.path.join(sel, "state", "READY")) if sel_present else False
+plan = os.path.isfile(os.path.join(sel, "state", "plan.json")) if sel_present else False
+
+# Diagnostic/test-only: REQUIRE_SELECTIVE_READY=0 may skip when no verified
+# selective generation pair is present.
+if require_ready != "1" and not (ready and plan) and not hermetic:
+    print("CLIENT_PLAN_CHECKSUM=")
+    print("CLIENT_DISCOVERY_ARTIFACT_CHECKSUM=")
+    print("CLIENT_AWS_SEMANTIC_CONTRACT_SHA256=")
+    print("CLIENT_SELECTIVE_GENERATION_MODE=SKIPPED_REQUIRE_SELECTIVE_READY_0")
+    sys.exit(0)
+
 try:
-    from aws_os_core_completeness import load_verified_selective_generation
-    gen = load_verified_selective_generation(sys.argv[1], project_root=sys.argv[2])
-    print(gen.get("aws_semantic_contract_sha256") or "")
-except Exception:
-    pass
+    gen = load_verified_selective_generation(sel, project_root=root)
+except Exception as exc:
+    print("CLIENT_SELECTIVE_GENERATION_LOAD=FAIL", file=sys.stderr)
+    print("CLIENT_SELECTIVE_GENERATION_REASON=%s" % str(exc).replace("\n", " "), file=sys.stderr)
+    sys.exit(2)
+
+plan_ck = (gen.get("plan_checksum") or "").strip().lower()
+disc_ck = (gen.get("discovery_artifact_checksum") or "").strip().lower()
+contract = (gen.get("aws_semantic_contract_sha256") or "").strip().lower()
+if gen.get("hermetic_fixture"):
+    if not hermetic:
+        print("CLIENT_SELECTIVE_GENERATION_LOAD=FAIL", file=sys.stderr)
+        print("CLIENT_SELECTIVE_GENERATION_REASON=hermetic_escape_without_test_boundary", file=sys.stderr)
+        sys.exit(2)
+elif not contract:
+    print("CLIENT_SELECTIVE_GENERATION_LOAD=FAIL", file=sys.stderr)
+    print("CLIENT_SELECTIVE_GENERATION_REASON=empty_contract_sha", file=sys.stderr)
+    sys.exit(2)
+elif require_ready == "1" and (not plan_ck or not disc_ck):
+    print("CLIENT_SELECTIVE_GENERATION_LOAD=FAIL", file=sys.stderr)
+    print("CLIENT_SELECTIVE_GENERATION_REASON=empty_plan_or_discovery_checksum", file=sys.stderr)
+    sys.exit(2)
+
+print("CLIENT_PLAN_CHECKSUM=%s" % plan_ck)
+print("CLIENT_DISCOVERY_ARTIFACT_CHECKSUM=%s" % disc_ck)
+print("CLIENT_AWS_SEMANTIC_CONTRACT_SHA256=%s" % contract)
+print(
+    "CLIENT_SELECTIVE_GENERATION_MODE=%s"
+    % ("HERMETIC_FIXTURE" if gen.get("hermetic_fixture") else "VERIFIED")
+)
 PY
-  )"
+then
+  rm -f "$_load_gen_env"
+  fail_build "" "selective_generation" "CLIENT_SELECTIVE_GENERATION_LOAD=FAIL" 1
 fi
+# shellcheck disable=SC1090
+source "$_load_gen_env"
+rm -f "$_load_gen_env"
+evidence_echo "CLIENT_PLAN_CHECKSUM=${CLIENT_PLAN_CHECKSUM:-}"
+evidence_echo "CLIENT_DISCOVERY_ARTIFACT_CHECKSUM=${CLIENT_DISCOVERY_ARTIFACT_CHECKSUM:-}"
 evidence_echo "CLIENT_AWS_SEMANTIC_CONTRACT_SHA256=${CLIENT_AWS_SEMANTIC_CONTRACT_SHA256:-}"
+evidence_echo "CLIENT_SELECTIVE_GENERATION_MODE=${CLIENT_SELECTIVE_GENERATION_MODE:-}"
 
 CLIENT_PROVENANCE_ENV="$(mktemp)"
 python3 "$CLIENT_PROVENANCE_MODULE" compute \
   --project-root "$ROOT" \
   --mirror-base-url "$MIRROR_BASE" \
   --signing-fingerprint "$LOCAL_KEY_FINGERPRINT" \
+  --plan-checksum "${CLIENT_PLAN_CHECKSUM}" \
+  --discovery-artifact-checksum "${CLIENT_DISCOVERY_ARTIFACT_CHECKSUM}" \
   --aws-semantic-contract-sha256 "${CLIENT_AWS_SEMANTIC_CONTRACT_SHA256}" \
   --format env >"$CLIENT_PROVENANCE_ENV"
 # shellcheck disable=SC1090
@@ -298,7 +355,8 @@ export CLIENT_SOURCE_REVISION CLIENT_SOURCE_TREE_STATE CLIENT_BUILD_SOURCE_REVIS
 export CLIENT_RUNTIME_MANIFEST_SHA256 CLIENT_BUILDERS_SHA256 CLIENT_TEMPLATES_SHA256
 export CLIENT_SHARED_HELPERS_SHA256 CLIENT_RUNNER_SHA256 CLIENT_COMMAND_BLOCK_VERSION
 export CLIENT_LAUNCHER_SCHEMA_VERSION CLIENT_MIRROR_BASE_URL CLIENT_SIGNING_FINGERPRINT
-export CLIENT_BUILD_CREATED_UTC CLIENT_AWS_SEMANTIC_CONTRACT_SHA256
+export CLIENT_BUILD_CREATED_UTC
+export CLIENT_PLAN_CHECKSUM CLIENT_DISCOVERY_ARTIFACT_CHECKSUM CLIENT_AWS_SEMANTIC_CONTRACT_SHA256
 evidence_echo "CLIENT_PROVENANCE_SCHEMA_VERSION=${CLIENT_PROVENANCE_SCHEMA_VERSION}"
 evidence_echo "CLIENT_BUILD_INPUT_SHA256=${CLIENT_BUILD_INPUT_SHA256}"
 evidence_echo "CLIENT_SOURCE_REVISION=${CLIENT_SOURCE_REVISION}"
@@ -307,6 +365,8 @@ evidence_echo "CLIENT_COMMAND_BLOCK_VERSION=${CLIENT_COMMAND_BLOCK_VERSION}"
 evidence_echo "CLIENT_LAUNCHER_SCHEMA_VERSION=${CLIENT_LAUNCHER_SCHEMA_VERSION}"
 evidence_echo "CLIENT_MIRROR_BASE_URL=${CLIENT_MIRROR_BASE_URL}"
 evidence_echo "CLIENT_SIGNING_FINGERPRINT=${CLIENT_SIGNING_FINGERPRINT}"
+evidence_echo "CLIENT_PLAN_CHECKSUM=${CLIENT_PLAN_CHECKSUM}"
+evidence_echo "CLIENT_DISCOVERY_ARTIFACT_CHECKSUM=${CLIENT_DISCOVERY_ARTIFACT_CHECKSUM}"
 evidence_echo "CLIENT_AWS_SEMANTIC_CONTRACT_SHA256=${CLIENT_AWS_SEMANTIC_CONTRACT_SHA256}"
 
 if [[ "$REQUIRE_SELECTIVE_READY" == "1" ]]; then
@@ -572,6 +632,8 @@ CLIENT_RUNNER_SHA256=${CLIENT_RUNNER_SHA256}
 CLIENT_COMMAND_BLOCK_VERSION=${CLIENT_COMMAND_BLOCK_VERSION}
 CLIENT_LAUNCHER_SCHEMA_VERSION=${CLIENT_LAUNCHER_SCHEMA_VERSION}
 CLIENT_MIRROR_BASE_URL=${CLIENT_MIRROR_BASE_URL}
+CLIENT_PLAN_CHECKSUM=${CLIENT_PLAN_CHECKSUM:-}
+CLIENT_DISCOVERY_ARTIFACT_CHECKSUM=${CLIENT_DISCOVERY_ARTIFACT_CHECKSUM:-}
 CLIENT_AWS_SEMANTIC_CONTRACT_SHA256=${CLIENT_AWS_SEMANTIC_CONTRACT_SHA256:-}
 CLIENT_BUILD_CREATED_UTC=${CLIENT_BUILD_CREATED_UTC}
 CREATED_UTC=${CLIENT_BUILD_CREATED_UTC}
@@ -624,7 +686,8 @@ if ! python3 "$CLIENT_PROVENANCE_MODULE" verify-client-set \
   --client-root "$STAGE_DIR" \
   --expected-mirror "$MIRROR_BASE" \
   --expected-fingerprint "$LOCAL_KEY_FINGERPRINT" \
-  --expected-mode "${PREPARATION_MODE:-FULL}" >>"$EVIDENCE_LOG" 2>&1
+  --expected-mode "${PREPARATION_MODE:-FULL}" \
+  --selective-root "$SELECTIVE_ROOT" >>"$EVIDENCE_LOG" 2>&1
 then
   evidence "CLIENT_SET_ATOMIC_SWAP=NOT_STARTED"
   fail_build "" "build_provenance" "CLIENT_BUILD_PROVENANCE=FAIL" 1
@@ -734,6 +797,9 @@ if [[ -f "${ROOT}/scripts/lib/mirror_workflow_state.sh" ]]; then
     "$CLIENT_RUNTIME_MANIFEST_SHA256" \
     "$CLIENT_COMMAND_BLOCK_VERSION" \
     "$CLIENT_PROVENANCE_SCHEMA_VERSION" \
+    "${CLIENT_PLAN_CHECKSUM:-}" \
+    "${CLIENT_DISCOVERY_ARTIFACT_CHECKSUM:-}" \
+    "${CLIENT_AWS_SEMANTIC_CONTRACT_SHA256:-}" \
     || evidence_echo "WORKFLOW_STATE_UPDATE=SKIPPED"
   evidence_echo "CLIENT_SET_GENERATION_ID=${CLIENT_BUILD_GENERATION_ID}"
   evidence_echo "CLIENT_SIGNING_FINGERPRINT=${LOCAL_KEY_FINGERPRINT}"
