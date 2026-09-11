@@ -962,7 +962,27 @@ def hop_series_pair(hop):
     return parts[0], parts[1]
 
 
-def debs_for_suite_index(debs_for_hop, suite, from_series='', to_series=''):
+def suite_for_hop_deb(deb, hop=''):
+    """Return the suite this deb should be indexed under for ``hop``.
+
+    Per-hop provenance wins so a SHA-deduplicated plan object can still carry
+    distinct pockets (bionic vs focal-updates) for each source_hop. Legacy
+    plans without hop_provenance fall back to original_suite.
+    """
+    prov = deb.get('hop_provenance') or {}
+    if hop and isinstance(prov, dict) and hop in prov:
+        entry = prov.get(hop) or {}
+        if isinstance(entry, dict):
+            suite = (entry.get('suite') or '').strip()
+            if suite:
+                return suite
+        elif entry:
+            return str(entry).strip()
+    return (deb.get('original_suite') or '').strip()
+
+
+def debs_for_suite_index(debs_for_hop, suite, from_series='', to_series='',
+                         hop=''):
     """Select debs that may appear in a suite Packages index.
 
     Discovery payloads for a hop are *target-release* packages. They must be
@@ -981,7 +1001,7 @@ def debs_for_suite_index(debs_for_hop, suite, from_series='', to_series=''):
         return []
     out = []
     for deb in debs_for_hop:
-        orig = (deb.get('original_suite') or '').strip()
+        orig = suite_for_hop_deb(deb, hop)
         if not orig:
             # Fail-closed at plan/publish; do not clone into every target suite.
             continue
@@ -1031,6 +1051,7 @@ def generate_packages_for_hop(ubuntu_root, debs_for_hop, suites, arch='amd64',
     for suite in suites:
         suite_debs = debs_for_suite_index(
             debs_for_hop, suite, from_series=from_series, to_series=to_series,
+            hop=hop,
         )
         by_component = defaultdict(list)
         for deb in suite_debs:

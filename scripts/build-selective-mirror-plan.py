@@ -517,9 +517,12 @@ def build_plan(discovery_root, seed_root, profile_name='offline-upgrade-selectiv
     url_by_sha, url_by_filename = build_discovery_url_indexes(hops_data)
 
     # Optional official/seed Packages indexes for sha256 → suite provenance.
+    # Collect EVERY suite a SHA appears in. First-wins across series would
+    # classify a shared .deb (same SHA in bionic and focal-updates) as
+    # source-series residue and drop the later hop.
     sha_to_suite_global = {}
     if pocket_index_root and os.path.isdir(pocket_index_root):
-        # Prefer security/updates/backports before base (setdefault keeps first).
+        # Prefer security/updates/backports before base within each series.
         for series in ('xenial', 'bionic', 'focal', 'jammy', 'noble'):
             scan = [
                 '%s-security' % series,
@@ -530,7 +533,9 @@ def build_plan(discovery_root, seed_root, profile_name='offline-upgrade-selectiv
             for sha, suite in build_sha_to_suite_from_packages_indexes(
                 pocket_index_root, scan,
             ).items():
-                sha_to_suite_global.setdefault(sha, suite)
+                cur = sha_to_suite_global.setdefault(sha, [])
+                if suite not in cur:
+                    cur.append(suite)
 
     upgrader_files = []
     meta_release_required = True  # always required by profile; not in discovery capture
@@ -759,6 +764,7 @@ def build_plan(discovery_root, seed_root, profile_name='offline-upgrade-selectiv
                     ('original_pocket', pocket),
                     ('original_component', component),
                     ('source_hops', []),
+                    ('hop_provenance', OrderedDict()),
                     ('acquisition_source', acquisition),
                     ('seed_local_path', seed_path if reusable else ''),
                     ('reusable_from_seed', reusable),
@@ -797,6 +803,12 @@ def build_plan(discovery_root, seed_root, profile_name='offline-upgrade-selectiv
 
             if hop not in rec['source_hops']:
                 rec['source_hops'].append(hop)
+            if not isinstance(rec.get('hop_provenance'), dict):
+                rec['hop_provenance'] = OrderedDict()
+            rec['hop_provenance'][hop] = OrderedDict([
+                ('suite', suite),
+                ('pocket', pocket),
+            ])
 
             hop_package_keys[hop].add((pkg, arch, ver))
             package_rows_out.append(OrderedDict([

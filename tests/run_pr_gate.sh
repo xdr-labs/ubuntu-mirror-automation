@@ -58,10 +58,14 @@ run_step "bash_n_run_pr_gate" bash -n tests/run_pr_gate.sh
 run_step "python_compile_fixture" python3 -m py_compile tests/lib/build_tiny_os_core_lifecycle_fixture.py
 run_step "python_compile_os_core" python3 -m py_compile scripts/lib/os_core_package.py
 run_step "python_compile_field_fix" python3 -m py_compile tests/test_aws_os_core_completeness_field_fix.py
+run_step "python_compile_cross_hop" python3 -m py_compile tests/test_cross_hop_shared_package.py
 
 # Core PR #20 gates (authoritative)
 run_step "aws_field_fix" \
   python3 -m unittest tests.test_aws_os_core_completeness_field_fix
+
+run_step "cross_hop_shared_package" \
+  python3 -m unittest tests.test_cross_hop_shared_package
 
 run_step "production_lifecycle_roundtrip" \
   bash tests/test_os_core_r2_roundtrip_integration.sh
