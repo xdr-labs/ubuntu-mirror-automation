@@ -5703,6 +5703,9 @@ pkg_installed_version() {
 
 is_focal_version_for_pkg() {
   # Return 0 if version looks like a Focal (20.04) core package.
+  # Kernel ABI alone is NOT a release discriminator: Bionic AWS/HWE legitimately
+  # ships 5.4 kernels (e.g. 5.4.0-1103-aws). Kernel packages use suite provenance
+  # / Ubuntu ~YY.MM markers via is_cross_release_kernel_candidate instead.
   local pkg="$1" ver="$2"
   [[ -n "$ver" ]] || return 1
   case "$pkg" in
@@ -5714,8 +5717,10 @@ is_focal_version_for_pkg() {
     python3) [[ "$ver" == 3.8* ]] && return 0 ;;
     ubuntu-server) [[ "$ver" == 1.450* ]] && return 0 ;;
     ubuntu-minimal|ubuntu-standard) [[ "$ver" == 1.450* ]] && return 0 ;;
-    linux-image-*|linux-headers-*|linux-generic|linux-virtual|linux-image-generic|linux-image-virtual)
-      [[ "$ver" == 5.4* || "$ver" == *5.4* ]] && return 0
+    linux-image-*|linux-headers-*|linux-modules-*|linux-generic|linux-virtual|linux-image-generic|linux-image-virtual|linux-aws|linux-image-aws|linux-headers-aws)
+      # Explicit Focal HWE/backport marker only — never kernel major/minor alone.
+      [[ "$ver" == *"~${PIN_TARGET_VERSION}"* || "$ver" == *'~20.04'* ]] && return 0
+      return 1
       ;;
     ubuntu-release-upgrader-core|update-manager-core)
       # Focal upgrader packages often carry 1:20.04 in version
@@ -5879,6 +5884,69 @@ cross_release_candidate_from_policy() {
   awk '/^[[:space:]]*Candidate:/{print $2; exit}' <<<"$policy_out"
 }
 
+# Extract origin suite/pocket (e.g. bionic-security, focal-updates) for a candidate
+# version from apt-cache policy Version table. Empty when unknown/local-only.
+cross_release_candidate_suite_from_policy() {
+  local policy_out="$1" cand="$2"
+  [[ -n "$cand" && "$cand" != "(none)" ]] || return 0
+  awk -v cand="$cand" '
+    BEGIN { found=0 }
+    $1 == "***" && $2 == cand { found=1; next }
+    $1 == cand { found=1; next }
+    found && /^[[:space:]]+[0-9]+[[:space:]]+http/ {
+      for (i = 1; i <= NF; i++) {
+        if ($i ~ /^[a-z0-9.]+(-[a-z0-9.]+)?\/[a-z0-9.]+$/) {
+          split($i, parts, "/")
+          print parts[1]
+          exit
+        }
+      }
+      found=0
+      next
+    }
+    found && /^[[:space:]]+[0-9]+[[:space:]]+\// { found=0; next }
+    found && /^[^[:space:]]/ { found=0 }
+  ' <<<"$policy_out"
+}
+
+is_source_origin_suite() {
+  local suite="$1"
+  [[ -n "$suite" ]] || return 1
+  case "$suite" in
+    "${PIN_SOURCE_CODENAME}"|"${PIN_SOURCE_CODENAME}-"*) return 0 ;;
+  esac
+  return 1
+}
+
+is_target_origin_suite() {
+  local suite="$1"
+  [[ -n "$suite" ]] || return 1
+  case "$suite" in
+    "${PIN_TARGET_CODENAME}"|"${PIN_TARGET_CODENAME}-"*) return 0 ;;
+  esac
+  return 1
+}
+
+# Kernel/image/header/meta cross-release decision: suite provenance first.
+# Never classify as target solely from kernel ABI (5.4 on Bionic AWS is valid).
+is_cross_release_kernel_candidate() {
+  local ver="$1" suite="${2:-}"
+  [[ -n "$ver" ]] || return 1
+  if is_source_origin_suite "$suite"; then
+    return 1
+  fi
+  if is_target_origin_suite "$suite"; then
+    return 0
+  fi
+  if [[ "$ver" == *"~${PIN_SOURCE_VERSION}"* ]]; then
+    return 1
+  fi
+  if [[ "$ver" == *"~${PIN_TARGET_VERSION}"* ]]; then
+    return 0
+  fi
+  return 1
+}
+
 cross_release_query_policy() {
   # Args: pkg, then apt-get/apt-cache -o options...
   # On query failure: logs evidence path and dies (never treats failure as candidates=0).
@@ -5901,6 +5969,29 @@ cross_release_query_policy() {
     die "$EC_CROSS_RELEASE" "FAIL_CROSS_RELEASE_CANDIDATE_QUERY"
   fi
   cross_release_candidate_from_policy "$policy_out"
+}
+
+cross_release_query_policy_raw() {
+  # Like cross_release_query_policy but prints full policy text (for suite parse).
+  local pkg="$1"
+  shift
+  local policy_out policy_rc=0 errf
+  errf="${CROSS_RELEASE_TMP}/policy-${pkg}.err"
+  set +e
+  policy_out="$(apt-cache "$@" policy "$pkg" 2>"$errf")"
+  policy_rc=$?
+  set -e
+  if [[ "$policy_rc" -ne 0 ]]; then
+    log ERROR "CROSS_RELEASE_CANDIDATE_QUERY=FAIL"
+    log ERROR "QUERY_EXIT_CODE=${policy_rc}"
+    log ERROR "QUERY_PACKAGE=${pkg}"
+    if [[ -s "$errf" ]]; then
+      log ERROR "QUERY_STDERR=$(tr '\n' ' ' <"$errf" | head -c 400)"
+    fi
+    persist_temp_apt_failure_evidence "$CROSS_RELEASE_TMP" "$policy_rc" "cross_release_apt_cache_policy" || true
+    die "$EC_CROSS_RELEASE" "FAIL_CROSS_RELEASE_CANDIDATE_QUERY"
+  fi
+  printf '%s\n' "$policy_out"
 }
 
 check_cross_release_candidates() {
@@ -5963,14 +6054,17 @@ check_cross_release_candidates() {
       candidates=$((candidates + 1))
     fi
   done
-  # Also scan linux image/header metapackages that may be installed
-  local inst
+  # Also scan linux image/header metapackages that may be installed.
+  # Use suite provenance — never treat kernel ABI (e.g. 5.4 on Bionic AWS) as Focal.
+  local inst policy_out suite
   inst="$(dpkg-query -W -f='${Package}\n' 'linux-image-*' 'linux-headers-*' 2>/dev/null || true)"
   for pkg in $inst; do
-    cand="$(cross_release_query_policy "$pkg" "${apt_opts[@]}")"
+    policy_out="$(cross_release_query_policy_raw "$pkg" "${apt_opts[@]}")"
+    cand="$(cross_release_candidate_from_policy "$policy_out")"
     [[ -n "$cand" && "$cand" != "(none)" ]] || continue
-    if is_focal_version_for_pkg "$pkg" "$cand"; then
-      log ERROR "cross-release candidate: ${pkg} Candidate=${cand}"
+    suite="$(cross_release_candidate_suite_from_policy "$policy_out" "$cand")"
+    if is_cross_release_kernel_candidate "$cand" "$suite"; then
+      log ERROR "cross-release candidate: ${pkg} Candidate=${cand} OriginSuite=${suite:-unknown}"
       candidates=$((candidates + 1))
     fi
   done
