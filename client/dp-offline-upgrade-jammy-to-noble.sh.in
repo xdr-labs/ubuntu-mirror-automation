@@ -7395,16 +7395,11 @@ main() {
   [[ "$py3ver" == 3.12* ]] || { log ERROR "python3 not Noble-series (${py3ver})"; write_state FAILED; exit 1; }
   log INFO "PYTHON3_SERIES_CHECK=PASS version=${py3ver}"
   log INFO "PYTHON2_RESIDUAL_IGNORED_BY_PHASE1_POLICY=YES"
-  # Kernel must be Noble-series generic; Jammy 5.15 boot is not success.
+  # Running-kernel series/flavor is enforced by the mutually exclusive AWS vs
+  # generic post-hop gates below (not by a generic-only inline regex). A valid
+  # Noble AWS kernel such as 7.0.0-1011-aws must not be rejected here.
   kr="$(uname -r)"
-  case "$kr" in
-    6.[8-9]*-*-generic|6.1[0-9]*-*-generic|7.*-*-generic) ;;
-    5.15*-generic)
-      log ERROR "kernel still Jammy-series (${kr})"; write_state FAILED; exit 1 ;;
-    *)
-      log ERROR "kernel not Noble-series generic (${kr})"; write_state FAILED; exit 1 ;;
-  esac
-  log INFO "KERNEL_SERIES_CHECK=PASS version=${kr}"
+  log INFO "RUNNING_KERNEL=${kr}"
   # 2) dpkg/apt health
   dpkg --audit 2>/dev/null | grep -q . && { log ERROR "dpkg audit"; write_state FAILED; exit 1; }
   apt-get check >/dev/null 2>&1 || { log ERROR "broken deps"; write_state FAILED; exit 1; }
@@ -7456,19 +7451,32 @@ main() {
   fi
   log INFO "TIME_POSTBOOT_VALIDATION=PASS"
   emit_dns_time_result_contract || true
-  # 6) COMPLETED_NOBLE — only after DNS + time readiness
-  if ! validate_aws_post_hop_kernel_gate "24.04"; then
-    log ERROR "AWS kernel post-hop validation failed; refusing COMPLETED_NOBLE"
-    write_state FAILED
-    exit 1
-  fi
-  if declare -F validate_generic_running_kernel_postboot >/dev/null 2>&1; then
+  # 6) Kernel post-hop gate — AWS and generic are mutually exclusive.
+  # Profile authority: detect_aws_upgrade_profile (persisted source_kernel_flavor,
+  # running *-aws, or linux-aws package presence). Do not apply the generic
+  # Noble-series regex to an AWS profile host.
+  local aws_profile
+  aws_profile="$(detect_aws_upgrade_profile 2>/dev/null || true)"
+  if [[ "$aws_profile" == "aws" ]]; then
+    if ! validate_aws_post_hop_kernel_gate "24.04"; then
+      log ERROR "AWS kernel post-hop validation failed; refusing COMPLETED_NOBLE"
+      write_state FAILED
+      exit 1
+    fi
+    log INFO "GENERIC_POST_HOP_KERNEL_GATE=SKIP reason=aws_profile"
+  else
+    if ! declare -F validate_generic_running_kernel_postboot >/dev/null 2>&1; then
+      log ERROR "GENERIC_POST_HOP_KERNEL_GATE=FAIL reason=helper_missing"
+      write_state FAILED
+      exit 1
+    fi
     if ! validate_generic_running_kernel_postboot "24.04"; then
       log ERROR "GENERIC_POST_HOP_KERNEL_GATE=FAIL"
       write_state FAILED
       exit 1
     fi
   fi
+  # 7) COMPLETED_NOBLE — only after DNS + time readiness + kernel gate
   write_state COMPLETED_NOBLE
   mkdir -p /etc/motd.d 2>/dev/null || true
   cat >"$MOTD" <<EOF
