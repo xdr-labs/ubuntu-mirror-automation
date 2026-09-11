@@ -2193,6 +2193,7 @@ Primary (fresh Ubuntu 24.04 Mirror Manager workflow):
   mirror-manager          Interactive whiptail manager (R2 OS Core + ACPS Phase 2)
   enable-http             Enable nginx HTTP distribution (non-interactive)
   verify-readiness        Print UPGRADE_READINESS (non-interactive)
+  diagnose-mirror-runtime Read-only heavy/client/HTTP/nginx/readiness snapshot
 
   Bootstrap a clean host with: sudo ./install.sh
   Re-open GUI after install:   sudo ubuntu-offline-mirror mirror-manager
@@ -2627,6 +2628,14 @@ cmd_verify_readiness() {
   bash "$script" verify-readiness "$@"
 }
 
+cmd_diagnose_mirror_runtime() {
+  local script
+  script="$(_mirror_manager_script)" || die "install-dp-upgrade-mirror.sh not found"
+  # Delegate only — authoritative implementation lives in Mirror Manager
+  # (cmd_diagnose_mirror_runtime / mm_diagnose_mirror_runtime_state).
+  bash "$script" diagnose-mirror-runtime "$@"
+}
+
 main() {
   local cmd="${1:-}"
   case "$cmd" in
@@ -2665,6 +2674,7 @@ main() {
     mirror-manager) shift; cmd_mirror_manager "$@" ;;
     enable-http) shift; cmd_enable_http "$@" ;;
     verify-readiness) shift; cmd_verify_readiness "$@" ;;
+    diagnose-mirror-runtime) shift; cmd_diagnose_mirror_runtime "$@" ;;
     -h|--help|help|"") usage; [[ -n "$cmd" ]] || exit 1; exit 0 ;;
     *) die "Unknown command: $cmd (see --help)" ;;
   esac
