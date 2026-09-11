@@ -116,6 +116,7 @@ UM_RUNTIME_CLIENT_FILES=(
   dp-client-hop-launcher.sh.in
   dp-postboot-readiness-policy.sh.inc
   dp-postboot-aws-kernel-gate.sh.inc
+  dp-postboot-aws-package-closure-recovery.sh.inc
   dp-postboot-generic-kernel-gate.sh.inc
   dp-aws-semantic-contract.sh.inc
   stage-dp-phase2.sh
