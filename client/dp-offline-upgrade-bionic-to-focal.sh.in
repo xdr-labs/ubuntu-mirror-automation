@@ -991,6 +991,8 @@ is_critical_os_hold_package() {
 
 @@AWS_KERNEL_GATE_LIB@@
 
+@@AWS_PACKAGE_CLOSURE_RECOVERY_LIB@@
+
 @@GENERIC_KERNEL_GATE_LIB@@
 
 @@SOURCE_PRODUCT_HELPER@@
@@ -9616,6 +9618,11 @@ handle_existing_state() {
       log ERROR "PREVIOUS_HOP_STATE=${st}"
       log ERROR "CURRENT_OS=${ver}"
       die "$EC_STATE" "FAIL_PREVIOUS_HOP_HANDOFF_REJECTED (state=${st} os=${ver})"
+    fi
+    # Recoverable AWS postboot package-closure repair (bounded). Never synthesizes
+    # COMPLETED_FOCAL; authoritative postboot validator remains the sole promoter.
+    if declare -F try_aws_postboot_package_closure_recovery >/dev/null 2>&1; then
+      try_aws_postboot_package_closure_recovery "$st" || exit $?
     fi
     log INFO "Focal with state='${st}' - running post-boot verification only"
     if [[ -x "$(hostpath "$POSTBOOT_PATH")" ]]; then
