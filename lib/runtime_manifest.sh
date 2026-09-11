@@ -60,6 +60,7 @@ UM_RUNTIME_SCRIPT_LIB_PYTHON_MODULES=(
   assert_client_executable_shebang.py
   aws_os_core_completeness.py
   discovery_profiles.py
+  distupgrade_source_compat.py
 )
 
 # ---------------------------------------------------------------------------
@@ -77,6 +78,7 @@ UM_RUNTIME_SCRIPT_LIB_PYTHON_EXECUTABLES=(
   phase2_ubuntu_prerequisites.py
   xenial_bionic_upgrade_analysis.py
   selective_mirror.py
+  validate_selective_mirror.py
 )
 
 # Extra files under scripts/lib/ (subdirectories). Includes Phase 2 bringup
