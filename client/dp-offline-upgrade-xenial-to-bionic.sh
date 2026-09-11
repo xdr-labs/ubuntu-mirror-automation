@@ -5470,6 +5470,9 @@ pkg_installed_version() {
 
 is_bionic_version_for_pkg() {
   # Return 0 if version looks like a Bionic (18.04) core package.
+  # Kernel ABI alone is NOT a release discriminator: Xenial HWE shipped 4.15.
+  # Kernel packages use suite provenance / ~YY.MM markers via
+  # is_cross_release_kernel_candidate instead.
   local pkg="$1" ver="$2"
   [[ -n "$ver" ]] || return 1
   case "$pkg" in
@@ -5481,8 +5484,9 @@ is_bionic_version_for_pkg() {
     python3) [[ "$ver" == 3.6* ]] && return 0 ;;
     ubuntu-server) [[ "$ver" == 1.417* ]] && return 0 ;;
     ubuntu-minimal|ubuntu-standard) [[ "$ver" == 1.417* ]] && return 0 ;;
-    linux-image-*|linux-headers-*|linux-generic|linux-virtual|linux-image-generic|linux-image-virtual)
-      [[ "$ver" == 4.15* || "$ver" == *4.15* ]] && return 0
+    linux-image-*|linux-headers-*|linux-modules-*|linux-generic|linux-virtual|linux-image-generic|linux-image-virtual|linux-aws|linux-image-aws|linux-headers-aws)
+      [[ "$ver" == *"~${PIN_TARGET_VERSION}"* || "$ver" == *'~18.04'* ]] && return 0
+      return 1
       ;;
     ubuntu-release-upgrader-core|update-manager-core)
       # Bionic upgrader packages often carry 1:18.04 in version
@@ -5617,6 +5621,70 @@ EOF
 EOF
 }
 
+# Extract origin suite/pocket (e.g. xenial-security, bionic-updates) for a candidate
+# version from apt-cache policy Version table. Empty when unknown/local-only.
+cross_release_candidate_suite_from_policy() {
+  local policy_out="$1" cand="$2"
+  [[ -n "$cand" && "$cand" != "(none)" ]] || return 0
+  awk -v cand="$cand" '
+    BEGIN { found=0 }
+    $1 == "***" && $2 == cand { found=1; next }
+    $1 == cand { found=1; next }
+    found && /^[[:space:]]+[0-9]+[[:space:]]+http/ {
+      for (i = 1; i <= NF; i++) {
+        if ($i ~ /^[a-z0-9.]+(-[a-z0-9.]+)?\/[a-z0-9.]+$/) {
+          split($i, parts, "/")
+          print parts[1]
+          exit
+        }
+      }
+      found=0
+      next
+    }
+    found && /^[[:space:]]+[0-9]+[[:space:]]+\// { found=0; next }
+    found && /^[^[:space:]]/ { found=0 }
+  ' <<<"$policy_out"
+}
+
+is_source_origin_suite() {
+  local suite="$1"
+  [[ -n "$suite" ]] || return 1
+  case "$suite" in
+    "${PIN_SOURCE_CODENAME}"|"${PIN_SOURCE_CODENAME}-"*) return 0 ;;
+  esac
+  return 1
+}
+
+is_target_origin_suite() {
+  local suite="$1"
+  [[ -n "$suite" ]] || return 1
+  case "$suite" in
+    "${PIN_TARGET_CODENAME}"|"${PIN_TARGET_CODENAME}-"*) return 0 ;;
+  esac
+  return 1
+}
+
+# Kernel/image/header/meta cross-release decision: suite provenance first.
+# Never classify as target solely from kernel ABI (4.15 on Xenial HWE is valid).
+# Also treat ~16.04 as source and ~18.04 as target via PIN_* version markers.
+is_cross_release_kernel_candidate() {
+  local ver="$1" suite="${2:-}"
+  [[ -n "$ver" ]] || return 1
+  if is_source_origin_suite "$suite"; then
+    return 1
+  fi
+  if is_target_origin_suite "$suite"; then
+    return 0
+  fi
+  if [[ "$ver" == *"~${PIN_SOURCE_VERSION}"* ]]; then
+    return 1
+  fi
+  if [[ "$ver" == *"~${PIN_TARGET_VERSION}"* ]]; then
+    return 0
+  fi
+  return 1
+}
+
 check_cross_release_candidates() {
   # Read-only: private APT lists against SOURCE suites only; never mutates host sources.
   local tmp repo sim candidates=0
@@ -5656,7 +5724,8 @@ check_cross_release_candidates() {
   # Policy check on core packages.
   # Buffer apt-cache output first - never pipe into awk with early exit under pipefail
   # (SIGPIPE/rc=141 would silently abort the outer client via set -e).
-  local pkg cand policy_out policy_rc
+  # Xenial keeps continue-on-query-fail for non-linux core packages.
+  local pkg cand policy_out policy_rc suite
   for pkg in $CORE_GUARD_PACKAGES; do
     set +e
     policy_out="$(apt-cache "${apt_opts[@]}" policy "$pkg" 2>/dev/null)"
@@ -5670,7 +5739,9 @@ check_cross_release_candidates() {
       candidates=$((candidates + 1))
     fi
   done
-  # Also scan linux image/header metapackages that may be installed
+  # Also scan linux image/header metapackages that may be installed.
+  # Use suite provenance when policy succeeds — skip xenial*; fail on bionic*;
+  # ~16.04 is source, ~18.04 is target via is_cross_release_kernel_candidate.
   local inst
   inst="$(dpkg-query -W -f='${Package}\n' 'linux-image-*' 'linux-headers-*' 2>/dev/null || true)"
   for pkg in $inst; do
@@ -5681,8 +5752,9 @@ check_cross_release_candidates() {
     [[ "$policy_rc" -eq 0 ]] || continue
     cand="$(awk '/^[[:space:]]*Candidate:/{print $2; exit}' <<<"$policy_out")"
     [[ -n "$cand" && "$cand" != "(none)" ]] || continue
-    if is_bionic_version_for_pkg "$pkg" "$cand"; then
-      log ERROR "cross-release candidate: ${pkg} Candidate=${cand}"
+    suite="$(cross_release_candidate_suite_from_policy "$policy_out" "$cand")"
+    if is_cross_release_kernel_candidate "$cand" "$suite"; then
+      log ERROR "cross-release candidate: ${pkg} Candidate=${cand} OriginSuite=${suite:-unknown}"
       candidates=$((candidates + 1))
     fi
   done
