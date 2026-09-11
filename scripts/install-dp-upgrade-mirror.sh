@@ -779,18 +779,34 @@ gui_enable_http() {
   load_mirror_defaults
   mm_load_gui_config
   engine_resolve_paths
-  if ! mm_artifacts_ready_for_http; then
+  local gate_msg="" heavy_ready=0
+  gate_msg="$(mm_enable_http_gate_status 2>/dev/null)" && heavy_ready=1 || heavy_ready=0
+  if [[ "$heavy_ready" -ne 1 ]]; then
     mm_whiptail_msg "Enable HTTP Distribution" \
-      "Upgrade files are not ready.
+      "Heavy upgrade artifacts are not ready.
+
+${gate_msg}
 
 Run:
 2 Download and Prepare Upgrade Files
 
-before enabling HTTP distribution."
+before enabling HTTP distribution.
+Do NOT skip Menu 2 when OS Core or Phase 2 is missing/invalid."
     return 0
   fi
+  # Heavy artifacts are ready. Stale/missing clients recover via local
+  # REBUILD_SIGN_PUBLISH inside engine_enable_http_distribution — never Menu 2.
+  if ! mm_artifacts_ready_for_http 2>/dev/null; then
+    mm_info "Heavy upgrade artifacts: READY"
+    mm_info "$(printf '%s\n' "$gate_msg" | grep -E '^(Client set|Client recovery|Heavy artifact download required):' || true)"
+    mm_info "CLIENT_RECOVERY=REBUILD_SIGN_PUBLISH (local-fs only; no R2/ACPS download)"
+  else
+    mm_info "Heavy upgrade artifacts: READY"
+    mm_info "Client set: CURRENT_VERIFIED"
+    mm_info "Heavy artifact download required: NO"
+  fi
   dp2_set_version "${TARGET_DP_VERSION}"
-  local backend_rc=0 tmp stable bytes
+  local backend_rc=0 tmp stable bytes errexit_was_on=0
   stable="$(dp2_stable_bundle_name)"
   bytes="$(stat -c%s "${MM_DP_PHASE2_ROOT}/${TARGET_DP_VERSION}/${stable}" 2>/dev/null || echo 0)"
 
@@ -804,7 +820,10 @@ Phase 2 Target: ${PHASE2_TARGET_VERSION}
 Phase 2 bundle: ${stable}
 Size: $(mm_format_bytes "$bytes")
 
+$(printf '%s\n' "$gate_msg")
+
 Verifying the Phase 2 bundle SHA256 before enabling HTTP distribution.
+Stale client sets are rebuilt/signed locally (no heavy re-download).
 Long checksum steps print a heartbeat every 30 seconds.
 Do not interrupt or close this terminal.
 ============================================================
@@ -813,12 +832,17 @@ EOF
   export MM_LIVE_PROGRESS=1
   export MM_SHA256_OPERATION=enable-http
   tmp="$(mktemp)"
+  case $- in *e*) errexit_was_on=1 ;; esac
   set +e
   # Capture transcript for the result textbox. Live progress is mirrored to
   # /dev/tty by mm_log under MM_LIVE_PROGRESS — do not also tee.
   engine_enable_http_distribution >"$tmp" 2>&1
   backend_rc=$?
-  set -e
+  if [[ "$errexit_was_on" -eq 1 ]]; then
+    set -e
+  else
+    set +e
+  fi
   unset MM_LIVE_PROGRESS
   unset MM_SHA256_OPERATION
 
@@ -1811,6 +1835,15 @@ cmd_verify_readiness() {
   engine_compute_readiness
 }
 
+cmd_diagnose_mirror_runtime() {
+  # Read-only: no root required for diagnosis of local status/nginx state,
+  # but load the same path resolution as other commands.
+  load_mirror_defaults
+  mm_load_gui_config 2>/dev/null || true
+  engine_resolve_paths 2>/dev/null || true
+  mm_diagnose_mirror_runtime_state
+}
+
 cmd_enable_http() {
   mm_require_root
   load_mirror_defaults
@@ -1831,6 +1864,7 @@ Commands:
   download-and-prepare    Non-interactive prepare (saved config + fixed R2 URL)
   verify-readiness        Print UPGRADE_READINESS
   enable-http             Install/enable nginx site and smoke-test HTTP
+  diagnose-mirror-runtime Read-only heavy/client/HTTP/nginx/readiness snapshot
 EOF
 }
 
@@ -1860,6 +1894,7 @@ main() {
     download-and-prepare) cmd_download_and_prepare ;;
     verify-readiness) cmd_verify_readiness ;;
     enable-http) cmd_enable_http ;;
+    diagnose-mirror-runtime) cmd_diagnose_mirror_runtime ;;
     *) usage; exit 1 ;;
   esac
 }

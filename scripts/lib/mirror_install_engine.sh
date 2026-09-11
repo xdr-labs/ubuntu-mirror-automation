@@ -318,11 +318,13 @@ engine_assess_client_set_for_finalize() {
   fi
 
   local provenance_out provenance_rc=0 state_line action_line reason_line expected_fpr=""
+  local errexit_was_on=0
   if [[ -f "${MM_CONFIG_DIR}/client-signing/fingerprint" ]]; then
     expected_fpr="$(tr -d '[:space:]' <"${MM_CONFIG_DIR}/client-signing/fingerprint" | tr '[:lower:]' '[:upper:]')"
   elif [[ -n "${LOCAL_KEY_FINGERPRINT:-}" ]]; then
     expected_fpr="${LOCAL_KEY_FINGERPRINT}"
   fi
+  case $- in *e*) errexit_was_on=1 ;; esac
   set +e
   provenance_out="$(python3 "${MM_PROJECT_ROOT}/scripts/lib/client_build_provenance.py" classify-client-set \
     --project-root "$MM_PROJECT_ROOT" \
@@ -332,7 +334,11 @@ engine_assess_client_set_for_finalize() {
     --expected-mode "${PREPARATION_MODE:-FULL}" \
     --selective-root "${MM_SELECTIVE_ROOT:-}" 2>&1)"
   provenance_rc=$?
-  set -e
+  if [[ "$errexit_was_on" -eq 1 ]]; then
+    set -e
+  else
+    set +e
+  fi
   state_line="$(printf '%s\n' "$provenance_out" | awk -F= '$1=="CLIENT_SET_STATE"{print $2; exit}')"
   action_line="$(printf '%s\n' "$provenance_out" | awk -F= '$1=="CLIENT_SET_ACTION"{print $2; exit}')"
   reason_line="$(printf '%s\n' "$provenance_out" | awk -F= '$1=="CLIENT_SET_REASON"{print substr($0,index($0,"=")+1); exit}')"
@@ -3421,8 +3427,13 @@ engine_enable_http_distribution() {
         engine_bind_reused_client_set_workflow \
           || mm_die "HTTP_DISTRIBUTION=FAIL client workflow binding"
       elif [[ -f "${MM_SELECTIVE_ROOT}/state/READY" ]]; then
+        mm_info "Heavy upgrade artifacts: READY"
+        mm_info "Client set: ${CLIENT_SET_STATE}"
+        mm_info "Client recovery: REBUILD_SIGN_PUBLISH"
+        mm_info "Heavy artifact download required: NO"
         mm_info "CLIENT_FILES_ON_DISK_READY=STALE_OR_MISSING — rebuilding current source"
         mm_info "DOWNLOAD_PREPARE_USES_AUTHORITATIVE_CLIENT_FINALIZER=YES"
+        mm_info "CLIENT_RECOVERY_CONTENT_SOURCE=local-fs"
         engine_rebuild_publish_local_client_set 1 \
           || mm_die "HTTP_DISTRIBUTION=FAIL client rebuild"
         clients_on_disk=1

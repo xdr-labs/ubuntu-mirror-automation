@@ -1223,6 +1223,20 @@ mm_upgrade_readiness_display() {
   printf 'NOT VERIFIED\n'
 }
 
+mm_heavy_artifacts_ready_for_http() {
+  # Heavy OS Core + Phase 2 only. Client provenance is a separate gate —
+  # stale clients recover via local REBUILD_SIGN_PUBLISH, not Menu 2.
+  local bundle_ck os_ready
+  bundle_ck="$(mm_status_get PHASE2_BUNDLE_CHECKSUM)"
+  [[ "$bundle_ck" == "PASS" ]] || return 1
+  if mm_is_phase2_only; then
+    return 0
+  fi
+  os_ready="$(mm_status_get OS_MIRROR_READY)"
+  [[ "$os_ready" == "PASS" ]] || return 1
+  return 0
+}
+
 mm_artifacts_ready_for_http() {
   local bundle_ck os_ready
   bundle_ck="$(mm_status_get PHASE2_BUNDLE_CHECKSUM)"
@@ -1238,10 +1252,186 @@ mm_artifacts_ready_for_http() {
   return 0
 }
 
+# Classify why Enable HTTP cannot proceed yet. Prints operator-facing lines.
+# Returns 0 when heavy artifacts are ready (client may still be stale).
+mm_enable_http_gate_status() {
+  local heavy=FAIL client_state=ABSENT client_action=REBUILD_SIGN_PUBLISH
+  local heavy_download=YES
+  if mm_heavy_artifacts_ready_for_http; then
+    heavy=READY
+    heavy_download=NO
+  fi
+  if mm_is_phase2_only; then
+    if mm_client_files_ready_phase2 "${MM_CLIENT_ROOT}" 2>/dev/null; then
+      client_state=CURRENT_VERIFIED
+      client_action=REUSE_CURRENT
+    else
+      client_state=ABSENT
+      client_action=REBUILD_SIGN_PUBLISH
+    fi
+  elif [[ -f "${MM_CLIENT_ROOT}/client-set.env" ]]; then
+    local out="" fpr_expected=""
+    if [[ -f "${MM_CONFIG_DIR}/client-signing/fingerprint" ]]; then
+      fpr_expected="$(tr -d '[:space:]' <"${MM_CONFIG_DIR}/client-signing/fingerprint" | tr '[:lower:]' '[:upper:]')"
+    fi
+    out="$(python3 "${MM_PROJECT_ROOT}/scripts/lib/client_build_provenance.py" classify-client-set \
+      --project-root "$MM_PROJECT_ROOT" \
+      --client-root "${MM_CLIENT_ROOT}" \
+      --expected-mirror "${MIRROR_HTTP_URL:-}" \
+      --expected-fingerprint "$fpr_expected" \
+      --expected-mode "${PREPARATION_MODE:-FULL}" \
+      --selective-root "${MM_SELECTIVE_ROOT:-${SELECTIVE_ROOT:-}}" 2>/dev/null || true)"
+    client_state="$(printf '%s\n' "$out" | awk -F= '$1=="CLIENT_SET_STATE"{print $2; exit}')"
+    client_action="$(printf '%s\n' "$out" | awk -F= '$1=="CLIENT_SET_ACTION"{print $2; exit}')"
+    [[ -n "$client_state" ]] || client_state=STALE_BUILD_INPUT
+    [[ -n "$client_action" ]] || client_action=REBUILD_SIGN_PUBLISH
+  fi
+  printf 'Heavy upgrade artifacts: %s\n' "$heavy"
+  printf 'Client set: %s\n' "$client_state"
+  printf 'Client recovery: %s\n' "$client_action"
+  printf 'Heavy artifact download required: %s\n' "$heavy_download"
+  [[ "$heavy" == "READY" ]]
+}
+
 mm_http_distribution_enabled() {
   local v
   v="$(mm_status_get HTTP_DISTRIBUTION)"
   [[ "$v" == "ENABLED" ]]
+}
+
+# Read-only operator diagnostic: heavy artifacts, client provenance, signing,
+# workflow generation, status HTTP value vs actual nginx, endpoint reachability,
+# and readiness currency. Does not mutate workflow/state. Installed runtime is
+# sufficient — Git checkout is not required.
+mm_diagnose_mirror_runtime_state() {
+  local nginx_active=NO nginx_enabled=NO http_status endpoint_rc=1 endpoint=UNREACHABLE
+  local heavy=FAIL phase2=FAIL client_files=NO client_state=ABSENT signing_state=UNKNOWN
+  local wf_gen="" pub_gen="" ready_gen="" readiness="" mirror_url=""
+  local fpr_file="${MM_CONFIG_DIR}/client-signing/fingerprint"
+  local fpr_expected="" fpr_meta=""
+
+  printf 'DIAGNOSE_MIRROR_RUNTIME=START\n'
+  printf 'DIAGNOSE_MUTATION=NO\n'
+  printf 'PROJECT_ROOT=%s\n' "${MM_PROJECT_ROOT:-}"
+  printf 'CLIENT_ROOT=%s\n' "${MM_CLIENT_ROOT:-}"
+  printf 'SELECTIVE_ROOT=%s\n' "${MM_SELECTIVE_ROOT:-}"
+
+  if [[ "$(mm_status_get OS_MIRROR_READY 2>/dev/null || true)" == "PASS" ]] \
+    || mm_is_phase2_only 2>/dev/null; then
+    if mm_is_phase2_only 2>/dev/null; then
+      heavy=NOT_REQUIRED
+    else
+      heavy=PASS
+    fi
+  fi
+  if [[ "$(mm_status_get PHASE2_BUNDLE_CHECKSUM 2>/dev/null || true)" == "PASS" ]]; then
+    phase2=PASS
+  fi
+  printf 'HEAVY_ARTIFACTS=%s\n' "$heavy"
+  printf 'PHASE2_BUNDLE=%s\n' "$phase2"
+  printf 'OS_MIRROR_READY=%s\n' "$(mm_status_get OS_MIRROR_READY 2>/dev/null || true)"
+  printf 'PHASE2_BUNDLE_CHECKSUM=%s\n' "$(mm_status_get PHASE2_BUNDLE_CHECKSUM 2>/dev/null || true)"
+  printf 'PHASE2_BUNDLE_ENTRY_COUNT=%s\n' "$(mm_status_get PHASE2_BUNDLE_ENTRY_COUNT 2>/dev/null || true)"
+
+  if mm_is_phase2_only 2>/dev/null; then
+    if mm_client_files_ready_phase2 "${MM_CLIENT_ROOT}" 2>/dev/null; then
+      client_files=YES
+      client_state=PHASE2_HELPERS_READY
+    fi
+  elif mm_client_files_ready "${MM_CLIENT_ROOT}" 2>/dev/null; then
+    client_files=YES
+  fi
+  printf 'CLIENT_FILES_PRESENT=%s\n' "$client_files"
+
+  if [[ -f "${MM_CLIENT_ROOT}/client-set.env" ]]; then
+    local out=""
+    mirror_url="${MIRROR_HTTP_URL:-}"
+    [[ -n "$mirror_url" ]] || mirror_url="http://${MIRROR_SERVER_IP:-}"
+    [[ -f "$fpr_file" ]] && fpr_expected="$(tr -d '[:space:]' <"$fpr_file" | tr '[:lower:]' '[:upper:]')"
+    out="$(python3 "${MM_PROJECT_ROOT}/scripts/lib/client_build_provenance.py" classify-client-set \
+      --project-root "$MM_PROJECT_ROOT" \
+      --client-root "${MM_CLIENT_ROOT}" \
+      --expected-mirror "$mirror_url" \
+      --expected-fingerprint "$fpr_expected" \
+      --expected-mode "${PREPARATION_MODE:-FULL}" \
+      --selective-root "${MM_SELECTIVE_ROOT:-}" 2>/dev/null || true)"
+    client_state="$(printf '%s\n' "$out" | awk -F= '$1=="CLIENT_SET_STATE"{print $2; exit}')"
+    [[ -n "$client_state" ]] || client_state=STALE_BUILD_INPUT
+    fpr_meta="$(awk -F= '$1=="CLIENT_SIGNING_FINGERPRINT"{print toupper($2); exit}' \
+      "${MM_CLIENT_ROOT}/client-set.env" 2>/dev/null || true)"
+    if [[ -n "$fpr_expected" && -n "$fpr_meta" && "$fpr_expected" == "$fpr_meta" ]]; then
+      signing_state=CURRENT
+    elif [[ -n "$fpr_expected" && -n "$fpr_meta" ]]; then
+      signing_state=STALE
+    elif [[ -z "$fpr_expected" ]]; then
+      signing_state=MISSING_LOCAL_FINGERPRINT
+    else
+      signing_state=UNKNOWN
+    fi
+    printf 'CLIENT_SET_GENERATION_ID=%s\n' \
+      "$(awk -F= '$1=="CLIENT_SET_GENERATION_ID"{print $2; exit}' "${MM_CLIENT_ROOT}/client-set.env" 2>/dev/null || true)"
+    printf 'CLIENT_BUILD_INPUT_SHA256=%s\n' \
+      "$(awk -F= '$1=="CLIENT_BUILD_INPUT_SHA256"{print $2; exit}' "${MM_CLIENT_ROOT}/client-set.env" 2>/dev/null || true)"
+  fi
+  printf 'CLIENT_PROVENANCE=%s\n' "$client_state"
+  printf 'SIGNING_IDENTITY=%s\n' "$signing_state"
+
+  if declare -F mm_wf_get >/dev/null 2>&1; then
+    wf_gen="$(mm_wf_get CLIENT_SET_GENERATION_ID 2>/dev/null || true)"
+    pub_gen="$(mm_wf_get HTTP_PUBLICATION_GENERATION_ID 2>/dev/null || true)"
+    ready_gen="$(mm_wf_get READINESS_VERIFIED_GENERATION_ID 2>/dev/null || true)"
+  fi
+  printf 'WORKFLOW_CLIENT_SET_GENERATION_ID=%s\n' "$wf_gen"
+  printf 'HTTP_PUBLICATION_GENERATION_ID=%s\n' "$pub_gen"
+  printf 'READINESS_VERIFIED_GENERATION_ID=%s\n' "$ready_gen"
+
+  http_status="$(mm_status_get HTTP_DISTRIBUTION 2>/dev/null || true)"
+  [[ -n "$http_status" ]] || http_status=UNKNOWN
+  printf 'STATUS_HTTP_DISTRIBUTION=%s\n' "$http_status"
+
+  if command -v systemctl >/dev/null 2>&1; then
+    if systemctl is-active --quiet nginx 2>/dev/null; then
+      nginx_active=YES
+    fi
+    if systemctl is-enabled nginx >/dev/null 2>&1; then
+      nginx_enabled=YES
+    fi
+  fi
+  printf 'NGINX_ACTIVE=%s\n' "$nginx_active"
+  printf 'NGINX_ENABLED=%s\n' "$nginx_enabled"
+
+  mirror_url="${MIRROR_HTTP_URL:-}"
+  [[ -n "$mirror_url" ]] || {
+    [[ -n "${MIRROR_SERVER_IP:-}" ]] && mirror_url="http://${MIRROR_SERVER_IP}"
+  }
+  if [[ -n "$mirror_url" ]]; then
+    if command -v curl >/dev/null 2>&1; then
+      if curl -fsS --connect-timeout 2 --max-time 5 \
+        "${mirror_url%/}/client/public-keyring.gpg" -o /dev/null 2>/dev/null; then
+        endpoint=REACHABLE
+        endpoint_rc=0
+      else
+        endpoint=UNREACHABLE
+      fi
+    else
+      endpoint=CURL_MISSING
+    fi
+  else
+    endpoint=MIRROR_URL_UNSET
+  fi
+  printf 'HTTP_ENDPOINT=%s\n' "$endpoint"
+  printf 'MIRROR_HTTP_URL=%s\n' "${mirror_url}"
+
+  readiness="$(mm_status_get UPGRADE_READINESS 2>/dev/null || true)"
+  printf 'UPGRADE_READINESS=%s\n' "${readiness:-UNKNOWN}"
+  printf 'READINESS_RESULT=%s\n' "$(mm_status_get READINESS_RESULT 2>/dev/null || true)"
+  if [[ "$http_status" == "ENABLED" && "$nginx_active" != "YES" ]]; then
+    printf 'HTTP_STATUS_RUNTIME_INCONSISTENT=YES\n'
+  else
+    printf 'HTTP_STATUS_RUNTIME_INCONSISTENT=NO\n'
+  fi
+  printf 'DIAGNOSE_MIRROR_RUNTIME=PASS\n'
+  return 0
 }
 
 mm_client_commands_file() {
@@ -2382,7 +2572,7 @@ mm_client_set_current_source() {
   local root="${1:-${MM_CLIENT_ROOT}}"
   local module="${MM_PROJECT_ROOT}/scripts/lib/client_build_provenance.py"
   local mirror="${MIRROR_HTTP_URL:-}" expected_fpr="" mode="${PREPARATION_MODE:-FULL}"
-  local out rc=0
+  local out rc=0 errexit_was_on=0
   [[ -f "$module" ]] || return 1
   [[ -f "${root}/client-set.env" ]] || return 1
   if [[ -z "$mirror" && -n "${MIRROR_SERVER_IP:-}" ]]; then
@@ -2393,6 +2583,7 @@ mm_client_set_current_source() {
   elif [[ -n "${LOCAL_KEY_FINGERPRINT:-}" ]]; then
     expected_fpr="${LOCAL_KEY_FINGERPRINT}"
   fi
+  case $- in *e*) errexit_was_on=1 ;; esac
   set +e
   out="$(python3 "$module" verify-client-set \
     --project-root "$MM_PROJECT_ROOT" \
@@ -2402,7 +2593,11 @@ mm_client_set_current_source() {
     --expected-mode "$mode" \
     --selective-root "${MM_SELECTIVE_ROOT:-${SELECTIVE_ROOT:-}}" 2>&1)"
   rc=$?
-  set -e
+  if [[ "$errexit_was_on" -eq 1 ]]; then
+    set -e
+  else
+    set +e
+  fi
   if [[ "$rc" -ne 0 ]]; then
     printf '%s\n' "$out" >&2
     return "$rc"

@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Authoritative build-provenance identity for published DP client sets.
 
-Digest is computed from actual file contents and explicit runtime pins
+Digest is computed from actual file contents and authoritative install mode
+classes (0644/0755 from lib/runtime_manifest.sh), plus explicit runtime pins
 (Mirror URL, signing fingerprint, schema/command-block versions). Never from
 .git metadata alone, timestamps, temporary paths, generated outputs, private
-keys, or host-specific inode values inside CLIENT_BUILD_INPUT_SHA256.
+keys, host umask/group-write bits, or inode values inside
+CLIENT_BUILD_INPUT_SHA256.
 """
 from __future__ import print_function
 
@@ -18,9 +20,21 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 
-CLIENT_PROVENANCE_SCHEMA_VERSION = "1"
+# Schema 2: file digest uses authoritative install modes from runtime_manifest
+# (0644/0755), not host umask / checkout group-write bits.
+CLIENT_PROVENANCE_SCHEMA_VERSION = "2"
 COMMAND_BLOCK_VERSION = "SUBSHELL_V2"
 LAUNCHER_SCHEMA_VERSION = "2"
+# Must match um_runtime_install_tree executable entrypoints in
+# lib/runtime_manifest.sh for every path that participates in FILE_DIGEST.
+_RUNTIME_EXECUTABLE_ENTRYPOINTS = frozenset(
+    (
+        "scripts/ubuntu-offline-mirror.sh",
+        "scripts/install-dp-upgrade-mirror.sh",
+        "scripts/rebuild-publish-clients.sh",
+        "scripts/prepare-phase2-ubuntu-prerequisites.sh",
+    )
+)
 HOPS = (
     "xenial-to-bionic",
     "bionic-to-focal",
@@ -127,16 +141,64 @@ def _sha_file(path):
     return h.hexdigest()
 
 
+def authoritative_install_mode(relpath):
+    """Return the runtime-manifest install mode class for a provenance input.
+
+    Matches lib/runtime_manifest.sh um_runtime_install_tree:
+      - script entrypoints → 0755
+      - client/*.sh (not under client/lib/, not *.sh.in / *.sh.inc) → 0755
+      - vendor/*.sh → 0755
+      - everything else → 0644
+
+    Group-write / sticky / host-umask bits are intentionally excluded so a Git
+    checkout and an installed runtime of the same revision digest identically.
+    Executable vs non-executable remains part of semantic identity via the
+    authoritative 0755/0644 class.
+    """
+    rel = relpath.replace("\\", "/").lstrip("./")
+    base = os.path.basename(rel)
+    if rel in _RUNTIME_EXECUTABLE_ENTRYPOINTS:
+        return 0o755
+    if rel == "scripts/lib/os_core_package.py":
+        return 0o755
+    if rel.startswith("vendor/") and base.endswith(".sh"):
+        return 0o755
+    if rel.startswith("client/") and not rel.startswith("client/lib/"):
+        # bash [[ $f == *.sh ]] — ends with .sh, not .sh.in / .sh.inc
+        if base.endswith(".sh"):
+            return 0o755
+        return 0o644
+    return 0o644
+
+
 def _canonical_digest(root, relpaths):
     h = hashlib.sha256()
     for rel in sorted(set(relpaths)):
         path = os.path.join(root, rel)
         if not os.path.isfile(path):
             raise RuntimeError("CLIENT_BUILD_INPUT_MISSING=" + rel)
-        mode = stat.S_IMODE(os.stat(path).st_mode)
+        mode = authoritative_install_mode(rel)
         line = "%s\0%04o\0%s\n" % (rel, mode, _sha_file(path))
         h.update(line.encode("utf-8"))
     return h.hexdigest()
+
+
+def assert_install_mode_class(path, relpath):
+    """Fail closed when an installed path's exec bit disagrees with the contract.
+
+    Used by targeted tests / optional verify helpers. Digest itself uses the
+    authoritative class so source↔runtime parity holds even when a checkout
+    has spurious +x from umask.
+    """
+    expected = authoritative_install_mode(relpath)
+    actual = stat.S_IMODE(os.stat(path).st_mode)
+    expected_exec = bool(expected & 0o111)
+    actual_exec = bool(actual & 0o111)
+    if expected_exec != actual_exec:
+        raise RuntimeError(
+            "CLIENT_BUILD_INPUT_MODE_CLASS_MISMATCH=%s expected=%04o actual=%04o"
+            % (relpath, expected, actual)
+        )
 
 
 def all_input_files():
