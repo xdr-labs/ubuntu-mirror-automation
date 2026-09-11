@@ -607,6 +607,19 @@ def render_script(template_path, replacements, aws_contract_body=""):
     aws_body = contract_text + aws_gate_body
     body = body.replace(aws_token, aws_body)
 
+    aws_pcr_token = "@@AWS_PACKAGE_CLOSURE_RECOVERY_LIB@@"
+    aws_pcr_path = os.path.join(
+        client_dir, "dp-postboot-aws-package-closure-recovery.sh.inc"
+    )
+    if aws_pcr_token in body:
+        if not os.path.isfile(aws_pcr_path):
+            raise BuildError(
+                "missing AWS package-closure recovery helper: {}".format(aws_pcr_path)
+            )
+        with open(aws_pcr_path, "r", encoding="utf-8") as fh:
+            aws_pcr_body = fh.read().rstrip("\n") + "\n"
+        body = body.replace(aws_pcr_token, aws_pcr_body)
+
     generic_token = "@@GENERIC_KERNEL_GATE_LIB@@"
     generic_path = os.path.join(client_dir, "dp-postboot-generic-kernel-gate.sh.inc")
     if generic_token not in body:
