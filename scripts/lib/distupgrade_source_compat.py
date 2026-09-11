@@ -424,6 +424,30 @@ SERIES_VERSION_HINTS = OrderedDict([
 ])
 
 
+def sha_mapped_suites(sha_to_suite, sha):
+    """Return every suite a SHA maps to.
+
+    ``sha_to_suite`` may be a first-wins ``sha -> suite`` dict (legacy) or
+    ``sha -> [suite, ...]`` when the same physical object appears in multiple
+    release indexes (cross-hop shared packages).
+    """
+    if not sha_to_suite or not sha:
+        return []
+    key = (sha or '').strip().lower()
+    val = sha_to_suite.get(key)
+    if val is None and key != sha:
+        val = sha_to_suite.get(sha)
+    if val is None:
+        return []
+    if isinstance(val, (list, tuple)):
+        out = []
+        for item in val:
+            if item and item not in out:
+                out.append(item)
+        return out
+    return [val] if val else []
+
+
 def _suite_candidates(row, preferred_series, sha_to_suite):
     """Collect ordered (suite, reason) candidates for a package row."""
     sha_to_suite = sha_to_suite or {}
@@ -443,8 +467,8 @@ def _suite_candidates(row, preferred_series, sha_to_suite):
     if host == 'security.ubuntu.com' and preferred_series:
         candidates.append(('%s-security' % preferred_series, 'repository_host_security'))
     sha = (row.get('sha256') or '').strip().lower()
-    if sha and sha in sha_to_suite:
-        candidates.append((sha_to_suite[sha], 'packages_index_sha256'))
+    for mapped in sha_mapped_suites(sha_to_suite, sha):
+        candidates.append((mapped, 'packages_index_sha256'))
     return candidates
 
 
@@ -505,6 +529,12 @@ def resolve_hop_suite(row, from_series, to_series, sha_to_suite=None):
             continue
         if allowed_source and suite not in allowed_source:
             continue
+        # Identical pool content often exists in both the hop's source-series
+        # index and the target-series index. A SHA hit on from_series alone is
+        # not proof this discovery row is pre-upgrade residue — fall through
+        # so a target-series SHA / archive-URL pocket can still win.
+        if reason == 'packages_index_sha256' and series == from_series:
+            continue
         return OrderedDict([
             ('source_suite', suite),
             ('source_pocket', pocket_from_suite(suite)),
@@ -517,18 +547,35 @@ def resolve_hop_suite(row, from_series, to_series, sha_to_suite=None):
     url = (row.get('original_url') or row.get('final_url') or row.get('source_url') or '').strip()
     sha = (row.get('sha256') or '').strip().lower()
 
-    # SHA maps to a non-target series (e.g. xenial residue on later hops).
-    if sha and sha in sha_to_suite:
-        mapped = sha_to_suite[sha]
-        mapped_series = series_from_suite(mapped)
-        if mapped_series and mapped_series != to_series:
-            return OrderedDict([
-                ('source_suite', mapped),
-                ('source_pocket', pocket_from_suite(mapped)),
-                ('resolved_from', 'non_target_series_sha256'),
-                ('role', 'source_series'),
-                ('error', ''),
-            ])
+    # SHA maps only to a series that is neither this hop's source nor target
+    # (e.g. xenial residue captured on a later hop). Shared packages whose SHA
+    # is in from_series (and possibly to_series) must not be omitted here.
+    mapped_suites = sha_mapped_suites(sha_to_suite, sha)
+    target_mapped = [
+        s for s in mapped_suites if series_from_suite(s) == to_series
+    ]
+    if target_mapped:
+        suite = target_mapped[0]
+        return OrderedDict([
+            ('source_suite', suite),
+            ('source_pocket', pocket_from_suite(suite)),
+            ('resolved_from', 'packages_index_sha256'),
+            ('role', 'target'),
+            ('error', ''),
+        ])
+    older_mapped = [
+        s for s in mapped_suites
+        if series_from_suite(s) not in (from_series, to_series, '')
+    ]
+    if older_mapped:
+        mapped = older_mapped[0]
+        return OrderedDict([
+            ('source_suite', mapped),
+            ('source_pocket', pocket_from_suite(mapped)),
+            ('resolved_from', 'non_target_series_sha256'),
+            ('role', 'source_series'),
+            ('error', ''),
+        ])
 
     # Version hint: any non-target series marker → omit (never invent target base).
     for series, hint in SERIES_VERSION_HINTS.items():
@@ -579,11 +626,20 @@ def resolve_hop_suite(row, from_series, to_series, sha_to_suite=None):
             ('error', ''),
         ])
 
-    # Archive/security URL whose SHA left current Packages (superseded pool object).
-    # Keep under updates/security — never invent blank→target base.
+    # Archive/security URL whose SHA left current Packages (superseded pool
+    # object), OR whose SHA is indexed only in this hop's source series (the
+    # identical .deb is reused by the target release). Keep under
+    # updates/security — never invent blank→target base, and never omit a
+    # discovery-selected shared package as source-series residue.
+    from_only_sha = bool(
+        mapped_suites
+        and from_series
+        and all(series_from_suite(s) == from_series for s in mapped_suites)
+    )
     if (
         host in ('archive.ubuntu.com', 'security.ubuntu.com', 'ports.ubuntu.com')
-        and sha and sha not in sha_to_suite
+        and sha
+        and (sha not in sha_to_suite or from_only_sha)
     ):
         suite = (
             '%s-security' % to_series
@@ -593,7 +649,10 @@ def resolve_hop_suite(row, from_series, to_series, sha_to_suite=None):
         return OrderedDict([
             ('source_suite', suite),
             ('source_pocket', pocket_from_suite(suite)),
-            ('resolved_from', 'stale_archive_url_target_pocket'),
+            ('resolved_from', (
+                'shared_source_series_sha256_target_pocket' if from_only_sha
+                else 'stale_archive_url_target_pocket'
+            )),
             ('role', 'target'),
             ('error', ''),
         ])

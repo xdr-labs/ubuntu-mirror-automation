@@ -236,6 +236,7 @@ MONITOR_RECENT_LINES="${DP_OFFLINE_MONITOR_RECENT_LINES:-15}"
 MONITOR_INTERRUPTED=0
 MONITOR_EXIT_REASON=""
 MONITOR_LOG_OFFSET=0
+MONITOR_ATTACH_LOG_OFFSET=0
 
 EC_OK=0
 EC_USAGE=2
@@ -10819,10 +10820,20 @@ reject_incomplete_reboot_or_postboot() {
 }
 
 log_has_terminal_failure_marker() {
-  local logf
+  local logf size offset chunk
   logf="$(hostpath "$LOG_FILE")"
   [[ -f "$logf" ]] || return 1
-  grep -qE 'STATE=FAILED|os_upgrade_result=FAIL|UPGRADE_FAILED=YES|FAIL_STAGE=' "$logf" 2>/dev/null
+  # Bind to this monitor attachment, not historical lines from a prior attempt.
+  offset="${MONITOR_ATTACH_LOG_OFFSET:-${MONITOR_LOG_OFFSET:-0}}"
+  [[ "$offset" =~ ^[0-9]+$ ]] || offset=0
+  size="$(wc -c <"$logf" | tr -d '[:space:]')"
+  [[ -n "$size" ]] || size=0
+  if [[ "$size" -le "$offset" ]]; then
+    return 1
+  fi
+  chunk="$(tail -c "+$((offset + 1))" "$logf" 2>/dev/null || true)"
+  [[ -n "$chunk" ]] || return 1
+  printf '%s' "$chunk" | grep -qE 'STATE=FAILED|os_upgrade_result=FAIL|UPGRADE_FAILED=YES|FAIL_STAGE='
 }
 
 monitor_runner_alive() {
@@ -11089,8 +11100,10 @@ monitor_upgrade_progress() {
   if [[ -f "$logf" ]]; then
     tail -n "$recent" "$logf" 2>/dev/null || true
     MONITOR_LOG_OFFSET="$(wc -c <"$logf" | tr -d '[:space:]')"
+    MONITOR_ATTACH_LOG_OFFSET="$MONITOR_LOG_OFFSET"
   else
     MONITOR_LOG_OFFSET=0
+    MONITOR_ATTACH_LOG_OFFSET=0
     echo "(log not created yet)"
   fi
   echo "--- live progress (new lines + heartbeat) ---"

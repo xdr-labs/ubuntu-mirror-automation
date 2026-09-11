@@ -56,6 +56,22 @@ AWS_DEB_NAME_RE = re.compile(
 
 SNAPD_REQUIRED_HOPS = frozenset(('xenial-to-bionic',))
 
+# Runtime dependency names that must resolve from a hop's own Packages indexes
+# whenever an indexed package Depends/Pre-Depends on them. Catches cross-hop
+# shared packages (identical SHA) omitted from a later hop's index.
+AWS_RUNTIME_DEPENDENCY_ROOTS = (
+    'linux-aws',
+    'linux-image-aws',
+)
+AWS_RUNTIME_DEPENDENCY_MUST_RESOLVE = frozenset((
+    'linux-aws',
+    'linux-image-aws',
+    'microcode-initrd',
+    'intel-microcode',
+    'amd64-microcode',
+    'iucode-tool',
+))
+
 # Hop ↔ Ubuntu VERSION_ID (target of the hop = completed userland series).
 HOP_TARGET_VERSION_ID = OrderedDict([
     ('xenial-to-bionic', '18.04'),

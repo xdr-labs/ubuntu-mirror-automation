@@ -57,6 +57,17 @@ except ImportError:  # pragma: no cover
         write_selective_generation_plan_json,
     )
 
+try:
+    from validate_selective_mirror import (
+        validate_aws_runtime_dependency_closure,
+        validate_per_hop_plan_membership,
+    )
+except ImportError:  # pragma: no cover
+    from scripts.lib.validate_selective_mirror import (  # type: ignore
+        validate_aws_runtime_dependency_closure,
+        validate_per_hop_plan_membership,
+    )
+
 # Schema 1 = legacy R2 / pre-generation-bound artifacts (intentionally supported
 # for materialize provenance fallback only). Schema 2 = generation-bound
 # AWS-aware OS Core (payload_manifest_sha256 + embedded plan + AWS contract).
@@ -769,6 +780,23 @@ def validate_package_tree(extract_root):
             "AWS_OS_CORE_SEMANTIC_COMPLETENESS=FAIL detail=%s errors=%s"
             % (aws_detail.get("result"), "; ".join(aws_errs))
         )
+    hop_ok, hop_errs, hop_detail = validate_per_hop_plan_membership(
+        payload_root, embedded_plan,
+    )
+    if hop_detail.get("result") not in ("PASS", "SKIPPED_NO_PLAN_DEBS") or not hop_ok:
+        if hop_detail.get("result") != "SKIPPED_NO_PLAN_DEBS":
+            raise OsCoreError(
+                "PER_HOP_PLAN_MEMBERSHIP=FAIL detail=%s errors=%s"
+                % (hop_detail.get("result"), "; ".join(hop_errs))
+            )
+    dep_ok, dep_errs, dep_detail = validate_aws_runtime_dependency_closure(
+        payload_root, plan=embedded_plan,
+    )
+    if not dep_ok:
+        raise OsCoreError(
+            "AWS_RUNTIME_DEPENDENCY_CLOSURE=FAIL detail=%s errors=%s"
+            % (dep_detail.get("result"), "; ".join(dep_errs))
+        )
     # Stash for callers; avoid printing from pure validate (cmd_verify logs).
     manifest = dict(manifest)
     manifest["aws_semantic_completeness"] = aws_detail.get("result") or "PASS"
@@ -832,6 +860,33 @@ def collect_from_selective_published(selective_root, payload_root):
     hops_src = os.path.join(published, "hops")
     if not os.path.isdir(hops_src):
         raise OsCoreError("SELECTIVE_HOPS_MISSING path=%s" % hops_src)
+
+    plan_path = os.path.join(selective_root, "state", "plan.json")
+    full_plan = {}
+    if os.path.isfile(plan_path):
+        try:
+            with open(plan_path, "r", encoding="utf-8") as fh:
+                full_plan = json.load(fh)
+        except (OSError, ValueError, TypeError):
+            full_plan = {}
+    if full_plan:
+        hop_ok, hop_errs, hop_detail = validate_per_hop_plan_membership(
+            published, full_plan,
+        )
+        if hop_detail.get("result") not in ("PASS", "SKIPPED_NO_PLAN_DEBS"):
+            raise OsCoreError(
+                "PER_HOP_PLAN_MEMBERSHIP=FAIL detail=%s errors=%s"
+                % (hop_detail.get("result"), "; ".join(hop_errs))
+            )
+        dep_ok, dep_errs, dep_detail = validate_aws_runtime_dependency_closure(
+            published, plan=full_plan,
+        )
+        if not dep_ok:
+            raise OsCoreError(
+                "AWS_RUNTIME_DEPENDENCY_CLOSURE=FAIL detail=%s errors=%s"
+                % (dep_detail.get("result"), "; ".join(dep_errs))
+            )
+
     for hop in SUPPORTED_HOPS:
         hop_src = os.path.join(hops_src, hop)
         if not os.path.isdir(hop_src):

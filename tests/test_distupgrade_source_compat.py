@@ -311,6 +311,61 @@ class TestPocketProvenance(unittest.TestCase):
         )
         self.assertEqual(resolved['source_suite'], 'bionic-updates')
 
+    def test_shared_sha_multi_suite_resolves_target(self):
+        sha = 'e' * 64
+        sha_map = {sha: ['bionic', 'focal-updates']}
+        row = {
+            'suite': '',
+            'sha256': sha,
+            'original_url': (
+                'http://archive.ubuntu.com/ubuntu/pool/main/i/iucode-tool/'
+                'iucode-tool_2.3.1-1_amd64.deb'
+            ),
+            'repository_host': 'archive.ubuntu.com',
+            'version': '2.3.1-1',
+            'filename': 'iucode-tool_2.3.1-1_amd64.deb',
+        }
+        resolved = dsc.resolve_hop_suite(
+            row, 'bionic', 'focal', sha_to_suite=sha_map,
+        )
+        self.assertEqual(resolved.get('error'), '')
+        self.assertEqual(resolved.get('role'), 'target')
+        self.assertEqual(resolved.get('source_suite'), 'focal-updates')
+
+    def test_shared_sha_source_series_only_does_not_omit_as_residue(self):
+        sha = 'f' * 64
+        row = {
+            'suite': '',
+            'sha256': sha,
+            'original_url': (
+                'http://archive.ubuntu.com/ubuntu/pool/main/i/iucode-tool/'
+                'iucode-tool_2.3.1-1_amd64.deb'
+            ),
+            'repository_host': 'archive.ubuntu.com',
+            'version': '2.3.1-1',
+            'filename': 'iucode-tool_2.3.1-1_amd64.deb',
+        }
+        resolved = dsc.resolve_hop_suite(
+            row, 'bionic', 'focal', sha_to_suite={sha: 'bionic'},
+        )
+        self.assertNotEqual(resolved.get('role'), 'source_series')
+        self.assertEqual(resolved.get('error'), '')
+        self.assertEqual(resolved.get('role'), 'target')
+        self.assertEqual(resolved.get('source_suite'), 'focal-updates')
+
+    def test_older_series_sha_still_omitted(self):
+        sha = 'a' * 64
+        row = {
+            'suite': '',
+            'sha256': sha,
+            'version': '1.1.0~beta1ubuntu0.16.04.12',
+            'filename': 'python-apt-common_1.1.0_all.deb',
+        }
+        resolved = dsc.resolve_hop_suite(
+            row, 'bionic', 'focal', sha_to_suite={sha: 'xenial'},
+        )
+        self.assertEqual(resolved.get('role'), 'source_series')
+
 
 class TestSuiteIndexDiversity(unittest.TestCase):
     def test_18_identical_indexes_fail(self):

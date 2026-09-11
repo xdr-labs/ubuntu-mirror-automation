@@ -42,11 +42,17 @@ EXTERNAL_HOSTS = (
 
 try:
     from aws_os_core_completeness import (
+        AWS_RUNTIME_DEPENDENCY_MUST_RESOLVE,
+        AWS_RUNTIME_DEPENDENCY_ROOTS,
+        HOPS as AWS_HOPS,
         validate_plan_aws_completeness,
         validate_tree_aws_completeness,
     )
 except ImportError:  # pragma: no cover
     from scripts.lib.aws_os_core_completeness import (  # type: ignore
+        AWS_RUNTIME_DEPENDENCY_MUST_RESOLVE,
+        AWS_RUNTIME_DEPENDENCY_ROOTS,
+        HOPS as AWS_HOPS,
         validate_plan_aws_completeness,
         validate_tree_aws_completeness,
     )
@@ -412,6 +418,317 @@ def parse_packages_file(path):
         if cur:
             entries.append(cur)
     return entries
+
+
+def parse_depends_alternatives(field):
+    """Parse a Depends/Pre-Depends field into groups of alternative names."""
+    groups = []
+    for raw_group in (field or '').split(','):
+        alts = []
+        for raw_alt in raw_group.split('|'):
+            tok = raw_alt.strip()
+            if not tok:
+                continue
+            name = tok.split()[0].strip()
+            if name.endswith(')'):
+                continue
+            if ':' in name:
+                name = name.split(':', 1)[0]
+            if name:
+                alts.append(name)
+        if alts:
+            groups.append(alts)
+    return groups
+
+
+def collect_hop_packages_index(ubuntu_root, arch='amd64'):
+    """Return hop Packages content: sha set, name set, provides, and stanzas.
+
+    ``by_suite_shas`` maps suite -> set(sha256). ``by_name`` maps package -> stanza.
+    """
+    by_suite_shas = OrderedDict()
+    by_name = OrderedDict()
+    provides = {}
+    stanzas = []
+    dists = os.path.join(ubuntu_root, 'dists')
+    if not os.path.isdir(dists):
+        return by_suite_shas, by_name, provides, stanzas
+    for suite in sorted(os.listdir(dists)):
+        suite_dir = os.path.join(dists, suite)
+        if not os.path.isdir(suite_dir):
+            continue
+        shas = by_suite_shas.setdefault(suite, set())
+        for dirpath, _dns, filenames in os.walk(suite_dir):
+            for fn in filenames:
+                if fn not in ('Packages', 'Packages.gz'):
+                    continue
+                for ent in parse_packages_file(os.path.join(dirpath, fn)):
+                    stanzas.append(ent)
+                    sha = (ent.get('SHA256') or '').strip().lower()
+                    if sha:
+                        shas.add(sha)
+                    name = (ent.get('Package') or '').strip()
+                    if name and name not in by_name:
+                        by_name[name] = ent
+                    for prov in parse_depends_alternatives(ent.get('Provides') or ''):
+                        for pname in prov:
+                            provides.setdefault(pname, set()).add(name)
+    return by_suite_shas, by_name, provides, stanzas
+
+
+def _suite_for_plan_deb(deb, hop):
+    prov = deb.get('hop_provenance') or {}
+    if hop and isinstance(prov, dict) and hop in prov:
+        entry = prov.get(hop) or {}
+        if isinstance(entry, dict):
+            suite = (entry.get('suite') or '').strip()
+            if suite:
+                return suite
+        elif entry:
+            return str(entry).strip()
+    return (deb.get('original_suite') or '').strip()
+
+
+def validate_per_hop_plan_membership(tree_root, plan, hop=None,
+                                     verify_checksums=True):
+    """Fail closed when a plan deb is missing from any listed source_hop.
+
+    For every plan deb P and every hop H in P.source_hops:
+      - H/ubuntu/<relative_pool_path> exists and matches SHA256/size
+      - P is represented in the correct Packages index for that hop
+
+    Catches source_hops=[A,B] with file/index only in A.
+    Empty plan.debs (public-safe OS Core generation records) skip this gate.
+    """
+    errors = []
+    detail = OrderedDict([
+        ('checked_debs', 0),
+        ('checked_memberships', 0),
+        ('missing_files', []),
+        ('checksum_mismatches', []),
+        ('missing_index', []),
+        ('result', 'PASS'),
+    ])
+    debs = list(plan.get('debs') or [])
+    if not debs:
+        detail['result'] = 'SKIPPED_NO_PLAN_DEBS'
+        return True, errors, detail
+
+    summaries = plan.get('hop_summaries') or {}
+    hops = list(plan.get('hops') or AWS_HOPS)
+    requested = hop or ''
+    index_cache = {}
+
+    for deb in debs:
+        src_hops = list(deb.get('source_hops') or [])
+        if not src_hops:
+            continue
+        detail['checked_debs'] += 1
+        rel = (deb.get('relative_pool_path') or '').lstrip('/')
+        expected_sha = (deb.get('sha256') or '').strip().lower()
+        try:
+            expected_size = int(deb.get('size_bytes') or 0)
+        except (TypeError, ValueError):
+            expected_size = 0
+        pkg_name = (deb.get('package') or '').strip()
+        for hop_name in src_hops:
+            if requested and hop_name != requested:
+                continue
+            if hop_name not in hops and hop_name not in summaries:
+                continue
+            detail['checked_memberships'] += 1
+            ubuntu = os.path.join(tree_root, 'hops', hop_name, 'ubuntu')
+            path = os.path.join(ubuntu, rel) if rel else ''
+            if not rel or not os.path.isfile(path):
+                rec = OrderedDict([
+                    ('hop', hop_name),
+                    ('package', pkg_name),
+                    ('path', path),
+                    ('reason', 'missing_file'),
+                ])
+                detail['missing_files'].append(rec)
+                errors.append(
+                    'per_hop_file_missing: %s %s' % (hop_name, pkg_name or rel)
+                )
+                continue
+            if verify_checksums:
+                actual_sha = file_sha256(path) if expected_sha else ''
+                actual_size = os.path.getsize(path)
+                if expected_sha and actual_sha != expected_sha:
+                    rec = OrderedDict([
+                        ('hop', hop_name),
+                        ('package', pkg_name),
+                        ('path', path),
+                        ('reason', 'sha256_mismatch'),
+                    ])
+                    detail['checksum_mismatches'].append(rec)
+                    errors.append(
+                        'per_hop_sha256_mismatch: %s %s' % (hop_name, pkg_name or rel)
+                    )
+                    continue
+                if expected_size and actual_size != expected_size:
+                    rec = OrderedDict([
+                        ('hop', hop_name),
+                        ('package', pkg_name),
+                        ('path', path),
+                        ('reason', 'size_mismatch'),
+                    ])
+                    detail['checksum_mismatches'].append(rec)
+                    errors.append(
+                        'per_hop_size_mismatch: %s %s' % (hop_name, pkg_name or rel)
+                    )
+                    continue
+
+            if hop_name not in index_cache:
+                index_cache[hop_name] = collect_hop_packages_index(ubuntu)
+            by_suite_shas, by_name, _provides, _stanzas = index_cache[hop_name]
+            summary = summaries.get(hop_name) or {}
+            to_series = summary.get('to_series') or (
+                hop_name.split('-to-')[-1] if hop_name else ''
+            )
+            expected_suite = _suite_for_plan_deb(deb, hop_name)
+            indexed = False
+            if expected_sha:
+                if expected_suite and expected_sha in (by_suite_shas.get(expected_suite) or set()):
+                    indexed = True
+                elif not expected_suite or (
+                    to_series and series_from_suite(expected_suite) != to_series
+                ):
+                    for suite, shas in by_suite_shas.items():
+                        if to_series and series_from_suite(suite) != to_series:
+                            continue
+                        if expected_sha in shas:
+                            indexed = True
+                            break
+                if not indexed and expected_suite:
+                    # original_suite from first hop may not match this hop;
+                    # still require the SHA in some target-series index.
+                    for suite, shas in by_suite_shas.items():
+                        if to_series and series_from_suite(suite) != to_series:
+                            continue
+                        if expected_sha in shas:
+                            indexed = True
+                            break
+            if not indexed and pkg_name and pkg_name in by_name:
+                ent = by_name[pkg_name]
+                ent_sha = (ent.get('SHA256') or '').strip().lower()
+                if not expected_sha or ent_sha == expected_sha:
+                    indexed = True
+            if not indexed:
+                rec = OrderedDict([
+                    ('hop', hop_name),
+                    ('package', pkg_name),
+                    ('expected_suite', expected_suite),
+                    ('sha256', expected_sha[:16] if expected_sha else ''),
+                    ('reason', 'missing_packages_index'),
+                ])
+                detail['missing_index'].append(rec)
+                errors.append(
+                    'per_hop_index_missing: %s %s suite=%s'
+                    % (hop_name, pkg_name or rel, expected_suite or 'target')
+                )
+
+    ok = not errors
+    detail['result'] = 'PASS' if ok else 'FAIL'
+    return ok, errors, detail
+
+
+def _name_in_hop_index(name, by_name, provides):
+    if name in by_name:
+        return True
+    if name in provides:
+        return True
+    return False
+
+
+def validate_aws_runtime_dependency_closure(tree_root, plan=None, hop=None):
+    """Ensure AWS kernel Depends closure is resolvable from each hop repo.
+
+    Walks Depends/Pre-Depends of indexed linux-aws / linux-image-aws (and any
+    already-indexed MUST_RESOLVE package). A required name that appears in
+    Depends of an indexed package but is absent from the same hop's Packages
+    (and Provides) fails closed.
+
+    This catches intel-microcode → iucode-tool when iucode-tool was indexed
+    only in an earlier hop that shares the same .deb SHA.
+    """
+    errors = []
+    detail = OrderedDict([
+        ('hops', OrderedDict()),
+        ('result', 'PASS'),
+    ])
+    plan = plan or {}
+    hops = list(plan.get('hops') or AWS_HOPS)
+    requested = hop or ''
+    plan_names = set()
+    for deb in plan.get('debs') or []:
+        n = (deb.get('package') or '').strip()
+        if n:
+            plan_names.add(n)
+
+    for hop_name in hops:
+        if requested and hop_name != requested:
+            continue
+        ubuntu = os.path.join(tree_root, 'hops', hop_name, 'ubuntu')
+        hop_detail = OrderedDict([
+            ('missing', []),
+            ('roots_indexed', []),
+            ('checked_relations', 0),
+        ])
+        if not os.path.isdir(ubuntu):
+            # Hop-scoped verify may not rematerialize siblings; skip absent hops.
+            detail['hops'][hop_name] = hop_detail
+            continue
+        _shas, by_name, provides, _stanzas = collect_hop_packages_index(ubuntu)
+        roots = [
+            n for n in AWS_RUNTIME_DEPENDENCY_ROOTS
+            if n in by_name
+        ]
+        hop_detail['roots_indexed'] = list(roots)
+        seen = set()
+        queue = list(roots)
+        for extra in AWS_RUNTIME_DEPENDENCY_MUST_RESOLVE:
+            if extra in by_name and extra not in queue:
+                queue.append(extra)
+        while queue:
+            name = queue.pop(0)
+            if name in seen:
+                continue
+            seen.add(name)
+            stanza = by_name.get(name)
+            if not stanza:
+                continue
+            for field in ('Depends', 'Pre-Depends'):
+                for alts in parse_depends_alternatives(stanza.get(field) or ''):
+                    hop_detail['checked_relations'] += 1
+                    if any(_name_in_hop_index(a, by_name, provides) for a in alts):
+                        for a in alts:
+                            if a in by_name and a not in seen:
+                                queue.append(a)
+                        continue
+                    required = [
+                        a for a in alts
+                        if a in AWS_RUNTIME_DEPENDENCY_MUST_RESOLVE or a in plan_names
+                    ]
+                    if not required:
+                        continue
+                    missing = required[0]
+                    rec = OrderedDict([
+                        ('from_package', name),
+                        ('field', field),
+                        ('missing', missing),
+                        ('alternatives', list(alts)),
+                    ])
+                    hop_detail['missing'].append(rec)
+                    errors.append(
+                        'aws_dep_unresolved: %s %s depends %s (not indexed)'
+                        % (hop_name, name, missing)
+                    )
+        detail['hops'][hop_name] = hop_detail
+
+    ok = not errors
+    detail['result'] = 'PASS' if ok else 'FAIL'
+    return ok, errors, detail
 
 
 # Relationship fields that published Packages must match against .deb control.
@@ -1236,6 +1553,61 @@ def validate_tree(plan_path, selective_root, mirror_root=None, run_apt=False,
     gate('selected_package_index_coverage',
          all(gates.get(k) == 'PASS' for k in gates if k.startswith('packages_coverage_')),
          '')
+    _membership_ok, _membership_errs, membership_detail = validate_per_hop_plan_membership(
+        live, plan, hop=requested_hop or None, verify_checksums=False,
+    )
+    if membership_detail.get('result') == 'SKIPPED_NO_PLAN_DEBS':
+        gates['per_hop_file_completeness'] = 'SKIPPED'
+        gates['per_hop_index_completeness'] = 'SKIPPED'
+    else:
+        file_ok = (
+            not membership_detail.get('missing_files')
+            and not membership_detail.get('checksum_mismatches')
+        )
+        index_ok_m = not membership_detail.get('missing_index')
+        gate(
+            'per_hop_file_completeness',
+            file_ok,
+            '%d missing / %d checksum'
+            % (
+                len(membership_detail.get('missing_files') or []),
+                len(membership_detail.get('checksum_mismatches') or []),
+            ),
+        )
+        gate(
+            'per_hop_index_completeness',
+            index_ok_m,
+            '%d missing index' % len(membership_detail.get('missing_index') or []),
+        )
+        if not file_ok:
+            error_details.append(OrderedDict([
+                ('validation_phase', 'pre_publish'),
+                ('check_name', 'per_hop_file_completeness'),
+                ('error_code', 'FAIL_PER_HOP_FILE_COMPLETENESS'),
+                ('detail', membership_detail),
+            ]))
+        if not index_ok_m:
+            error_details.append(OrderedDict([
+                ('validation_phase', 'pre_publish'),
+                ('check_name', 'per_hop_index_completeness'),
+                ('error_code', 'FAIL_PER_HOP_INDEX_COMPLETENESS'),
+                ('detail', membership_detail),
+            ]))
+    dep_ok, dep_errs, dep_detail = validate_aws_runtime_dependency_closure(
+        live, plan=plan, hop=requested_hop or None,
+    )
+    gate(
+        'aws_runtime_dependency_closure',
+        dep_ok,
+        '; '.join(dep_errs) if dep_errs else 'ok',
+    )
+    if not dep_ok:
+        error_details.append(OrderedDict([
+            ('validation_phase', 'pre_publish'),
+            ('check_name', 'aws_runtime_dependency_closure'),
+            ('error_code', 'FAIL_AWS_RUNTIME_DEPENDENCY_CLOSURE'),
+            ('detail', dep_detail),
+        ]))
     gate('unexpected_pool_packages',
          all(gates.get(k) == 'PASS' for k in gates if k.startswith('unexpected_pool_packages_')),
          '')
