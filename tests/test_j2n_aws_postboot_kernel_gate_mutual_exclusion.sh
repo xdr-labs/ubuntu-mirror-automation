@@ -86,8 +86,11 @@ else
   pass "generic Noble series ERE remains generic-only"
 fi
 
-# Already-Noble FAILED re-entry is validation-only (no DRO).
+# Already-Noble FAILED re-entry is validation-only (no DRO) and refreshes
+# the product-owned postboot from the current wrapper before execution.
 if grep -q 'running post-boot verification only' "$TEMPLATE" \
+  && grep -q 'POSTBOOT_REFRESH=START reason=validation_only_reentry' "$TEMPLATE" \
+  && grep -q 'install_authoritative_postboot_runtime' "$TEMPLATE" \
   && grep -q 'bash "$(hostpath "$POSTBOOT_PATH")"' "$TEMPLATE"; then
   pass "E template already-Noble validation-only re-entry present"
 else

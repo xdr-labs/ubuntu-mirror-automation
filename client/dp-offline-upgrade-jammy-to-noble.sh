@@ -30,10 +30,10 @@ PIN_UPGRADER_TAR_SHA256='447f54cbdfb9f57d32ddb02fcf0a0abb0184059cc0f680e806d2337
 PIN_UPGRADER_GPG_SHA256='7af99394662fe6d9fbe4ba7f6efd4818f5594e82e553aaaf659144a80ff53bfe'
 PIN_PLAN_CHECKSUM='7711448ed858306e082c0cf72185d1137d1839e48f368fc29aa681fae85dc81c'
 PIN_DISCOVERY_CHECKSUM='d7bdbce25b5fa32f6fee972297f8def449ca495efed93ebb470ef8d22b7c5ddf'
-PIN_MANIFEST_SHA256='430aa3f24d85532574ce7347343bf8d1bd0c4c98a8649f019c113737a2a9887a'
+PIN_MANIFEST_SHA256='f6412731634a025db518d25905e6458242c7d01940f5394cf4bf1bb1527ee0fd'
 PIN_SAMPLE_DEB_URL='http://127.0.0.1/hops/jammy-to-noble/ubuntu/pool/main/a/accountsservice/accountsservice_23.13.9-2ubuntu6_amd64.deb'
 PIN_CONFIRM_PHRASE='UPGRADE-JAMMY-TO-NOBLE'
-PIN_GENERATED_AT='2026-09-11T13:09:55Z'
+PIN_GENERATED_AT='2026-09-12T15:22:06Z'
 PIN_PROFILE_NAME='offline-upgrade-selective'
 
 PIN_KEY_B64='mQENBGqh/tYBCAC2mUohxJinGmVgSKvmjoG/5oEUtsHlFr/Cc1UtLiwdBif2Gx0RjxU3anHltzw4
@@ -116,23 +116,23 @@ cnlfY2hlY2tzdW0iOiAiZDdiZGJjZTI1YjVmYTMyZjZmZWU5NzIyOTdmOGRlZjQ0OWNhNDk1ZWZl
 ZDkzZWJiNDcwZWY4ZDIyYjdjNWRkZiIsCiAgImF3c19zZW1hbnRpY19jb250cmFjdF9zaGEyNTYi
 OiAiOGQ4MWZhMTBkNzQ4ZWI4OTJjNjAwMmNiYjY1MTA3MzNiNmE4YWEyYjNiNDRlMWMyOWM4ZmMw
 NjA2YzMwMTU2YiIsCiAgImNvbmZpcm1fcGhyYXNlIjogIlVQR1JBREUtSkFNTVktVE8tTk9CTEUi
-LAogICJjbGllbnRfcHJvdmVuYW5jZV9zY2hlbWFfdmVyc2lvbiI6ICIxIiwKICAiY2xpZW50X2J1
-aWxkX2lucHV0X3NoYTI1NiI6ICJmNzRjMjk0Zjc2NTAzNDg2N2M4M2JiNWE1ZDA4ZDIzYjhiNWM3
-MjJhYTU0MGI5OWUyOGQzMGNiOTdmZTA3ZTNlIiwKICAiY2xpZW50X3NvdXJjZV9yZXZpc2lvbiI6
-ICJiYjYxYjRkODI1ZjViNDExMjMxOGMyOGJiYjIzZWIyMmM5NGM1N2ExIiwKICAiY2xpZW50X3Nv
+LAogICJjbGllbnRfcHJvdmVuYW5jZV9zY2hlbWFfdmVyc2lvbiI6ICIyIiwKICAiY2xpZW50X2J1
+aWxkX2lucHV0X3NoYTI1NiI6ICJjMGZlOTMxNmYxY2Q2ZTdmMGI4OGI0ZjllNGY0MjUxNmM2MTVj
+NTBjNTE3NGJhMTU2Yjk1NWU3Yzg0ODVhNjBmIiwKICAiY2xpZW50X3NvdXJjZV9yZXZpc2lvbiI6
+ICJhZTA3OGM2NzA4MzEyMWI3OThhZTFjOThjNjdjZDQyMjIzNWMwZDQ0IiwKICAiY2xpZW50X3Nv
 dXJjZV90cmVlX3N0YXRlIjogImRpcnR5IiwKICAiY2xpZW50X2NvbW1hbmRfYmxvY2tfdmVyc2lv
 biI6ICJTVUJTSEVMTF9WMiIsCiAgImNsaWVudF9taXJyb3JfYmFzZV91cmwiOiAiaHR0cDovLzEy
 Ny4wLjAuMSIsCiAgImNsaWVudF9zaWduaW5nX2ZpbmdlcnByaW50IjogIjc2QTYzQjNGOUNCOEIw
 OTk1NUMyODk0M0M3N0RDMUZGMjNCRjMxQjUiLAogICJjbGllbnRfcnVudGltZV9tYW5pZmVzdF9z
-aGEyNTYiOiAiOTc0MWM5Zjc0MGE5Mzk5YjdiMTgzMjVjYWUwZjg5OTY1NmU3OWIyZTViN2VhNzEw
-MjlmMjM1MTUxMTgxZDllOSIsCiAgImNsaWVudF9idWlsZGVyc19zaGEyNTYiOiAiMDUyM2I2ZWQz
-MmJlYWE3ZjU4MTE0NWZkZmMzMzc4MzM0YTk4ZmRjODM4ZTQyN2ZkMzhlZGJjNjgzM2Q1YjU5MCIs
-CiAgImNsaWVudF90ZW1wbGF0ZXNfc2hhMjU2IjogImY4ZWVmMzI0OTllZWYxZDljYWYxZjdkMWU0
-ZjdjYTJlMDU0YjJlMmU4NzY1ZGY1MDliZWIyMDJhNDdiMDE5MTMiLAogICJjbGllbnRfc2hhcmVk
-X2hlbHBlcnNfc2hhMjU2IjogIjE2OTcyZTY5MmM0YmIxYmI5NjllYWViODk2ODllY2UxMDdiZWVi
-YjVhNjhjODc2OTU1NjE3MzAxZTMzNTVkYzgiLAogICJjbGllbnRfcnVubmVyX3NoYTI1NiI6ICI2
+aGEyNTYiOiAiNzE0MjQ0Nzg5NzBhMmNhZTI3ZjNjMGE4YzY3YWYxZjk3N2NmODI0ZjQ0NmRiNTFh
+MDNhM2Q0MmYzZDdlMmZjNyIsCiAgImNsaWVudF9idWlsZGVyc19zaGEyNTYiOiAiMWY1ZDE5NDhh
+MDQ0OTZiZjdiNjZjOTI4MTA2ZTUyYjkxYWMxOWJjODJlZDYyNjNmZTQ3N2M1OTFiYjQwMzE5MCIs
+CiAgImNsaWVudF90ZW1wbGF0ZXNfc2hhMjU2IjogIjA2ZWQxMDkxNWQ0NmM3MDU0OTMyNWQzNmQy
+NjIwZDhlNWUxN2YzMjFiYzRmYjBiNThjNmRiNmM0NzhiYmZjMjciLAogICJjbGllbnRfc2hhcmVk
+X2hlbHBlcnNfc2hhMjU2IjogImEwZGRjZTlkMjk3Zjc2YTM1ZTViYzhhN2Y4OGZlMWViODhkNDVm
+YjUzMmE3NTQ0YmM3NWI5ZjE4ODY0MzJlZTMiLAogICJjbGllbnRfcnVubmVyX3NoYTI1NiI6ICI2
 MDkxNGFkNTcyN2VlY2ZkNzY0NDBkYTFlOTM2ZTRlZjllMDZhN2E2NzljOWJiZGUxZDk0NDliYzU1
-YjNmNzMxIiwKICAiZ2VuZXJhdGVkX2F0IjogIjIwMjYtMDktMTFUMTM6MDk6NTVaIiwKICAiYW5u
+YjNmNzMxIiwKICAiZ2VuZXJhdGVkX2F0IjogIjIwMjYtMDktMTJUMTU6MjI6MDZaIiwKICAiYW5u
 b3VuY2VtZW50cyI6IHsKICAgICJSZWxlYXNlQW5ub3VuY2VtZW50IjogImQxZTgyZDJlNzcwNjYz
 YjYzYWM5OWIzOWUzYWE0MzZkZmI3MzExMzljNjcxNjNkYjQ0MzkyYjkzMjg0ZWZkNjMiLAogICAg
 IlJlbGVhc2VBbm5vdW5jZW1lbnQuaHRtbCI6ICJlNzFkMTRkZjA5M2NlNWU0NTdmN2MzYmE4OWM1
@@ -11038,6 +11038,1993 @@ change_login_shells() {
   done
 }
 
+install_authoritative_postboot_runtime() {
+  # Install/replace the product-owned postboot verifier from this wrapper's
+  # embedded payload. Authoritative for first-time handoff and already-Noble
+  # validation-only recovery (do not trust a pre-existing on-disk postboot).
+  local dest tmp dir expected_base
+  expected_base="stellar-offline-os-upgrade-postboot"
+  dest="$(hostpath "$POSTBOOT_PATH")"
+  dir="$(dirname "$dest")"
+  if [[ "$(basename "$dest")" != "$expected_base" ]]; then
+    log ERROR "POSTBOOT_REFRESH=REFUSED reason=UNEXPECTED_BASENAME path=${dest}"
+    return 1
+  fi
+  if [[ -d "$dest" && ! -L "$dest" ]]; then
+    log ERROR "POSTBOOT_REFRESH=REFUSED reason=PATH_IS_DIRECTORY path=${dest}"
+    return 1
+  fi
+  if [[ -L "$dest" ]]; then
+    local link_target
+    link_target="$(readlink -f "$dest" 2>/dev/null || true)"
+    if [[ -z "$link_target" || "$(basename "$link_target")" != "$expected_base" ]]; then
+      log ERROR "POSTBOOT_REFRESH=REFUSED reason=UNEXPECTED_SYMLINK path=${dest} target=${link_target:-empty}"
+      return 1
+    fi
+  fi
+  mkdir -p "$dir" || {
+    log ERROR "POSTBOOT_REFRESH=FAIL reason=MKDIR path=${dir}"
+    return 1
+  }
+  tmp="${dest}.new.$$"
+  rm -f "$tmp"
+  # Postboot: build-time-inlined DNS/time policy + main verifier (single-file).
+  {
+    cat <<'POSTBOOT_HDR'
+#!/usr/bin/env bash
+set -euo pipefail
+# Shared durable atomic write helpers for offline OS-upgrade clients.
+# shellcheck shell=bash
+# Injected at build time via the DURABLE_WRITE_HELPER template token.
+# Prefer targeted file+directory fsync over unbounded global `sync`.
+# Bash 4.3+/4.4 safe; requires python3 (standard on Bionic+ upgrade hosts).
+
+DURABLE_WRITE_LOG_THRESHOLD_MS="${DURABLE_WRITE_LOG_THRESHOLD_MS:-500}"
+
+_durable_now_ms() {
+  python3 -c 'import time; print(int(time.time()*1000))' 2>/dev/null || echo 0
+}
+
+_durable_write_python() {
+  # stdin → durable atomic replace at path. Args: path mode_or_empty preserve_owner(0|1)
+  local dest="$1"
+  local mode="${2:-}"
+  local preserve_owner="${3:-1}"
+  local content_file
+  content_file="$(mktemp "${TMPDIR:-/tmp}/durable-content.XXXXXX")"
+  cat >"$content_file"
+  python3 - "$dest" "$mode" "$preserve_owner" "$content_file" <<'PY'
+import errno
+import os
+import stat
+import sys
+import tempfile
+
+dest = sys.argv[1]
+mode_arg = sys.argv[2]
+preserve_owner = sys.argv[3] == "1"
+with open(sys.argv[4], "rb") as fh:
+    data = fh.read()
+
+parent = os.path.dirname(os.path.abspath(dest)) or "."
+base = os.path.basename(dest)
+os.makedirs(parent, mode=0o755, exist_ok=True)
+
+existed = False
+old_mode = None
+old_uid = None
+old_gid = None
+if os.path.lexists(dest):
+    if os.path.islink(dest):
+        sys.stderr.write("DURABLE_WRITE_ERR=dest_is_symlink\n")
+        sys.exit(2)
+    st = os.lstat(dest)
+    if not stat.S_ISREG(st.st_mode):
+        sys.stderr.write("DURABLE_WRITE_ERR=dest_not_regular\n")
+        sys.exit(2)
+    existed = True
+    old_mode = stat.S_IMODE(st.st_mode)
+    old_uid = st.st_uid
+    old_gid = st.st_gid
+
+if mode_arg:
+    mode = int(mode_arg, 8)
+elif existed and old_mode is not None:
+    mode = old_mode
+else:
+    mode = 0o644
+
+fd = None
+tmp_path = None
+try:
+    fd, tmp_path = tempfile.mkstemp(
+        prefix="." + base + ".",
+        suffix=".tmp",
+        dir=parent,
+    )
+    written = 0
+    view = memoryview(data)
+    while written < len(data):
+        n = os.write(fd, view[written:])
+        if n <= 0:
+            raise OSError(errno.EIO, "short write")
+        written += n
+    os.fsync(fd)
+    os.fchmod(fd, mode)
+    if preserve_owner and existed and old_uid is not None:
+        try:
+            os.fchown(fd, old_uid, old_gid)
+        except OSError:
+            pass
+    os.close(fd)
+    fd = None
+    os.replace(tmp_path, dest)
+    tmp_path = None
+    dirfd = os.open(parent, os.O_RDONLY)
+    try:
+        os.fsync(dirfd)
+    finally:
+        os.close(dirfd)
+except Exception as exc:
+    if fd is not None:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+    if tmp_path and os.path.lexists(tmp_path):
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+    sys.stderr.write("DURABLE_WRITE_ERR=%s\n" % (exc,))
+    sys.exit(1)
+sys.exit(0)
+PY
+  local py_rc=$?
+  rm -f "$content_file"
+  return "$py_rc"
+}
+
+durable_fsync_path() {
+  # Targeted fsync of an existing regular file and its parent directory.
+  # Never falls back to unbounded global sync.
+  local path="$1"
+  python3 - "$path" <<'PY'
+import os
+import stat
+import sys
+
+path = sys.argv[1]
+if not os.path.lexists(path):
+    sys.exit(1)
+if os.path.islink(path):
+    sys.exit(2)
+st = os.lstat(path)
+parent = os.path.dirname(os.path.abspath(path)) or "."
+if stat.S_ISREG(st.st_mode):
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+elif stat.S_ISDIR(st.st_mode):
+    parent = path
+else:
+    sys.exit(2)
+dirfd = os.open(parent, os.O_RDONLY)
+try:
+    os.fsync(dirfd)
+finally:
+    os.close(dirfd)
+sys.exit(0)
+PY
+}
+
+durable_atomic_write() {
+  # durable_atomic_write <logical-name> <path> [mode]
+  # Content from stdin. Optional mode octal (0600). Preserves owner when file exists.
+  local logical="$1"
+  local path="$2"
+  local mode="${3:-}"
+  local start_ms end_ms dur rc=0
+  local errf
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    if declare -F log >/dev/null 2>&1; then
+      log ERROR "DURABLE_WRITE_BEGIN=${logical}"
+      log ERROR "DURABLE_WRITE_PATH=${path}"
+      log ERROR "DURABLE_WRITE_RESULT=FAIL"
+      log ERROR "DURABLE_WRITE_DURATION_MS=0"
+      log ERROR "DURABLE_WRITE_ERR=python3_missing"
+    fi
+    return 1
+  fi
+
+  start_ms="$(_durable_now_ms)"
+  errf="$(mktemp "${TMPDIR:-/tmp}/durable-write.XXXXXX")"
+  set +e
+  _durable_write_python "$path" "$mode" 1 2>"$errf"
+  rc=$?
+  set -e
+  end_ms="$(_durable_now_ms)"
+  dur=$((end_ms - start_ms))
+  if [[ "$dur" -lt 0 ]]; then
+    dur=0
+  fi
+
+  if [[ "$rc" -ne 0 ]]; then
+    if declare -F log >/dev/null 2>&1; then
+      log ERROR "DURABLE_WRITE_BEGIN=${logical}"
+      log ERROR "DURABLE_WRITE_PATH=${path}"
+      log ERROR "DURABLE_WRITE_RESULT=FAIL"
+      log ERROR "DURABLE_WRITE_DURATION_MS=${dur}"
+      if [[ -s "$errf" ]]; then
+        log ERROR "DURABLE_WRITE_ERR=$(tr '\n' ' ' <"$errf" | head -c 200)"
+      fi
+    fi
+    rm -f "$errf"
+    return 1
+  fi
+
+  if [[ "$dur" -ge "${DURABLE_WRITE_LOG_THRESHOLD_MS}" ]] && declare -F log >/dev/null 2>&1; then
+    log INFO "DURABLE_WRITE_BEGIN=${logical}"
+    log INFO "DURABLE_WRITE_PATH=${path}"
+    log INFO "DURABLE_WRITE_RESULT=PASS"
+    log INFO "DURABLE_WRITE_DURATION_MS=${dur}"
+  fi
+  rm -f "$errf"
+  return 0
+}
+
+durable_atomic_write_string() {
+  local logical="$1" path="$2" content="$3" mode="${4:-}"
+  printf '%s' "$content" | durable_atomic_write "$logical" "$path" "$mode"
+}
+
+# Drop-in replacement for prior temp+rename helper (now durable).
+atomic_write_file() {
+  local dest="$1"
+  durable_atomic_write "atomic_write_file" "$dest" || return 1
+}
+
+# Generated AWS semantic contract (discovery-derived). Do not hand-edit.
+# shellcheck shell=bash
+AWS_SEMANTIC_CONTRACT_LOADED=1
+AWS_SEMANTIC_CONTRACT_SCHEMA=1
+AWS_SEMANTIC_CONTRACT_SHA256='8d81fa10d748eb892c6002cbb6510733b6a8aa2b3b44e1c29c8fc0606c30156b'
+
+aws_contract_clear() {
+  AWS_C_HOP=""
+  AWS_C_TARGET_VERSION_ID=""
+  AWS_C_LINUX_AWS_VERSION=""
+  AWS_C_LINUX_AWS_SHA256=""
+  AWS_C_LINUX_IMAGE_AWS_VERSION=""
+  AWS_C_LINUX_IMAGE_AWS_SHA256=""
+  AWS_C_KERNEL_RELEASES=""
+  AWS_C_VERSIONED_IMAGE_PACKAGES=""
+  AWS_C_BOOT_PACKAGES=""
+  AWS_C_BOOT_PACKAGE_VERSIONS=""
+  AWS_C_SNAPD_VERSION=""
+}
+
+aws_contract_load_for_version_id() {
+  local ver="${1:-}"
+  aws_contract_clear
+  case "$ver" in
+    18.04)
+      AWS_C_HOP='xenial-to-bionic'
+      AWS_C_TARGET_VERSION_ID='18.04'
+      AWS_C_LINUX_AWS_VERSION='5.4.0.1103.81'
+      AWS_C_LINUX_AWS_SHA256='b26db52ae44bfe8cfb059ac1e878772a5a80288a2720e3f6b5caa0b7c6820bed'
+      AWS_C_LINUX_IMAGE_AWS_VERSION='5.4.0.1103.81'
+      AWS_C_LINUX_IMAGE_AWS_SHA256='749b87ebdaacf79eabafe60280f2bad5ad349de1efc14759316941f097f05a42'
+      AWS_C_KERNEL_RELEASES='5.4.0-1103-aws'
+      AWS_C_VERSIONED_IMAGE_PACKAGES='linux-image-5.4.0-1103-aws'
+      AWS_C_BOOT_PACKAGES='linux-modules-5.4.0-1103-aws'
+      AWS_C_BOOT_PACKAGE_VERSIONS='linux-modules-5.4.0-1103-aws=5.4.0-1103.111~18.04.1'
+      AWS_C_SNAPD_VERSION='2.58+18.04.1'
+      ;;
+    20.04)
+      AWS_C_HOP='bionic-to-focal'
+      AWS_C_TARGET_VERSION_ID='20.04'
+      AWS_C_LINUX_AWS_VERSION='5.15.0.1084.91~20.04.1'
+      AWS_C_LINUX_AWS_SHA256='1ef7259cc9081ae50c8175cc4a2d47770f8ff555a42d2eccbc85f0a4ffa8a54a'
+      AWS_C_LINUX_IMAGE_AWS_VERSION='5.15.0.1084.91~20.04.1'
+      AWS_C_LINUX_IMAGE_AWS_SHA256='fa9f6b20764d6e6a62af16c41a9be2fa4b47aca88c6d9d84b776ad55d2b018fc'
+      AWS_C_KERNEL_RELEASES='5.15.0-1084-aws'
+      AWS_C_VERSIONED_IMAGE_PACKAGES='linux-image-5.15.0-1084-aws'
+      AWS_C_BOOT_PACKAGES='linux-modules-5.15.0-1084-aws'
+      AWS_C_BOOT_PACKAGE_VERSIONS='linux-modules-5.15.0-1084-aws=5.15.0-1084.91~20.04.1'
+      AWS_C_SNAPD_VERSION=''
+      ;;
+    22.04)
+      AWS_C_HOP='focal-to-jammy'
+      AWS_C_TARGET_VERSION_ID='22.04'
+      AWS_C_LINUX_AWS_VERSION='6.8.0-1063.66~22.04.1'
+      AWS_C_LINUX_AWS_SHA256='6865857784d5f70d43bd94d66e46da540cbf714fd29add7fe471e9b6a588d0ac'
+      AWS_C_LINUX_IMAGE_AWS_VERSION='6.8.0-1063.66~22.04.1'
+      AWS_C_LINUX_IMAGE_AWS_SHA256='46dbf9d2ddf2aff0787afecaa83cd1f5d71a780c0000edc980fa0f6438ec5e81'
+      AWS_C_KERNEL_RELEASES='6.8.0-1063-aws'
+      AWS_C_VERSIONED_IMAGE_PACKAGES='linux-image-6.8.0-1063-aws'
+      AWS_C_BOOT_PACKAGES='linux-modules-6.8.0-1063-aws'
+      AWS_C_BOOT_PACKAGE_VERSIONS='linux-modules-6.8.0-1063-aws=6.8.0-1063.66~22.04.1'
+      AWS_C_SNAPD_VERSION=''
+      ;;
+    24.04)
+      AWS_C_HOP='jammy-to-noble'
+      AWS_C_TARGET_VERSION_ID='24.04'
+      AWS_C_LINUX_AWS_VERSION='7.0.0-1011.11~24.04.1'
+      AWS_C_LINUX_AWS_SHA256='80d4952185254d8c3eeca148c426dc57a8c421080731378b90803b045a9f70f0'
+      AWS_C_LINUX_IMAGE_AWS_VERSION='7.0.0-1011.11~24.04.1'
+      AWS_C_LINUX_IMAGE_AWS_SHA256='257cc613057cbc4b7f7659943627ebdbcffcd42228520be29af40849236b862c'
+      AWS_C_KERNEL_RELEASES='7.0.0-1011-aws'
+      AWS_C_VERSIONED_IMAGE_PACKAGES='linux-image-7.0.0-1011-aws'
+      AWS_C_BOOT_PACKAGES='linux-modules-7.0.0-1011-aws'
+      AWS_C_BOOT_PACKAGE_VERSIONS='linux-modules-7.0.0-1011-aws=7.0.0-1011.11~24.04.1'
+      AWS_C_SNAPD_VERSION=''
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+  if [[ -z "${AWS_C_LINUX_AWS_VERSION}" || -z "${AWS_C_LINUX_IMAGE_AWS_VERSION}" ]]; then
+    return 1
+  fi
+  if [[ -z "${AWS_C_KERNEL_RELEASES}" || -z "${AWS_C_VERSIONED_IMAGE_PACKAGES}" ]]; then
+    return 1
+  fi
+  return 0
+}
+#!/usr/bin/env bash
+# Shared AWS kernel source-preflight, pre-reboot target readiness, and
+# post-hop completion gate. Inlined into offline upgrade clients / postboot.
+#
+# Authority is the discovery-derived AWS semantic contract (exact package
+# versions / expected kernel releases per hop target VERSION_ID). Series
+# major.minor floors are NOT authoritative.
+#
+# Contract usage:
+#   SOURCE PREFLIGHT (VERSION_ID=current source): installed AWS stack must
+#     match the hop contract whose TARGET is this VERSION_ID (prior hop
+#     completion state). Xenial 16.04 has no prior-hop contract — require a
+#     coherent installed AWS stack only.
+#   PRE-REBOOT (VERSION_ID=target): target contract packages + boot artifacts
+#     must be installed/prepared; do not start automatic reboot on failure.
+#   POSTBOOT (VERSION_ID=target): running kernel must be a contract target
+#     release; metapackages must match contract; not stale vs source baseline.
+# shellcheck shell=bash
+
+aws_gate_log() {
+  local level="$1"; shift
+  if declare -F log >/dev/null 2>&1; then
+    log "$level" "$*"
+  else
+    printf '%s: %s\n' "$level" "$*"
+  fi
+}
+
+aws_gate_hp() {
+  local p="$1"
+  if [[ -n "${TEST_ROOT:-}" ]]; then
+    printf '%s%s' "${TEST_ROOT%/}" "$p"
+  elif [[ -n "${DP_POSTBOOT_TEST_ROOT:-}" ]]; then
+    printf '%s%s' "${DP_POSTBOOT_TEST_ROOT%/}" "$p"
+  else
+    printf '%s' "$p"
+  fi
+}
+
+aws_pkg_installed() {
+  local pkg="$1" status
+  status="$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null || true)"
+  [[ "$status" == *"install ok installed"* ]]
+}
+
+aws_pkg_version() {
+  local pkg="$1"
+  dpkg-query -W -f='${Version}' "$pkg" 2>/dev/null || true
+}
+
+aws_running_kernel_release() {
+  local kr
+  kr="$(uname -r 2>/dev/null || true)"
+  if [[ -n "${TEST_ROOT:-}" && -n "${DP_OFFLINE_FAKE_KERNEL:-}" ]]; then
+    kr="$DP_OFFLINE_FAKE_KERNEL"
+  elif [[ -n "${DP_POSTBOOT_TEST_ROOT:-}" && -n "${DP_OFFLINE_FAKE_KERNEL:-}" ]]; then
+    kr="$DP_OFFLINE_FAKE_KERNEL"
+  fi
+  printf '%s' "$kr"
+}
+
+# Decode URL-encoded dpkg/discovery versions for comparison.
+aws_decode_version() {
+  local v="$1"
+  v="${v//%2[bB]/+}"
+  v="${v//%7[eE]/~}"
+  printf '%s' "$v"
+}
+
+aws_versions_equal() {
+  local a b
+  a="$(aws_decode_version "$1")"
+  b="$(aws_decode_version "$2")"
+  [[ -n "$a" && "$a" == "$b" ]]
+}
+
+# Load discovery-derived contract for a target Ubuntu VERSION_ID when needed.
+if [[ "${AWS_SEMANTIC_CONTRACT_LOADED:-0}" != "1" ]]; then
+  _aws_contract_inc="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/dp-aws-semantic-contract.sh.inc"
+  if [[ -n "${_aws_contract_inc}" && -f "${_aws_contract_inc}" ]]; then
+    # shellcheck disable=SC1090
+    source "${_aws_contract_inc}"
+  fi
+  unset _aws_contract_inc
+fi
+
+aws_contract_available_for_version() {
+  declare -F aws_contract_load_for_version_id >/dev/null 2>&1 || return 1
+  aws_contract_load_for_version_id "$1"
+}
+
+aws_kernel_release_in_contract() {
+  local kr="$1" r
+  for r in ${AWS_C_KERNEL_RELEASES}; do
+    [[ "$kr" == "$r" ]] && return 0
+  done
+  return 1
+}
+
+# Enforce discovery-derived snapd identity when the loaded hop contract sets it.
+# Empty AWS_C_SNAPD_VERSION means no snapd gate for this hop.
+aws_validate_contract_snapd() {
+  local phase="${1:-GATE}"
+  local exp got
+  exp="${AWS_C_SNAPD_VERSION:-}"
+  if [[ -z "$exp" ]]; then
+    return 0
+  fi
+  if ! aws_pkg_installed snapd; then
+    aws_gate_log ERROR "${phase}=FAIL reason=snapd_not_installed expected=${exp}"
+    return 1
+  fi
+  got="$(aws_pkg_version snapd)"
+  if ! aws_versions_equal "$got" "$exp"; then
+    aws_gate_log ERROR "${phase}=FAIL reason=snapd_not_contract_identity expected=${exp} installed=${got}"
+    return 1
+  fi
+  aws_gate_log INFO "AWS_CONTRACT_SNAPD_VERSION=${exp}"
+  aws_gate_log INFO "AWS_CONTRACT_SNAPD=PASS"
+  return 0
+}
+
+# Enforce discovery-derived boot packages (modules/modules-extra) when present.
+# Empty AWS_C_BOOT_PACKAGES means no boot-package gate for this hop.
+aws_validate_contract_boot_packages() {
+  local phase="${1:-GATE}"
+  local pkg pair name exp got
+  if [[ -z "${AWS_C_BOOT_PACKAGES:-}" ]]; then
+    return 0
+  fi
+  for pkg in ${AWS_C_BOOT_PACKAGES}; do
+    if ! aws_pkg_installed "$pkg"; then
+      aws_gate_log ERROR "${phase}=FAIL reason=boot_package_not_installed package=${pkg}"
+      return 1
+    fi
+  done
+  if [[ -n "${AWS_C_BOOT_PACKAGE_VERSIONS:-}" ]]; then
+    for pair in ${AWS_C_BOOT_PACKAGE_VERSIONS}; do
+      name="${pair%%=*}"
+      exp="${pair#*=}"
+      [[ -n "$name" && -n "$exp" && "$name" != "$pair" ]] || continue
+      got="$(aws_pkg_version "$name")"
+      if ! aws_versions_equal "$got" "$exp"; then
+        aws_gate_log ERROR "${phase}=FAIL reason=boot_package_not_contract_identity package=${name} expected=${exp} installed=${got}"
+        return 1
+      fi
+    done
+  fi
+  aws_gate_log INFO "AWS_CONTRACT_BOOT_PACKAGES=${AWS_C_BOOT_PACKAGES}"
+  aws_gate_log INFO "AWS_CONTRACT_BOOT_PACKAGES=PASS"
+  return 0
+}
+
+aws_detect_current_flavor() {
+  local flavor kr
+  if declare -F kernel_flavor >/dev/null 2>&1; then
+    flavor="$(kernel_flavor)"
+  else
+    flavor=""
+    kr="$(aws_running_kernel_release)"
+    case "$kr" in
+      *-aws) flavor=aws ;;
+      *-generic*) flavor=generic ;;
+      *) flavor=other ;;
+    esac
+  fi
+  if [[ -z "$flavor" ]]; then
+    kr="$(aws_running_kernel_release)"
+    case "$kr" in
+      *-aws) flavor=aws ;;
+      *) flavor=other ;;
+    esac
+  fi
+  printf '%s' "$flavor"
+}
+
+detect_aws_upgrade_profile() {
+  # Echo "aws" when this host is/was an AWS kernel DP; else "other".
+  local holds_dir flavor kr
+  holds_dir="${HOLDS_DIR:-${STATE_ROOT:-/opt/aelladata/os-upgrade/offline}/critical-holds}"
+  if [[ -f "$(aws_gate_hp "${holds_dir}/source_kernel_flavor")" ]]; then
+    flavor="$(tr -d '\r\n' <"$(aws_gate_hp "${holds_dir}/source_kernel_flavor")" || true)"
+    if [[ "$flavor" == "aws" ]]; then
+      printf 'aws\n'
+      return 0
+    fi
+  fi
+  if [[ -n "${SOURCE_KERNEL_FLAVOR:-}" && "$SOURCE_KERNEL_FLAVOR" == "aws" ]]; then
+    printf 'aws\n'
+    return 0
+  fi
+  kr="$(aws_running_kernel_release)"
+  case "$kr" in
+    *-aws) printf 'aws\n'; return 0 ;;
+  esac
+  if aws_pkg_installed linux-aws || aws_pkg_installed linux-image-aws || aws_pkg_installed linux-headers-aws; then
+    printf 'aws\n'
+    return 0
+  fi
+  printf 'other\n'
+}
+
+aws_gate_atomic_write_line() {
+  # Write one line atomically and verify read-back. Same rules under TEST_ROOT.
+  local rel_path="$1" content="$2"
+  local dest parent tmp readback
+  dest="$(aws_gate_hp "$rel_path")"
+  parent="$(dirname "$dest")"
+  mkdir -p "$parent" || {
+    aws_gate_log ERROR "AWS_BASELINE_PERSIST=FAIL reason=mkdir path=${parent}"
+    return 1
+  }
+  if declare -F durable_atomic_write_string >/dev/null 2>&1; then
+    if ! durable_atomic_write_string "aws_baseline" "$dest" "${content}"$'\n' 0644; then
+      aws_gate_log ERROR "AWS_BASELINE_PERSIST=FAIL reason=durable_write path=${dest}"
+      return 1
+    fi
+  else
+    tmp="${dest}.tmp.$$.$RANDOM"
+    if ! printf '%s\n' "$content" >"$tmp"; then
+      rm -f "$tmp" 2>/dev/null || true
+      aws_gate_log ERROR "AWS_BASELINE_PERSIST=FAIL reason=write path=${dest}"
+      return 1
+    fi
+    if ! mv -f "$tmp" "$dest"; then
+      rm -f "$tmp" 2>/dev/null || true
+      aws_gate_log ERROR "AWS_BASELINE_PERSIST=FAIL reason=rename path=${dest}"
+      return 1
+    fi
+  fi
+  if [[ ! -f "$dest" ]]; then
+    aws_gate_log ERROR "AWS_BASELINE_PERSIST=FAIL reason=missing_after_write path=${dest}"
+    return 1
+  fi
+  readback="$(tr -d '\r\n' <"$dest" || true)"
+  if [[ "$readback" != "$content" ]]; then
+    aws_gate_log ERROR "AWS_BASELINE_PERSIST=FAIL reason=readback_mismatch path=${dest} expected=${content} got=${readback}"
+    return 1
+  fi
+  return 0
+}
+
+persist_source_kernel_aws_baseline() {
+  # Called from source preflight/baseline. AWS: fail closed. Non-AWS: record flavor only.
+  local holds_dir flavor kr aws_ver img_ver
+  holds_dir="${HOLDS_DIR:-${STATE_ROOT:-/opt/aelladata/os-upgrade/offline}/critical-holds}"
+  flavor="$(aws_detect_current_flavor)"
+  kr="$(aws_running_kernel_release)"
+  aws_ver="$(aws_pkg_version linux-aws)"
+  img_ver="$(aws_pkg_version linux-image-aws)"
+
+  if [[ "$flavor" != "aws" && -z "$aws_ver" && -z "$img_ver" ]]; then
+    aws_gate_atomic_write_line "${holds_dir}/source_kernel_flavor" "${flavor:-other}" || return 1
+    aws_gate_atomic_write_line "${holds_dir}/source_kernel_release" "${kr}" || return 1
+    aws_gate_log INFO "SOURCE_KERNEL_FLAVOR=${flavor:-other}"
+    aws_gate_log INFO "AWS_BASELINE_PERSIST=SKIP reason=non_aws_profile"
+    return 0
+  fi
+
+  # AWS source profile: all four baseline fields are safety-critical.
+  if [[ -z "$aws_ver" ]]; then
+    aws_gate_log ERROR "AWS_BASELINE_PERSIST=FAIL reason=linux-aws_version_unavailable"
+    return 1
+  fi
+  if [[ -z "$img_ver" ]]; then
+    aws_gate_log ERROR "AWS_BASELINE_PERSIST=FAIL reason=linux-image-aws_version_unavailable"
+    return 1
+  fi
+  if [[ -z "$kr" ]]; then
+    aws_gate_log ERROR "AWS_BASELINE_PERSIST=FAIL reason=kernel_release_unavailable"
+    return 1
+  fi
+
+  aws_gate_atomic_write_line "${holds_dir}/source_kernel_flavor" "aws" || return 1
+  aws_gate_atomic_write_line "${holds_dir}/source_kernel_release" "$kr" || return 1
+  aws_gate_atomic_write_line "${holds_dir}/source_linux_aws_version" "$aws_ver" || return 1
+  aws_gate_atomic_write_line "${holds_dir}/source_linux_image_aws_version" "$img_ver" || return 1
+
+  aws_gate_log INFO "SOURCE_KERNEL_FLAVOR=aws"
+  aws_gate_log INFO "SOURCE_KERNEL_RELEASE=${kr}"
+  aws_gate_log INFO "SOURCE_LINUX_AWS_VERSION=${aws_ver}"
+  aws_gate_log INFO "SOURCE_LINUX_IMAGE_AWS_VERSION=${img_ver}"
+  aws_gate_log INFO "AWS_BASELINE_PERSIST=PASS"
+  return 0
+}
+
+validate_aws_source_kernel_preflight() {
+  # Arg: current SOURCE Ubuntu VERSION_ID (e.g. 18.04 for Bionic→Focal).
+  # Rejects already-bad AWS state before destructive package/LXD/release mutation.
+  local source_ver="${1:-}"
+  local flavor kr aws_ver img_ver
+  flavor="$(aws_detect_current_flavor)"
+  if [[ "$flavor" != "aws" ]]; then
+    # Also treat installed AWS metapackages as AWS even if flavor helper differs.
+    if ! aws_pkg_installed linux-aws && ! aws_pkg_installed linux-image-aws; then
+      aws_gate_log INFO "AWS_SOURCE_PREFLIGHT=SKIP reason=non_aws_profile"
+      return 0
+    fi
+    flavor=aws
+  fi
+
+  if [[ -z "$source_ver" ]]; then
+    aws_gate_log ERROR "NEXT_HOP_PREFLIGHT_FAIL reason=missing_source_version"
+    return 1
+  fi
+
+  if ! aws_pkg_installed linux-aws; then
+    aws_gate_log ERROR "NEXT_HOP_PREFLIGHT_FAIL reason=linux-aws_not_installed"
+    return 1
+  fi
+  if ! aws_pkg_installed linux-image-aws; then
+    aws_gate_log ERROR "NEXT_HOP_PREFLIGHT_FAIL reason=linux-image-aws_not_installed"
+    return 1
+  fi
+
+  kr="$(aws_running_kernel_release)"
+  case "$kr" in
+    *-aws) ;;
+    *)
+      aws_gate_log ERROR "NEXT_HOP_PREFLIGHT_FAIL reason=running_kernel_not_aws kernel=${kr}"
+      return 1
+      ;;
+  esac
+  if ! aws_pkg_installed "linux-image-${kr}"; then
+    aws_gate_log ERROR "NEXT_HOP_PREFLIGHT_FAIL reason=running_aws_image_pkg_missing kernel=${kr}"
+    return 1
+  fi
+
+  aws_ver="$(aws_pkg_version linux-aws)"
+  img_ver="$(aws_pkg_version linux-image-aws)"
+  aws_gate_log INFO "AWS_SOURCE_SERIES=${source_ver}"
+  aws_gate_log INFO "AWS_SOURCE_RUNNING_KERNEL=${kr}"
+  aws_gate_log INFO "AWS_SOURCE_LINUX_AWS_VERSION=${aws_ver:-none}"
+  aws_gate_log INFO "AWS_SOURCE_LINUX_IMAGE_AWS_VERSION=${img_ver:-none}"
+
+  # 16.04 has no prior-hop target contract in the four-hop discovery set.
+  # Require a coherent AWS stack only (exact identities enforced from 18.04+).
+  if [[ "$source_ver" == "16.04" ]]; then
+    aws_gate_log INFO "AWS_SOURCE_PREFLIGHT=PASS reason=xenial_source_no_prior_hop_contract"
+    return 0
+  fi
+
+  if ! aws_contract_available_for_version "$source_ver"; then
+    aws_gate_log ERROR "NEXT_HOP_PREFLIGHT_FAIL reason=missing_source_hop_contract series=${source_ver}"
+    return 1
+  fi
+  aws_gate_log INFO "AWS_SOURCE_CONTRACT_HOP=${AWS_C_HOP}"
+  aws_gate_log INFO "AWS_SOURCE_CONTRACT_LINUX_AWS=${AWS_C_LINUX_AWS_VERSION}"
+  aws_gate_log INFO "AWS_SOURCE_CONTRACT_KERNEL_RELEASES=${AWS_C_KERNEL_RELEASES}"
+
+  if ! aws_versions_equal "$aws_ver" "$AWS_C_LINUX_AWS_VERSION"; then
+    aws_gate_log ERROR "NEXT_HOP_PREFLIGHT_FAIL reason=linux-aws_not_source_contract_identity series=${source_ver} expected=${AWS_C_LINUX_AWS_VERSION} installed=${aws_ver}"
+    return 1
+  fi
+  if ! aws_versions_equal "$img_ver" "$AWS_C_LINUX_IMAGE_AWS_VERSION"; then
+    aws_gate_log ERROR "NEXT_HOP_PREFLIGHT_FAIL reason=linux-image-aws_not_source_contract_identity series=${source_ver} expected=${AWS_C_LINUX_IMAGE_AWS_VERSION} installed=${img_ver}"
+    return 1
+  fi
+  if ! aws_kernel_release_in_contract "$kr"; then
+    aws_gate_log ERROR "NEXT_HOP_PREFLIGHT_FAIL reason=running_kernel_not_source_contract_release series=${source_ver} expected=${AWS_C_KERNEL_RELEASES} kernel=${kr}"
+    return 1
+  fi
+  if ! aws_validate_contract_snapd "NEXT_HOP_PREFLIGHT_FAIL"; then
+    return 1
+  fi
+  if ! aws_validate_contract_boot_packages "NEXT_HOP_PREFLIGHT_FAIL"; then
+    return 1
+  fi
+
+  aws_gate_log INFO "AWS_SOURCE_PREFLIGHT=PASS"
+  return 0
+}
+
+validate_aws_target_kernel_pre_reboot() {
+  # Arg: TARGET Ubuntu VERSION_ID (e.g. 18.04 after xenial→bionic DRO).
+  # Runs AFTER package transition and BEFORE automatic reboot.
+  # On failure: do not mark hop successful; do not initiate automatic reboot.
+  # No rollback after package transition begins.
+  local target_ver="${1:-}"
+  local profile holds_dir src_kr
+  local cur_aws cur_img img_pkg kr boot_dir vmlinuz initrd matched_kr
+  profile="$(detect_aws_upgrade_profile)"
+  if [[ "$profile" != "aws" ]]; then
+    aws_gate_log INFO "PRE_REBOOT_AWS_TARGET_GATE=SKIP reason=non_aws_profile"
+    return 0
+  fi
+
+  if [[ -z "$target_ver" ]]; then
+    aws_gate_log ERROR "PRE_REBOOT_AWS_TARGET_GATE=FAIL reason=missing_target_version"
+    aws_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED"
+    return 1
+  fi
+  if ! aws_contract_available_for_version "$target_ver"; then
+    aws_gate_log ERROR "PRE_REBOOT_AWS_TARGET_GATE=FAIL reason=missing_target_hop_contract series=${target_ver}"
+    aws_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED"
+    return 1
+  fi
+
+  holds_dir="${HOLDS_DIR:-${STATE_ROOT:-/opt/aelladata/os-upgrade/offline}/critical-holds}"
+  src_kr=""
+  if [[ -f "$(aws_gate_hp "${holds_dir}/source_kernel_release")" ]]; then
+    src_kr="$(tr -d '\r\n' <"$(aws_gate_hp "${holds_dir}/source_kernel_release")" || true)"
+  fi
+
+  aws_gate_log INFO "PRE_REBOOT_AWS_TARGET_CONTRACT_HOP=${AWS_C_HOP}"
+  aws_gate_log INFO "PRE_REBOOT_AWS_TARGET_CONTRACT_LINUX_AWS=${AWS_C_LINUX_AWS_VERSION}"
+  aws_gate_log INFO "PRE_REBOOT_AWS_TARGET_CONTRACT_KERNEL_RELEASES=${AWS_C_KERNEL_RELEASES}"
+
+  if ! aws_pkg_installed linux-aws; then
+    aws_gate_log ERROR "PRE_REBOOT_AWS_TARGET_GATE=FAIL reason=linux-aws_not_installed"
+    aws_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED"
+    return 1
+  fi
+  if ! aws_pkg_installed linux-image-aws; then
+    aws_gate_log ERROR "PRE_REBOOT_AWS_TARGET_GATE=FAIL reason=linux-image-aws_not_installed"
+    aws_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED"
+    return 1
+  fi
+
+  cur_aws="$(aws_pkg_version linux-aws)"
+  cur_img="$(aws_pkg_version linux-image-aws)"
+  if [[ -z "$cur_aws" || -z "$cur_img" ]]; then
+    aws_gate_log ERROR "PRE_REBOOT_AWS_TARGET_GATE=FAIL reason=metapackage_version_unavailable"
+    aws_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED"
+    return 1
+  fi
+  if ! aws_versions_equal "$cur_aws" "$AWS_C_LINUX_AWS_VERSION"; then
+    aws_gate_log ERROR "PRE_REBOOT_AWS_TARGET_GATE=FAIL reason=linux-aws_not_target_contract_identity expected=${AWS_C_LINUX_AWS_VERSION} installed=${cur_aws}"
+    aws_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED"
+    return 1
+  fi
+  if ! aws_versions_equal "$cur_img" "$AWS_C_LINUX_IMAGE_AWS_VERSION"; then
+    aws_gate_log ERROR "PRE_REBOOT_AWS_TARGET_GATE=FAIL reason=linux-image-aws_not_target_contract_identity expected=${AWS_C_LINUX_IMAGE_AWS_VERSION} installed=${cur_img}"
+    aws_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED"
+    return 1
+  fi
+
+  matched_kr=""
+  for kr in ${AWS_C_KERNEL_RELEASES}; do
+    img_pkg="linux-image-${kr}"
+    if aws_pkg_installed "$img_pkg"; then
+      # Must not be merely the original source kernel release.
+      if [[ -n "$src_kr" && "$kr" == "$src_kr" ]]; then
+        aws_gate_log ERROR "PRE_REBOOT_AWS_TARGET_GATE=FAIL reason=target_image_still_source_kernel kernel=${kr}"
+        aws_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED"
+        return 1
+      fi
+      boot_dir="$(aws_gate_hp /boot)"
+      vmlinuz="${boot_dir}/vmlinuz-${kr}"
+      initrd="${boot_dir}/initrd.img-${kr}"
+      if [[ ! -f "$vmlinuz" || ! -s "$vmlinuz" ]]; then
+        aws_gate_log ERROR "PRE_REBOOT_AWS_TARGET_GATE=FAIL reason=missing_target_vmlinuz kernel=${kr} path=${vmlinuz}"
+        aws_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED"
+        return 1
+      fi
+      if [[ ! -f "$initrd" || ! -s "$initrd" ]]; then
+        aws_gate_log ERROR "PRE_REBOOT_AWS_TARGET_GATE=FAIL reason=missing_target_initrd kernel=${kr} path=${initrd}"
+        aws_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED"
+        return 1
+      fi
+      matched_kr="$kr"
+      break
+    fi
+  done
+
+  if [[ -z "$matched_kr" ]]; then
+    aws_gate_log ERROR "PRE_REBOOT_AWS_TARGET_GATE=FAIL reason=target_versioned_aws_image_not_installed expected=${AWS_C_VERSIONED_IMAGE_PACKAGES}"
+    aws_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED"
+    return 1
+  fi
+
+  if ! aws_validate_contract_snapd "PRE_REBOOT_AWS_TARGET_GATE"; then
+    aws_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED"
+    return 1
+  fi
+  if ! aws_validate_contract_boot_packages "PRE_REBOOT_AWS_TARGET_GATE"; then
+    aws_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED"
+    return 1
+  fi
+
+  aws_gate_log INFO "PRE_REBOOT_AWS_TARGET_KERNEL=${matched_kr}"
+  aws_gate_log INFO "PRE_REBOOT_AWS_TARGET_GATE=PASS"
+  return 0
+}
+
+validate_aws_post_hop_kernel_gate() {
+  # Arguments: expected_target_version_id (e.g. 18.04). Discovery contract authority.
+  # Runs after reboot, immediately before COMPLETED_*. No "pending reboot" PASS.
+  local target_ver="${1:-}"
+  local profile holds_dir src_aws src_img src_kr src_flavor
+  local cur_aws cur_img kr boot_aws
+  profile="$(detect_aws_upgrade_profile)"
+  if [[ "$profile" != "aws" ]]; then
+    aws_gate_log INFO "AWS_POST_HOP_KERNEL_GATE=SKIP reason=non_aws_profile"
+    return 0
+  fi
+
+  if [[ -z "$target_ver" ]]; then
+    aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=missing_target_version"
+    return 1
+  fi
+  if ! aws_contract_available_for_version "$target_ver"; then
+    aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=missing_target_hop_contract series=${target_ver}"
+    return 1
+  fi
+
+  holds_dir="${HOLDS_DIR:-${STATE_ROOT:-/opt/aelladata/os-upgrade/offline}/critical-holds}"
+  src_flavor=""
+  src_kr=""
+  src_aws=""
+  src_img=""
+  if [[ -f "$(aws_gate_hp "${holds_dir}/source_kernel_flavor")" ]]; then
+    src_flavor="$(tr -d '\r\n' <"$(aws_gate_hp "${holds_dir}/source_kernel_flavor")" || true)"
+  fi
+  if [[ -f "$(aws_gate_hp "${holds_dir}/source_kernel_release")" ]]; then
+    src_kr="$(tr -d '\r\n' <"$(aws_gate_hp "${holds_dir}/source_kernel_release")" || true)"
+  fi
+  if [[ -f "$(aws_gate_hp "${holds_dir}/source_linux_aws_version")" ]]; then
+    src_aws="$(tr -d '\r\n' <"$(aws_gate_hp "${holds_dir}/source_linux_aws_version")" || true)"
+  fi
+  if [[ -f "$(aws_gate_hp "${holds_dir}/source_linux_image_aws_version")" ]]; then
+    src_img="$(tr -d '\r\n' <"$(aws_gate_hp "${holds_dir}/source_linux_image_aws_version")" || true)"
+  fi
+
+  # Missing baseline must not allow a stale 4.4 stack to PASS via skipped compares.
+  if [[ "$src_flavor" != "aws" || -z "$src_aws" || -z "$src_img" || -z "$src_kr" ]]; then
+    aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=missing_source_baseline flavor=${src_flavor:-none} aws=${src_aws:-none} img=${src_img:-none} kr=${src_kr:-none}"
+    return 1
+  fi
+
+  if ! aws_pkg_installed linux-aws; then
+    aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=linux-aws_not_installed"
+    return 1
+  fi
+  if ! aws_pkg_installed linux-image-aws; then
+    aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=linux-image-aws_not_installed"
+    return 1
+  fi
+
+  cur_aws="$(aws_pkg_version linux-aws)"
+  cur_img="$(aws_pkg_version linux-image-aws)"
+  aws_gate_log INFO "AWS_LINUX_AWS_VERSION=${cur_aws:-none}"
+  aws_gate_log INFO "AWS_LINUX_IMAGE_AWS_VERSION=${cur_img:-none}"
+  aws_gate_log INFO "AWS_POST_HOP_TARGET_VERSION=${target_ver}"
+  aws_gate_log INFO "AWS_POST_HOP_CONTRACT_HOP=${AWS_C_HOP}"
+  aws_gate_log INFO "AWS_POST_HOP_CONTRACT_LINUX_AWS=${AWS_C_LINUX_AWS_VERSION}"
+  aws_gate_log INFO "AWS_POST_HOP_CONTRACT_KERNEL_RELEASES=${AWS_C_KERNEL_RELEASES}"
+
+  if [[ -z "$cur_aws" || -z "$cur_img" ]]; then
+    aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=metapackage_version_unavailable"
+    return 1
+  fi
+
+  # Stale source metapackage: still equal to pre-upgrade baseline.
+  if aws_versions_equal "$src_aws" "$cur_aws"; then
+    aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=stale_linux-aws_metapackage source=${src_aws} installed=${cur_aws}"
+    return 1
+  fi
+  if aws_versions_equal "$src_img" "$cur_img"; then
+    aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=stale_linux-image-aws_metapackage source=${src_img} installed=${cur_img}"
+    return 1
+  fi
+
+  # Target contract identity (not major.minor floor, not "version changed").
+  if ! aws_versions_equal "$cur_aws" "$AWS_C_LINUX_AWS_VERSION"; then
+    aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=linux-aws_not_target_contract_identity expected=${AWS_C_LINUX_AWS_VERSION} installed=${cur_aws}"
+    return 1
+  fi
+  if ! aws_versions_equal "$cur_img" "$AWS_C_LINUX_IMAGE_AWS_VERSION"; then
+    aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=linux-image-aws_not_target_contract_identity expected=${AWS_C_LINUX_IMAGE_AWS_VERSION} installed=${cur_img}"
+    return 1
+  fi
+
+  boot_aws=0
+  if ls "$(aws_gate_hp /boot)"/vmlinu*-aws >/dev/null 2>&1; then
+    boot_aws=1
+  fi
+  if [[ "$boot_aws" -ne 1 ]]; then
+    aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=no_boot_vmlinuz_aws"
+    return 1
+  fi
+
+  kr="$(aws_running_kernel_release)"
+  case "$kr" in
+    *-aws) ;;
+    *)
+      aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=running_kernel_not_aws kernel=${kr}"
+      return 1
+      ;;
+  esac
+  if ! aws_kernel_release_in_contract "$kr"; then
+    aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=running_kernel_not_target_contract_release expected=${AWS_C_KERNEL_RELEASES} kernel=${kr}"
+    return 1
+  fi
+  if ! aws_pkg_installed "linux-image-${kr}"; then
+    aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=running_aws_image_pkg_missing kernel=${kr}"
+    return 1
+  fi
+  if ! aws_validate_contract_snapd "AWS_POST_HOP_KERNEL_GATE"; then
+    return 1
+  fi
+  if ! aws_validate_contract_boot_packages "AWS_POST_HOP_KERNEL_GATE"; then
+    return 1
+  fi
+
+  aws_gate_log INFO "AWS_POST_HOP_KERNEL_GATE=PASS"
+  return 0
+}
+
+
+#!/usr/bin/env bash
+# Generic/virtual kernel continuity gate for OS hops (non-AWS).
+# shellcheck shell=bash
+#
+# Complements (does not replace) the AWS exact-contract gate.
+# Goals: reject target userspace + stale source running kernel as success.
+# Does NOT hardcode laboratory-specific generic ABI package versions.
+
+generic_gate_log() {
+  local level="$1"; shift
+  if declare -F log >/dev/null 2>&1; then
+    log "$level" "$*"
+  else
+    printf '%s: %s\n' "$level" "$*"
+  fi
+}
+
+generic_gate_hp() {
+  local p="$1"
+  if [[ -n "${TEST_ROOT:-}" ]]; then
+    printf '%s%s' "${TEST_ROOT%/}" "$p"
+  elif [[ -n "${DP_POSTBOOT_TEST_ROOT:-}" ]]; then
+    printf '%s%s' "${DP_POSTBOOT_TEST_ROOT%/}" "$p"
+  else
+    printf '%s' "$p"
+  fi
+}
+
+generic_running_kernel_release() {
+  local kr
+  kr="$(uname -r 2>/dev/null || true)"
+  if [[ -n "${TEST_ROOT:-}${DP_POSTBOOT_TEST_ROOT:-}" && -n "${DP_OFFLINE_FAKE_KERNEL:-}" ]]; then
+    kr="$DP_OFFLINE_FAKE_KERNEL"
+  fi
+  printf '%s' "$kr"
+}
+
+generic_kernel_flavor() {
+  local kr="${1:-}"
+  [[ -n "$kr" ]] || kr="$(generic_running_kernel_release)"
+  case "$kr" in
+    *-aws) printf 'aws' ;;
+    *-generic-lpae) printf 'generic-lpae' ;;
+    *-generic) printf 'generic' ;;
+    *-virtual) printf 'virtual' ;;
+    *) printf 'other' ;;
+  esac
+}
+
+generic_pkg_installed() {
+  local pkg="$1" status
+  status="$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null || true)"
+  [[ "$status" == *"install ok installed"* ]]
+}
+
+# Map Ubuntu VERSION_ID → acceptable running-kernel series patterns (ERE).
+# Intentionally series-based, not exact ABI pins.
+generic_target_kernel_series_ere() {
+  case "${1:-}" in
+    18.04) printf '%s' '^(4\.15[.-].*-generic(-lpae)?|4\.1[6-9][.-].*-generic(-lpae)?|5\.[0-9]+[.-].*-generic(-lpae)?)$' ;;
+    20.04) printf '%s' '^(5\.4[.-].*-generic(-lpae)?|5\.[5-9][.-].*-generic(-lpae)?|5\.[1-9][0-9][.-].*-generic(-lpae)?)$' ;;
+    22.04) printf '%s' '^(5\.15[.-].*-generic(-lpae)?|5\.1[6-9][.-].*-generic(-lpae)?|5\.[2-9][0-9][.-].*-generic(-lpae)?|6\.[0-9]+[.-].*-generic(-lpae)?)$' ;;
+    24.04) printf '%s' '^(6\.[8-9][.-].*-generic(-lpae)?|6\.[1-9][0-9][.-].*-generic(-lpae)?|7\.[0-9]+[.-].*-generic(-lpae)?)$' ;;
+    *) return 1 ;;
+  esac
+}
+
+generic_is_aws_profile() {
+  # detect_aws_upgrade_profile is an output classifier: it prints "aws" or
+  # "other" and returns 0 for both. Classify on OUTPUT, never exit status.
+  local profile flavor
+  if declare -F detect_aws_upgrade_profile >/dev/null 2>&1; then
+    profile="$(detect_aws_upgrade_profile 2>/dev/null || true)"
+    [[ "$profile" == "aws" ]]
+    return $?
+  fi
+  flavor="$(generic_kernel_flavor)"
+  [[ "$flavor" == "aws" ]]
+}
+
+persist_source_kernel_generic_baseline() {
+  local holds_dir flavor kr
+  holds_dir="${HOLDS_DIR:-${STATE_ROOT:-/opt/aelladata/os-upgrade/offline}/critical-holds}"
+  flavor="$(generic_kernel_flavor)"
+  kr="$(generic_running_kernel_release)"
+  mkdir -p "$(generic_gate_hp "$holds_dir")" 2>/dev/null || true
+  if declare -F durable_atomic_write_string >/dev/null 2>&1; then
+    durable_atomic_write_string "generic_src_flavor" "$(generic_gate_hp "${holds_dir}/source_kernel_flavor")" "${flavor}"$'\n' 0644 || true
+    durable_atomic_write_string "generic_src_kr" "$(generic_gate_hp "${holds_dir}/source_kernel_release")" "${kr}"$'\n' 0644 || true
+  else
+    printf '%s\n' "$flavor" >"$(generic_gate_hp "${holds_dir}/source_kernel_flavor")"
+    printf '%s\n' "$kr" >"$(generic_gate_hp "${holds_dir}/source_kernel_release")"
+  fi
+  generic_gate_log INFO "SOURCE_KERNEL_FLAVOR=${flavor}"
+  generic_gate_log INFO "SOURCE_KERNEL_RELEASE=${kr}"
+  generic_gate_log INFO "GENERIC_SOURCE_KERNEL_BASELINE=PASS"
+  return 0
+}
+
+# PRE-REBOOT: target kernel image + matching initrd exist; not merely source kernel.
+# Arg: target Ubuntu VERSION_ID
+validate_generic_target_kernel_pre_reboot() {
+  local target_ver="${1:-}"
+  local holds_dir src_kr flavor boot_dir found=0 kr img initrd
+  if generic_is_aws_profile; then
+    generic_gate_log INFO "PRE_REBOOT_GENERIC_TARGET_GATE=SKIP reason=aws_profile"
+    return 0
+  fi
+  holds_dir="${HOLDS_DIR:-${STATE_ROOT:-/opt/aelladata/os-upgrade/offline}/critical-holds}"
+  src_kr=""
+  if [[ -f "$(generic_gate_hp "${holds_dir}/source_kernel_release")" ]]; then
+    src_kr="$(tr -d '\r\n' <"$(generic_gate_hp "${holds_dir}/source_kernel_release")" || true)"
+  fi
+  flavor="$(generic_kernel_flavor "${src_kr}")"
+  case "$flavor" in
+    generic|generic-lpae|virtual|other)
+      ;;
+    aws)
+      generic_gate_log INFO "PRE_REBOOT_GENERIC_TARGET_GATE=SKIP reason=aws_flavor"
+      return 0
+      ;;
+  esac
+
+  # Prefer metapackage presence without pinning exact ABI.
+  if ! generic_pkg_installed linux-image-generic \
+    && ! generic_pkg_installed linux-image-virtual \
+    && ! generic_pkg_installed linux-generic; then
+    generic_gate_log ERROR "PRE_REBOOT_GENERIC_TARGET_GATE=FAIL reason=target_generic_metapackage_missing"
+    generic_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED=YES"
+    generic_gate_log ERROR "POSTBOOT_HANDOFF_READY=NO"
+    return 1
+  fi
+
+  boot_dir="$(generic_gate_hp /boot)"
+  # Look for installed versioned generic/virtual images that are not the source release.
+  while IFS= read -r img; do
+    [[ -n "$img" ]] || continue
+    kr="${img#linux-image-}"
+    case "$kr" in
+      *-generic|*-generic-lpae|*-virtual) ;;
+      *) continue ;;
+    esac
+    if [[ -n "$src_kr" && "$kr" == "$src_kr" ]]; then
+      continue
+    fi
+    # Series coherence when target VERSION_ID known
+    if [[ -n "$target_ver" ]]; then
+      local ere
+      ere="$(generic_target_kernel_series_ere "$target_ver" || true)"
+      if [[ -n "$ere" ]] && ! printf '%s' "$kr" | grep -Eq "$ere"; then
+        continue
+      fi
+    fi
+    initrd="${boot_dir}/initrd.img-${kr}"
+    if [[ -f "${boot_dir}/vmlinuz-${kr}" && -s "${boot_dir}/vmlinuz-${kr}" \
+      && -f "$initrd" && -s "$initrd" ]]; then
+      found=1
+      generic_gate_log INFO "PRE_REBOOT_GENERIC_TARGET_KERNEL=${kr}"
+      break
+    fi
+  done < <(dpkg-query -W -f='${Package}\n' 'linux-image-*' 2>/dev/null | grep -E '^linux-image-[0-9]' || true)
+
+  if [[ "$found" -ne 1 ]]; then
+    generic_gate_log ERROR "PRE_REBOOT_GENERIC_TARGET_GATE=FAIL reason=no_target_series_vmlinuz_initrd source_kernel=${src_kr:-unknown}"
+    generic_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED=YES"
+    generic_gate_log ERROR "POSTBOOT_HANDOFF_READY=NO"
+    return 1
+  fi
+  generic_gate_log INFO "PRE_REBOOT_GENERIC_TARGET_GATE=PASS"
+  return 0
+}
+
+# POSTBOOT: running kernel must not equal source; must match target series/flavor.
+# Arg: target Ubuntu VERSION_ID
+validate_generic_running_kernel_postboot() {
+  local target_ver="${1:-}"
+  local holds_dir src_kr kr flavor ere img_pkg
+  if generic_is_aws_profile; then
+    generic_gate_log INFO "GENERIC_POST_HOP_KERNEL_GATE=SKIP reason=aws_profile"
+    return 0
+  fi
+  holds_dir="${HOLDS_DIR:-${STATE_ROOT:-/opt/aelladata/os-upgrade/offline}/critical-holds}"
+  src_kr=""
+  if [[ -f "$(generic_gate_hp "${holds_dir}/source_kernel_release")" ]]; then
+    src_kr="$(tr -d '\r\n' <"$(generic_gate_hp "${holds_dir}/source_kernel_release")" || true)"
+  fi
+  kr="$(generic_running_kernel_release)"
+  flavor="$(generic_kernel_flavor "$kr")"
+  if [[ -z "$kr" ]]; then
+    generic_gate_log ERROR "GENERIC_POST_HOP_KERNEL_GATE=FAIL reason=running_kernel_unavailable"
+    return 1
+  fi
+  if [[ -n "$src_kr" && "$kr" == "$src_kr" ]]; then
+    generic_gate_log ERROR "GENERIC_POST_HOP_KERNEL_GATE=FAIL reason=running_kernel_still_source kernel=${kr}"
+    return 1
+  fi
+  case "$flavor" in
+    generic|generic-lpae|virtual) ;;
+    aws)
+      generic_gate_log INFO "GENERIC_POST_HOP_KERNEL_GATE=SKIP reason=aws_flavor"
+      return 0
+      ;;
+    *)
+      generic_gate_log ERROR "GENERIC_POST_HOP_KERNEL_GATE=FAIL reason=unexpected_flavor flavor=${flavor} kernel=${kr}"
+      return 1
+      ;;
+  esac
+  ere="$(generic_target_kernel_series_ere "$target_ver" || true)"
+  if [[ -z "$ere" ]]; then
+    generic_gate_log ERROR "GENERIC_POST_HOP_KERNEL_GATE=FAIL reason=unknown_target_version ${target_ver}"
+    return 1
+  fi
+  if ! printf '%s' "$kr" | grep -Eq "$ere"; then
+    generic_gate_log ERROR "GENERIC_POST_HOP_KERNEL_GATE=FAIL reason=kernel_not_target_series kernel=${kr} target=${target_ver}"
+    return 1
+  fi
+  img_pkg="linux-image-${kr}"
+  if ! generic_pkg_installed "$img_pkg"; then
+    generic_gate_log ERROR "GENERIC_POST_HOP_KERNEL_GATE=FAIL reason=running_image_package_missing package=${img_pkg}"
+    return 1
+  fi
+  # OS VERSION_ID must match hop target when readable.
+  local vid
+  vid="$(grep -E '^VERSION_ID=' "$(generic_gate_hp /etc/os-release)" 2>/dev/null | cut -d= -f2 | tr -d '"' || true)"
+  if [[ -n "$target_ver" && -n "$vid" && "$vid" != "$target_ver" ]]; then
+    generic_gate_log ERROR "GENERIC_POST_HOP_KERNEL_GATE=FAIL reason=os_version_mismatch expected=${target_ver} got=${vid}"
+    return 1
+  fi
+  generic_gate_log INFO "GENERIC_POST_HOP_KERNEL_GATE=PASS kernel=${kr} flavor=${flavor}"
+  return 0
+}
+
+STATE_ROOT="/opt/aelladata/os-upgrade/offline"
+STATE_FILE="${STATE_ROOT}/state"
+HISTORY_FILE="${STATE_ROOT}/hop_history"
+LOG_FILE="/var/log/aella/offline_os_upgrade.log"
+MOTD="/etc/motd.d/99-stellar-offline-upgrade"
+exec >>"$LOG_FILE" 2>&1
+log() { printf '%s [%s] %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$1" "$2"; }
+write_state() {
+  printf '%s\n' "$1" | durable_atomic_write "write_state" "$STATE_FILE" || return 1
+}
+
+# Inlined by scripts/lib/build_client_jammy_to_noble.py (single-file; no runtime include).
+#!/usr/bin/env bash
+# Shared postboot DNS resolver repair and local-clock readiness policy.
+# This file is inlined by build_client_jammy_to_noble.py into the generated
+# postboot helper. It is also directly sourceable by fixture tests.
+# shellcheck shell=bash
+
+DNS_RESOLVER_STATE="NOT_CHECKED"
+DNS_RESOLVER_REPAIR="NOT_ATTEMPTED"
+DNS_SERVERS_CONFIGURED="NONE"
+DNS_NAME_RESOLUTION="NOT_TESTED"
+TIME_READINESS="NOT_CHECKED"
+CLOCK_SKEW_SECONDS="UNKNOWN"
+MAX_CLOCK_SKEW_SECONDS="${DP_MAX_CLOCK_SKEW_SECONDS:-300}"
+NTP_SOURCE_CLASS="UNKNOWN"
+NTP_SELECTED_PEER="NONE"
+BRINGUP_READY="NO"
+NTP_BRINGUP_READINESS="NOT_CHECKED"
+BRINGUP_EXECUTED="NO"
+
+DP_POSTBOOT_TEST_ROOT="${DP_POSTBOOT_TEST_ROOT:-}"
+SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
+RESOLVECTL_BIN="${RESOLVECTL_BIN:-resolvectl}"
+GETENT_BIN="${GETENT_BIN:-getent}"
+CURL_BIN="${CURL_BIN:-curl}"
+NTPQ_BIN="${NTPQ_BIN:-ntpq}"
+NTPWAIT_BIN="${NTPWAIT_BIN:-ntpwait}"
+TIMEDATECTL_BIN="${TIMEDATECTL_BIN:-timedatectl}"
+
+postboot_policy_log() {
+  local level="$1"; shift
+  if declare -F log >/dev/null 2>&1; then
+    log "$level" "$*"
+  else
+    printf '%s: %s\n' "$level" "$*"
+  fi
+}
+
+dns_hp() {
+  local p="$1"
+  if [[ -n "${DP_POSTBOOT_TEST_ROOT:-}" ]]; then
+    printf '%s%s' "${DP_POSTBOOT_TEST_ROOT%/}" "$p"
+  else
+    printf '%s' "$p"
+  fi
+}
+
+dns_is_valid_ipv4() {
+  local ip="${1:-}" a b c d octet
+  IFS=. read -r a b c d <<<"$ip"
+  [[ -n "$a" && -n "$b" && -n "$c" && -n "$d" && "$ip" != *.*.*.*.* ]] || return 1
+  for octet in "$a" "$b" "$c" "$d"; do
+    [[ "$octet" =~ ^[0-9]{1,3}$ ]] || return 1
+    ((10#$octet >= 0 && 10#$octet <= 255)) || return 1
+  done
+}
+
+dedup_valid_ipv4_words() {
+  local word
+  for word in "$@"; do
+    dns_is_valid_ipv4 "$word" && printf '%s\n' "$word"
+  done | awk '!seen[$0]++'
+}
+
+interfaces_dns_servers() {
+  local f
+  f="$(dns_hp /etc/network/interfaces)"
+  [[ -r "$f" ]] || return 0
+  awk '
+    /^[[:space:]]*#/ {next}
+    /^[[:space:]]*dns-nameservers[[:space:]]+/ {
+      sub(/^[[:space:]]*dns-nameservers[[:space:]]+/, "")
+      print
+    }
+  ' "$f" | tr ' \t' '\n' | awk 'NF'
+}
+
+resolv_conf_dns_servers() {
+  local f
+  f="$(dns_hp /etc/resolv.conf)"
+  [[ -r "$f" ]] || return 0
+  awk '
+    /^[[:space:]]*#/ {next}
+    /^[[:space:]]*nameserver[[:space:]]+/ {print $2}
+  ' "$f"
+}
+
+configured_ntp_hostname() {
+  local f token
+  f="$(dns_hp /etc/ntpsec/ntp.conf)"
+  [[ -r "$f" ]] || return 1
+  while IFS= read -r token; do
+    [[ -n "$token" ]] || continue
+    if ! dns_is_valid_ipv4 "$token" && [[ "$token" != "localhost" && "$token" != "::1" ]]; then
+      printf '%s' "$token"
+      return 0
+    fi
+  done < <(awk '
+    /^[[:space:]]*#/ {next}
+    /^[[:space:]]*(server|pool)[[:space:]]+/ {print $2}
+  ' "$f")
+  return 1
+}
+
+check_dns_name_resolution() {
+  local host="${1:-}"
+  [[ -n "$host" ]] || host="$(configured_ntp_hostname 2>/dev/null || true)"
+  [[ -n "$host" ]] || host="${DP_DNS_VALIDATION_HOSTNAME:-archive.ubuntu.com}"
+  if "$GETENT_BIN" ahosts "$host" >/dev/null 2>&1; then
+    DNS_NAME_RESOLUTION="PASS"
+    postboot_policy_log INFO "DNS_VALIDATION_HOSTNAME=${host}"
+    return 0
+  fi
+  DNS_NAME_RESOLUTION="FAIL"
+  postboot_policy_log INFO "DNS_VALIDATION_HOSTNAME=${host}"
+  return 1
+}
+
+resolver_service_state() {
+  local enabled active
+  enabled="$("$SYSTEMCTL_BIN" is-enabled systemd-resolved 2>/dev/null || true)"
+  enabled="$(printf '%s\n' "$enabled" | awk 'NF{print; exit}')"
+  active="$("$SYSTEMCTL_BIN" is-active systemd-resolved 2>/dev/null || true)"
+  active="$(printf '%s\n' "$active" | awk 'NF{print; exit}')"
+  printf '%s|%s' "${enabled:-unknown}" "${active:-unknown}"
+}
+
+resolved_uses_one_configured_dns() {
+  local servers_csv="$1" output ip
+  output="$("$RESOLVECTL_BIN" dns 2>/dev/null || true)"
+  IFS=, read -ra _dns_array <<<"$servers_csv"
+  for ip in "${_dns_array[@]}"; do
+    [[ -n "$ip" ]] || continue
+    if printf '%s\n' "$output" | grep -Fq -- "$ip"; then
+      return 0
+    fi
+  done
+  local upstream
+  upstream="$(dns_hp /run/systemd/resolve/resolv.conf)"
+  if [[ -r "$upstream" ]]; then
+    for ip in "${_dns_array[@]}"; do
+      grep -Eq "^[[:space:]]*nameserver[[:space:]]+${ip//./\.}([[:space:]]|$)" "$upstream" && return 0
+    done
+  fi
+  return 1
+}
+
+restore_resolved_service_state() {
+  local prior_enabled="$1" prior_active="$2"
+  "$SYSTEMCTL_BIN" stop systemd-resolved >/dev/null 2>&1 || true
+  case "$prior_enabled" in
+    masked)
+      "$SYSTEMCTL_BIN" disable systemd-resolved >/dev/null 2>&1 || true
+      "$SYSTEMCTL_BIN" mask systemd-resolved >/dev/null 2>&1 || true
+      ;;
+    enabled|enabled-runtime|static|indirect)
+      "$SYSTEMCTL_BIN" unmask systemd-resolved >/dev/null 2>&1 || true
+      "$SYSTEMCTL_BIN" enable systemd-resolved >/dev/null 2>&1 || true
+      ;;
+    *)
+      "$SYSTEMCTL_BIN" unmask systemd-resolved >/dev/null 2>&1 || true
+      "$SYSTEMCTL_BIN" disable systemd-resolved >/dev/null 2>&1 || true
+      ;;
+  esac
+  if [[ "$prior_active" == "active" ]]; then
+    "$SYSTEMCTL_BIN" start systemd-resolved >/dev/null 2>&1 || true
+  fi
+}
+
+emit_dns_result() {
+  postboot_policy_log INFO "DNS_RESOLVER_STATE=${DNS_RESOLVER_STATE}"
+  postboot_policy_log INFO "DNS_RESOLVER_REPAIR=${DNS_RESOLVER_REPAIR}"
+  postboot_policy_log INFO "DNS_SERVERS_CONFIGURED=${DNS_SERVERS_CONFIGURED}"
+  postboot_policy_log INFO "DNS_NAME_RESOLUTION=${DNS_NAME_RESOLUTION}"
+}
+
+check_and_repair_dns_resolver() {
+  local resolv raw_target canonical stub interfaces state_pair enabled active
+  local dns_lines dns_csv dropin_dir dropin tmp backup had_dropin=0
+  local repair_ok=1 current_active
+  DNS_RESOLVER_STATE="NOT_CHECKED"
+  DNS_RESOLVER_REPAIR="NOT_ATTEMPTED"
+  DNS_SERVERS_CONFIGURED="NONE"
+  DNS_NAME_RESOLUTION="NOT_TESTED"
+
+  resolv="$(dns_hp /etc/resolv.conf)"
+  stub="$(dns_hp /run/systemd/resolve/stub-resolv.conf)"
+  interfaces="$(dns_hp /etc/network/interfaces)"
+
+  if [[ -f "$resolv" && ! -L "$resolv" ]]; then
+    dns_lines="$(resolv_conf_dns_servers | while read -r ip; do dns_is_valid_ipv4 "$ip" && echo "$ip"; done | awk '!seen[$0]++')"
+    if [[ -n "$dns_lines" ]]; then
+      DNS_RESOLVER_STATE="HEALTHY_STATIC"
+      DNS_RESOLVER_REPAIR="NOT_REQUIRED"
+      DNS_SERVERS_CONFIGURED="$(printf '%s\n' "$dns_lines" | paste -sd, -)"
+      check_dns_name_resolution || true
+      emit_dns_result
+      return 0
+    fi
+    DNS_RESOLVER_STATE="BROKEN_STATIC"
+    DNS_RESOLVER_REPAIR="FAIL"
+    check_dns_name_resolution || true
+    emit_dns_result
+    return 1
+  fi
+
+  if [[ -L "$resolv" ]]; then
+    raw_target="$(readlink "$resolv" 2>/dev/null || true)"
+    canonical="$(readlink -f "$resolv" 2>/dev/null || true)"
+    if [[ "$canonical" == "$stub" && -f "$stub" ]]; then
+      if check_dns_name_resolution; then
+        DNS_RESOLVER_STATE="HEALTHY_SYSTEMD_RESOLVED"
+        DNS_RESOLVER_REPAIR="NOT_REQUIRED"
+        dns_lines="$(interfaces_dns_servers | while read -r ip; do dns_is_valid_ipv4 "$ip" && echo "$ip"; done | awk '!seen[$0]++')"
+        [[ -n "$dns_lines" ]] && DNS_SERVERS_CONFIGURED="$(printf '%s\n' "$dns_lines" | paste -sd, -)"
+        emit_dns_result
+        return 0
+      fi
+      DNS_RESOLVER_STATE="BROKEN_SYSTEMD_RESOLVED"
+      DNS_RESOLVER_REPAIR="FAIL"
+      emit_dns_result
+      return 1
+    fi
+
+    state_pair="$(resolver_service_state)"
+    enabled="${state_pair%%|*}"
+    active="${state_pair#*|}"
+    if [[ "$raw_target" == "../run/systemd/resolve/stub-resolv.conf" && ! -e "$stub" \
+          && ( "$enabled" == "masked" || "$active" != "active" ) ]]; then
+      dns_lines="$(interfaces_dns_servers | while read -r ip; do dns_is_valid_ipv4 "$ip" && echo "$ip"; done | awk '!seen[$0]++')"
+      if [[ -z "$dns_lines" ]]; then
+        DNS_RESOLVER_STATE="BROKEN_SYSTEMD_RESOLVED"
+        DNS_RESOLVER_REPAIR="FAIL"
+        DNS_SERVERS_CONFIGURED="NONE"
+        DNS_NAME_RESOLUTION="NOT_TESTED"
+        postboot_policy_log ERROR "ERROR: broken systemd-resolved stub link and no valid dns-nameservers in ${interfaces}"
+        emit_dns_result
+        return 1
+      fi
+      dns_csv="$(printf '%s\n' "$dns_lines" | paste -sd, -)"
+      DNS_SERVERS_CONFIGURED="$dns_csv"
+      dropin_dir="$(dns_hp /etc/systemd/resolved.conf.d)"
+      dropin="${dropin_dir}/20-dp-static-dns.conf"
+      mkdir -p "$dropin_dir"
+      backup="${dropin}.rollback.$$"
+      if [[ -e "$dropin" ]]; then
+        cp -a "$dropin" "$backup"
+        had_dropin=1
+      fi
+      tmp="${dropin}.tmp.$$"
+      {
+        printf '[Resolve]\nDNS='
+        printf '%s\n' "$dns_lines" | paste -sd' ' -
+        printf 'FallbackDNS=\n'
+      } >"$tmp"
+      chmod 0644 "$tmp"
+      mv -f "$tmp" "$dropin"
+
+      "$SYSTEMCTL_BIN" unmask systemd-resolved >/dev/null 2>&1 || repair_ok=0
+      "$SYSTEMCTL_BIN" enable --now systemd-resolved >/dev/null 2>&1 || repair_ok=0
+
+      canonical="$(readlink -f "$resolv" 2>/dev/null || true)"
+      current_active="$("$SYSTEMCTL_BIN" is-active systemd-resolved 2>/dev/null || true)"
+      current_active="$(printf '%s\n' "$current_active" | awk 'NF {print; exit}')"
+      [[ "$current_active" == "active" ]] || repair_ok=0
+      [[ -f "$stub" ]] || repair_ok=0
+      [[ "$canonical" == "$stub" ]] || repair_ok=0
+      resolved_uses_one_configured_dns "$dns_csv" || repair_ok=0
+      check_dns_name_resolution || repair_ok=0
+
+      if [[ "$repair_ok" -eq 1 ]]; then
+        rm -f "$backup"
+        DNS_RESOLVER_STATE="RECOVERED_SYSTEMD_RESOLVED"
+        DNS_RESOLVER_REPAIR="PASS"
+        emit_dns_result
+        return 0
+      fi
+
+      rm -f "$dropin"
+      if [[ "$had_dropin" -eq 1 && -e "$backup" ]]; then
+        mv -f "$backup" "$dropin"
+      else
+        rm -f "$backup"
+      fi
+      restore_resolved_service_state "$enabled" "$active"
+      DNS_RESOLVER_STATE="BROKEN_SYSTEMD_RESOLVED"
+      DNS_RESOLVER_REPAIR="FAIL"
+      emit_dns_result
+      return 1
+    fi
+
+    DNS_RESOLVER_STATE="UNKNOWN_LAYOUT"
+    DNS_RESOLVER_REPAIR="NOT_ATTEMPTED"
+    postboot_policy_log WARN "DNS_RESOLVER_DIAGNOSTIC=symlink target=${raw_target:-unknown} canonical=${canonical:-missing} resolved_enabled=${enabled:-unknown} resolved_active=${active:-unknown}"
+    if check_dns_name_resolution; then
+      emit_dns_result
+      return 0
+    fi
+    emit_dns_result
+    return 1
+  fi
+
+  DNS_RESOLVER_STATE="UNKNOWN_LAYOUT"
+  DNS_RESOLVER_REPAIR="NOT_ATTEMPTED"
+  postboot_policy_log WARN "DNS_RESOLVER_DIAGNOSTIC=/etc/resolv.conf missing or unsupported layout"
+  if check_dns_name_resolution; then
+    emit_dns_result
+    return 0
+  fi
+  emit_dns_result
+  return 1
+}
+
+is_positive_integer() {
+  [[ "${1:-}" =~ ^[1-9][0-9]*$ ]]
+}
+
+is_valid_ipv4() {
+  local ip="${1:-}" a b c d octet
+  IFS=. read -r a b c d <<<"$ip"
+  [[ -n "$a" && -n "$b" && -n "$c" && -n "$d" ]] || return 1
+  [[ "$ip" != *.*.*.*.* ]] || return 1
+  for octet in "$a" "$b" "$c" "$d"; do
+    [[ "$octet" =~ ^[0-9]{1,3}$ ]] || return 1
+    ((10#$octet >= 0 && 10#$octet <= 255)) || return 1
+  done
+}
+
+ipv4_source_scope() {
+  local ip="$1" a b c d
+  is_valid_ipv4 "$ip" || { printf 'UNKNOWN'; return 1; }
+  IFS=. read -r a b c d <<<"$ip"
+  if ((a == 10)) || ((a == 172 && b >= 16 && b <= 31)) || ((a == 192 && b == 168)); then
+    printf 'INTERNAL'
+  elif ((a == 127)) || ((a == 169 && b == 254)) || ((a == 0)) || ((a >= 224)); then
+    printf 'IGNORED'
+  else
+    printf 'PUBLIC'
+  fi
+}
+
+normalize_ntp_source_token() {
+  local token="${1:-}"
+  token="${token#\*}"
+  token="${token#+}"
+  token="${token#-}"
+  token="${token#o}"
+  token="${token#x}"
+  token="${token#\#}"
+  token="${token#[}"
+  token="${token%]}"
+  token="${token%.}"
+  printf '%s' "$token"
+}
+
+classify_ntp_source_token() {
+  local token ip scope saw_public=0
+  token="$(normalize_ntp_source_token "${1:-}")"
+  [[ -n "$token" ]] || { printf 'UNKNOWN'; return 0; }
+  case "$token" in
+    LOCAL|LOCAL\(*|localhost|localhost.*|0.0.0.0|127.*|169.254.*|::1|fe80:*|FE80:*)
+      printf 'IGNORED'; return 0 ;;
+  esac
+  if is_valid_ipv4 "$token"; then
+    ipv4_source_scope "$token"
+    return 0
+  fi
+  if command -v "$GETENT_BIN" >/dev/null 2>&1; then
+    while IFS= read -r ip; do
+      [[ -n "$ip" ]] || continue
+      scope="$(ipv4_source_scope "$ip" 2>/dev/null || printf UNKNOWN)"
+      case "$scope" in
+        INTERNAL) printf 'INTERNAL'; return 0 ;;
+        PUBLIC) saw_public=1 ;;
+      esac
+    done < <("$GETENT_BIN" ahostsv4 "$token" 2>/dev/null | awk '{print $1}' | awk '!seen[$0]++')
+  fi
+  if [[ "$saw_public" -eq 1 ]]; then
+    printf 'PUBLIC'
+  else
+    printf 'UNKNOWN'
+  fi
+}
+
+classify_ntp_sources() {
+  local ntpq_text="${1:-}" token class have_internal=0 have_public=0
+  while IFS= read -r token; do
+    [[ -n "$token" ]] || continue
+    class="$(classify_ntp_source_token "$token")"
+    case "$class" in
+      INTERNAL) have_internal=1 ;;
+      PUBLIC) have_public=1 ;;
+    esac
+  done < <(
+    {
+      printf '%s\n' "$ntpq_text" | awk 'NR>2 && NF>=1 {print $1}'
+      if [[ -r "$(dns_hp /etc/ntpsec/ntp.conf)" ]]; then
+        awk '
+          /^[[:space:]]*#/ {next}
+          /^[[:space:]]*(server|pool)[[:space:]]+/ {print $2}
+        ' "$(dns_hp /etc/ntpsec/ntp.conf)"
+      fi
+    } | awk 'NF && !seen[$0]++'
+  )
+  if [[ "$have_internal" -eq 1 ]]; then
+    NTP_SOURCE_CLASS="INTERNAL"
+  elif [[ "$have_public" -eq 1 ]]; then
+    NTP_SOURCE_CLASS="PUBLIC"
+  else
+    NTP_SOURCE_CLASS="UNKNOWN"
+  fi
+}
+
+selected_ntp_peer_from_text() {
+  local text="${1:-}"
+  printf '%s\n' "$text" | awk 'NR>2 && $1 ~ /^\*/ {gsub(/^\*/, "", $1); print $1; exit}'
+}
+
+ntpq_clock_reference_from_text() {
+  local text="${1:-}"
+  printf '%s\n' "$text" | awk '
+    function abs(v) { return v < 0 ? -v : v }
+    NR > 2 && NF >= 9 {
+      remote=$1; reach=$7; off=$9
+      selected=(remote ~ /^\*/)
+      gsub(/^[*+#ox-]/, "", remote)
+      if (reach !~ /^[0-9]+$/ || reach == 0) next
+      if (off !~ /^[-+]?[0-9]+([.][0-9]+)?$/) next
+      a=abs(off)
+      if (selected && !have_sel) { sel=a; selpeer=remote; have_sel=1 }
+      if (!have_any || a < best) { best=a; bestpeer=remote; have_any=1 }
+    }
+    END {
+      if (have_sel) printf "%d|%s\n", int((sel + 999.999999) / 1000), selpeer
+      else if (have_any) printf "%d|%s\n", int((best + 999.999999) / 1000), bestpeer
+    }
+  '
+}
+
+http_date_clock_skew_seconds() {
+  local base_url="${1:-}" headers date_value ref_epoch local_epoch delta
+  [[ -n "$base_url" ]] || return 1
+  headers="$("$CURL_BIN" -fsSI --connect-timeout 5 --max-time 10 "$base_url" 2>/dev/null || true)"
+  date_value="$(printf '%s\n' "$headers" | awk 'BEGIN{IGNORECASE=1} /^Date:[[:space:]]*/ {sub(/^[^:]+:[[:space:]]*/, ""); sub(/\r$/, ""); print; exit}')"
+  [[ -n "$date_value" ]] || return 1
+  ref_epoch="$(LC_ALL=C date -u -d "$date_value" +%s 2>/dev/null || true)"
+  local_epoch="$(date -u +%s 2>/dev/null || true)"
+  [[ "$ref_epoch" =~ ^[0-9]+$ && "$local_epoch" =~ ^[0-9]+$ ]] || return 1
+  if ((local_epoch >= ref_epoch)); then delta=$((local_epoch-ref_epoch)); else delta=$((ref_epoch-local_epoch)); fi
+  printf '%s\n' "$delta"
+}
+
+run_ntpwait_probe() {
+  command -v "$NTPWAIT_BIN" >/dev/null 2>&1 || return 1
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 20 "$NTPWAIT_BIN" -n 1 -s 1 >/dev/null 2>&1
+  else
+    "$NTPWAIT_BIN" -n 1 -s 1 >/dev/null 2>&1
+  fi
+}
+
+check_time_readiness() {
+  local ntpq_text="" rv_text="" td="" ref="" skew="" ref_peer=""
+  TIME_READINESS="FAIL_TIME_UNVERIFIABLE"
+  CLOCK_SKEW_SECONDS="UNKNOWN"
+  MAX_CLOCK_SKEW_SECONDS="${DP_MAX_CLOCK_SKEW_SECONDS:-300}"
+  NTP_SOURCE_CLASS="UNKNOWN"
+  NTP_SELECTED_PEER="NONE"
+  BRINGUP_READY="NO"
+  NTP_BRINGUP_READINESS="FAIL"
+
+  if ! is_positive_integer "$MAX_CLOCK_SKEW_SECONDS"; then
+    postboot_policy_log ERROR "ERROR: DP_MAX_CLOCK_SKEW_SECONDS must be a positive integer"
+    return 1
+  fi
+
+  if command -v "$NTPQ_BIN" >/dev/null 2>&1; then
+    ntpq_text="$("$NTPQ_BIN" -pn 2>/dev/null || "$NTPQ_BIN" -p 2>/dev/null || true)"
+    rv_text="$("$NTPQ_BIN" rv 2>/dev/null || true)"
+  fi
+  NTP_SELECTED_PEER="$(selected_ntp_peer_from_text "$ntpq_text")"
+  [[ -n "$NTP_SELECTED_PEER" ]] || NTP_SELECTED_PEER="NONE"
+  classify_ntp_sources "$ntpq_text"
+
+  if run_ntpwait_probe; then
+    TIME_READINESS="PASS_SYNCED"
+    CLOCK_SKEW_SECONDS="0"
+    BRINGUP_READY="YES"
+    NTP_BRINGUP_READINESS="PASS"
+  elif [[ "$NTP_SELECTED_PEER" != "NONE" ]] && printf '%s\n' "$rv_text" | grep -Eq '(^|[[:space:],])leap=00([[:space:],]|$)'; then
+    TIME_READINESS="PASS_SYNCED"
+    CLOCK_SKEW_SECONDS="0"
+    BRINGUP_READY="YES"
+    NTP_BRINGUP_READINESS="PASS"
+  else
+    if command -v "$TIMEDATECTL_BIN" >/dev/null 2>&1; then
+      td="$("$TIMEDATECTL_BIN" status 2>/dev/null || "$TIMEDATECTL_BIN" 2>/dev/null || true)"
+    fi
+    if printf '%s\n' "$td" | grep -qiE 'System clock synchronized:[[:space:]]*yes'; then
+      TIME_READINESS="PASS_SYNCED"
+      CLOCK_SKEW_SECONDS="0"
+      BRINGUP_READY="YES"
+      NTP_BRINGUP_READINESS="PASS"
+    else
+      ref="$(ntpq_clock_reference_from_text "$ntpq_text" || true)"
+      if [[ -n "$ref" ]]; then
+        skew="${ref%%|*}"
+        ref_peer="${ref#*|}"
+        postboot_policy_log INFO "TIME_REFERENCE=NTP_PEER peer=${ref_peer}"
+      else
+        # The mirror this client was built for is the only trusted HTTP Date
+        # reference; skip the probe rather than guess an address.
+        local time_ref_url="${DP_TIME_REFERENCE_URL:-${PIN_MIRROR_BASE:-${MIRROR_BASE:-}}}"
+        if [[ -n "$time_ref_url" ]]; then
+          skew="$(http_date_clock_skew_seconds "$time_ref_url" || true)"
+          [[ -n "$skew" ]] && postboot_policy_log INFO "TIME_REFERENCE=HTTP_DATE url=${time_ref_url}"
+        else
+          postboot_policy_log WARN "TIME_REFERENCE=UNAVAILABLE no NTP peer and no mirror base for HTTP Date"
+        fi
+      fi
+      if [[ "$skew" =~ ^[0-9]+$ ]]; then
+        CLOCK_SKEW_SECONDS="$skew"
+        if ((skew <= MAX_CLOCK_SKEW_SECONDS)); then
+          TIME_READINESS="PASS_WITH_WARNING"
+          BRINGUP_READY="YES"
+          NTP_BRINGUP_READINESS="PASS"
+          postboot_policy_log WARN "WARNING: time synchronization not confirmed; clock skew ${skew}s is within ${MAX_CLOCK_SKEW_SECONDS}s"
+        else
+          TIME_READINESS="FAIL_CLOCK_SKEW"
+          BRINGUP_READY="NO"
+          NTP_BRINGUP_READINESS="FAIL"
+          postboot_policy_log ERROR "ERROR: clock skew ${skew}s exceeds ${MAX_CLOCK_SKEW_SECONDS}s"
+        fi
+      else
+        TIME_READINESS="FAIL_TIME_UNVERIFIABLE"
+        BRINGUP_READY="NO"
+        NTP_BRINGUP_READINESS="FAIL"
+        postboot_policy_log ERROR "ERROR: time synchronization is unconfirmed and no usable time reference was obtained"
+      fi
+    fi
+  fi
+
+  if [[ "$BRINGUP_READY" == "YES" && "$NTP_SOURCE_CLASS" != "INTERNAL" ]]; then
+    postboot_policy_log WARN "WARNING: no internal NTP source detected; continuing because local clock readiness passed"
+  fi
+  postboot_policy_log INFO "TIME_READINESS=${TIME_READINESS}"
+  postboot_policy_log INFO "CLOCK_SKEW_SECONDS=${CLOCK_SKEW_SECONDS}"
+  postboot_policy_log INFO "MAX_CLOCK_SKEW_SECONDS=${MAX_CLOCK_SKEW_SECONDS}"
+  postboot_policy_log INFO "NTP_SOURCE_CLASS=${NTP_SOURCE_CLASS}"
+  postboot_policy_log INFO "NTP_SELECTED_PEER=${NTP_SELECTED_PEER}"
+  postboot_policy_log INFO "BRINGUP_READY=${BRINGUP_READY}"
+  [[ "$BRINGUP_READY" == "YES" ]]
+}
+
+check_time_readiness_phase1() {
+  check_time_readiness "$@"
+}
+
+check_basic_network_route() {
+  local default_route default_iface
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "${STELLAR_OFFLINE_FAKE_DEFAULT_ROUTE:-}" ]]; then
+    [[ "${STELLAR_OFFLINE_FAKE_DEFAULT_ROUTE}" == "1" ]]
+    return $?
+  fi
+  default_route="$(ip -4 route show default 2>/dev/null | awk 'NR==1 {print; exit}')"
+  default_iface="$(printf '%s\n' "$default_route" | awk '{for (i=1; i<=NF; i++) if ($i=="dev") {print $(i+1); exit}}')"
+  [[ -n "$default_route" && -n "$default_iface" ]] || return 1
+  log INFO "DEFAULT_ROUTE_CHECK=PASS"
+  log INFO "DEFAULT_INTERFACE=${default_iface}"
+  log INFO "DEFAULT_ROUTE=${default_route}"
+}
+
+emit_dns_time_result_contract() {
+  log INFO "DNS_RESOLVER_STATE=${DNS_RESOLVER_STATE:-}"
+  log INFO "DNS_RESOLVER_REPAIR=${DNS_RESOLVER_REPAIR:-}"
+  log INFO "DNS_SERVERS_CONFIGURED=${DNS_SERVERS_CONFIGURED:-}"
+  log INFO "DNS_NAME_RESOLUTION=${DNS_NAME_RESOLUTION:-}"
+  log INFO "TIME_READINESS=${TIME_READINESS:-}"
+  log INFO "CLOCK_SKEW_SECONDS=${CLOCK_SKEW_SECONDS:-}"
+  log INFO "MAX_CLOCK_SKEW_SECONDS=${MAX_CLOCK_SKEW_SECONDS:-}"
+  log INFO "NTP_SOURCE_CLASS=${NTP_SOURCE_CLASS:-}"
+  log INFO "NTP_SELECTED_PEER=${NTP_SELECTED_PEER:-}"
+  log INFO "BRINGUP_READY=${BRINGUP_READY:-}"
+  log INFO "BRINGUP_EXECUTED=${BRINGUP_EXECUTED:-NO}"
+}
+POSTBOOT_HDR
+    cat <<'POSTBOOT_MAIN'
+
+main() {
+  write_state POST_BOOT_VERIFY
+  local ver code arch ubu py3ver kr
+  # 1) Noble OS confirmation
+  ver="$(grep -E '^VERSION_ID=' /etc/os-release | cut -d= -f2 | tr -d '"')"
+  code="$(grep -E '^VERSION_CODENAME=' /etc/os-release | cut -d= -f2 | tr -d '"')"
+  arch="$(dpkg --print-architecture)"
+  ubu="$(grep -E '^UBUNTU_CODENAME=' /etc/os-release | cut -d= -f2 | tr -d '"' || true)"
+  [[ "$ver" == "24.04" && "$code" == "noble" ]] || { log ERROR "not noble"; write_state FAILED; exit 1; }
+  if [[ -n "$ubu" && "$ubu" != "noble" ]]; then
+    log ERROR "UBUNTU_CODENAME=${ubu} (expected noble)"; write_state FAILED; exit 1
+  fi
+  [[ "$arch" == "amd64" ]] || { log ERROR "arch ${arch}"; write_state FAILED; exit 1; }
+  # Python3 must be Noble-series; Python2 residual alone is NOT a postboot failure.
+  py3ver="$(dpkg-query -W -f='${Version}' python3 2>/dev/null || true)"
+  [[ "$py3ver" == 3.12* ]] || { log ERROR "python3 not Noble-series (${py3ver})"; write_state FAILED; exit 1; }
+  log INFO "PYTHON3_SERIES_CHECK=PASS version=${py3ver}"
+  log INFO "PYTHON2_RESIDUAL_IGNORED_BY_PHASE1_POLICY=YES"
+  # Running-kernel series/flavor is enforced by the mutually exclusive AWS vs
+  # generic post-hop gates below (not by a generic-only inline regex). A valid
+  # Noble AWS kernel such as 7.0.0-1011-aws must not be rejected here.
+  kr="$(uname -r)"
+  log INFO "RUNNING_KERNEL=${kr}"
+  # 2) dpkg/apt health
+  dpkg --audit 2>/dev/null | grep -q . && { log ERROR "dpkg audit"; write_state FAILED; exit 1; }
+  apt-get check >/dev/null 2>&1 || { log ERROR "broken deps"; write_state FAILED; exit 1; }
+  [[ -d /opt/aelladata ]] || { log ERROR "aelladata missing"; write_state FAILED; exit 1; }
+  if grep -RqiE '(archive|security|old-releases)\.ubuntu\.com' /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null; then
+    log ERROR "external apt sources active"
+    write_state FAILED
+    exit 1
+  fi
+  if ! grep -RqiE 'noble' /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null; then
+    log WARN "noble suite not found in sources (may still be mid-transition)"
+  fi
+  [[ -f "$HISTORY_FILE" ]] || printf 'HOP_4: 22.04 -> 24.04 rc=0\n' >>"$HISTORY_FILE"
+  # Remove temporary keep-local conffile policy after successful Noble boot.
+  if [[ -f /etc/apt/apt.conf.d/97stellar-offline-conffile-policy ]]; then
+    preexisting="${STATE_ROOT}/critical-holds/97stellar-offline-conffile-policy.preexisting"
+    if [[ -f "$preexisting" ]]; then
+      cp -a "$preexisting" /etc/apt/apt.conf.d/97stellar-offline-conffile-policy
+      log INFO "NONINTERACTIVE_CONFFILE_POLICY_RESTORED=YES reason=postboot"
+    else
+      rm -f /etc/apt/apt.conf.d/97stellar-offline-conffile-policy
+      log INFO "NONINTERACTIVE_CONFFILE_POLICY_REMOVED=YES reason=postboot"
+    fi
+  fi
+  # 3) basic interface / default route
+  if ! check_basic_network_route; then
+    log ERROR "DEFAULT_ROUTE_CHECK=FAIL"
+    write_state FAILED
+    exit 1
+  fi
+  log INFO "DEFAULT_ROUTE_CHECK=PASS"
+  log INFO "BASIC_NETWORK_ROUTE=PASS"
+  # 4) DNS resolver inspect / limited auto-repair (before COMPLETED_NOBLE)
+  if ! check_and_repair_dns_resolver; then
+    emit_dns_time_result_contract || true
+    log ERROR "DNS_POSTBOOT_VALIDATION=FAIL"
+    log ERROR "DNS resolver validation/repair failed; not recording COMPLETED_NOBLE"
+    write_state FAILED
+    exit 1
+  fi
+  log INFO "DNS_POSTBOOT_VALIDATION=PASS"
+  # 5) time readiness (skew/unverifiable hard-fail; sync-only never hard-fails alone)
+  if ! check_time_readiness; then
+    emit_dns_time_result_contract || true
+    log ERROR "TIME_POSTBOOT_VALIDATION=FAIL"
+    log ERROR "time readiness failed; not recording COMPLETED_NOBLE"
+    write_state FAILED
+    exit 1
+  fi
+  log INFO "TIME_POSTBOOT_VALIDATION=PASS"
+  emit_dns_time_result_contract || true
+  # 6) Kernel post-hop gate — AWS and generic are mutually exclusive.
+  # Profile authority: detect_aws_upgrade_profile (persisted source_kernel_flavor,
+  # running *-aws, or linux-aws package presence). Do not apply the generic
+  # Noble-series regex to an AWS profile host.
+  local aws_profile
+  aws_profile="$(detect_aws_upgrade_profile 2>/dev/null || true)"
+  if [[ "$aws_profile" == "aws" ]]; then
+    if ! validate_aws_post_hop_kernel_gate "24.04"; then
+      log ERROR "AWS kernel post-hop validation failed; refusing COMPLETED_NOBLE"
+      write_state FAILED
+      exit 1
+    fi
+    log INFO "GENERIC_POST_HOP_KERNEL_GATE=SKIP reason=aws_profile"
+  else
+    if ! declare -F validate_generic_running_kernel_postboot >/dev/null 2>&1; then
+      log ERROR "GENERIC_POST_HOP_KERNEL_GATE=FAIL reason=helper_missing"
+      write_state FAILED
+      exit 1
+    fi
+    if ! validate_generic_running_kernel_postboot "24.04"; then
+      log ERROR "GENERIC_POST_HOP_KERNEL_GATE=FAIL"
+      write_state FAILED
+      exit 1
+    fi
+  fi
+  # 7) COMPLETED_NOBLE — only after DNS + time readiness + kernel gate
+  write_state COMPLETED_NOBLE
+  mkdir -p /etc/motd.d 2>/dev/null || true
+  cat >"$MOTD" <<EOF
+============================================================
+ STELLAR DP OS UPGRADE - PHASE 1 COMPLETE (NOBLE)
+============================================================
+
+Ubuntu 24.04 Noble OS upgrade succeeded.
+OS validation: PASS
+Product validation: NOT run in Phase 1
+DP runtime recovery: NOT performed yet
+Phase 2 bringup: NOT started (will NOT auto-run)
+
+Required next actions (exact order):
+
+1. Shut down this DP server:
+
+   sudo shutdown -h now
+
+2. Wait until the VM is completely powered off.
+
+3. Create a powered-off VMware/hypervisor snapshot.
+
+4. Power on the VM.
+
+5. Run Phase 2 preflight, then bringup only AFTER the
+   powered-off snapshot exists (NOT auto-run by Phase 1):
+
+   # manual Phase 2 - never auto-started here
+   bringup_py3_dp_after_os_upgrade.sh --version 6.6.0 --skip-download
+
+Do NOT run Phase 2 bringup before the powered-off snapshot.
+Do NOT treat product runtime as validated yet.
+
+Markers:
+  PHASE1_OS_UPGRADE=COMPLETE
+  NOBLE_OS_VALIDATION=PASS
+  PRODUCT_VALIDATION=NOT_RUN_PHASE1
+  PHASE2_DP_BRINGUP=PENDING
+  NEXT_REQUIRED_ACTION=POWERED_OFF_SNAPSHOT
+
+============================================================
+EOF
+  systemctl disable stellar-offline-os-upgrade-postboot.service 2>/dev/null || true
+  log INFO "UPGRADE_PHASE=1"
+  log INFO "UPGRADE_MODE=OS_ONLY_PHASE1"
+  log INFO "state=COMPLETED_NOBLE"
+  log INFO "os_upgrade_result=COMPLETED_NOBLE"
+  log INFO "os_validation_result=PASS"
+  log INFO "product_validation_result=NOT_RUN_PHASE1"
+  log INFO "phase1_result=PASS"
+  log INFO "phase2_result=NOT_STARTED"
+  log INFO "PHASE1_OS_UPGRADE=COMPLETE"
+  log INFO "NOBLE_OS_VALIDATION=PASS"
+  log INFO "PRODUCT_VALIDATION=NOT_RUN_PHASE1"
+  log INFO "PHASE2_DP_BRINGUP=PENDING"
+  log INFO "NEXT_REQUIRED_ACTION=POWERED_OFF_SNAPSHOT"
+  log INFO "DNS_RESOLVER_STATE=${DNS_RESOLVER_STATE}"
+  log INFO "DNS_RESOLVER_REPAIR=${DNS_RESOLVER_REPAIR}"
+  log INFO "DNS_SERVERS_CONFIGURED=${DNS_SERVERS_CONFIGURED}"
+  log INFO "DNS_NAME_RESOLUTION=${DNS_NAME_RESOLUTION}"
+  log INFO "TIME_READINESS=${TIME_READINESS}"
+  log INFO "CLOCK_SKEW_SECONDS=${CLOCK_SKEW_SECONDS}"
+  log INFO "MAX_CLOCK_SKEW_SECONDS=${MAX_CLOCK_SKEW_SECONDS}"
+  log INFO "NTP_SOURCE_CLASS=${NTP_SOURCE_CLASS}"
+  log INFO "NTP_SELECTED_PEER=${NTP_SELECTED_PEER}"
+  log INFO "BRINGUP_READY=${BRINGUP_READY}"
+  log INFO "BRINGUP_EXECUTED=NO"
+  log INFO "post-boot verification PASS - COMPLETED_NOBLE"
+}
+main "$@"
+POSTBOOT_MAIN
+  } >"$tmp" || {
+    rm -f "$tmp"
+    log ERROR "POSTBOOT_REFRESH=FAIL reason=WRITE_TMP path=${tmp}"
+    return 1
+  }
+  chmod 0755 "$tmp" || {
+    rm -f "$tmp"
+    log ERROR "POSTBOOT_REFRESH=FAIL reason=CHMOD_TMP path=${tmp}"
+    return 1
+  }
+  chown root:root "$tmp" 2>/dev/null || true
+  if ! mv -f "$tmp" "$dest"; then
+    rm -f "$tmp"
+    log ERROR "POSTBOOT_REFRESH=FAIL reason=ATOMIC_REPLACE path=${dest}"
+    return 1
+  fi
+  chmod 0755 "$dest" || {
+    log ERROR "POSTBOOT_REFRESH=FAIL reason=CHMOD_DEST path=${dest}"
+    return 1
+  }
+  chown root:root "$dest" 2>/dev/null || true
+  if [[ ! -x "$dest" ]]; then
+    log ERROR "POSTBOOT_REFRESH=FAIL reason=NOT_EXECUTABLE path=${dest}"
+    return 1
+  fi
+  # Fail closed unless the refreshed payload carries the PR30 AWS/generic
+  # mutual-exclusion contract (do not accept a generic-only stale body).
+  if ! grep -q 'validate_aws_post_hop_kernel_gate "24.04"' "$dest" 2>/dev/null \
+    || ! grep -q 'GENERIC_POST_HOP_KERNEL_GATE=SKIP reason=aws_profile' "$dest" 2>/dev/null \
+    || ! grep -q 'validate_generic_running_kernel_postboot' "$dest" 2>/dev/null; then
+    log ERROR "POSTBOOT_REFRESH=FAIL reason=MISSING_MUTUAL_EXCLUSION_MARKERS path=${dest}"
+    return 1
+  fi
+  log INFO "POSTBOOT_REFRESH=INSTALLED path=${POSTBOOT_PATH}"
+  return 0
+}
+
 install_runner_and_units() {
   local work="$1"
   mkdir -p "$(hostpath /usr/local/sbin)" "$(hostpath /etc/systemd/system)"
@@ -13571,1928 +15558,10 @@ main "$@"
 
 RUNNER
 
-  # Postboot: build-time-inlined DNS/time policy + main verifier (single-file).
-  {
-    cat <<'POSTBOOT_HDR'
-#!/usr/bin/env bash
-set -euo pipefail
-# Shared durable atomic write helpers for offline OS-upgrade clients.
-# shellcheck shell=bash
-# Injected at build time via the DURABLE_WRITE_HELPER template token.
-# Prefer targeted file+directory fsync over unbounded global `sync`.
-# Bash 4.3+/4.4 safe; requires python3 (standard on Bionic+ upgrade hosts).
-
-DURABLE_WRITE_LOG_THRESHOLD_MS="${DURABLE_WRITE_LOG_THRESHOLD_MS:-500}"
-
-_durable_now_ms() {
-  python3 -c 'import time; print(int(time.time()*1000))' 2>/dev/null || echo 0
-}
-
-_durable_write_python() {
-  # stdin → durable atomic replace at path. Args: path mode_or_empty preserve_owner(0|1)
-  local dest="$1"
-  local mode="${2:-}"
-  local preserve_owner="${3:-1}"
-  local content_file
-  content_file="$(mktemp "${TMPDIR:-/tmp}/durable-content.XXXXXX")"
-  cat >"$content_file"
-  python3 - "$dest" "$mode" "$preserve_owner" "$content_file" <<'PY'
-import errno
-import os
-import stat
-import sys
-import tempfile
-
-dest = sys.argv[1]
-mode_arg = sys.argv[2]
-preserve_owner = sys.argv[3] == "1"
-with open(sys.argv[4], "rb") as fh:
-    data = fh.read()
-
-parent = os.path.dirname(os.path.abspath(dest)) or "."
-base = os.path.basename(dest)
-os.makedirs(parent, mode=0o755, exist_ok=True)
-
-existed = False
-old_mode = None
-old_uid = None
-old_gid = None
-if os.path.lexists(dest):
-    if os.path.islink(dest):
-        sys.stderr.write("DURABLE_WRITE_ERR=dest_is_symlink\n")
-        sys.exit(2)
-    st = os.lstat(dest)
-    if not stat.S_ISREG(st.st_mode):
-        sys.stderr.write("DURABLE_WRITE_ERR=dest_not_regular\n")
-        sys.exit(2)
-    existed = True
-    old_mode = stat.S_IMODE(st.st_mode)
-    old_uid = st.st_uid
-    old_gid = st.st_gid
-
-if mode_arg:
-    mode = int(mode_arg, 8)
-elif existed and old_mode is not None:
-    mode = old_mode
-else:
-    mode = 0o644
-
-fd = None
-tmp_path = None
-try:
-    fd, tmp_path = tempfile.mkstemp(
-        prefix="." + base + ".",
-        suffix=".tmp",
-        dir=parent,
-    )
-    written = 0
-    view = memoryview(data)
-    while written < len(data):
-        n = os.write(fd, view[written:])
-        if n <= 0:
-            raise OSError(errno.EIO, "short write")
-        written += n
-    os.fsync(fd)
-    os.fchmod(fd, mode)
-    if preserve_owner and existed and old_uid is not None:
-        try:
-            os.fchown(fd, old_uid, old_gid)
-        except OSError:
-            pass
-    os.close(fd)
-    fd = None
-    os.replace(tmp_path, dest)
-    tmp_path = None
-    dirfd = os.open(parent, os.O_RDONLY)
-    try:
-        os.fsync(dirfd)
-    finally:
-        os.close(dirfd)
-except Exception as exc:
-    if fd is not None:
-        try:
-            os.close(fd)
-        except OSError:
-            pass
-    if tmp_path and os.path.lexists(tmp_path):
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-    sys.stderr.write("DURABLE_WRITE_ERR=%s\n" % (exc,))
-    sys.exit(1)
-sys.exit(0)
-PY
-  local py_rc=$?
-  rm -f "$content_file"
-  return "$py_rc"
-}
-
-durable_fsync_path() {
-  # Targeted fsync of an existing regular file and its parent directory.
-  # Never falls back to unbounded global sync.
-  local path="$1"
-  python3 - "$path" <<'PY'
-import os
-import stat
-import sys
-
-path = sys.argv[1]
-if not os.path.lexists(path):
-    sys.exit(1)
-if os.path.islink(path):
-    sys.exit(2)
-st = os.lstat(path)
-parent = os.path.dirname(os.path.abspath(path)) or "."
-if stat.S_ISREG(st.st_mode):
-    fd = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(fd)
-    finally:
-        os.close(fd)
-elif stat.S_ISDIR(st.st_mode):
-    parent = path
-else:
-    sys.exit(2)
-dirfd = os.open(parent, os.O_RDONLY)
-try:
-    os.fsync(dirfd)
-finally:
-    os.close(dirfd)
-sys.exit(0)
-PY
-}
-
-durable_atomic_write() {
-  # durable_atomic_write <logical-name> <path> [mode]
-  # Content from stdin. Optional mode octal (0600). Preserves owner when file exists.
-  local logical="$1"
-  local path="$2"
-  local mode="${3:-}"
-  local start_ms end_ms dur rc=0
-  local errf
-
-  if ! command -v python3 >/dev/null 2>&1; then
-    if declare -F log >/dev/null 2>&1; then
-      log ERROR "DURABLE_WRITE_BEGIN=${logical}"
-      log ERROR "DURABLE_WRITE_PATH=${path}"
-      log ERROR "DURABLE_WRITE_RESULT=FAIL"
-      log ERROR "DURABLE_WRITE_DURATION_MS=0"
-      log ERROR "DURABLE_WRITE_ERR=python3_missing"
-    fi
+  if ! install_authoritative_postboot_runtime; then
+    log ERROR "POSTBOOT_INSTALL=FAIL"
     return 1
   fi
-
-  start_ms="$(_durable_now_ms)"
-  errf="$(mktemp "${TMPDIR:-/tmp}/durable-write.XXXXXX")"
-  set +e
-  _durable_write_python "$path" "$mode" 1 2>"$errf"
-  rc=$?
-  set -e
-  end_ms="$(_durable_now_ms)"
-  dur=$((end_ms - start_ms))
-  if [[ "$dur" -lt 0 ]]; then
-    dur=0
-  fi
-
-  if [[ "$rc" -ne 0 ]]; then
-    if declare -F log >/dev/null 2>&1; then
-      log ERROR "DURABLE_WRITE_BEGIN=${logical}"
-      log ERROR "DURABLE_WRITE_PATH=${path}"
-      log ERROR "DURABLE_WRITE_RESULT=FAIL"
-      log ERROR "DURABLE_WRITE_DURATION_MS=${dur}"
-      if [[ -s "$errf" ]]; then
-        log ERROR "DURABLE_WRITE_ERR=$(tr '\n' ' ' <"$errf" | head -c 200)"
-      fi
-    fi
-    rm -f "$errf"
-    return 1
-  fi
-
-  if [[ "$dur" -ge "${DURABLE_WRITE_LOG_THRESHOLD_MS}" ]] && declare -F log >/dev/null 2>&1; then
-    log INFO "DURABLE_WRITE_BEGIN=${logical}"
-    log INFO "DURABLE_WRITE_PATH=${path}"
-    log INFO "DURABLE_WRITE_RESULT=PASS"
-    log INFO "DURABLE_WRITE_DURATION_MS=${dur}"
-  fi
-  rm -f "$errf"
-  return 0
-}
-
-durable_atomic_write_string() {
-  local logical="$1" path="$2" content="$3" mode="${4:-}"
-  printf '%s' "$content" | durable_atomic_write "$logical" "$path" "$mode"
-}
-
-# Drop-in replacement for prior temp+rename helper (now durable).
-atomic_write_file() {
-  local dest="$1"
-  durable_atomic_write "atomic_write_file" "$dest" || return 1
-}
-
-# Generated AWS semantic contract (discovery-derived). Do not hand-edit.
-# shellcheck shell=bash
-AWS_SEMANTIC_CONTRACT_LOADED=1
-AWS_SEMANTIC_CONTRACT_SCHEMA=1
-AWS_SEMANTIC_CONTRACT_SHA256='8d81fa10d748eb892c6002cbb6510733b6a8aa2b3b44e1c29c8fc0606c30156b'
-
-aws_contract_clear() {
-  AWS_C_HOP=""
-  AWS_C_TARGET_VERSION_ID=""
-  AWS_C_LINUX_AWS_VERSION=""
-  AWS_C_LINUX_AWS_SHA256=""
-  AWS_C_LINUX_IMAGE_AWS_VERSION=""
-  AWS_C_LINUX_IMAGE_AWS_SHA256=""
-  AWS_C_KERNEL_RELEASES=""
-  AWS_C_VERSIONED_IMAGE_PACKAGES=""
-  AWS_C_BOOT_PACKAGES=""
-  AWS_C_BOOT_PACKAGE_VERSIONS=""
-  AWS_C_SNAPD_VERSION=""
-}
-
-aws_contract_load_for_version_id() {
-  local ver="${1:-}"
-  aws_contract_clear
-  case "$ver" in
-    18.04)
-      AWS_C_HOP='xenial-to-bionic'
-      AWS_C_TARGET_VERSION_ID='18.04'
-      AWS_C_LINUX_AWS_VERSION='5.4.0.1103.81'
-      AWS_C_LINUX_AWS_SHA256='b26db52ae44bfe8cfb059ac1e878772a5a80288a2720e3f6b5caa0b7c6820bed'
-      AWS_C_LINUX_IMAGE_AWS_VERSION='5.4.0.1103.81'
-      AWS_C_LINUX_IMAGE_AWS_SHA256='749b87ebdaacf79eabafe60280f2bad5ad349de1efc14759316941f097f05a42'
-      AWS_C_KERNEL_RELEASES='5.4.0-1103-aws'
-      AWS_C_VERSIONED_IMAGE_PACKAGES='linux-image-5.4.0-1103-aws'
-      AWS_C_BOOT_PACKAGES='linux-modules-5.4.0-1103-aws'
-      AWS_C_BOOT_PACKAGE_VERSIONS='linux-modules-5.4.0-1103-aws=5.4.0-1103.111~18.04.1'
-      AWS_C_SNAPD_VERSION='2.58+18.04.1'
-      ;;
-    20.04)
-      AWS_C_HOP='bionic-to-focal'
-      AWS_C_TARGET_VERSION_ID='20.04'
-      AWS_C_LINUX_AWS_VERSION='5.15.0.1084.91~20.04.1'
-      AWS_C_LINUX_AWS_SHA256='1ef7259cc9081ae50c8175cc4a2d47770f8ff555a42d2eccbc85f0a4ffa8a54a'
-      AWS_C_LINUX_IMAGE_AWS_VERSION='5.15.0.1084.91~20.04.1'
-      AWS_C_LINUX_IMAGE_AWS_SHA256='fa9f6b20764d6e6a62af16c41a9be2fa4b47aca88c6d9d84b776ad55d2b018fc'
-      AWS_C_KERNEL_RELEASES='5.15.0-1084-aws'
-      AWS_C_VERSIONED_IMAGE_PACKAGES='linux-image-5.15.0-1084-aws'
-      AWS_C_BOOT_PACKAGES='linux-modules-5.15.0-1084-aws'
-      AWS_C_BOOT_PACKAGE_VERSIONS='linux-modules-5.15.0-1084-aws=5.15.0-1084.91~20.04.1'
-      AWS_C_SNAPD_VERSION=''
-      ;;
-    22.04)
-      AWS_C_HOP='focal-to-jammy'
-      AWS_C_TARGET_VERSION_ID='22.04'
-      AWS_C_LINUX_AWS_VERSION='6.8.0-1063.66~22.04.1'
-      AWS_C_LINUX_AWS_SHA256='6865857784d5f70d43bd94d66e46da540cbf714fd29add7fe471e9b6a588d0ac'
-      AWS_C_LINUX_IMAGE_AWS_VERSION='6.8.0-1063.66~22.04.1'
-      AWS_C_LINUX_IMAGE_AWS_SHA256='46dbf9d2ddf2aff0787afecaa83cd1f5d71a780c0000edc980fa0f6438ec5e81'
-      AWS_C_KERNEL_RELEASES='6.8.0-1063-aws'
-      AWS_C_VERSIONED_IMAGE_PACKAGES='linux-image-6.8.0-1063-aws'
-      AWS_C_BOOT_PACKAGES='linux-modules-6.8.0-1063-aws'
-      AWS_C_BOOT_PACKAGE_VERSIONS='linux-modules-6.8.0-1063-aws=6.8.0-1063.66~22.04.1'
-      AWS_C_SNAPD_VERSION=''
-      ;;
-    24.04)
-      AWS_C_HOP='jammy-to-noble'
-      AWS_C_TARGET_VERSION_ID='24.04'
-      AWS_C_LINUX_AWS_VERSION='7.0.0-1011.11~24.04.1'
-      AWS_C_LINUX_AWS_SHA256='80d4952185254d8c3eeca148c426dc57a8c421080731378b90803b045a9f70f0'
-      AWS_C_LINUX_IMAGE_AWS_VERSION='7.0.0-1011.11~24.04.1'
-      AWS_C_LINUX_IMAGE_AWS_SHA256='257cc613057cbc4b7f7659943627ebdbcffcd42228520be29af40849236b862c'
-      AWS_C_KERNEL_RELEASES='7.0.0-1011-aws'
-      AWS_C_VERSIONED_IMAGE_PACKAGES='linux-image-7.0.0-1011-aws'
-      AWS_C_BOOT_PACKAGES='linux-modules-7.0.0-1011-aws'
-      AWS_C_BOOT_PACKAGE_VERSIONS='linux-modules-7.0.0-1011-aws=7.0.0-1011.11~24.04.1'
-      AWS_C_SNAPD_VERSION=''
-      ;;
-    *)
-      return 1
-      ;;
-  esac
-  if [[ -z "${AWS_C_LINUX_AWS_VERSION}" || -z "${AWS_C_LINUX_IMAGE_AWS_VERSION}" ]]; then
-    return 1
-  fi
-  if [[ -z "${AWS_C_KERNEL_RELEASES}" || -z "${AWS_C_VERSIONED_IMAGE_PACKAGES}" ]]; then
-    return 1
-  fi
-  return 0
-}
-#!/usr/bin/env bash
-# Shared AWS kernel source-preflight, pre-reboot target readiness, and
-# post-hop completion gate. Inlined into offline upgrade clients / postboot.
-#
-# Authority is the discovery-derived AWS semantic contract (exact package
-# versions / expected kernel releases per hop target VERSION_ID). Series
-# major.minor floors are NOT authoritative.
-#
-# Contract usage:
-#   SOURCE PREFLIGHT (VERSION_ID=current source): installed AWS stack must
-#     match the hop contract whose TARGET is this VERSION_ID (prior hop
-#     completion state). Xenial 16.04 has no prior-hop contract — require a
-#     coherent installed AWS stack only.
-#   PRE-REBOOT (VERSION_ID=target): target contract packages + boot artifacts
-#     must be installed/prepared; do not start automatic reboot on failure.
-#   POSTBOOT (VERSION_ID=target): running kernel must be a contract target
-#     release; metapackages must match contract; not stale vs source baseline.
-# shellcheck shell=bash
-
-aws_gate_log() {
-  local level="$1"; shift
-  if declare -F log >/dev/null 2>&1; then
-    log "$level" "$*"
-  else
-    printf '%s: %s\n' "$level" "$*"
-  fi
-}
-
-aws_gate_hp() {
-  local p="$1"
-  if [[ -n "${TEST_ROOT:-}" ]]; then
-    printf '%s%s' "${TEST_ROOT%/}" "$p"
-  elif [[ -n "${DP_POSTBOOT_TEST_ROOT:-}" ]]; then
-    printf '%s%s' "${DP_POSTBOOT_TEST_ROOT%/}" "$p"
-  else
-    printf '%s' "$p"
-  fi
-}
-
-aws_pkg_installed() {
-  local pkg="$1" status
-  status="$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null || true)"
-  [[ "$status" == *"install ok installed"* ]]
-}
-
-aws_pkg_version() {
-  local pkg="$1"
-  dpkg-query -W -f='${Version}' "$pkg" 2>/dev/null || true
-}
-
-aws_running_kernel_release() {
-  local kr
-  kr="$(uname -r 2>/dev/null || true)"
-  if [[ -n "${TEST_ROOT:-}" && -n "${DP_OFFLINE_FAKE_KERNEL:-}" ]]; then
-    kr="$DP_OFFLINE_FAKE_KERNEL"
-  elif [[ -n "${DP_POSTBOOT_TEST_ROOT:-}" && -n "${DP_OFFLINE_FAKE_KERNEL:-}" ]]; then
-    kr="$DP_OFFLINE_FAKE_KERNEL"
-  fi
-  printf '%s' "$kr"
-}
-
-# Decode URL-encoded dpkg/discovery versions for comparison.
-aws_decode_version() {
-  local v="$1"
-  v="${v//%2[bB]/+}"
-  v="${v//%7[eE]/~}"
-  printf '%s' "$v"
-}
-
-aws_versions_equal() {
-  local a b
-  a="$(aws_decode_version "$1")"
-  b="$(aws_decode_version "$2")"
-  [[ -n "$a" && "$a" == "$b" ]]
-}
-
-# Load discovery-derived contract for a target Ubuntu VERSION_ID when needed.
-if [[ "${AWS_SEMANTIC_CONTRACT_LOADED:-0}" != "1" ]]; then
-  _aws_contract_inc="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/dp-aws-semantic-contract.sh.inc"
-  if [[ -n "${_aws_contract_inc}" && -f "${_aws_contract_inc}" ]]; then
-    # shellcheck disable=SC1090
-    source "${_aws_contract_inc}"
-  fi
-  unset _aws_contract_inc
-fi
-
-aws_contract_available_for_version() {
-  declare -F aws_contract_load_for_version_id >/dev/null 2>&1 || return 1
-  aws_contract_load_for_version_id "$1"
-}
-
-aws_kernel_release_in_contract() {
-  local kr="$1" r
-  for r in ${AWS_C_KERNEL_RELEASES}; do
-    [[ "$kr" == "$r" ]] && return 0
-  done
-  return 1
-}
-
-# Enforce discovery-derived snapd identity when the loaded hop contract sets it.
-# Empty AWS_C_SNAPD_VERSION means no snapd gate for this hop.
-aws_validate_contract_snapd() {
-  local phase="${1:-GATE}"
-  local exp got
-  exp="${AWS_C_SNAPD_VERSION:-}"
-  if [[ -z "$exp" ]]; then
-    return 0
-  fi
-  if ! aws_pkg_installed snapd; then
-    aws_gate_log ERROR "${phase}=FAIL reason=snapd_not_installed expected=${exp}"
-    return 1
-  fi
-  got="$(aws_pkg_version snapd)"
-  if ! aws_versions_equal "$got" "$exp"; then
-    aws_gate_log ERROR "${phase}=FAIL reason=snapd_not_contract_identity expected=${exp} installed=${got}"
-    return 1
-  fi
-  aws_gate_log INFO "AWS_CONTRACT_SNAPD_VERSION=${exp}"
-  aws_gate_log INFO "AWS_CONTRACT_SNAPD=PASS"
-  return 0
-}
-
-# Enforce discovery-derived boot packages (modules/modules-extra) when present.
-# Empty AWS_C_BOOT_PACKAGES means no boot-package gate for this hop.
-aws_validate_contract_boot_packages() {
-  local phase="${1:-GATE}"
-  local pkg pair name exp got
-  if [[ -z "${AWS_C_BOOT_PACKAGES:-}" ]]; then
-    return 0
-  fi
-  for pkg in ${AWS_C_BOOT_PACKAGES}; do
-    if ! aws_pkg_installed "$pkg"; then
-      aws_gate_log ERROR "${phase}=FAIL reason=boot_package_not_installed package=${pkg}"
-      return 1
-    fi
-  done
-  if [[ -n "${AWS_C_BOOT_PACKAGE_VERSIONS:-}" ]]; then
-    for pair in ${AWS_C_BOOT_PACKAGE_VERSIONS}; do
-      name="${pair%%=*}"
-      exp="${pair#*=}"
-      [[ -n "$name" && -n "$exp" && "$name" != "$pair" ]] || continue
-      got="$(aws_pkg_version "$name")"
-      if ! aws_versions_equal "$got" "$exp"; then
-        aws_gate_log ERROR "${phase}=FAIL reason=boot_package_not_contract_identity package=${name} expected=${exp} installed=${got}"
-        return 1
-      fi
-    done
-  fi
-  aws_gate_log INFO "AWS_CONTRACT_BOOT_PACKAGES=${AWS_C_BOOT_PACKAGES}"
-  aws_gate_log INFO "AWS_CONTRACT_BOOT_PACKAGES=PASS"
-  return 0
-}
-
-aws_detect_current_flavor() {
-  local flavor kr
-  if declare -F kernel_flavor >/dev/null 2>&1; then
-    flavor="$(kernel_flavor)"
-  else
-    flavor=""
-    kr="$(aws_running_kernel_release)"
-    case "$kr" in
-      *-aws) flavor=aws ;;
-      *-generic*) flavor=generic ;;
-      *) flavor=other ;;
-    esac
-  fi
-  if [[ -z "$flavor" ]]; then
-    kr="$(aws_running_kernel_release)"
-    case "$kr" in
-      *-aws) flavor=aws ;;
-      *) flavor=other ;;
-    esac
-  fi
-  printf '%s' "$flavor"
-}
-
-detect_aws_upgrade_profile() {
-  # Echo "aws" when this host is/was an AWS kernel DP; else "other".
-  local holds_dir flavor kr
-  holds_dir="${HOLDS_DIR:-${STATE_ROOT:-/opt/aelladata/os-upgrade/offline}/critical-holds}"
-  if [[ -f "$(aws_gate_hp "${holds_dir}/source_kernel_flavor")" ]]; then
-    flavor="$(tr -d '\r\n' <"$(aws_gate_hp "${holds_dir}/source_kernel_flavor")" || true)"
-    if [[ "$flavor" == "aws" ]]; then
-      printf 'aws\n'
-      return 0
-    fi
-  fi
-  if [[ -n "${SOURCE_KERNEL_FLAVOR:-}" && "$SOURCE_KERNEL_FLAVOR" == "aws" ]]; then
-    printf 'aws\n'
-    return 0
-  fi
-  kr="$(aws_running_kernel_release)"
-  case "$kr" in
-    *-aws) printf 'aws\n'; return 0 ;;
-  esac
-  if aws_pkg_installed linux-aws || aws_pkg_installed linux-image-aws || aws_pkg_installed linux-headers-aws; then
-    printf 'aws\n'
-    return 0
-  fi
-  printf 'other\n'
-}
-
-aws_gate_atomic_write_line() {
-  # Write one line atomically and verify read-back. Same rules under TEST_ROOT.
-  local rel_path="$1" content="$2"
-  local dest parent tmp readback
-  dest="$(aws_gate_hp "$rel_path")"
-  parent="$(dirname "$dest")"
-  mkdir -p "$parent" || {
-    aws_gate_log ERROR "AWS_BASELINE_PERSIST=FAIL reason=mkdir path=${parent}"
-    return 1
-  }
-  if declare -F durable_atomic_write_string >/dev/null 2>&1; then
-    if ! durable_atomic_write_string "aws_baseline" "$dest" "${content}"$'\n' 0644; then
-      aws_gate_log ERROR "AWS_BASELINE_PERSIST=FAIL reason=durable_write path=${dest}"
-      return 1
-    fi
-  else
-    tmp="${dest}.tmp.$$.$RANDOM"
-    if ! printf '%s\n' "$content" >"$tmp"; then
-      rm -f "$tmp" 2>/dev/null || true
-      aws_gate_log ERROR "AWS_BASELINE_PERSIST=FAIL reason=write path=${dest}"
-      return 1
-    fi
-    if ! mv -f "$tmp" "$dest"; then
-      rm -f "$tmp" 2>/dev/null || true
-      aws_gate_log ERROR "AWS_BASELINE_PERSIST=FAIL reason=rename path=${dest}"
-      return 1
-    fi
-  fi
-  if [[ ! -f "$dest" ]]; then
-    aws_gate_log ERROR "AWS_BASELINE_PERSIST=FAIL reason=missing_after_write path=${dest}"
-    return 1
-  fi
-  readback="$(tr -d '\r\n' <"$dest" || true)"
-  if [[ "$readback" != "$content" ]]; then
-    aws_gate_log ERROR "AWS_BASELINE_PERSIST=FAIL reason=readback_mismatch path=${dest} expected=${content} got=${readback}"
-    return 1
-  fi
-  return 0
-}
-
-persist_source_kernel_aws_baseline() {
-  # Called from source preflight/baseline. AWS: fail closed. Non-AWS: record flavor only.
-  local holds_dir flavor kr aws_ver img_ver
-  holds_dir="${HOLDS_DIR:-${STATE_ROOT:-/opt/aelladata/os-upgrade/offline}/critical-holds}"
-  flavor="$(aws_detect_current_flavor)"
-  kr="$(aws_running_kernel_release)"
-  aws_ver="$(aws_pkg_version linux-aws)"
-  img_ver="$(aws_pkg_version linux-image-aws)"
-
-  if [[ "$flavor" != "aws" && -z "$aws_ver" && -z "$img_ver" ]]; then
-    aws_gate_atomic_write_line "${holds_dir}/source_kernel_flavor" "${flavor:-other}" || return 1
-    aws_gate_atomic_write_line "${holds_dir}/source_kernel_release" "${kr}" || return 1
-    aws_gate_log INFO "SOURCE_KERNEL_FLAVOR=${flavor:-other}"
-    aws_gate_log INFO "AWS_BASELINE_PERSIST=SKIP reason=non_aws_profile"
-    return 0
-  fi
-
-  # AWS source profile: all four baseline fields are safety-critical.
-  if [[ -z "$aws_ver" ]]; then
-    aws_gate_log ERROR "AWS_BASELINE_PERSIST=FAIL reason=linux-aws_version_unavailable"
-    return 1
-  fi
-  if [[ -z "$img_ver" ]]; then
-    aws_gate_log ERROR "AWS_BASELINE_PERSIST=FAIL reason=linux-image-aws_version_unavailable"
-    return 1
-  fi
-  if [[ -z "$kr" ]]; then
-    aws_gate_log ERROR "AWS_BASELINE_PERSIST=FAIL reason=kernel_release_unavailable"
-    return 1
-  fi
-
-  aws_gate_atomic_write_line "${holds_dir}/source_kernel_flavor" "aws" || return 1
-  aws_gate_atomic_write_line "${holds_dir}/source_kernel_release" "$kr" || return 1
-  aws_gate_atomic_write_line "${holds_dir}/source_linux_aws_version" "$aws_ver" || return 1
-  aws_gate_atomic_write_line "${holds_dir}/source_linux_image_aws_version" "$img_ver" || return 1
-
-  aws_gate_log INFO "SOURCE_KERNEL_FLAVOR=aws"
-  aws_gate_log INFO "SOURCE_KERNEL_RELEASE=${kr}"
-  aws_gate_log INFO "SOURCE_LINUX_AWS_VERSION=${aws_ver}"
-  aws_gate_log INFO "SOURCE_LINUX_IMAGE_AWS_VERSION=${img_ver}"
-  aws_gate_log INFO "AWS_BASELINE_PERSIST=PASS"
-  return 0
-}
-
-validate_aws_source_kernel_preflight() {
-  # Arg: current SOURCE Ubuntu VERSION_ID (e.g. 18.04 for Bionic→Focal).
-  # Rejects already-bad AWS state before destructive package/LXD/release mutation.
-  local source_ver="${1:-}"
-  local flavor kr aws_ver img_ver
-  flavor="$(aws_detect_current_flavor)"
-  if [[ "$flavor" != "aws" ]]; then
-    # Also treat installed AWS metapackages as AWS even if flavor helper differs.
-    if ! aws_pkg_installed linux-aws && ! aws_pkg_installed linux-image-aws; then
-      aws_gate_log INFO "AWS_SOURCE_PREFLIGHT=SKIP reason=non_aws_profile"
-      return 0
-    fi
-    flavor=aws
-  fi
-
-  if [[ -z "$source_ver" ]]; then
-    aws_gate_log ERROR "NEXT_HOP_PREFLIGHT_FAIL reason=missing_source_version"
-    return 1
-  fi
-
-  if ! aws_pkg_installed linux-aws; then
-    aws_gate_log ERROR "NEXT_HOP_PREFLIGHT_FAIL reason=linux-aws_not_installed"
-    return 1
-  fi
-  if ! aws_pkg_installed linux-image-aws; then
-    aws_gate_log ERROR "NEXT_HOP_PREFLIGHT_FAIL reason=linux-image-aws_not_installed"
-    return 1
-  fi
-
-  kr="$(aws_running_kernel_release)"
-  case "$kr" in
-    *-aws) ;;
-    *)
-      aws_gate_log ERROR "NEXT_HOP_PREFLIGHT_FAIL reason=running_kernel_not_aws kernel=${kr}"
-      return 1
-      ;;
-  esac
-  if ! aws_pkg_installed "linux-image-${kr}"; then
-    aws_gate_log ERROR "NEXT_HOP_PREFLIGHT_FAIL reason=running_aws_image_pkg_missing kernel=${kr}"
-    return 1
-  fi
-
-  aws_ver="$(aws_pkg_version linux-aws)"
-  img_ver="$(aws_pkg_version linux-image-aws)"
-  aws_gate_log INFO "AWS_SOURCE_SERIES=${source_ver}"
-  aws_gate_log INFO "AWS_SOURCE_RUNNING_KERNEL=${kr}"
-  aws_gate_log INFO "AWS_SOURCE_LINUX_AWS_VERSION=${aws_ver:-none}"
-  aws_gate_log INFO "AWS_SOURCE_LINUX_IMAGE_AWS_VERSION=${img_ver:-none}"
-
-  # 16.04 has no prior-hop target contract in the four-hop discovery set.
-  # Require a coherent AWS stack only (exact identities enforced from 18.04+).
-  if [[ "$source_ver" == "16.04" ]]; then
-    aws_gate_log INFO "AWS_SOURCE_PREFLIGHT=PASS reason=xenial_source_no_prior_hop_contract"
-    return 0
-  fi
-
-  if ! aws_contract_available_for_version "$source_ver"; then
-    aws_gate_log ERROR "NEXT_HOP_PREFLIGHT_FAIL reason=missing_source_hop_contract series=${source_ver}"
-    return 1
-  fi
-  aws_gate_log INFO "AWS_SOURCE_CONTRACT_HOP=${AWS_C_HOP}"
-  aws_gate_log INFO "AWS_SOURCE_CONTRACT_LINUX_AWS=${AWS_C_LINUX_AWS_VERSION}"
-  aws_gate_log INFO "AWS_SOURCE_CONTRACT_KERNEL_RELEASES=${AWS_C_KERNEL_RELEASES}"
-
-  if ! aws_versions_equal "$aws_ver" "$AWS_C_LINUX_AWS_VERSION"; then
-    aws_gate_log ERROR "NEXT_HOP_PREFLIGHT_FAIL reason=linux-aws_not_source_contract_identity series=${source_ver} expected=${AWS_C_LINUX_AWS_VERSION} installed=${aws_ver}"
-    return 1
-  fi
-  if ! aws_versions_equal "$img_ver" "$AWS_C_LINUX_IMAGE_AWS_VERSION"; then
-    aws_gate_log ERROR "NEXT_HOP_PREFLIGHT_FAIL reason=linux-image-aws_not_source_contract_identity series=${source_ver} expected=${AWS_C_LINUX_IMAGE_AWS_VERSION} installed=${img_ver}"
-    return 1
-  fi
-  if ! aws_kernel_release_in_contract "$kr"; then
-    aws_gate_log ERROR "NEXT_HOP_PREFLIGHT_FAIL reason=running_kernel_not_source_contract_release series=${source_ver} expected=${AWS_C_KERNEL_RELEASES} kernel=${kr}"
-    return 1
-  fi
-  if ! aws_validate_contract_snapd "NEXT_HOP_PREFLIGHT_FAIL"; then
-    return 1
-  fi
-  if ! aws_validate_contract_boot_packages "NEXT_HOP_PREFLIGHT_FAIL"; then
-    return 1
-  fi
-
-  aws_gate_log INFO "AWS_SOURCE_PREFLIGHT=PASS"
-  return 0
-}
-
-validate_aws_target_kernel_pre_reboot() {
-  # Arg: TARGET Ubuntu VERSION_ID (e.g. 18.04 after xenial→bionic DRO).
-  # Runs AFTER package transition and BEFORE automatic reboot.
-  # On failure: do not mark hop successful; do not initiate automatic reboot.
-  # No rollback after package transition begins.
-  local target_ver="${1:-}"
-  local profile holds_dir src_kr
-  local cur_aws cur_img img_pkg kr boot_dir vmlinuz initrd matched_kr
-  profile="$(detect_aws_upgrade_profile)"
-  if [[ "$profile" != "aws" ]]; then
-    aws_gate_log INFO "PRE_REBOOT_AWS_TARGET_GATE=SKIP reason=non_aws_profile"
-    return 0
-  fi
-
-  if [[ -z "$target_ver" ]]; then
-    aws_gate_log ERROR "PRE_REBOOT_AWS_TARGET_GATE=FAIL reason=missing_target_version"
-    aws_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED"
-    return 1
-  fi
-  if ! aws_contract_available_for_version "$target_ver"; then
-    aws_gate_log ERROR "PRE_REBOOT_AWS_TARGET_GATE=FAIL reason=missing_target_hop_contract series=${target_ver}"
-    aws_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED"
-    return 1
-  fi
-
-  holds_dir="${HOLDS_DIR:-${STATE_ROOT:-/opt/aelladata/os-upgrade/offline}/critical-holds}"
-  src_kr=""
-  if [[ -f "$(aws_gate_hp "${holds_dir}/source_kernel_release")" ]]; then
-    src_kr="$(tr -d '\r\n' <"$(aws_gate_hp "${holds_dir}/source_kernel_release")" || true)"
-  fi
-
-  aws_gate_log INFO "PRE_REBOOT_AWS_TARGET_CONTRACT_HOP=${AWS_C_HOP}"
-  aws_gate_log INFO "PRE_REBOOT_AWS_TARGET_CONTRACT_LINUX_AWS=${AWS_C_LINUX_AWS_VERSION}"
-  aws_gate_log INFO "PRE_REBOOT_AWS_TARGET_CONTRACT_KERNEL_RELEASES=${AWS_C_KERNEL_RELEASES}"
-
-  if ! aws_pkg_installed linux-aws; then
-    aws_gate_log ERROR "PRE_REBOOT_AWS_TARGET_GATE=FAIL reason=linux-aws_not_installed"
-    aws_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED"
-    return 1
-  fi
-  if ! aws_pkg_installed linux-image-aws; then
-    aws_gate_log ERROR "PRE_REBOOT_AWS_TARGET_GATE=FAIL reason=linux-image-aws_not_installed"
-    aws_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED"
-    return 1
-  fi
-
-  cur_aws="$(aws_pkg_version linux-aws)"
-  cur_img="$(aws_pkg_version linux-image-aws)"
-  if [[ -z "$cur_aws" || -z "$cur_img" ]]; then
-    aws_gate_log ERROR "PRE_REBOOT_AWS_TARGET_GATE=FAIL reason=metapackage_version_unavailable"
-    aws_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED"
-    return 1
-  fi
-  if ! aws_versions_equal "$cur_aws" "$AWS_C_LINUX_AWS_VERSION"; then
-    aws_gate_log ERROR "PRE_REBOOT_AWS_TARGET_GATE=FAIL reason=linux-aws_not_target_contract_identity expected=${AWS_C_LINUX_AWS_VERSION} installed=${cur_aws}"
-    aws_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED"
-    return 1
-  fi
-  if ! aws_versions_equal "$cur_img" "$AWS_C_LINUX_IMAGE_AWS_VERSION"; then
-    aws_gate_log ERROR "PRE_REBOOT_AWS_TARGET_GATE=FAIL reason=linux-image-aws_not_target_contract_identity expected=${AWS_C_LINUX_IMAGE_AWS_VERSION} installed=${cur_img}"
-    aws_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED"
-    return 1
-  fi
-
-  matched_kr=""
-  for kr in ${AWS_C_KERNEL_RELEASES}; do
-    img_pkg="linux-image-${kr}"
-    if aws_pkg_installed "$img_pkg"; then
-      # Must not be merely the original source kernel release.
-      if [[ -n "$src_kr" && "$kr" == "$src_kr" ]]; then
-        aws_gate_log ERROR "PRE_REBOOT_AWS_TARGET_GATE=FAIL reason=target_image_still_source_kernel kernel=${kr}"
-        aws_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED"
-        return 1
-      fi
-      boot_dir="$(aws_gate_hp /boot)"
-      vmlinuz="${boot_dir}/vmlinuz-${kr}"
-      initrd="${boot_dir}/initrd.img-${kr}"
-      if [[ ! -f "$vmlinuz" || ! -s "$vmlinuz" ]]; then
-        aws_gate_log ERROR "PRE_REBOOT_AWS_TARGET_GATE=FAIL reason=missing_target_vmlinuz kernel=${kr} path=${vmlinuz}"
-        aws_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED"
-        return 1
-      fi
-      if [[ ! -f "$initrd" || ! -s "$initrd" ]]; then
-        aws_gate_log ERROR "PRE_REBOOT_AWS_TARGET_GATE=FAIL reason=missing_target_initrd kernel=${kr} path=${initrd}"
-        aws_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED"
-        return 1
-      fi
-      matched_kr="$kr"
-      break
-    fi
-  done
-
-  if [[ -z "$matched_kr" ]]; then
-    aws_gate_log ERROR "PRE_REBOOT_AWS_TARGET_GATE=FAIL reason=target_versioned_aws_image_not_installed expected=${AWS_C_VERSIONED_IMAGE_PACKAGES}"
-    aws_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED"
-    return 1
-  fi
-
-  if ! aws_validate_contract_snapd "PRE_REBOOT_AWS_TARGET_GATE"; then
-    aws_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED"
-    return 1
-  fi
-  if ! aws_validate_contract_boot_packages "PRE_REBOOT_AWS_TARGET_GATE"; then
-    aws_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED"
-    return 1
-  fi
-
-  aws_gate_log INFO "PRE_REBOOT_AWS_TARGET_KERNEL=${matched_kr}"
-  aws_gate_log INFO "PRE_REBOOT_AWS_TARGET_GATE=PASS"
-  return 0
-}
-
-validate_aws_post_hop_kernel_gate() {
-  # Arguments: expected_target_version_id (e.g. 18.04). Discovery contract authority.
-  # Runs after reboot, immediately before COMPLETED_*. No "pending reboot" PASS.
-  local target_ver="${1:-}"
-  local profile holds_dir src_aws src_img src_kr src_flavor
-  local cur_aws cur_img kr boot_aws
-  profile="$(detect_aws_upgrade_profile)"
-  if [[ "$profile" != "aws" ]]; then
-    aws_gate_log INFO "AWS_POST_HOP_KERNEL_GATE=SKIP reason=non_aws_profile"
-    return 0
-  fi
-
-  if [[ -z "$target_ver" ]]; then
-    aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=missing_target_version"
-    return 1
-  fi
-  if ! aws_contract_available_for_version "$target_ver"; then
-    aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=missing_target_hop_contract series=${target_ver}"
-    return 1
-  fi
-
-  holds_dir="${HOLDS_DIR:-${STATE_ROOT:-/opt/aelladata/os-upgrade/offline}/critical-holds}"
-  src_flavor=""
-  src_kr=""
-  src_aws=""
-  src_img=""
-  if [[ -f "$(aws_gate_hp "${holds_dir}/source_kernel_flavor")" ]]; then
-    src_flavor="$(tr -d '\r\n' <"$(aws_gate_hp "${holds_dir}/source_kernel_flavor")" || true)"
-  fi
-  if [[ -f "$(aws_gate_hp "${holds_dir}/source_kernel_release")" ]]; then
-    src_kr="$(tr -d '\r\n' <"$(aws_gate_hp "${holds_dir}/source_kernel_release")" || true)"
-  fi
-  if [[ -f "$(aws_gate_hp "${holds_dir}/source_linux_aws_version")" ]]; then
-    src_aws="$(tr -d '\r\n' <"$(aws_gate_hp "${holds_dir}/source_linux_aws_version")" || true)"
-  fi
-  if [[ -f "$(aws_gate_hp "${holds_dir}/source_linux_image_aws_version")" ]]; then
-    src_img="$(tr -d '\r\n' <"$(aws_gate_hp "${holds_dir}/source_linux_image_aws_version")" || true)"
-  fi
-
-  # Missing baseline must not allow a stale 4.4 stack to PASS via skipped compares.
-  if [[ "$src_flavor" != "aws" || -z "$src_aws" || -z "$src_img" || -z "$src_kr" ]]; then
-    aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=missing_source_baseline flavor=${src_flavor:-none} aws=${src_aws:-none} img=${src_img:-none} kr=${src_kr:-none}"
-    return 1
-  fi
-
-  if ! aws_pkg_installed linux-aws; then
-    aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=linux-aws_not_installed"
-    return 1
-  fi
-  if ! aws_pkg_installed linux-image-aws; then
-    aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=linux-image-aws_not_installed"
-    return 1
-  fi
-
-  cur_aws="$(aws_pkg_version linux-aws)"
-  cur_img="$(aws_pkg_version linux-image-aws)"
-  aws_gate_log INFO "AWS_LINUX_AWS_VERSION=${cur_aws:-none}"
-  aws_gate_log INFO "AWS_LINUX_IMAGE_AWS_VERSION=${cur_img:-none}"
-  aws_gate_log INFO "AWS_POST_HOP_TARGET_VERSION=${target_ver}"
-  aws_gate_log INFO "AWS_POST_HOP_CONTRACT_HOP=${AWS_C_HOP}"
-  aws_gate_log INFO "AWS_POST_HOP_CONTRACT_LINUX_AWS=${AWS_C_LINUX_AWS_VERSION}"
-  aws_gate_log INFO "AWS_POST_HOP_CONTRACT_KERNEL_RELEASES=${AWS_C_KERNEL_RELEASES}"
-
-  if [[ -z "$cur_aws" || -z "$cur_img" ]]; then
-    aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=metapackage_version_unavailable"
-    return 1
-  fi
-
-  # Stale source metapackage: still equal to pre-upgrade baseline.
-  if aws_versions_equal "$src_aws" "$cur_aws"; then
-    aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=stale_linux-aws_metapackage source=${src_aws} installed=${cur_aws}"
-    return 1
-  fi
-  if aws_versions_equal "$src_img" "$cur_img"; then
-    aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=stale_linux-image-aws_metapackage source=${src_img} installed=${cur_img}"
-    return 1
-  fi
-
-  # Target contract identity (not major.minor floor, not "version changed").
-  if ! aws_versions_equal "$cur_aws" "$AWS_C_LINUX_AWS_VERSION"; then
-    aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=linux-aws_not_target_contract_identity expected=${AWS_C_LINUX_AWS_VERSION} installed=${cur_aws}"
-    return 1
-  fi
-  if ! aws_versions_equal "$cur_img" "$AWS_C_LINUX_IMAGE_AWS_VERSION"; then
-    aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=linux-image-aws_not_target_contract_identity expected=${AWS_C_LINUX_IMAGE_AWS_VERSION} installed=${cur_img}"
-    return 1
-  fi
-
-  boot_aws=0
-  if ls "$(aws_gate_hp /boot)"/vmlinu*-aws >/dev/null 2>&1; then
-    boot_aws=1
-  fi
-  if [[ "$boot_aws" -ne 1 ]]; then
-    aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=no_boot_vmlinuz_aws"
-    return 1
-  fi
-
-  kr="$(aws_running_kernel_release)"
-  case "$kr" in
-    *-aws) ;;
-    *)
-      aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=running_kernel_not_aws kernel=${kr}"
-      return 1
-      ;;
-  esac
-  if ! aws_kernel_release_in_contract "$kr"; then
-    aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=running_kernel_not_target_contract_release expected=${AWS_C_KERNEL_RELEASES} kernel=${kr}"
-    return 1
-  fi
-  if ! aws_pkg_installed "linux-image-${kr}"; then
-    aws_gate_log ERROR "AWS_POST_HOP_KERNEL_GATE=FAIL reason=running_aws_image_pkg_missing kernel=${kr}"
-    return 1
-  fi
-  if ! aws_validate_contract_snapd "AWS_POST_HOP_KERNEL_GATE"; then
-    return 1
-  fi
-  if ! aws_validate_contract_boot_packages "AWS_POST_HOP_KERNEL_GATE"; then
-    return 1
-  fi
-
-  aws_gate_log INFO "AWS_POST_HOP_KERNEL_GATE=PASS"
-  return 0
-}
-
-
-#!/usr/bin/env bash
-# Generic/virtual kernel continuity gate for OS hops (non-AWS).
-# shellcheck shell=bash
-#
-# Complements (does not replace) the AWS exact-contract gate.
-# Goals: reject target userspace + stale source running kernel as success.
-# Does NOT hardcode laboratory-specific generic ABI package versions.
-
-generic_gate_log() {
-  local level="$1"; shift
-  if declare -F log >/dev/null 2>&1; then
-    log "$level" "$*"
-  else
-    printf '%s: %s\n' "$level" "$*"
-  fi
-}
-
-generic_gate_hp() {
-  local p="$1"
-  if [[ -n "${TEST_ROOT:-}" ]]; then
-    printf '%s%s' "${TEST_ROOT%/}" "$p"
-  elif [[ -n "${DP_POSTBOOT_TEST_ROOT:-}" ]]; then
-    printf '%s%s' "${DP_POSTBOOT_TEST_ROOT%/}" "$p"
-  else
-    printf '%s' "$p"
-  fi
-}
-
-generic_running_kernel_release() {
-  local kr
-  kr="$(uname -r 2>/dev/null || true)"
-  if [[ -n "${TEST_ROOT:-}${DP_POSTBOOT_TEST_ROOT:-}" && -n "${DP_OFFLINE_FAKE_KERNEL:-}" ]]; then
-    kr="$DP_OFFLINE_FAKE_KERNEL"
-  fi
-  printf '%s' "$kr"
-}
-
-generic_kernel_flavor() {
-  local kr="${1:-}"
-  [[ -n "$kr" ]] || kr="$(generic_running_kernel_release)"
-  case "$kr" in
-    *-aws) printf 'aws' ;;
-    *-generic-lpae) printf 'generic-lpae' ;;
-    *-generic) printf 'generic' ;;
-    *-virtual) printf 'virtual' ;;
-    *) printf 'other' ;;
-  esac
-}
-
-generic_pkg_installed() {
-  local pkg="$1" status
-  status="$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null || true)"
-  [[ "$status" == *"install ok installed"* ]]
-}
-
-# Map Ubuntu VERSION_ID → acceptable running-kernel series patterns (ERE).
-# Intentionally series-based, not exact ABI pins.
-generic_target_kernel_series_ere() {
-  case "${1:-}" in
-    18.04) printf '%s' '^(4\.15[.-].*-generic(-lpae)?|4\.1[6-9][.-].*-generic(-lpae)?|5\.[0-9]+[.-].*-generic(-lpae)?)$' ;;
-    20.04) printf '%s' '^(5\.4[.-].*-generic(-lpae)?|5\.[5-9][.-].*-generic(-lpae)?|5\.[1-9][0-9][.-].*-generic(-lpae)?)$' ;;
-    22.04) printf '%s' '^(5\.15[.-].*-generic(-lpae)?|5\.1[6-9][.-].*-generic(-lpae)?|5\.[2-9][0-9][.-].*-generic(-lpae)?|6\.[0-9]+[.-].*-generic(-lpae)?)$' ;;
-    24.04) printf '%s' '^(6\.[8-9][.-].*-generic(-lpae)?|6\.[1-9][0-9][.-].*-generic(-lpae)?|7\.[0-9]+[.-].*-generic(-lpae)?)$' ;;
-    *) return 1 ;;
-  esac
-}
-
-generic_is_aws_profile() {
-  # detect_aws_upgrade_profile is an output classifier: it prints "aws" or
-  # "other" and returns 0 for both. Classify on OUTPUT, never exit status.
-  local profile flavor
-  if declare -F detect_aws_upgrade_profile >/dev/null 2>&1; then
-    profile="$(detect_aws_upgrade_profile 2>/dev/null || true)"
-    [[ "$profile" == "aws" ]]
-    return $?
-  fi
-  flavor="$(generic_kernel_flavor)"
-  [[ "$flavor" == "aws" ]]
-}
-
-persist_source_kernel_generic_baseline() {
-  local holds_dir flavor kr
-  holds_dir="${HOLDS_DIR:-${STATE_ROOT:-/opt/aelladata/os-upgrade/offline}/critical-holds}"
-  flavor="$(generic_kernel_flavor)"
-  kr="$(generic_running_kernel_release)"
-  mkdir -p "$(generic_gate_hp "$holds_dir")" 2>/dev/null || true
-  if declare -F durable_atomic_write_string >/dev/null 2>&1; then
-    durable_atomic_write_string "generic_src_flavor" "$(generic_gate_hp "${holds_dir}/source_kernel_flavor")" "${flavor}"$'\n' 0644 || true
-    durable_atomic_write_string "generic_src_kr" "$(generic_gate_hp "${holds_dir}/source_kernel_release")" "${kr}"$'\n' 0644 || true
-  else
-    printf '%s\n' "$flavor" >"$(generic_gate_hp "${holds_dir}/source_kernel_flavor")"
-    printf '%s\n' "$kr" >"$(generic_gate_hp "${holds_dir}/source_kernel_release")"
-  fi
-  generic_gate_log INFO "SOURCE_KERNEL_FLAVOR=${flavor}"
-  generic_gate_log INFO "SOURCE_KERNEL_RELEASE=${kr}"
-  generic_gate_log INFO "GENERIC_SOURCE_KERNEL_BASELINE=PASS"
-  return 0
-}
-
-# PRE-REBOOT: target kernel image + matching initrd exist; not merely source kernel.
-# Arg: target Ubuntu VERSION_ID
-validate_generic_target_kernel_pre_reboot() {
-  local target_ver="${1:-}"
-  local holds_dir src_kr flavor boot_dir found=0 kr img initrd
-  if generic_is_aws_profile; then
-    generic_gate_log INFO "PRE_REBOOT_GENERIC_TARGET_GATE=SKIP reason=aws_profile"
-    return 0
-  fi
-  holds_dir="${HOLDS_DIR:-${STATE_ROOT:-/opt/aelladata/os-upgrade/offline}/critical-holds}"
-  src_kr=""
-  if [[ -f "$(generic_gate_hp "${holds_dir}/source_kernel_release")" ]]; then
-    src_kr="$(tr -d '\r\n' <"$(generic_gate_hp "${holds_dir}/source_kernel_release")" || true)"
-  fi
-  flavor="$(generic_kernel_flavor "${src_kr}")"
-  case "$flavor" in
-    generic|generic-lpae|virtual|other)
-      ;;
-    aws)
-      generic_gate_log INFO "PRE_REBOOT_GENERIC_TARGET_GATE=SKIP reason=aws_flavor"
-      return 0
-      ;;
-  esac
-
-  # Prefer metapackage presence without pinning exact ABI.
-  if ! generic_pkg_installed linux-image-generic \
-    && ! generic_pkg_installed linux-image-virtual \
-    && ! generic_pkg_installed linux-generic; then
-    generic_gate_log ERROR "PRE_REBOOT_GENERIC_TARGET_GATE=FAIL reason=target_generic_metapackage_missing"
-    generic_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED=YES"
-    generic_gate_log ERROR "POSTBOOT_HANDOFF_READY=NO"
-    return 1
-  fi
-
-  boot_dir="$(generic_gate_hp /boot)"
-  # Look for installed versioned generic/virtual images that are not the source release.
-  while IFS= read -r img; do
-    [[ -n "$img" ]] || continue
-    kr="${img#linux-image-}"
-    case "$kr" in
-      *-generic|*-generic-lpae|*-virtual) ;;
-      *) continue ;;
-    esac
-    if [[ -n "$src_kr" && "$kr" == "$src_kr" ]]; then
-      continue
-    fi
-    # Series coherence when target VERSION_ID known
-    if [[ -n "$target_ver" ]]; then
-      local ere
-      ere="$(generic_target_kernel_series_ere "$target_ver" || true)"
-      if [[ -n "$ere" ]] && ! printf '%s' "$kr" | grep -Eq "$ere"; then
-        continue
-      fi
-    fi
-    initrd="${boot_dir}/initrd.img-${kr}"
-    if [[ -f "${boot_dir}/vmlinuz-${kr}" && -s "${boot_dir}/vmlinuz-${kr}" \
-      && -f "$initrd" && -s "$initrd" ]]; then
-      found=1
-      generic_gate_log INFO "PRE_REBOOT_GENERIC_TARGET_KERNEL=${kr}"
-      break
-    fi
-  done < <(dpkg-query -W -f='${Package}\n' 'linux-image-*' 2>/dev/null | grep -E '^linux-image-[0-9]' || true)
-
-  if [[ "$found" -ne 1 ]]; then
-    generic_gate_log ERROR "PRE_REBOOT_GENERIC_TARGET_GATE=FAIL reason=no_target_series_vmlinuz_initrd source_kernel=${src_kr:-unknown}"
-    generic_gate_log ERROR "AUTOMATIC_REBOOT_NOT_STARTED=YES"
-    generic_gate_log ERROR "POSTBOOT_HANDOFF_READY=NO"
-    return 1
-  fi
-  generic_gate_log INFO "PRE_REBOOT_GENERIC_TARGET_GATE=PASS"
-  return 0
-}
-
-# POSTBOOT: running kernel must not equal source; must match target series/flavor.
-# Arg: target Ubuntu VERSION_ID
-validate_generic_running_kernel_postboot() {
-  local target_ver="${1:-}"
-  local holds_dir src_kr kr flavor ere img_pkg
-  if generic_is_aws_profile; then
-    generic_gate_log INFO "GENERIC_POST_HOP_KERNEL_GATE=SKIP reason=aws_profile"
-    return 0
-  fi
-  holds_dir="${HOLDS_DIR:-${STATE_ROOT:-/opt/aelladata/os-upgrade/offline}/critical-holds}"
-  src_kr=""
-  if [[ -f "$(generic_gate_hp "${holds_dir}/source_kernel_release")" ]]; then
-    src_kr="$(tr -d '\r\n' <"$(generic_gate_hp "${holds_dir}/source_kernel_release")" || true)"
-  fi
-  kr="$(generic_running_kernel_release)"
-  flavor="$(generic_kernel_flavor "$kr")"
-  if [[ -z "$kr" ]]; then
-    generic_gate_log ERROR "GENERIC_POST_HOP_KERNEL_GATE=FAIL reason=running_kernel_unavailable"
-    return 1
-  fi
-  if [[ -n "$src_kr" && "$kr" == "$src_kr" ]]; then
-    generic_gate_log ERROR "GENERIC_POST_HOP_KERNEL_GATE=FAIL reason=running_kernel_still_source kernel=${kr}"
-    return 1
-  fi
-  case "$flavor" in
-    generic|generic-lpae|virtual) ;;
-    aws)
-      generic_gate_log INFO "GENERIC_POST_HOP_KERNEL_GATE=SKIP reason=aws_flavor"
-      return 0
-      ;;
-    *)
-      generic_gate_log ERROR "GENERIC_POST_HOP_KERNEL_GATE=FAIL reason=unexpected_flavor flavor=${flavor} kernel=${kr}"
-      return 1
-      ;;
-  esac
-  ere="$(generic_target_kernel_series_ere "$target_ver" || true)"
-  if [[ -z "$ere" ]]; then
-    generic_gate_log ERROR "GENERIC_POST_HOP_KERNEL_GATE=FAIL reason=unknown_target_version ${target_ver}"
-    return 1
-  fi
-  if ! printf '%s' "$kr" | grep -Eq "$ere"; then
-    generic_gate_log ERROR "GENERIC_POST_HOP_KERNEL_GATE=FAIL reason=kernel_not_target_series kernel=${kr} target=${target_ver}"
-    return 1
-  fi
-  img_pkg="linux-image-${kr}"
-  if ! generic_pkg_installed "$img_pkg"; then
-    generic_gate_log ERROR "GENERIC_POST_HOP_KERNEL_GATE=FAIL reason=running_image_package_missing package=${img_pkg}"
-    return 1
-  fi
-  # OS VERSION_ID must match hop target when readable.
-  local vid
-  vid="$(grep -E '^VERSION_ID=' "$(generic_gate_hp /etc/os-release)" 2>/dev/null | cut -d= -f2 | tr -d '"' || true)"
-  if [[ -n "$target_ver" && -n "$vid" && "$vid" != "$target_ver" ]]; then
-    generic_gate_log ERROR "GENERIC_POST_HOP_KERNEL_GATE=FAIL reason=os_version_mismatch expected=${target_ver} got=${vid}"
-    return 1
-  fi
-  generic_gate_log INFO "GENERIC_POST_HOP_KERNEL_GATE=PASS kernel=${kr} flavor=${flavor}"
-  return 0
-}
-
-STATE_ROOT="/opt/aelladata/os-upgrade/offline"
-STATE_FILE="${STATE_ROOT}/state"
-HISTORY_FILE="${STATE_ROOT}/hop_history"
-LOG_FILE="/var/log/aella/offline_os_upgrade.log"
-MOTD="/etc/motd.d/99-stellar-offline-upgrade"
-exec >>"$LOG_FILE" 2>&1
-log() { printf '%s [%s] %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$1" "$2"; }
-write_state() {
-  printf '%s\n' "$1" | durable_atomic_write "write_state" "$STATE_FILE" || return 1
-}
-
-# Inlined by scripts/lib/build_client_jammy_to_noble.py (single-file; no runtime include).
-#!/usr/bin/env bash
-# Shared postboot DNS resolver repair and local-clock readiness policy.
-# This file is inlined by build_client_jammy_to_noble.py into the generated
-# postboot helper. It is also directly sourceable by fixture tests.
-# shellcheck shell=bash
-
-DNS_RESOLVER_STATE="NOT_CHECKED"
-DNS_RESOLVER_REPAIR="NOT_ATTEMPTED"
-DNS_SERVERS_CONFIGURED="NONE"
-DNS_NAME_RESOLUTION="NOT_TESTED"
-TIME_READINESS="NOT_CHECKED"
-CLOCK_SKEW_SECONDS="UNKNOWN"
-MAX_CLOCK_SKEW_SECONDS="${DP_MAX_CLOCK_SKEW_SECONDS:-300}"
-NTP_SOURCE_CLASS="UNKNOWN"
-NTP_SELECTED_PEER="NONE"
-BRINGUP_READY="NO"
-NTP_BRINGUP_READINESS="NOT_CHECKED"
-BRINGUP_EXECUTED="NO"
-
-DP_POSTBOOT_TEST_ROOT="${DP_POSTBOOT_TEST_ROOT:-}"
-SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
-RESOLVECTL_BIN="${RESOLVECTL_BIN:-resolvectl}"
-GETENT_BIN="${GETENT_BIN:-getent}"
-CURL_BIN="${CURL_BIN:-curl}"
-NTPQ_BIN="${NTPQ_BIN:-ntpq}"
-NTPWAIT_BIN="${NTPWAIT_BIN:-ntpwait}"
-TIMEDATECTL_BIN="${TIMEDATECTL_BIN:-timedatectl}"
-
-postboot_policy_log() {
-  local level="$1"; shift
-  if declare -F log >/dev/null 2>&1; then
-    log "$level" "$*"
-  else
-    printf '%s: %s\n' "$level" "$*"
-  fi
-}
-
-dns_hp() {
-  local p="$1"
-  if [[ -n "${DP_POSTBOOT_TEST_ROOT:-}" ]]; then
-    printf '%s%s' "${DP_POSTBOOT_TEST_ROOT%/}" "$p"
-  else
-    printf '%s' "$p"
-  fi
-}
-
-dns_is_valid_ipv4() {
-  local ip="${1:-}" a b c d octet
-  IFS=. read -r a b c d <<<"$ip"
-  [[ -n "$a" && -n "$b" && -n "$c" && -n "$d" && "$ip" != *.*.*.*.* ]] || return 1
-  for octet in "$a" "$b" "$c" "$d"; do
-    [[ "$octet" =~ ^[0-9]{1,3}$ ]] || return 1
-    ((10#$octet >= 0 && 10#$octet <= 255)) || return 1
-  done
-}
-
-dedup_valid_ipv4_words() {
-  local word
-  for word in "$@"; do
-    dns_is_valid_ipv4 "$word" && printf '%s\n' "$word"
-  done | awk '!seen[$0]++'
-}
-
-interfaces_dns_servers() {
-  local f
-  f="$(dns_hp /etc/network/interfaces)"
-  [[ -r "$f" ]] || return 0
-  awk '
-    /^[[:space:]]*#/ {next}
-    /^[[:space:]]*dns-nameservers[[:space:]]+/ {
-      sub(/^[[:space:]]*dns-nameservers[[:space:]]+/, "")
-      print
-    }
-  ' "$f" | tr ' \t' '\n' | awk 'NF'
-}
-
-resolv_conf_dns_servers() {
-  local f
-  f="$(dns_hp /etc/resolv.conf)"
-  [[ -r "$f" ]] || return 0
-  awk '
-    /^[[:space:]]*#/ {next}
-    /^[[:space:]]*nameserver[[:space:]]+/ {print $2}
-  ' "$f"
-}
-
-configured_ntp_hostname() {
-  local f token
-  f="$(dns_hp /etc/ntpsec/ntp.conf)"
-  [[ -r "$f" ]] || return 1
-  while IFS= read -r token; do
-    [[ -n "$token" ]] || continue
-    if ! dns_is_valid_ipv4 "$token" && [[ "$token" != "localhost" && "$token" != "::1" ]]; then
-      printf '%s' "$token"
-      return 0
-    fi
-  done < <(awk '
-    /^[[:space:]]*#/ {next}
-    /^[[:space:]]*(server|pool)[[:space:]]+/ {print $2}
-  ' "$f")
-  return 1
-}
-
-check_dns_name_resolution() {
-  local host="${1:-}"
-  [[ -n "$host" ]] || host="$(configured_ntp_hostname 2>/dev/null || true)"
-  [[ -n "$host" ]] || host="${DP_DNS_VALIDATION_HOSTNAME:-archive.ubuntu.com}"
-  if "$GETENT_BIN" ahosts "$host" >/dev/null 2>&1; then
-    DNS_NAME_RESOLUTION="PASS"
-    postboot_policy_log INFO "DNS_VALIDATION_HOSTNAME=${host}"
-    return 0
-  fi
-  DNS_NAME_RESOLUTION="FAIL"
-  postboot_policy_log INFO "DNS_VALIDATION_HOSTNAME=${host}"
-  return 1
-}
-
-resolver_service_state() {
-  local enabled active
-  enabled="$("$SYSTEMCTL_BIN" is-enabled systemd-resolved 2>/dev/null || true)"
-  enabled="$(printf '%s\n' "$enabled" | awk 'NF{print; exit}')"
-  active="$("$SYSTEMCTL_BIN" is-active systemd-resolved 2>/dev/null || true)"
-  active="$(printf '%s\n' "$active" | awk 'NF{print; exit}')"
-  printf '%s|%s' "${enabled:-unknown}" "${active:-unknown}"
-}
-
-resolved_uses_one_configured_dns() {
-  local servers_csv="$1" output ip
-  output="$("$RESOLVECTL_BIN" dns 2>/dev/null || true)"
-  IFS=, read -ra _dns_array <<<"$servers_csv"
-  for ip in "${_dns_array[@]}"; do
-    [[ -n "$ip" ]] || continue
-    if printf '%s\n' "$output" | grep -Fq -- "$ip"; then
-      return 0
-    fi
-  done
-  local upstream
-  upstream="$(dns_hp /run/systemd/resolve/resolv.conf)"
-  if [[ -r "$upstream" ]]; then
-    for ip in "${_dns_array[@]}"; do
-      grep -Eq "^[[:space:]]*nameserver[[:space:]]+${ip//./\.}([[:space:]]|$)" "$upstream" && return 0
-    done
-  fi
-  return 1
-}
-
-restore_resolved_service_state() {
-  local prior_enabled="$1" prior_active="$2"
-  "$SYSTEMCTL_BIN" stop systemd-resolved >/dev/null 2>&1 || true
-  case "$prior_enabled" in
-    masked)
-      "$SYSTEMCTL_BIN" disable systemd-resolved >/dev/null 2>&1 || true
-      "$SYSTEMCTL_BIN" mask systemd-resolved >/dev/null 2>&1 || true
-      ;;
-    enabled|enabled-runtime|static|indirect)
-      "$SYSTEMCTL_BIN" unmask systemd-resolved >/dev/null 2>&1 || true
-      "$SYSTEMCTL_BIN" enable systemd-resolved >/dev/null 2>&1 || true
-      ;;
-    *)
-      "$SYSTEMCTL_BIN" unmask systemd-resolved >/dev/null 2>&1 || true
-      "$SYSTEMCTL_BIN" disable systemd-resolved >/dev/null 2>&1 || true
-      ;;
-  esac
-  if [[ "$prior_active" == "active" ]]; then
-    "$SYSTEMCTL_BIN" start systemd-resolved >/dev/null 2>&1 || true
-  fi
-}
-
-emit_dns_result() {
-  postboot_policy_log INFO "DNS_RESOLVER_STATE=${DNS_RESOLVER_STATE}"
-  postboot_policy_log INFO "DNS_RESOLVER_REPAIR=${DNS_RESOLVER_REPAIR}"
-  postboot_policy_log INFO "DNS_SERVERS_CONFIGURED=${DNS_SERVERS_CONFIGURED}"
-  postboot_policy_log INFO "DNS_NAME_RESOLUTION=${DNS_NAME_RESOLUTION}"
-}
-
-check_and_repair_dns_resolver() {
-  local resolv raw_target canonical stub interfaces state_pair enabled active
-  local dns_lines dns_csv dropin_dir dropin tmp backup had_dropin=0
-  local repair_ok=1 current_active
-  DNS_RESOLVER_STATE="NOT_CHECKED"
-  DNS_RESOLVER_REPAIR="NOT_ATTEMPTED"
-  DNS_SERVERS_CONFIGURED="NONE"
-  DNS_NAME_RESOLUTION="NOT_TESTED"
-
-  resolv="$(dns_hp /etc/resolv.conf)"
-  stub="$(dns_hp /run/systemd/resolve/stub-resolv.conf)"
-  interfaces="$(dns_hp /etc/network/interfaces)"
-
-  if [[ -f "$resolv" && ! -L "$resolv" ]]; then
-    dns_lines="$(resolv_conf_dns_servers | while read -r ip; do dns_is_valid_ipv4 "$ip" && echo "$ip"; done | awk '!seen[$0]++')"
-    if [[ -n "$dns_lines" ]]; then
-      DNS_RESOLVER_STATE="HEALTHY_STATIC"
-      DNS_RESOLVER_REPAIR="NOT_REQUIRED"
-      DNS_SERVERS_CONFIGURED="$(printf '%s\n' "$dns_lines" | paste -sd, -)"
-      check_dns_name_resolution || true
-      emit_dns_result
-      return 0
-    fi
-    DNS_RESOLVER_STATE="BROKEN_STATIC"
-    DNS_RESOLVER_REPAIR="FAIL"
-    check_dns_name_resolution || true
-    emit_dns_result
-    return 1
-  fi
-
-  if [[ -L "$resolv" ]]; then
-    raw_target="$(readlink "$resolv" 2>/dev/null || true)"
-    canonical="$(readlink -f "$resolv" 2>/dev/null || true)"
-    if [[ "$canonical" == "$stub" && -f "$stub" ]]; then
-      if check_dns_name_resolution; then
-        DNS_RESOLVER_STATE="HEALTHY_SYSTEMD_RESOLVED"
-        DNS_RESOLVER_REPAIR="NOT_REQUIRED"
-        dns_lines="$(interfaces_dns_servers | while read -r ip; do dns_is_valid_ipv4 "$ip" && echo "$ip"; done | awk '!seen[$0]++')"
-        [[ -n "$dns_lines" ]] && DNS_SERVERS_CONFIGURED="$(printf '%s\n' "$dns_lines" | paste -sd, -)"
-        emit_dns_result
-        return 0
-      fi
-      DNS_RESOLVER_STATE="BROKEN_SYSTEMD_RESOLVED"
-      DNS_RESOLVER_REPAIR="FAIL"
-      emit_dns_result
-      return 1
-    fi
-
-    state_pair="$(resolver_service_state)"
-    enabled="${state_pair%%|*}"
-    active="${state_pair#*|}"
-    if [[ "$raw_target" == "../run/systemd/resolve/stub-resolv.conf" && ! -e "$stub" \
-          && ( "$enabled" == "masked" || "$active" != "active" ) ]]; then
-      dns_lines="$(interfaces_dns_servers | while read -r ip; do dns_is_valid_ipv4 "$ip" && echo "$ip"; done | awk '!seen[$0]++')"
-      if [[ -z "$dns_lines" ]]; then
-        DNS_RESOLVER_STATE="BROKEN_SYSTEMD_RESOLVED"
-        DNS_RESOLVER_REPAIR="FAIL"
-        DNS_SERVERS_CONFIGURED="NONE"
-        DNS_NAME_RESOLUTION="NOT_TESTED"
-        postboot_policy_log ERROR "ERROR: broken systemd-resolved stub link and no valid dns-nameservers in ${interfaces}"
-        emit_dns_result
-        return 1
-      fi
-      dns_csv="$(printf '%s\n' "$dns_lines" | paste -sd, -)"
-      DNS_SERVERS_CONFIGURED="$dns_csv"
-      dropin_dir="$(dns_hp /etc/systemd/resolved.conf.d)"
-      dropin="${dropin_dir}/20-dp-static-dns.conf"
-      mkdir -p "$dropin_dir"
-      backup="${dropin}.rollback.$$"
-      if [[ -e "$dropin" ]]; then
-        cp -a "$dropin" "$backup"
-        had_dropin=1
-      fi
-      tmp="${dropin}.tmp.$$"
-      {
-        printf '[Resolve]\nDNS='
-        printf '%s\n' "$dns_lines" | paste -sd' ' -
-        printf 'FallbackDNS=\n'
-      } >"$tmp"
-      chmod 0644 "$tmp"
-      mv -f "$tmp" "$dropin"
-
-      "$SYSTEMCTL_BIN" unmask systemd-resolved >/dev/null 2>&1 || repair_ok=0
-      "$SYSTEMCTL_BIN" enable --now systemd-resolved >/dev/null 2>&1 || repair_ok=0
-
-      canonical="$(readlink -f "$resolv" 2>/dev/null || true)"
-      current_active="$("$SYSTEMCTL_BIN" is-active systemd-resolved 2>/dev/null || true)"
-      current_active="$(printf '%s\n' "$current_active" | awk 'NF {print; exit}')"
-      [[ "$current_active" == "active" ]] || repair_ok=0
-      [[ -f "$stub" ]] || repair_ok=0
-      [[ "$canonical" == "$stub" ]] || repair_ok=0
-      resolved_uses_one_configured_dns "$dns_csv" || repair_ok=0
-      check_dns_name_resolution || repair_ok=0
-
-      if [[ "$repair_ok" -eq 1 ]]; then
-        rm -f "$backup"
-        DNS_RESOLVER_STATE="RECOVERED_SYSTEMD_RESOLVED"
-        DNS_RESOLVER_REPAIR="PASS"
-        emit_dns_result
-        return 0
-      fi
-
-      rm -f "$dropin"
-      if [[ "$had_dropin" -eq 1 && -e "$backup" ]]; then
-        mv -f "$backup" "$dropin"
-      else
-        rm -f "$backup"
-      fi
-      restore_resolved_service_state "$enabled" "$active"
-      DNS_RESOLVER_STATE="BROKEN_SYSTEMD_RESOLVED"
-      DNS_RESOLVER_REPAIR="FAIL"
-      emit_dns_result
-      return 1
-    fi
-
-    DNS_RESOLVER_STATE="UNKNOWN_LAYOUT"
-    DNS_RESOLVER_REPAIR="NOT_ATTEMPTED"
-    postboot_policy_log WARN "DNS_RESOLVER_DIAGNOSTIC=symlink target=${raw_target:-unknown} canonical=${canonical:-missing} resolved_enabled=${enabled:-unknown} resolved_active=${active:-unknown}"
-    if check_dns_name_resolution; then
-      emit_dns_result
-      return 0
-    fi
-    emit_dns_result
-    return 1
-  fi
-
-  DNS_RESOLVER_STATE="UNKNOWN_LAYOUT"
-  DNS_RESOLVER_REPAIR="NOT_ATTEMPTED"
-  postboot_policy_log WARN "DNS_RESOLVER_DIAGNOSTIC=/etc/resolv.conf missing or unsupported layout"
-  if check_dns_name_resolution; then
-    emit_dns_result
-    return 0
-  fi
-  emit_dns_result
-  return 1
-}
-
-is_positive_integer() {
-  [[ "${1:-}" =~ ^[1-9][0-9]*$ ]]
-}
-
-is_valid_ipv4() {
-  local ip="${1:-}" a b c d octet
-  IFS=. read -r a b c d <<<"$ip"
-  [[ -n "$a" && -n "$b" && -n "$c" && -n "$d" ]] || return 1
-  [[ "$ip" != *.*.*.*.* ]] || return 1
-  for octet in "$a" "$b" "$c" "$d"; do
-    [[ "$octet" =~ ^[0-9]{1,3}$ ]] || return 1
-    ((10#$octet >= 0 && 10#$octet <= 255)) || return 1
-  done
-}
-
-ipv4_source_scope() {
-  local ip="$1" a b c d
-  is_valid_ipv4 "$ip" || { printf 'UNKNOWN'; return 1; }
-  IFS=. read -r a b c d <<<"$ip"
-  if ((a == 10)) || ((a == 172 && b >= 16 && b <= 31)) || ((a == 192 && b == 168)); then
-    printf 'INTERNAL'
-  elif ((a == 127)) || ((a == 169 && b == 254)) || ((a == 0)) || ((a >= 224)); then
-    printf 'IGNORED'
-  else
-    printf 'PUBLIC'
-  fi
-}
-
-normalize_ntp_source_token() {
-  local token="${1:-}"
-  token="${token#\*}"
-  token="${token#+}"
-  token="${token#-}"
-  token="${token#o}"
-  token="${token#x}"
-  token="${token#\#}"
-  token="${token#[}"
-  token="${token%]}"
-  token="${token%.}"
-  printf '%s' "$token"
-}
-
-classify_ntp_source_token() {
-  local token ip scope saw_public=0
-  token="$(normalize_ntp_source_token "${1:-}")"
-  [[ -n "$token" ]] || { printf 'UNKNOWN'; return 0; }
-  case "$token" in
-    LOCAL|LOCAL\(*|localhost|localhost.*|0.0.0.0|127.*|169.254.*|::1|fe80:*|FE80:*)
-      printf 'IGNORED'; return 0 ;;
-  esac
-  if is_valid_ipv4 "$token"; then
-    ipv4_source_scope "$token"
-    return 0
-  fi
-  if command -v "$GETENT_BIN" >/dev/null 2>&1; then
-    while IFS= read -r ip; do
-      [[ -n "$ip" ]] || continue
-      scope="$(ipv4_source_scope "$ip" 2>/dev/null || printf UNKNOWN)"
-      case "$scope" in
-        INTERNAL) printf 'INTERNAL'; return 0 ;;
-        PUBLIC) saw_public=1 ;;
-      esac
-    done < <("$GETENT_BIN" ahostsv4 "$token" 2>/dev/null | awk '{print $1}' | awk '!seen[$0]++')
-  fi
-  if [[ "$saw_public" -eq 1 ]]; then
-    printf 'PUBLIC'
-  else
-    printf 'UNKNOWN'
-  fi
-}
-
-classify_ntp_sources() {
-  local ntpq_text="${1:-}" token class have_internal=0 have_public=0
-  while IFS= read -r token; do
-    [[ -n "$token" ]] || continue
-    class="$(classify_ntp_source_token "$token")"
-    case "$class" in
-      INTERNAL) have_internal=1 ;;
-      PUBLIC) have_public=1 ;;
-    esac
-  done < <(
-    {
-      printf '%s\n' "$ntpq_text" | awk 'NR>2 && NF>=1 {print $1}'
-      if [[ -r "$(dns_hp /etc/ntpsec/ntp.conf)" ]]; then
-        awk '
-          /^[[:space:]]*#/ {next}
-          /^[[:space:]]*(server|pool)[[:space:]]+/ {print $2}
-        ' "$(dns_hp /etc/ntpsec/ntp.conf)"
-      fi
-    } | awk 'NF && !seen[$0]++'
-  )
-  if [[ "$have_internal" -eq 1 ]]; then
-    NTP_SOURCE_CLASS="INTERNAL"
-  elif [[ "$have_public" -eq 1 ]]; then
-    NTP_SOURCE_CLASS="PUBLIC"
-  else
-    NTP_SOURCE_CLASS="UNKNOWN"
-  fi
-}
-
-selected_ntp_peer_from_text() {
-  local text="${1:-}"
-  printf '%s\n' "$text" | awk 'NR>2 && $1 ~ /^\*/ {gsub(/^\*/, "", $1); print $1; exit}'
-}
-
-ntpq_clock_reference_from_text() {
-  local text="${1:-}"
-  printf '%s\n' "$text" | awk '
-    function abs(v) { return v < 0 ? -v : v }
-    NR > 2 && NF >= 9 {
-      remote=$1; reach=$7; off=$9
-      selected=(remote ~ /^\*/)
-      gsub(/^[*+#ox-]/, "", remote)
-      if (reach !~ /^[0-9]+$/ || reach == 0) next
-      if (off !~ /^[-+]?[0-9]+([.][0-9]+)?$/) next
-      a=abs(off)
-      if (selected && !have_sel) { sel=a; selpeer=remote; have_sel=1 }
-      if (!have_any || a < best) { best=a; bestpeer=remote; have_any=1 }
-    }
-    END {
-      if (have_sel) printf "%d|%s\n", int((sel + 999.999999) / 1000), selpeer
-      else if (have_any) printf "%d|%s\n", int((best + 999.999999) / 1000), bestpeer
-    }
-  '
-}
-
-http_date_clock_skew_seconds() {
-  local base_url="${1:-}" headers date_value ref_epoch local_epoch delta
-  [[ -n "$base_url" ]] || return 1
-  headers="$("$CURL_BIN" -fsSI --connect-timeout 5 --max-time 10 "$base_url" 2>/dev/null || true)"
-  date_value="$(printf '%s\n' "$headers" | awk 'BEGIN{IGNORECASE=1} /^Date:[[:space:]]*/ {sub(/^[^:]+:[[:space:]]*/, ""); sub(/\r$/, ""); print; exit}')"
-  [[ -n "$date_value" ]] || return 1
-  ref_epoch="$(LC_ALL=C date -u -d "$date_value" +%s 2>/dev/null || true)"
-  local_epoch="$(date -u +%s 2>/dev/null || true)"
-  [[ "$ref_epoch" =~ ^[0-9]+$ && "$local_epoch" =~ ^[0-9]+$ ]] || return 1
-  if ((local_epoch >= ref_epoch)); then delta=$((local_epoch-ref_epoch)); else delta=$((ref_epoch-local_epoch)); fi
-  printf '%s\n' "$delta"
-}
-
-run_ntpwait_probe() {
-  command -v "$NTPWAIT_BIN" >/dev/null 2>&1 || return 1
-  if command -v timeout >/dev/null 2>&1; then
-    timeout 20 "$NTPWAIT_BIN" -n 1 -s 1 >/dev/null 2>&1
-  else
-    "$NTPWAIT_BIN" -n 1 -s 1 >/dev/null 2>&1
-  fi
-}
-
-check_time_readiness() {
-  local ntpq_text="" rv_text="" td="" ref="" skew="" ref_peer=""
-  TIME_READINESS="FAIL_TIME_UNVERIFIABLE"
-  CLOCK_SKEW_SECONDS="UNKNOWN"
-  MAX_CLOCK_SKEW_SECONDS="${DP_MAX_CLOCK_SKEW_SECONDS:-300}"
-  NTP_SOURCE_CLASS="UNKNOWN"
-  NTP_SELECTED_PEER="NONE"
-  BRINGUP_READY="NO"
-  NTP_BRINGUP_READINESS="FAIL"
-
-  if ! is_positive_integer "$MAX_CLOCK_SKEW_SECONDS"; then
-    postboot_policy_log ERROR "ERROR: DP_MAX_CLOCK_SKEW_SECONDS must be a positive integer"
-    return 1
-  fi
-
-  if command -v "$NTPQ_BIN" >/dev/null 2>&1; then
-    ntpq_text="$("$NTPQ_BIN" -pn 2>/dev/null || "$NTPQ_BIN" -p 2>/dev/null || true)"
-    rv_text="$("$NTPQ_BIN" rv 2>/dev/null || true)"
-  fi
-  NTP_SELECTED_PEER="$(selected_ntp_peer_from_text "$ntpq_text")"
-  [[ -n "$NTP_SELECTED_PEER" ]] || NTP_SELECTED_PEER="NONE"
-  classify_ntp_sources "$ntpq_text"
-
-  if run_ntpwait_probe; then
-    TIME_READINESS="PASS_SYNCED"
-    CLOCK_SKEW_SECONDS="0"
-    BRINGUP_READY="YES"
-    NTP_BRINGUP_READINESS="PASS"
-  elif [[ "$NTP_SELECTED_PEER" != "NONE" ]] && printf '%s\n' "$rv_text" | grep -Eq '(^|[[:space:],])leap=00([[:space:],]|$)'; then
-    TIME_READINESS="PASS_SYNCED"
-    CLOCK_SKEW_SECONDS="0"
-    BRINGUP_READY="YES"
-    NTP_BRINGUP_READINESS="PASS"
-  else
-    if command -v "$TIMEDATECTL_BIN" >/dev/null 2>&1; then
-      td="$("$TIMEDATECTL_BIN" status 2>/dev/null || "$TIMEDATECTL_BIN" 2>/dev/null || true)"
-    fi
-    if printf '%s\n' "$td" | grep -qiE 'System clock synchronized:[[:space:]]*yes'; then
-      TIME_READINESS="PASS_SYNCED"
-      CLOCK_SKEW_SECONDS="0"
-      BRINGUP_READY="YES"
-      NTP_BRINGUP_READINESS="PASS"
-    else
-      ref="$(ntpq_clock_reference_from_text "$ntpq_text" || true)"
-      if [[ -n "$ref" ]]; then
-        skew="${ref%%|*}"
-        ref_peer="${ref#*|}"
-        postboot_policy_log INFO "TIME_REFERENCE=NTP_PEER peer=${ref_peer}"
-      else
-        # The mirror this client was built for is the only trusted HTTP Date
-        # reference; skip the probe rather than guess an address.
-        local time_ref_url="${DP_TIME_REFERENCE_URL:-${PIN_MIRROR_BASE:-${MIRROR_BASE:-}}}"
-        if [[ -n "$time_ref_url" ]]; then
-          skew="$(http_date_clock_skew_seconds "$time_ref_url" || true)"
-          [[ -n "$skew" ]] && postboot_policy_log INFO "TIME_REFERENCE=HTTP_DATE url=${time_ref_url}"
-        else
-          postboot_policy_log WARN "TIME_REFERENCE=UNAVAILABLE no NTP peer and no mirror base for HTTP Date"
-        fi
-      fi
-      if [[ "$skew" =~ ^[0-9]+$ ]]; then
-        CLOCK_SKEW_SECONDS="$skew"
-        if ((skew <= MAX_CLOCK_SKEW_SECONDS)); then
-          TIME_READINESS="PASS_WITH_WARNING"
-          BRINGUP_READY="YES"
-          NTP_BRINGUP_READINESS="PASS"
-          postboot_policy_log WARN "WARNING: time synchronization not confirmed; clock skew ${skew}s is within ${MAX_CLOCK_SKEW_SECONDS}s"
-        else
-          TIME_READINESS="FAIL_CLOCK_SKEW"
-          BRINGUP_READY="NO"
-          NTP_BRINGUP_READINESS="FAIL"
-          postboot_policy_log ERROR "ERROR: clock skew ${skew}s exceeds ${MAX_CLOCK_SKEW_SECONDS}s"
-        fi
-      else
-        TIME_READINESS="FAIL_TIME_UNVERIFIABLE"
-        BRINGUP_READY="NO"
-        NTP_BRINGUP_READINESS="FAIL"
-        postboot_policy_log ERROR "ERROR: time synchronization is unconfirmed and no usable time reference was obtained"
-      fi
-    fi
-  fi
-
-  if [[ "$BRINGUP_READY" == "YES" && "$NTP_SOURCE_CLASS" != "INTERNAL" ]]; then
-    postboot_policy_log WARN "WARNING: no internal NTP source detected; continuing because local clock readiness passed"
-  fi
-  postboot_policy_log INFO "TIME_READINESS=${TIME_READINESS}"
-  postboot_policy_log INFO "CLOCK_SKEW_SECONDS=${CLOCK_SKEW_SECONDS}"
-  postboot_policy_log INFO "MAX_CLOCK_SKEW_SECONDS=${MAX_CLOCK_SKEW_SECONDS}"
-  postboot_policy_log INFO "NTP_SOURCE_CLASS=${NTP_SOURCE_CLASS}"
-  postboot_policy_log INFO "NTP_SELECTED_PEER=${NTP_SELECTED_PEER}"
-  postboot_policy_log INFO "BRINGUP_READY=${BRINGUP_READY}"
-  [[ "$BRINGUP_READY" == "YES" ]]
-}
-
-check_time_readiness_phase1() {
-  check_time_readiness "$@"
-}
-
-check_basic_network_route() {
-  local default_route default_iface
-  if dp_offline_hermetic_fixtures_enabled && [[ -n "${STELLAR_OFFLINE_FAKE_DEFAULT_ROUTE:-}" ]]; then
-    [[ "${STELLAR_OFFLINE_FAKE_DEFAULT_ROUTE}" == "1" ]]
-    return $?
-  fi
-  default_route="$(ip -4 route show default 2>/dev/null | awk 'NR==1 {print; exit}')"
-  default_iface="$(printf '%s\n' "$default_route" | awk '{for (i=1; i<=NF; i++) if ($i=="dev") {print $(i+1); exit}}')"
-  [[ -n "$default_route" && -n "$default_iface" ]] || return 1
-  log INFO "DEFAULT_ROUTE_CHECK=PASS"
-  log INFO "DEFAULT_INTERFACE=${default_iface}"
-  log INFO "DEFAULT_ROUTE=${default_route}"
-}
-
-emit_dns_time_result_contract() {
-  log INFO "DNS_RESOLVER_STATE=${DNS_RESOLVER_STATE:-}"
-  log INFO "DNS_RESOLVER_REPAIR=${DNS_RESOLVER_REPAIR:-}"
-  log INFO "DNS_SERVERS_CONFIGURED=${DNS_SERVERS_CONFIGURED:-}"
-  log INFO "DNS_NAME_RESOLUTION=${DNS_NAME_RESOLUTION:-}"
-  log INFO "TIME_READINESS=${TIME_READINESS:-}"
-  log INFO "CLOCK_SKEW_SECONDS=${CLOCK_SKEW_SECONDS:-}"
-  log INFO "MAX_CLOCK_SKEW_SECONDS=${MAX_CLOCK_SKEW_SECONDS:-}"
-  log INFO "NTP_SOURCE_CLASS=${NTP_SOURCE_CLASS:-}"
-  log INFO "NTP_SELECTED_PEER=${NTP_SELECTED_PEER:-}"
-  log INFO "BRINGUP_READY=${BRINGUP_READY:-}"
-  log INFO "BRINGUP_EXECUTED=${BRINGUP_EXECUTED:-NO}"
-}
-POSTBOOT_HDR
-    cat <<'POSTBOOT_MAIN'
-
-main() {
-  write_state POST_BOOT_VERIFY
-  local ver code arch ubu py3ver kr
-  # 1) Noble OS confirmation
-  ver="$(grep -E '^VERSION_ID=' /etc/os-release | cut -d= -f2 | tr -d '"')"
-  code="$(grep -E '^VERSION_CODENAME=' /etc/os-release | cut -d= -f2 | tr -d '"')"
-  arch="$(dpkg --print-architecture)"
-  ubu="$(grep -E '^UBUNTU_CODENAME=' /etc/os-release | cut -d= -f2 | tr -d '"' || true)"
-  [[ "$ver" == "24.04" && "$code" == "noble" ]] || { log ERROR "not noble"; write_state FAILED; exit 1; }
-  if [[ -n "$ubu" && "$ubu" != "noble" ]]; then
-    log ERROR "UBUNTU_CODENAME=${ubu} (expected noble)"; write_state FAILED; exit 1
-  fi
-  [[ "$arch" == "amd64" ]] || { log ERROR "arch ${arch}"; write_state FAILED; exit 1; }
-  # Python3 must be Noble-series; Python2 residual alone is NOT a postboot failure.
-  py3ver="$(dpkg-query -W -f='${Version}' python3 2>/dev/null || true)"
-  [[ "$py3ver" == 3.12* ]] || { log ERROR "python3 not Noble-series (${py3ver})"; write_state FAILED; exit 1; }
-  log INFO "PYTHON3_SERIES_CHECK=PASS version=${py3ver}"
-  log INFO "PYTHON2_RESIDUAL_IGNORED_BY_PHASE1_POLICY=YES"
-  # Running-kernel series/flavor is enforced by the mutually exclusive AWS vs
-  # generic post-hop gates below (not by a generic-only inline regex). A valid
-  # Noble AWS kernel such as 7.0.0-1011-aws must not be rejected here.
-  kr="$(uname -r)"
-  log INFO "RUNNING_KERNEL=${kr}"
-  # 2) dpkg/apt health
-  dpkg --audit 2>/dev/null | grep -q . && { log ERROR "dpkg audit"; write_state FAILED; exit 1; }
-  apt-get check >/dev/null 2>&1 || { log ERROR "broken deps"; write_state FAILED; exit 1; }
-  [[ -d /opt/aelladata ]] || { log ERROR "aelladata missing"; write_state FAILED; exit 1; }
-  if grep -RqiE '(archive|security|old-releases)\.ubuntu\.com' /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null; then
-    log ERROR "external apt sources active"
-    write_state FAILED
-    exit 1
-  fi
-  if ! grep -RqiE 'noble' /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null; then
-    log WARN "noble suite not found in sources (may still be mid-transition)"
-  fi
-  [[ -f "$HISTORY_FILE" ]] || printf 'HOP_4: 22.04 -> 24.04 rc=0\n' >>"$HISTORY_FILE"
-  # Remove temporary keep-local conffile policy after successful Noble boot.
-  if [[ -f /etc/apt/apt.conf.d/97stellar-offline-conffile-policy ]]; then
-    preexisting="${STATE_ROOT}/critical-holds/97stellar-offline-conffile-policy.preexisting"
-    if [[ -f "$preexisting" ]]; then
-      cp -a "$preexisting" /etc/apt/apt.conf.d/97stellar-offline-conffile-policy
-      log INFO "NONINTERACTIVE_CONFFILE_POLICY_RESTORED=YES reason=postboot"
-    else
-      rm -f /etc/apt/apt.conf.d/97stellar-offline-conffile-policy
-      log INFO "NONINTERACTIVE_CONFFILE_POLICY_REMOVED=YES reason=postboot"
-    fi
-  fi
-  # 3) basic interface / default route
-  if ! check_basic_network_route; then
-    log ERROR "DEFAULT_ROUTE_CHECK=FAIL"
-    write_state FAILED
-    exit 1
-  fi
-  log INFO "DEFAULT_ROUTE_CHECK=PASS"
-  log INFO "BASIC_NETWORK_ROUTE=PASS"
-  # 4) DNS resolver inspect / limited auto-repair (before COMPLETED_NOBLE)
-  if ! check_and_repair_dns_resolver; then
-    emit_dns_time_result_contract || true
-    log ERROR "DNS_POSTBOOT_VALIDATION=FAIL"
-    log ERROR "DNS resolver validation/repair failed; not recording COMPLETED_NOBLE"
-    write_state FAILED
-    exit 1
-  fi
-  log INFO "DNS_POSTBOOT_VALIDATION=PASS"
-  # 5) time readiness (skew/unverifiable hard-fail; sync-only never hard-fails alone)
-  if ! check_time_readiness; then
-    emit_dns_time_result_contract || true
-    log ERROR "TIME_POSTBOOT_VALIDATION=FAIL"
-    log ERROR "time readiness failed; not recording COMPLETED_NOBLE"
-    write_state FAILED
-    exit 1
-  fi
-  log INFO "TIME_POSTBOOT_VALIDATION=PASS"
-  emit_dns_time_result_contract || true
-  # 6) Kernel post-hop gate — AWS and generic are mutually exclusive.
-  # Profile authority: detect_aws_upgrade_profile (persisted source_kernel_flavor,
-  # running *-aws, or linux-aws package presence). Do not apply the generic
-  # Noble-series regex to an AWS profile host.
-  local aws_profile
-  aws_profile="$(detect_aws_upgrade_profile 2>/dev/null || true)"
-  if [[ "$aws_profile" == "aws" ]]; then
-    if ! validate_aws_post_hop_kernel_gate "24.04"; then
-      log ERROR "AWS kernel post-hop validation failed; refusing COMPLETED_NOBLE"
-      write_state FAILED
-      exit 1
-    fi
-    log INFO "GENERIC_POST_HOP_KERNEL_GATE=SKIP reason=aws_profile"
-  else
-    if ! declare -F validate_generic_running_kernel_postboot >/dev/null 2>&1; then
-      log ERROR "GENERIC_POST_HOP_KERNEL_GATE=FAIL reason=helper_missing"
-      write_state FAILED
-      exit 1
-    fi
-    if ! validate_generic_running_kernel_postboot "24.04"; then
-      log ERROR "GENERIC_POST_HOP_KERNEL_GATE=FAIL"
-      write_state FAILED
-      exit 1
-    fi
-  fi
-  # 7) COMPLETED_NOBLE — only after DNS + time readiness + kernel gate
-  write_state COMPLETED_NOBLE
-  mkdir -p /etc/motd.d 2>/dev/null || true
-  cat >"$MOTD" <<EOF
-============================================================
- STELLAR DP OS UPGRADE - PHASE 1 COMPLETE (NOBLE)
-============================================================
-
-Ubuntu 24.04 Noble OS upgrade succeeded.
-OS validation: PASS
-Product validation: NOT run in Phase 1
-DP runtime recovery: NOT performed yet
-Phase 2 bringup: NOT started (will NOT auto-run)
-
-Required next actions (exact order):
-
-1. Shut down this DP server:
-
-   sudo shutdown -h now
-
-2. Wait until the VM is completely powered off.
-
-3. Create a powered-off VMware/hypervisor snapshot.
-
-4. Power on the VM.
-
-5. Run Phase 2 preflight, then bringup only AFTER the
-   powered-off snapshot exists (NOT auto-run by Phase 1):
-
-   # manual Phase 2 - never auto-started here
-   bringup_py3_dp_after_os_upgrade.sh --version 6.6.0 --skip-download
-
-Do NOT run Phase 2 bringup before the powered-off snapshot.
-Do NOT treat product runtime as validated yet.
-
-Markers:
-  PHASE1_OS_UPGRADE=COMPLETE
-  NOBLE_OS_VALIDATION=PASS
-  PRODUCT_VALIDATION=NOT_RUN_PHASE1
-  PHASE2_DP_BRINGUP=PENDING
-  NEXT_REQUIRED_ACTION=POWERED_OFF_SNAPSHOT
-
-============================================================
-EOF
-  systemctl disable stellar-offline-os-upgrade-postboot.service 2>/dev/null || true
-  log INFO "UPGRADE_PHASE=1"
-  log INFO "UPGRADE_MODE=OS_ONLY_PHASE1"
-  log INFO "state=COMPLETED_NOBLE"
-  log INFO "os_upgrade_result=COMPLETED_NOBLE"
-  log INFO "os_validation_result=PASS"
-  log INFO "product_validation_result=NOT_RUN_PHASE1"
-  log INFO "phase1_result=PASS"
-  log INFO "phase2_result=NOT_STARTED"
-  log INFO "PHASE1_OS_UPGRADE=COMPLETE"
-  log INFO "NOBLE_OS_VALIDATION=PASS"
-  log INFO "PRODUCT_VALIDATION=NOT_RUN_PHASE1"
-  log INFO "PHASE2_DP_BRINGUP=PENDING"
-  log INFO "NEXT_REQUIRED_ACTION=POWERED_OFF_SNAPSHOT"
-  log INFO "DNS_RESOLVER_STATE=${DNS_RESOLVER_STATE}"
-  log INFO "DNS_RESOLVER_REPAIR=${DNS_RESOLVER_REPAIR}"
-  log INFO "DNS_SERVERS_CONFIGURED=${DNS_SERVERS_CONFIGURED}"
-  log INFO "DNS_NAME_RESOLUTION=${DNS_NAME_RESOLUTION}"
-  log INFO "TIME_READINESS=${TIME_READINESS}"
-  log INFO "CLOCK_SKEW_SECONDS=${CLOCK_SKEW_SECONDS}"
-  log INFO "MAX_CLOCK_SKEW_SECONDS=${MAX_CLOCK_SKEW_SECONDS}"
-  log INFO "NTP_SOURCE_CLASS=${NTP_SOURCE_CLASS}"
-  log INFO "NTP_SELECTED_PEER=${NTP_SELECTED_PEER}"
-  log INFO "BRINGUP_READY=${BRINGUP_READY}"
-  log INFO "BRINGUP_EXECUTED=NO"
-  log INFO "post-boot verification PASS - COMPLETED_NOBLE"
-}
-main "$@"
-POSTBOOT_MAIN
-  } >"$(hostpath "$POSTBOOT_PATH")"
-  chmod 0755 "$(hostpath "$POSTBOOT_PATH")"
 
   cat >"$(hostpath /etc/systemd/system/${UNIT_NAME})" <<EOF
 [Unit]
@@ -19445,11 +19514,23 @@ handle_existing_state() {
       die "$EC_STATE" "FAIL_PREVIOUS_HOP_HANDOFF_REJECTED (state=${st} os=${ver})"
     fi
     log INFO "Noble with state='${st}' - running post-boot verification only"
+    # Validation-only recovery: refresh product-owned postboot from this wrapper
+    # before execution. A stale on-disk postboot (e.g. pre-PR30 generic-only
+    # kernel reject) must not remain authoritative merely because it exists.
+    log INFO "POSTBOOT_REFRESH=START reason=validation_only_reentry state=${st}"
+    if ! install_authoritative_postboot_runtime; then
+      log ERROR "POSTBOOT_REFRESH=FAIL; refusing validation-only recovery"
+      # Leave FAILED (or current non-COMPLETED state) and fail closed.
+      if [[ "$(read_state)" != "FAILED" ]]; then
+        write_state FAILED || true
+      fi
+      die "$EC_STATE" "authoritative postboot refresh failed; validation-only recovery aborted"
+    fi
     if [[ -x "$(hostpath "$POSTBOOT_PATH")" ]]; then
       bash "$(hostpath "$POSTBOOT_PATH")"
       exit $?
     fi
-    die "$EC_STATE" "Noble host but post-boot helper missing; manual validation required"
+    die "$EC_STATE" "Noble host but post-boot helper missing after refresh; manual validation required"
   fi
 
   # Live systemd/process evidence wins even if state file is stale.
