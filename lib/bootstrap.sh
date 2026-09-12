@@ -853,6 +853,71 @@ um_bootstrap_enforce_http_disabled() {
   um_info "HTTP_DISTRIBUTION=DISABLED"
   um_info "NGINX_SERVICE_STATE=STOPPED"
   um_info "NGINX_BOOT_ENABLE=DISABLED"
+  # Keep operator status file synchronized with actual nginx state. Bootstrap
+  # isolation intentionally stops HTTP; never leave HTTP_DISTRIBUTION=ENABLED
+  # or active-HTTP readiness PASS while nginx is stopped/disabled. Heavy
+  # artifacts (OS Core / Phase 2) are not invalidated here.
+  um_bootstrap_sync_http_status_disabled
+}
+
+# Synchronize dp-upgrade-mirror.status after bootstrap stops nginx.
+# Does NOT clear OS_MIRROR_READY / PHASE2_BUNDLE_* / selective readiness.
+um_bootstrap_sync_http_status_disabled() {
+  local confdir="${INSTALL_CONF_DIR:-/etc/ubuntu-mirror}"
+  local status="${confdir}/dp-upgrade-mirror.status"
+  local wf="${confdir}/workflow.state"
+
+  if [[ "${UM_DRY_RUN:-0}" == "1" ]]; then
+    um_dry "Would sync HTTP_DISTRIBUTION=DISABLED into ${status}"
+    return 0
+  fi
+  if [[ ! -f "$status" ]]; then
+    um_info "HTTP_STATUS_SYNC=SKIP reason=status_file_absent"
+    return 0
+  fi
+
+  _um_bootstrap_status_set() {
+    local f="$1" k="$2" v="$3" t
+    t="$(mktemp "${f}.XXXXXX")"
+    if grep -q "^${k}=" "$f" 2>/dev/null; then
+      awk -F= -v key="$k" -v val="$v" '
+        BEGIN { done=0 }
+        $1==key && !done { print key "=" val; done=1; next }
+        { print }
+        END { if (!done) print key "=" val }
+      ' "$f" >"$t"
+    else
+      cat "$f" >"$t"
+      printf '%s=%s\n' "$k" "$v" >>"$t"
+    fi
+    chmod 600 "$t" 2>/dev/null || true
+    mv -f "$t" "$f"
+    chmod 600 "$f" 2>/dev/null || true
+  }
+
+  _um_bootstrap_status_set "$status" HTTP_DISTRIBUTION DISABLED
+  _um_bootstrap_status_set "$status" HTTP_REENABLE_REQUIRED YES
+  # Active-HTTP readiness must not remain PASS while nginx is stopped.
+  if grep -q '^HTTP_CONFIGURATION_READY=' "$status" 2>/dev/null; then
+    _um_bootstrap_status_set "$status" HTTP_CONFIGURATION_READY FAIL
+  fi
+  if grep -q '^HTTP_ENABLE_RESULT=' "$status" 2>/dev/null; then
+    _um_bootstrap_status_set "$status" HTTP_ENABLE_RESULT ""
+  fi
+  if grep -q '^UPGRADE_READINESS=' "$status" 2>/dev/null; then
+    _um_bootstrap_status_set "$status" UPGRADE_READINESS FAIL
+  fi
+  if grep -q '^READINESS_RESULT=' "$status" 2>/dev/null; then
+    _um_bootstrap_status_set "$status" READINESS_RESULT FAIL
+  fi
+  if [[ -f "$wf" ]]; then
+    _um_bootstrap_status_set "$wf" HTTP_REENABLE_REQUIRED YES
+    _um_bootstrap_status_set "$wf" HTTP_PUBLICATION_GENERATION_ID ""
+    _um_bootstrap_status_set "$wf" READINESS_VERIFIED_GENERATION_ID ""
+    _um_bootstrap_status_set "$wf" VERIFIED_UTC ""
+  fi
+  um_ok "HTTP_STATUS_SYNC=PASS HTTP_DISTRIBUTION=DISABLED HTTP_REENABLE_REQUIRED=YES"
+  um_info "HEAVY_ARTIFACTS_PRESERVED=YES"
 }
 
 um_bootstrap_summary() {

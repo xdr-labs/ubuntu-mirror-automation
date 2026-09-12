@@ -403,8 +403,7 @@ um_runtime_verify_python_dependency_closure() {
   local runtime="$1"
   local exclude_repo="${2:-}"
   local lib_dir="${runtime}/scripts/lib"
-  local lib_dir="${runtime}/scripts/lib"
-  local out rc
+  local out rc errexit_was_on=0
 
   if [[ ! -d "$lib_dir" ]]; then
     printf 'RUNTIME_PYTHON_DEPENDENCY_CLOSURE=FAIL\n'
@@ -415,6 +414,7 @@ um_runtime_verify_python_dependency_closure() {
     return 1
   fi
 
+  case $- in *e*) errexit_was_on=1 ;; esac
   set +e
   out="$(
     UM_EXCLUDE_REPO_ROOT="$exclude_repo" python3 - "$lib_dir" <<'PY'
@@ -487,7 +487,11 @@ sys.exit(0)
 PY
   )"
   rc=$?
-  set -e
+  if [[ "$errexit_was_on" -eq 1 ]]; then
+    set -e
+  else
+    set +e
+  fi
   printf '%s\n' "$out"
   if [[ "$rc" -ne 0 ]]; then
     printf 'INSTALL_RESULT=FAIL\n'
