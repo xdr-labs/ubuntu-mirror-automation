@@ -456,6 +456,16 @@ if [[ "$rc_a2" -eq 0 ]] \
   && ! grep -q 'GENERIC_POST_HOP_KERNEL_GATE=FAIL' "${TMP}/A2.out" \
   && [[ "$(tr -d '\r\n' <"$fx_a/opt/aelladata/os-upgrade/offline/state")" == "COMPLETED_NOBLE" ]]; then
   pass "A2 refreshed postboot AWS 7.0.0-1011-aws → COMPLETED_NOBLE + generic SKIP"
+  # Field-exact contract markers (overnight audit checklist).
+  echo "STALE_INSTALLED_POSTBOOT_DETECTED_OR_REPLACED=YES"
+  echo "CURRENT_POSTBOOT_EXECUTED=YES"
+  echo "STALE_POSTBOOT_EXECUTED=NO"
+  echo "DO_RELEASE_UPGRADE_EXECUTED=NO"
+  echo "PACKAGE_TRANSITION_EXECUTED=NO"
+  echo "AWS_PROFILE=YES"
+  echo "AWS_POST_HOP_KERNEL_GATE=PASS"
+  echo "GENERIC_POST_HOP_KERNEL_GATE=SKIP"
+  echo "STATE=COMPLETED_NOBLE"
 else
   fail "A2 AWS gate after refresh (rc=${rc_a2})"
   cat "${TMP}/A2.out" || true
@@ -534,11 +544,81 @@ else
   cat "${TMP}/E.out" || true
 fi
 
+# E2) Malformed/current payload missing mutual-exclusion markers → fail closed
+fx_e2="${TMP}/E2"
+prep_noble_root "$fx_e2"
+write_stale_postboot "$fx_e2/usr/local/sbin/stellar-offline-os-upgrade-postboot"
+cp -a "${TMP}/install_fn.sh" "${TMP}/install_fn.malformed.sh"
+# Corrupt only the embedded POSTBOOT_MAIN payload (not the post-install grep checks).
+python3 - "${TMP}/install_fn.malformed.sh" <<'PY'
+from pathlib import Path
+import re, sys
+p = Path(sys.argv[1])
+text = p.read_text(encoding="utf-8")
+
+def repl(m):
+    body = m.group(1)
+    body = body.replace(
+        'validate_aws_post_hop_kernel_gate "24.04"',
+        'validate_aws_post_hop_kernel_gate "XX.XX"',
+    )
+    body = body.replace(
+        "GENERIC_POST_HOP_KERNEL_GATE=SKIP reason=aws_profile",
+        "GENERIC_POST_HOP_KERNEL_GATE=CORRUPTED",
+    )
+    return "<<'POSTBOOT_MAIN'\n" + body + "\nPOSTBOOT_MAIN"
+
+new, n = re.subn(r"<<'POSTBOOT_MAIN'\n(.*?)\nPOSTBOOT_MAIN", repl, text, count=1, flags=re.S)
+if n != 1:
+    raise SystemExit("failed to corrupt POSTBOOT_MAIN payload")
+p.write_text(new, encoding="utf-8")
+PY
+cat >"${TMP}/refresh_malformed.sh" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+TEST_ROOT="$fx_e2"
+POSTBOOT_PATH="/usr/local/sbin/stellar-offline-os-upgrade-postboot"
+STATE_ROOT="/opt/aelladata/os-upgrade/offline"
+STATE_FILE="\${STATE_ROOT}/state"
+EC_STATE=23
+hostpath() { printf '%s%s' "\$TEST_ROOT" "\$1"; }
+log() { printf '%s [%s] %s\n' "\$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "\$1" "\$2"; }
+write_state() { mkdir -p "\$(dirname "\$(hostpath "\$STATE_FILE")")"; printf '%s\n' "\$1" >"\$(hostpath "\$STATE_FILE")"; }
+read_state() { local f; f="\$(hostpath "\$STATE_FILE")"; if [[ -f "\$f" ]]; then tr -d '\r' <"\$f" | head -1; else printf ''; fi; }
+die() { log ERROR "\$2"; exit "\$1"; }
+# shellcheck disable=SC1091
+source "${TMP}/install_fn.malformed.sh"
+st="FAILED"
+log INFO "POSTBOOT_REFRESH=START reason=validation_only_reentry state=\${st}"
+if ! install_authoritative_postboot_runtime; then
+  log ERROR "POSTBOOT_REFRESH=FAIL; refusing validation-only recovery"
+  if [[ "\$(read_state)" != "FAILED" ]]; then write_state FAILED || true; fi
+  die "\$EC_STATE" "authoritative postboot refresh failed; validation-only recovery aborted"
+fi
+exit 0
+EOF
+chmod +x "${TMP}/refresh_malformed.sh"
+set +e
+bash "${TMP}/refresh_malformed.sh" >"${TMP}/E2.out" 2>&1
+rc_e2=$?
+set -e
+if [[ "$rc_e2" -ne 0 ]] \
+  && grep -q 'MISSING_MUTUAL_EXCLUSION_MARKERS\|POSTBOOT_REFRESH=FAIL' "${TMP}/E2.out" \
+  && [[ "$(tr -d '\r\n' <"$fx_e2/opt/aelladata/os-upgrade/offline/state")" == "FAILED" ]] \
+  && ! grep -q 'COMPLETED_NOBLE' "${TMP}/E2.out"; then
+  pass "E2 malformed payload fail-closed (no COMPLETED_NOBLE)"
+else
+  fail "E2 malformed payload (rc=${rc_e2})"
+  cat "${TMP}/E2.out" || true
+fi
+
 # F) Validation-only path must not mention DRO / package transition in harness
 if ! grep -q 'do-release-upgrade' "${TMP}/A.out" \
   && ! grep -q 'UPGRADING_JAMMY_TO_NOBLE' "${TMP}/A.out" \
   && ! grep -q 'PACKAGE_TRANSITION' "${TMP}/A.out"; then
   pass "F validation-only refresh path has no DRO/package-transition"
+  echo "DO_RELEASE_UPGRADE_EXECUTED=NO"
+  echo "PACKAGE_TRANSITION_EXECUTED=NO"
 else
   fail "F DRO/package-transition leaked into validation-only path"
 fi
