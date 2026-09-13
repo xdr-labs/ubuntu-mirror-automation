@@ -1092,6 +1092,7 @@ EOF
       AELLA_CLI_AVAILABLE="NO"
       AELLA_CLI_PATH=""
       if p2b_discover_aella_cli; then
+        local _wrap="${P2B_WRAPPER_PATH:-/home/aella/bringup_py3_dp_after_os_upgrade.sh}"
         cat <<EOF
 BRINGUP_PROGRESS run_id=${run_id} state=COMPLETED elapsed_seconds=${elapsed} worker=GONE last_log_age_seconds=${last_log_age} current_phase=COMPLETE current_operation=done
 BRINGUP_RESULT=PASS
@@ -1105,27 +1106,38 @@ AELLA_CLI_AVAILABLE=YES
 AELLA_CLI_PATH=${AELLA_CLI_PATH}
 AELLA_CLI_READY=YES
 DO_NOT_RUN_AELLA_CLI_YET=NO
-NEXT_COMMAND=sudo ${AELLA_CLI_PATH}
 
-After bringup process success, cluster readiness is NOT yet complete.
-Run:
-  sudo bash ${P2B_WRAPPER_PATH:-/home/aella/bringup_py3_dp_after_os_upgrade.sh} --validate-cluster
+OPERATOR_POST_BRINGUP_SEQUENCE=START
+Bringup process completed successfully. This is NOT yet DP_UPGRADE_COMPLETE.
 
-Then inside aella_cli:
-  show status
+1) Inspect status / detect pause (non-interactive):
+     sudo bash ${_wrap} --validate-cluster
+   Or interactively:
+     sudo ${AELLA_CLI_PATH}
+     show status
 
-If the status contains:
-  System paused. Type resume in cli to start data processor services
+2) If status contains:
+     System paused. Type resume in cli to start data processor services
+   Then resume is required (manual; never auto-run by this wrapper):
+     sudo ${AELLA_CLI_PATH}
+     resume
+     show status
 
-then run:
-  resume
-  show status
+3) After services start, re-run validation:
+     sudo bash ${_wrap} --validate-cluster
+   Authoritative readiness signals include cluster nodes ready, host services
+   ready, and license valid. Pod "at least N expected" is informational.
 
-Only after cluster nodes/pods are ready, and any REQUIRED post-bringup
-migration is recorded PASS, record:
-  sudo bash ${P2B_WRAPPER_PATH:-/home/aella/bringup_py3_dp_after_os_upgrade.sh} --record-cluster-validation PASS
+4) If POST_BRINGUP_MIGRATION=REQUIRED, run the vendor migration manually, then:
+     sudo bash ${_wrap} --record-post-bringup-migration PASS
 
+5) Only when not paused and readiness looks healthy (and migration PASS/NOT_REQUIRED):
+     sudo bash ${_wrap} --record-cluster-validation PASS
+
+DP_UPGRADE_COMPLETE=YES only after bringup PASS + migration OK + CLUSTER_VALIDATION=PASS.
+OPERATOR_POST_BRINGUP_SEQUENCE=END
 DP_RESUME_AUTOMATIC=NO
+CLUSTER_VALIDATION_AUTO_PASS=NO
 EOF
         if declare -F p2b_emit_completion_semantics >/dev/null 2>&1; then
           p2b_emit_completion_semantics YES PENDING
