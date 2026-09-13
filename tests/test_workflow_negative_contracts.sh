@@ -33,7 +33,9 @@ source "$ROOT/scripts/lib/phase2_helper_generation.sh"
 install -m 0755 "$ROOT/client/stage-dp-phase2.sh" "$MM_CLIENT_ROOT/stage-dp-phase2.sh"
 install -m 0755 "$ROOT/client/bringup_py3_dp_lifecycle.sh" "$MM_CLIENT_ROOT/bringup_py3_dp_lifecycle.sh"
 for hf in dp-offline-source-product-version.sh dp-phase2-operation-progress.sh \
-  dp-phase2-bringup-lifecycle.sh dp-phase2-ubuntu-prerequisites.sh
+  dp-phase2-bringup-lifecycle.sh dp-phase2-ubuntu-prerequisites.sh \
+  dp-phase2-time-readiness.sh dp-phase2-post-bringup-migration.sh \
+  dp-phase2-cluster-validation.sh
 do
   install -m 0755 "$ROOT/client/lib/${hf}" "$MM_CLIENT_ROOT/lib/${hf}"
 done

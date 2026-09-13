@@ -1296,6 +1296,20 @@ mm_wf_reconstruct_command_block() {
   printf '\n'
 }
 
+# Executable Phase2 bringup lines only (Menu 7 STEP 7 / STEP 3 grammar).
+# Matches gui_cluster_bringup_command_line / single-topology bringup_cmd exactly.
+# Does NOT count indented prose/reference mentions (--validate-cluster,
+# --record-post-bringup-migration, --record-cluster-validation, etc.).
+mm_wf_bringup_executable_line_regex() {
+  printf '%s\n' \
+    '^sudo bash /home/aella/bringup_py3_dp_after_os_upgrade\.sh --version [0-9]+\.[0-9]+\.[0-9]+ --skip-download( --worker-ips [^[:space:]]+ --prompt-worker-password)?$'
+}
+
+mm_wf_count_bringup_executable_invocations() {
+  local file="$1"
+  grep -cE "$(mm_wf_bringup_executable_line_regex)" "$file" || true
+}
+
 # Validate the upgrade-phase2.sh WRAPPER_V1 one-liner.
 mm_wf_validate_phase2_wrapper_at() {
   local file="$1" expected_mirror="${2:-}"
@@ -1452,7 +1466,7 @@ mm_wf_validate_command_file_content() {
   # Args: file mode(FULL|PHASE2_ONLY)
   # Prints COMMAND_FILE_* evidence lines; returns 0 only when structure is valid.
   local file="$1" mode="$2"
-  local lines exec_count hop_count stage_count bringup_count
+  local lines exec_count hop_count stage_count bringup_executable_count
   local xenial bionic focal jammy
   local max_phys=0 max_block_lines=0 block_count=0 hop_block_count=0
   local lineno line
@@ -1483,7 +1497,8 @@ mm_wf_validate_command_file_content() {
   legacy_hop_count="$(grep -cE "^\( .*HOP='(xenial-to-bionic|bionic-to-focal|focal-to-jammy|jammy-to-noble)'" "$file" || true)"
   legacy_hop_count=$((legacy_hop_count + $(grep -cE '^cd /home/aella && curl -fsSLo dp-launch-' "$file" || true)))
   stage_count="$(grep -cE '^cd /home/aella && curl -fsSLo upgrade-phase2\.sh\.download ' "$file" || true)"
-  bringup_count="$(grep -cE 'bringup_py3_dp_after_os_upgrade\.sh' "$file" || true)"
+  # Semantic count: executable STEP 7/3 bringup grammar only (not prose refs).
+  bringup_executable_count="$(mm_wf_count_bringup_executable_invocations "$file")"
   xenial="$(grep -cE '^cd /home/aella && curl -fsSLo upgrade-xenial-to-bionic\.sh\.download ' "$file" || true)"
   bionic="$(grep -cE '^cd /home/aella && curl -fsSLo upgrade-bionic-to-focal\.sh\.download ' "$file" || true)"
   focal="$(grep -cE '^cd /home/aella && curl -fsSLo upgrade-focal-to-jammy\.sh\.download ' "$file" || true)"
@@ -1512,6 +1527,7 @@ mm_wf_validate_command_file_content() {
   printf 'COMMAND_FILE_OS_HOP_BLOCK_COUNT=%s\n' "$hop_block_count"
   printf 'COMMAND_FILE_OS_HOP_LAUNCHER_COUNT=%s\n' "$launcher_count"
   printf 'COMMAND_FILE_OS_HOP_LEGACY_BLOCK_COUNT=%s\n' "$legacy_hop_count"
+  printf 'COMMAND_FILE_BRINGUP_EXECUTABLE_COUNT=%s\n' "$bringup_executable_count"
   printf 'COMMAND_FILE_MAX_PHYSICAL_LINE_LENGTH=%s\n' "$max_phys"
 
   if grep -qE 'curl[^|;]*\|[[:space:]]*(bash|sh)([[:space:]]|$)' "$file"; then
@@ -1561,9 +1577,16 @@ mm_wf_validate_command_file_content() {
         printf 'COMMAND_FILE_PHASE2_STAGE_COUNT=%s\n' "$stage_count"
         return 1
       }
-      if [[ "$bringup_count" -lt 1 || "$bringup_count" -gt 2 ]]; then
+      # Single topology: exactly one STEP 7 bringup. Cluster (7A/7B): one or two.
+      local bringup_min=1 bringup_max=1
+      if grep -qE '^STEP 7A —|^STEP 3A —' "$file"; then
+        bringup_max=2
+      fi
+      if [[ "$bringup_executable_count" -lt "$bringup_min" \
+        || "$bringup_executable_count" -gt "$bringup_max" ]]; then
         printf 'COMMAND_FILE_BUILD=FAIL\n'
-        printf 'COMMAND_FILE_BRINGUP_COUNT=%s\n' "$bringup_count"
+        printf 'COMMAND_FILE_BRINGUP_EXECUTABLE_COUNT=%s\n' "$bringup_executable_count"
+        printf 'COMMAND_FILE_BRINGUP_EXECUTABLE_VALIDATION=FAIL\n'
         return 1
       fi
       # Bringup still uses sudo bash; OS-hop/Phase2 wrapper operator commands must not.
@@ -1626,9 +1649,16 @@ mm_wf_validate_command_file_content() {
         printf 'COMMAND_FILE_PHASE2_STAGE_COUNT=%s\n' "$stage_count"
         return 1
       }
-      if [[ "$bringup_count" -lt 1 || "$bringup_count" -gt 2 ]]; then
+      # Single topology: exactly one STEP 3 bringup. Cluster (3A/3B): one or two.
+      local bringup_min=1 bringup_max=1
+      if grep -qE '^STEP 7A —|^STEP 3A —' "$file"; then
+        bringup_max=2
+      fi
+      if [[ "$bringup_executable_count" -lt "$bringup_min" \
+        || "$bringup_executable_count" -gt "$bringup_max" ]]; then
         printf 'COMMAND_FILE_BUILD=FAIL\n'
-        printf 'COMMAND_FILE_BRINGUP_COUNT=%s\n' "$bringup_count"
+        printf 'COMMAND_FILE_BRINGUP_EXECUTABLE_COUNT=%s\n' "$bringup_executable_count"
+        printf 'COMMAND_FILE_BRINGUP_EXECUTABLE_VALIDATION=FAIL\n'
         return 1
       fi
       grep -q "sudo bash" "$file" || {
@@ -1664,6 +1694,23 @@ mm_wf_validate_command_file_content() {
   return 0
 }
 
+mm_wf_log_command_file_validation_evidence() {
+  # Log structural COMMAND_FILE_*/DP_* evidence keys only (no command body / secrets).
+  local evidence_file="$1"
+  local eline
+  [[ -f "$evidence_file" ]] || return 0
+  if ! declare -F mm_error >/dev/null 2>&1; then
+    return 0
+  fi
+  while IFS= read -r eline || [[ -n "$eline" ]]; do
+    case "$eline" in
+      COMMAND_FILE_*|DP_*)
+        mm_error "MENU7_COMMAND_FILE_VALIDATION ${eline}"
+        ;;
+    esac
+  done <"$evidence_file"
+}
+
 mm_wf_atomic_publish_command_file() {
   # Args: tmp_file dest_file mode readiness_generation_id
   local tmp="$1" dest="$2" mode="$3" ready_gen="$4"
@@ -1672,6 +1719,7 @@ mm_wf_atomic_publish_command_file() {
   if ! mm_wf_validate_command_file_content "$tmp" "$mode" | tee "$evidence"; then
     printf 'COMMAND_FILE_ATOMIC_PUBLISH=FAIL\n'
     cat "$evidence"
+    mm_wf_log_command_file_validation_evidence "$evidence"
     rm -f "$evidence"
     return 1
   fi
@@ -1689,7 +1737,7 @@ mm_wf_atomic_publish_command_file() {
   printf 'COMMAND_FILE_ATOMIC_PUBLISH=PASS\n'
   printf 'COMMAND_FILE_VALID_FOR_READINESS_GENERATION=%s\n' "$ready_gen"
   # Re-emit counts from evidence
-  grep -E '^COMMAND_FILE_(LINE|EXECUTABLE|OS_HOP|COMMAND_BLOCK|OS_HOP_BLOCK|OS_HOP_LAUNCHER|OS_HOP_LEGACY_BLOCK)_COUNT=' "$evidence" || true
+  grep -E '^COMMAND_FILE_(LINE|EXECUTABLE|OS_HOP|COMMAND_BLOCK|OS_HOP_BLOCK|OS_HOP_LAUNCHER|OS_HOP_LEGACY_BLOCK|BRINGUP_EXECUTABLE)_COUNT=' "$evidence" || true
   grep -E '^COMMAND_FILE_(MAX_BLOCK_LINES|MAX_PHYSICAL_LINE_LENGTH|CONTINUATION_VALIDATION|LAUNCHER_SHA_PINNING|PHASE2_BLOCK_VERSION)=' "$evidence" || true
   grep -E '^DP_(COMMAND_BLOCK_VERSION|OS_HOP_COMMAND_VERSION)=' "$evidence" || true
   rm -f "$evidence"

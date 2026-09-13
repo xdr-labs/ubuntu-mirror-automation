@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tests/test_dp_client_launcher_commands.sh
-# Menu 7 LAUNCHER_V1: generation, operator one-liner, security negatives,
+# Menu 7 WRAPPER_V1: generation, operator one-liner, security negatives,
 # publication/provenance binding, and protected-client regression hashes.
 set -euo pipefail
 
@@ -54,7 +54,7 @@ gpg --homedir "$GPG_HOME" --batch --export-secret-keys --armor >"$PRIV"
 FPR="$(local_signing_fingerprint_of "$PUB")"
 KR="${WORKDIR}/public-keyring.gpg"
 local_signing_build_binary_keyring "$PUB" "$KR"
-KR_SHA="$(sha256sum "$KR" | awk '{print $1}')
+KR_SHA="$(sha256sum "$KR" | awk '{print $1}')"
 LOCAL_SIGNING_PRIVATE_KEY="$PRIV"
 LOCAL_SIGNING_PUBLIC_KEY="$PUB"
 LOCAL_KEY_FINGERPRINT="$FPR"
@@ -194,7 +194,9 @@ mkdir -p "${CLIENT_ROOT}/lib"
 install -m 0755 "${ROOT}/client/stage-dp-phase2.sh" "${CLIENT_ROOT}/stage-dp-phase2.sh"
 install -m 0755 "${ROOT}/client/bringup_py3_dp_lifecycle.sh" "${CLIENT_ROOT}/bringup_py3_dp_lifecycle.sh"
 for hf in dp-offline-source-product-version.sh dp-phase2-operation-progress.sh \
-  dp-phase2-bringup-lifecycle.sh dp-phase2-ubuntu-prerequisites.sh
+  dp-phase2-bringup-lifecycle.sh dp-phase2-ubuntu-prerequisites.sh \
+  dp-phase2-time-readiness.sh dp-phase2-post-bringup-migration.sh \
+  dp-phase2-cluster-validation.sh
 do
   install -m 0755 "${ROOT}/client/lib/${hf}" "${CLIENT_ROOT}/lib/${hf}"
 done

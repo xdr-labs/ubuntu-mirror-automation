@@ -805,7 +805,7 @@ grep -q 'DA cluster bringup command was not generated because' "$REG_DL_ONLY" \
   || fail "DL-only missing DA not-configured message"
 grep -q 'DA Worker IPs are not configured' "$REG_DL_ONLY" \
   || fail "DL-only missing DA Worker IPs reason"
-[[ "$(grep -c 'bringup_py3_dp_after_os_upgrade.sh' "$REG_DL_ONLY")" -eq 1 ]] \
+[[ "$(grep -cE '^sudo bash /home/aella/bringup_py3_dp_after_os_upgrade\.sh --version .* --skip-download' "$REG_DL_ONLY" || true)" -eq 1 ]] \
   || fail "DL-only should emit exactly one bringup command"
 echo "DL_ONLY_CONFIGURATION=PASS"
 
@@ -820,7 +820,7 @@ grep -q 'DL cluster bringup command was not generated because' "$REG_DA_ONLY" \
   || fail "DA-only missing DL not-configured message"
 grep -q 'DL Worker IPs are not configured' "$REG_DA_ONLY" \
   || fail "DA-only missing DL Worker IPs reason"
-[[ "$(grep -c 'bringup_py3_dp_after_os_upgrade.sh' "$REG_DA_ONLY")" -eq 1 ]] \
+[[ "$(grep -cE '^sudo bash /home/aella/bringup_py3_dp_after_os_upgrade\.sh --version .* --skip-download' "$REG_DA_ONLY" || true)" -eq 1 ]] \
   || fail "DA-only should emit exactly one bringup command"
 echo "DA_ONLY_CONFIGURATION=PASS"
 
