@@ -57,25 +57,149 @@ acps_chmod_private_file() {
   [[ "$actual" == "$want_n" ]]
 }
 
+# Canonicalize paths that may not exist yet (reject empty).
+acps_normalize_path() {
+  local path="${1:-}"
+  local resolved
+  [[ -n "$path" ]] || return 1
+  resolved="$(realpath -m "$path" 2>/dev/null || true)"
+  [[ -n "$resolved" ]] || return 1
+  resolved="${resolved%/}"
+  [[ -n "$resolved" ]] || resolved="/"
+  printf '%s\n' "$resolved"
+}
+
+# True when needle is exactly root or a descendant after canonicalization.
+acps_path_is_within() {
+  local needle="${1:-}"
+  local root="${2:-}"
+  [[ -n "$needle" && -n "$root" ]] || return 1
+  case "$needle" in
+    "$root"|"$root"/*) return 0 ;;
+  esac
+  return 1
+}
+
+# Allowed private trees: ${MM_CACHE_ROOT}/acps(/...) and .../acps-work(/...).
+# Prints the matching tree root (acps or acps-work) or fails closed.
+acps_private_cache_tree_root_for() {
+  local path="${1:-}"
+  local cache_root normalized acps_root work_root
+  [[ -n "${MM_CACHE_ROOT:-}" ]] || return 1
+  cache_root="$(acps_normalize_path "$MM_CACHE_ROOT")" || return 1
+  normalized="$(acps_normalize_path "$path")" || return 1
+  acps_root="${cache_root}/acps"
+  work_root="${cache_root}/acps-work"
+  if acps_path_is_within "$normalized" "$acps_root"; then
+    printf '%s\n' "$acps_root"
+    return 0
+  fi
+  if acps_path_is_within "$normalized" "$work_root"; then
+    printf '%s\n' "$work_root"
+    return 0
+  fi
+  return 1
+}
+
+acps_private_cache_boundary_fail() {
+  local path="${1:-}"
+  local normalized="${2:-}"
+  if declare -F mm_error >/dev/null 2>&1; then
+    mm_error "ACPS_PRIVATE_CACHE_DIR=FAIL reason=outside_boundary path=${path} normalized=${normalized}"
+  else
+    printf 'ACPS_PRIVATE_CACHE_DIR=FAIL reason=outside_boundary path=%s normalized=%s\n' \
+      "$path" "$normalized" >&2
+  fi
+}
+
+# Harden only ACPS cache/work subtrees under MM_CACHE_ROOT.
+# Fail closed for any path outside ${MM_CACHE_ROOT}/{acps,acps-work}/**.
+# Never chmod /, /var, /var/lib, /var/spool, MM_MIRROR_ROOT, or MM_CACHE_ROOT itself.
 acps_ensure_private_cache_dir() {
-  local dir="$1"
+  local dir="${1:-}"
+  local cache_root tree_root normalized cur
+
+  [[ -n "$dir" ]] || return 1
+  [[ -n "${MM_CACHE_ROOT:-}" ]] || return 1
+
+  # Containment must be proven before mkdir/chmod (paths may not exist yet).
+  normalized="$(acps_normalize_path "$dir")" || return 1
+  if ! tree_root="$(acps_private_cache_tree_root_for "$dir")"; then
+    acps_private_cache_boundary_fail "$dir" "$normalized"
+    return 1
+  fi
+
   mkdir -p "$dir" || return 1
-  # Harden parents under .install-cache/acps and acps-work.
-  local cur="$dir"
-  local cache_root="${MM_CACHE_ROOT}"
-  while [[ -n "$cur" && "$cur" != "/" && "$cur" != "$cache_root" ]]; do
+
+  # Re-check after creation so a symlink race/escape cannot expand the walk.
+  normalized="$(acps_normalize_path "$dir")" || return 1
+  if ! acps_path_is_within "$normalized" "$tree_root"; then
+    acps_private_cache_boundary_fail "$dir" "$normalized"
+    return 1
+  fi
+  cache_root="$(acps_normalize_path "$MM_CACHE_ROOT")" || return 1
+
+  cur="$normalized"
+  while [[ -n "$cur" && "$cur" != "/" ]]; do
+    if ! acps_path_is_within "$cur" "$tree_root"; then
+      acps_private_cache_boundary_fail "$dir" "$cur"
+      return 1
+    fi
+    # Never harden the cache root or anything above the acps/acps-work tree.
+    if [[ "$cur" == "$cache_root" || "$cur" == "/" ]]; then
+      acps_private_cache_boundary_fail "$dir" "$cur"
+      return 1
+    fi
     acps_chmod_private_dir "$cur" || return 1
-    case "$(basename "$cur")" in
-      acps|acps-work) break ;;
-    esac
+    [[ "$cur" == "$tree_root" ]] && break
     cur="$(dirname "$cur")"
   done
-  if [[ -d "${cache_root}/acps" ]]; then
-    acps_chmod_private_dir "${cache_root}/acps" || true
+  return 0
+}
+
+# Run-state / disk-preflight directories are product-owned but are NOT ACPS cache
+# trees. Enforce private mode on the exact directory only — never walk ancestors.
+acps_ensure_private_state_dir() {
+  local dir="${1:-}"
+  local normalized mirror_root cache_root
+  [[ -n "$dir" ]] || return 1
+  mkdir -p "$dir" || return 1
+  normalized="$(acps_normalize_path "$dir")" || return 1
+
+  # Refuse to privatize host or spool ancestors even if a caller passes them.
+  case "$normalized" in
+    /|/var|/var/lib|/var/log|/var/spool|/tmp|/home|/usr|/etc|/opt|/root)
+      if declare -F mm_error >/dev/null 2>&1; then
+        mm_error "ACPS_PRIVATE_STATE_DIR=FAIL reason=forbidden_ancestor path=${normalized}"
+      else
+        printf 'ACPS_PRIVATE_STATE_DIR=FAIL reason=forbidden_ancestor path=%s\n' \
+          "$normalized" >&2
+      fi
+      return 1
+      ;;
+  esac
+  if [[ -n "${MM_MIRROR_ROOT:-}" ]]; then
+    mirror_root="$(acps_normalize_path "$MM_MIRROR_ROOT" 2>/dev/null || true)"
+    if [[ -n "$mirror_root" && "$normalized" == "$mirror_root" ]]; then
+      if declare -F mm_error >/dev/null 2>&1; then
+        mm_error "ACPS_PRIVATE_STATE_DIR=FAIL reason=mirror_root path=${normalized}"
+      else
+        printf 'ACPS_PRIVATE_STATE_DIR=FAIL reason=mirror_root path=%s\n' \
+          "$normalized" >&2
+      fi
+      return 1
+    fi
   fi
-  if [[ -d "${cache_root}/acps-work" ]]; then
-    acps_chmod_private_dir "${cache_root}/acps-work" || true
+  if [[ -n "${MM_CACHE_ROOT:-}" ]]; then
+    cache_root="$(acps_normalize_path "$MM_CACHE_ROOT" 2>/dev/null || true)"
+    # State files may live *under* the cache root as a fallback filename, but
+    # the cache root directory itself must not be forced to 0700 here.
+    if [[ -n "$cache_root" && "$normalized" == "$cache_root" ]]; then
+      return 0
+    fi
   fi
+
+  acps_chmod_private_dir "$normalized" || return 1
   return 0
 }
 
@@ -83,6 +207,11 @@ acps_enforce_private_tree_permissions() {
   local root="$1"
   local path
   [[ -d "$root" ]] || return 0
+  # Refuse to recurse outside the ACPS private cache/work boundary.
+  acps_private_cache_tree_root_for "$root" >/dev/null || {
+    acps_private_cache_boundary_fail "$root" "$(acps_normalize_path "$root" 2>/dev/null || printf '%s' "$root")"
+    return 1
+  }
   acps_chmod_private_dir "$root" || return 1
   while IFS= read -r -d '' path; do
     acps_chmod_private_dir "$path" || return 1
@@ -310,8 +439,9 @@ acps_record_verified_cache_disk_state() {
   [[ "$total" =~ ^[1-9][0-9]*$ ]] || return 1
 
   state="$(acps_disk_preflight_state_file "$ver")"
-  mkdir -p "$(dirname "$state")" 2>/dev/null || true
-  acps_ensure_private_cache_dir "$(dirname "$state")" 2>/dev/null || true
+  # Run-state lives under MM_STATE_DIR (or as a file under MM_CACHE_ROOT) —
+  # never route it through the ACPS cache private-tree walker.
+  acps_ensure_private_state_dir "$(dirname "$state")" 2>/dev/null || true
   tmp="$(mktemp "${state}.tmp.XXXXXX" 2>/dev/null || mktemp "${TMPDIR:-/tmp}/acps-preflight.XXXXXX")"
   {
     printf 'ACPS_PREFLIGHT_VERSION=%s\n' "$ver"
@@ -321,9 +451,10 @@ acps_record_verified_cache_disk_state() {
     printf 'ACPS_REUSABLE_ON_DISK_BYTES=%s\n' "$total"
     printf 'ACPS_REMAINING_DOWNLOAD_BYTES=0\n'
   } >"$tmp"
-  chmod 0600 "$tmp" 2>/dev/null || true
+  acps_chmod_private_file "$tmp" 2>/dev/null || chmod 0600 "$tmp" 2>/dev/null || true
   if [[ -d "$(dirname "$state")" && -w "$(dirname "$state")" ]]; then
     mv -f "$tmp" "$state"
+    acps_chmod_private_file "$state" 2>/dev/null || chmod 0600 "$state" 2>/dev/null || true
   else
     rm -f "$tmp"
     return 1
@@ -348,8 +479,9 @@ acps_collect_disk_preflight_state() {
 
   cache="$(acps_cache_dir "$ver")"
   state="$(acps_disk_preflight_state_file "$ver")"
-  mkdir -p "$(dirname "$state")" 2>/dev/null || true
-  acps_ensure_private_cache_dir "$(dirname "$state")" 2>/dev/null || true
+  # First-run disk preflight writes under MM_STATE_DIR; do not use the cache
+  # private-tree walker (that formerly chmod'd host ancestors up to /var).
+  acps_ensure_private_state_dir "$(dirname "$state")" 2>/dev/null || true
 
   for name in "${DP_PHASE2_REQUIRED_FILES[@]}"; do
     if ! expected="$(acps_remote_content_length "$base" "$name")"; then
@@ -417,9 +549,10 @@ acps_collect_disk_preflight_state() {
     printf 'ACPS_REUSABLE_ON_DISK_BYTES=%s\n' "$reusable"
     printf 'ACPS_REMAINING_DOWNLOAD_BYTES=%s\n' "$remaining"
   } >"$tmp"
-  chmod 0600 "$tmp" 2>/dev/null || true
+  acps_chmod_private_file "$tmp" 2>/dev/null || chmod 0600 "$tmp" 2>/dev/null || true
   if [[ -d "$(dirname "$state")" && -w "$(dirname "$state")" ]]; then
     mv -f "$tmp" "$state"
+    acps_chmod_private_file "$state" 2>/dev/null || chmod 0600 "$state" 2>/dev/null || true
   else
     rm -f "$tmp"
   fi
