@@ -5126,6 +5126,305 @@ change_login_shells() {
   done
 }
 
+install_authoritative_postboot_runtime() {
+  # Install/replace the product-owned postboot verifier from this wrapper's
+  # embedded payload. Authoritative for first-time handoff and already-Noble
+  # validation-only recovery (do not trust a pre-existing on-disk postboot).
+  local dest tmp dir expected_base
+  expected_base="stellar-offline-os-upgrade-postboot"
+  dest="$(hostpath "$POSTBOOT_PATH")"
+  dir="$(dirname "$dest")"
+  if [[ "$(basename "$dest")" != "$expected_base" ]]; then
+    log ERROR "POSTBOOT_REFRESH=REFUSED reason=UNEXPECTED_BASENAME path=${dest}"
+    return 1
+  fi
+  if [[ -d "$dest" && ! -L "$dest" ]]; then
+    log ERROR "POSTBOOT_REFRESH=REFUSED reason=PATH_IS_DIRECTORY path=${dest}"
+    return 1
+  fi
+  if [[ -L "$dest" ]]; then
+    local link_target
+    link_target="$(readlink -f "$dest" 2>/dev/null || true)"
+    if [[ -z "$link_target" || "$(basename "$link_target")" != "$expected_base" ]]; then
+      log ERROR "POSTBOOT_REFRESH=REFUSED reason=UNEXPECTED_SYMLINK path=${dest} target=${link_target:-empty}"
+      return 1
+    fi
+  fi
+  mkdir -p "$dir" || {
+    log ERROR "POSTBOOT_REFRESH=FAIL reason=MKDIR path=${dir}"
+    return 1
+  }
+  tmp="${dest}.new.$$"
+  rm -f "$tmp"
+  # Postboot: build-time-inlined DNS/time policy + main verifier (single-file).
+  {
+    cat <<'POSTBOOT_HDR'
+#!/usr/bin/env bash
+set -euo pipefail
+@@DURABLE_WRITE_HELPER@@
+@@AWS_KERNEL_GATE_LIB@@
+
+@@GENERIC_KERNEL_GATE_LIB@@
+STATE_ROOT="/opt/aelladata/os-upgrade/offline"
+STATE_FILE="${STATE_ROOT}/state"
+HISTORY_FILE="${STATE_ROOT}/hop_history"
+LOG_FILE="/var/log/aella/offline_os_upgrade.log"
+MOTD="/etc/motd.d/99-stellar-offline-upgrade"
+exec >>"$LOG_FILE" 2>&1
+log() { printf '%s [%s] %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$1" "$2"; }
+write_state() {
+  printf '%s\n' "$1" | durable_atomic_write "write_state" "$STATE_FILE" || return 1
+}
+
+# Inlined by scripts/lib/build_client_jammy_to_noble.py (single-file; no runtime include).
+# Hermetic fixture helpers must live inside the installed postboot payload —
+# the outer wrapper definitions are not visible after POSTBOOT_REFRESH.
+@@HERMETIC_ESCAPES_HELPER@@
+@@POSTBOOT_POLICY_LIB@@
+
+check_time_readiness_phase1() {
+  check_time_readiness "$@"
+}
+
+check_basic_network_route() {
+  local default_route default_iface
+  if dp_offline_hermetic_fixtures_enabled && [[ -n "${STELLAR_OFFLINE_FAKE_DEFAULT_ROUTE:-}" ]]; then
+    [[ "${STELLAR_OFFLINE_FAKE_DEFAULT_ROUTE}" == "1" ]]
+    return $?
+  fi
+  default_route="$(ip -4 route show default 2>/dev/null | awk 'NR==1 {print; exit}')"
+  default_iface="$(printf '%s\n' "$default_route" | awk '{for (i=1; i<=NF; i++) if ($i=="dev") {print $(i+1); exit}}')"
+  [[ -n "$default_route" && -n "$default_iface" ]] || return 1
+  log INFO "DEFAULT_ROUTE_CHECK=PASS"
+  log INFO "DEFAULT_INTERFACE=${default_iface}"
+  log INFO "DEFAULT_ROUTE=${default_route}"
+}
+
+emit_dns_time_result_contract() {
+  log INFO "DNS_RESOLVER_STATE=${DNS_RESOLVER_STATE:-}"
+  log INFO "DNS_RESOLVER_REPAIR=${DNS_RESOLVER_REPAIR:-}"
+  log INFO "DNS_SERVERS_CONFIGURED=${DNS_SERVERS_CONFIGURED:-}"
+  log INFO "DNS_NAME_RESOLUTION=${DNS_NAME_RESOLUTION:-}"
+  log INFO "TIME_READINESS=${TIME_READINESS:-}"
+  log INFO "CLOCK_SKEW_SECONDS=${CLOCK_SKEW_SECONDS:-}"
+  log INFO "MAX_CLOCK_SKEW_SECONDS=${MAX_CLOCK_SKEW_SECONDS:-}"
+  log INFO "NTP_SOURCE_CLASS=${NTP_SOURCE_CLASS:-}"
+  log INFO "NTP_SELECTED_PEER=${NTP_SELECTED_PEER:-}"
+  log INFO "BRINGUP_READY=${BRINGUP_READY:-}"
+  log INFO "BRINGUP_EXECUTED=${BRINGUP_EXECUTED:-NO}"
+}
+POSTBOOT_HDR
+    cat <<'POSTBOOT_MAIN'
+
+main() {
+  write_state POST_BOOT_VERIFY
+  local ver code arch ubu py3ver kr
+  # 1) Noble OS confirmation
+  ver="$(grep -E '^VERSION_ID=' /etc/os-release | cut -d= -f2 | tr -d '"')"
+  code="$(grep -E '^VERSION_CODENAME=' /etc/os-release | cut -d= -f2 | tr -d '"')"
+  arch="$(dpkg --print-architecture)"
+  ubu="$(grep -E '^UBUNTU_CODENAME=' /etc/os-release | cut -d= -f2 | tr -d '"' || true)"
+  [[ "$ver" == "24.04" && "$code" == "noble" ]] || { log ERROR "not noble"; write_state FAILED; exit 1; }
+  if [[ -n "$ubu" && "$ubu" != "noble" ]]; then
+    log ERROR "UBUNTU_CODENAME=${ubu} (expected noble)"; write_state FAILED; exit 1
+  fi
+  [[ "$arch" == "amd64" ]] || { log ERROR "arch ${arch}"; write_state FAILED; exit 1; }
+  # Python3 must be Noble-series; Python2 residual alone is NOT a postboot failure.
+  py3ver="$(dpkg-query -W -f='${Version}' python3 2>/dev/null || true)"
+  [[ "$py3ver" == 3.12* ]] || { log ERROR "python3 not Noble-series (${py3ver})"; write_state FAILED; exit 1; }
+  log INFO "PYTHON3_SERIES_CHECK=PASS version=${py3ver}"
+  log INFO "PYTHON2_RESIDUAL_IGNORED_BY_PHASE1_POLICY=YES"
+  # Running-kernel series/flavor is enforced by the mutually exclusive AWS vs
+  # generic post-hop gates below (not by a generic-only inline regex). A valid
+  # Noble AWS kernel such as 7.0.0-1011-aws must not be rejected here.
+  kr="$(uname -r)"
+  log INFO "RUNNING_KERNEL=${kr}"
+  # 2) dpkg/apt health
+  dpkg --audit 2>/dev/null | grep -q . && { log ERROR "dpkg audit"; write_state FAILED; exit 1; }
+  apt-get check >/dev/null 2>&1 || { log ERROR "broken deps"; write_state FAILED; exit 1; }
+  [[ -d /opt/aelladata ]] || { log ERROR "aelladata missing"; write_state FAILED; exit 1; }
+  if grep -RqiE '(archive|security|old-releases)\.ubuntu\.com' /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null; then
+    log ERROR "external apt sources active"
+    write_state FAILED
+    exit 1
+  fi
+  if ! grep -RqiE 'noble' /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null; then
+    log WARN "noble suite not found in sources (may still be mid-transition)"
+  fi
+  [[ -f "$HISTORY_FILE" ]] || printf 'HOP_4: 22.04 -> 24.04 rc=0\n' >>"$HISTORY_FILE"
+  # Remove temporary keep-local conffile policy after successful Noble boot.
+  if [[ -f /etc/apt/apt.conf.d/97stellar-offline-conffile-policy ]]; then
+    preexisting="${STATE_ROOT}/critical-holds/97stellar-offline-conffile-policy.preexisting"
+    if [[ -f "$preexisting" ]]; then
+      cp -a "$preexisting" /etc/apt/apt.conf.d/97stellar-offline-conffile-policy
+      log INFO "NONINTERACTIVE_CONFFILE_POLICY_RESTORED=YES reason=postboot"
+    else
+      rm -f /etc/apt/apt.conf.d/97stellar-offline-conffile-policy
+      log INFO "NONINTERACTIVE_CONFFILE_POLICY_REMOVED=YES reason=postboot"
+    fi
+  fi
+  # 3) basic interface / default route
+  if ! check_basic_network_route; then
+    log ERROR "DEFAULT_ROUTE_CHECK=FAIL"
+    write_state FAILED
+    exit 1
+  fi
+  log INFO "DEFAULT_ROUTE_CHECK=PASS"
+  log INFO "BASIC_NETWORK_ROUTE=PASS"
+  # 4) DNS resolver inspect / limited auto-repair (before COMPLETED_NOBLE)
+  if ! check_and_repair_dns_resolver; then
+    emit_dns_time_result_contract || true
+    log ERROR "DNS_POSTBOOT_VALIDATION=FAIL"
+    log ERROR "DNS resolver validation/repair failed; not recording COMPLETED_NOBLE"
+    write_state FAILED
+    exit 1
+  fi
+  log INFO "DNS_POSTBOOT_VALIDATION=PASS"
+  # 5) time readiness (skew/unverifiable hard-fail; sync-only never hard-fails alone)
+  if ! check_time_readiness; then
+    emit_dns_time_result_contract || true
+    log ERROR "TIME_POSTBOOT_VALIDATION=FAIL"
+    log ERROR "time readiness failed; not recording COMPLETED_NOBLE"
+    write_state FAILED
+    exit 1
+  fi
+  log INFO "TIME_POSTBOOT_VALIDATION=PASS"
+  emit_dns_time_result_contract || true
+  # 6) Kernel post-hop gate — AWS and generic are mutually exclusive.
+  # Profile authority: detect_aws_upgrade_profile (persisted source_kernel_flavor,
+  # running *-aws, or linux-aws package presence). Do not apply the generic
+  # Noble-series regex to an AWS profile host.
+  local aws_profile
+  aws_profile="$(detect_aws_upgrade_profile 2>/dev/null || true)"
+  if [[ "$aws_profile" == "aws" ]]; then
+    if ! validate_aws_post_hop_kernel_gate "24.04"; then
+      log ERROR "AWS kernel post-hop validation failed; refusing COMPLETED_NOBLE"
+      write_state FAILED
+      exit 1
+    fi
+    log INFO "GENERIC_POST_HOP_KERNEL_GATE=SKIP reason=aws_profile"
+  else
+    if ! declare -F validate_generic_running_kernel_postboot >/dev/null 2>&1; then
+      log ERROR "GENERIC_POST_HOP_KERNEL_GATE=FAIL reason=helper_missing"
+      write_state FAILED
+      exit 1
+    fi
+    if ! validate_generic_running_kernel_postboot "24.04"; then
+      log ERROR "GENERIC_POST_HOP_KERNEL_GATE=FAIL"
+      write_state FAILED
+      exit 1
+    fi
+  fi
+  # 7) COMPLETED_NOBLE — only after DNS + time readiness + kernel gate
+  write_state COMPLETED_NOBLE
+  mkdir -p /etc/motd.d 2>/dev/null || true
+  cat >"$MOTD" <<EOF
+============================================================
+ STELLAR DP OS UPGRADE - PHASE 1 COMPLETE (NOBLE)
+============================================================
+
+Ubuntu 24.04 Noble OS upgrade succeeded.
+OS validation: PASS
+Product validation: NOT run in Phase 1
+DP runtime recovery: NOT performed yet
+Phase 2 bringup: NOT started (will NOT auto-run)
+
+Required next actions (exact order):
+
+1. Shut down this DP server:
+
+   sudo shutdown -h now
+
+2. Wait until the VM is completely powered off.
+
+3. Create a powered-off VMware/hypervisor snapshot.
+
+4. Power on the VM.
+
+5. Run Phase 2 preflight, then bringup only AFTER the
+   powered-off snapshot exists (NOT auto-run by Phase 1):
+
+   # manual Phase 2 - never auto-started here
+   bringup_py3_dp_after_os_upgrade.sh --version 6.6.0 --skip-download
+
+Do NOT run Phase 2 bringup before the powered-off snapshot.
+Do NOT treat product runtime as validated yet.
+
+Markers:
+  PHASE1_OS_UPGRADE=COMPLETE
+  NOBLE_OS_VALIDATION=PASS
+  PRODUCT_VALIDATION=NOT_RUN_PHASE1
+  PHASE2_DP_BRINGUP=PENDING
+  NEXT_REQUIRED_ACTION=POWERED_OFF_SNAPSHOT
+
+============================================================
+EOF
+  systemctl disable stellar-offline-os-upgrade-postboot.service 2>/dev/null || true
+  log INFO "UPGRADE_PHASE=1"
+  log INFO "UPGRADE_MODE=OS_ONLY_PHASE1"
+  log INFO "state=COMPLETED_NOBLE"
+  log INFO "os_upgrade_result=COMPLETED_NOBLE"
+  log INFO "os_validation_result=PASS"
+  log INFO "product_validation_result=NOT_RUN_PHASE1"
+  log INFO "phase1_result=PASS"
+  log INFO "phase2_result=NOT_STARTED"
+  log INFO "PHASE1_OS_UPGRADE=COMPLETE"
+  log INFO "NOBLE_OS_VALIDATION=PASS"
+  log INFO "PRODUCT_VALIDATION=NOT_RUN_PHASE1"
+  log INFO "PHASE2_DP_BRINGUP=PENDING"
+  log INFO "NEXT_REQUIRED_ACTION=POWERED_OFF_SNAPSHOT"
+  log INFO "DNS_RESOLVER_STATE=${DNS_RESOLVER_STATE}"
+  log INFO "DNS_RESOLVER_REPAIR=${DNS_RESOLVER_REPAIR}"
+  log INFO "DNS_SERVERS_CONFIGURED=${DNS_SERVERS_CONFIGURED}"
+  log INFO "DNS_NAME_RESOLUTION=${DNS_NAME_RESOLUTION}"
+  log INFO "TIME_READINESS=${TIME_READINESS}"
+  log INFO "CLOCK_SKEW_SECONDS=${CLOCK_SKEW_SECONDS}"
+  log INFO "MAX_CLOCK_SKEW_SECONDS=${MAX_CLOCK_SKEW_SECONDS}"
+  log INFO "NTP_SOURCE_CLASS=${NTP_SOURCE_CLASS}"
+  log INFO "NTP_SELECTED_PEER=${NTP_SELECTED_PEER}"
+  log INFO "BRINGUP_READY=${BRINGUP_READY}"
+  log INFO "BRINGUP_EXECUTED=NO"
+  log INFO "post-boot verification PASS - COMPLETED_NOBLE"
+}
+main "$@"
+POSTBOOT_MAIN
+  } >"$tmp" || {
+    rm -f "$tmp"
+    log ERROR "POSTBOOT_REFRESH=FAIL reason=WRITE_TMP path=${tmp}"
+    return 1
+  }
+  chmod 0755 "$tmp" || {
+    rm -f "$tmp"
+    log ERROR "POSTBOOT_REFRESH=FAIL reason=CHMOD_TMP path=${tmp}"
+    return 1
+  }
+  chown root:root "$tmp" 2>/dev/null || true
+  if ! mv -f "$tmp" "$dest"; then
+    rm -f "$tmp"
+    log ERROR "POSTBOOT_REFRESH=FAIL reason=ATOMIC_REPLACE path=${dest}"
+    return 1
+  fi
+  chmod 0755 "$dest" || {
+    log ERROR "POSTBOOT_REFRESH=FAIL reason=CHMOD_DEST path=${dest}"
+    return 1
+  }
+  chown root:root "$dest" 2>/dev/null || true
+  if [[ ! -x "$dest" ]]; then
+    log ERROR "POSTBOOT_REFRESH=FAIL reason=NOT_EXECUTABLE path=${dest}"
+    return 1
+  fi
+  # Fail closed unless the refreshed payload carries the PR30 AWS/generic
+  # mutual-exclusion contract (do not accept a generic-only stale body).
+  if ! grep -q 'validate_aws_post_hop_kernel_gate "24.04"' "$dest" 2>/dev/null \
+    || ! grep -q 'GENERIC_POST_HOP_KERNEL_GATE=SKIP reason=aws_profile' "$dest" 2>/dev/null \
+    || ! grep -q 'validate_generic_running_kernel_postboot' "$dest" 2>/dev/null; then
+    log ERROR "POSTBOOT_REFRESH=FAIL reason=MISSING_MUTUAL_EXCLUSION_MARKERS path=${dest}"
+    return 1
+  fi
+  log INFO "POSTBOOT_REFRESH=INSTALLED path=${POSTBOOT_PATH}"
+  return 0
+}
+
 install_runner_and_units() {
   local work="$1"
   mkdir -p "$(hostpath /usr/local/sbin)" "$(hostpath /etc/systemd/system)"
@@ -7320,237 +7619,10 @@ main "$@"
 
 RUNNER
 
-  # Postboot: build-time-inlined DNS/time policy + main verifier (single-file).
-  {
-    cat <<'POSTBOOT_HDR'
-#!/usr/bin/env bash
-set -euo pipefail
-@@DURABLE_WRITE_HELPER@@
-@@AWS_KERNEL_GATE_LIB@@
-
-@@GENERIC_KERNEL_GATE_LIB@@
-STATE_ROOT="/opt/aelladata/os-upgrade/offline"
-STATE_FILE="${STATE_ROOT}/state"
-HISTORY_FILE="${STATE_ROOT}/hop_history"
-LOG_FILE="/var/log/aella/offline_os_upgrade.log"
-MOTD="/etc/motd.d/99-stellar-offline-upgrade"
-exec >>"$LOG_FILE" 2>&1
-log() { printf '%s [%s] %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$1" "$2"; }
-write_state() {
-  printf '%s\n' "$1" | durable_atomic_write "write_state" "$STATE_FILE" || return 1
-}
-
-# Inlined by scripts/lib/build_client_jammy_to_noble.py (single-file; no runtime include).
-@@POSTBOOT_POLICY_LIB@@
-
-check_time_readiness_phase1() {
-  check_time_readiness "$@"
-}
-
-check_basic_network_route() {
-  local default_route default_iface
-  if dp_offline_hermetic_fixtures_enabled && [[ -n "${STELLAR_OFFLINE_FAKE_DEFAULT_ROUTE:-}" ]]; then
-    [[ "${STELLAR_OFFLINE_FAKE_DEFAULT_ROUTE}" == "1" ]]
-    return $?
+  if ! install_authoritative_postboot_runtime; then
+    log ERROR "POSTBOOT_INSTALL=FAIL"
+    return 1
   fi
-  default_route="$(ip -4 route show default 2>/dev/null | awk 'NR==1 {print; exit}')"
-  default_iface="$(printf '%s\n' "$default_route" | awk '{for (i=1; i<=NF; i++) if ($i=="dev") {print $(i+1); exit}}')"
-  [[ -n "$default_route" && -n "$default_iface" ]] || return 1
-  log INFO "DEFAULT_ROUTE_CHECK=PASS"
-  log INFO "DEFAULT_INTERFACE=${default_iface}"
-  log INFO "DEFAULT_ROUTE=${default_route}"
-}
-
-emit_dns_time_result_contract() {
-  log INFO "DNS_RESOLVER_STATE=${DNS_RESOLVER_STATE:-}"
-  log INFO "DNS_RESOLVER_REPAIR=${DNS_RESOLVER_REPAIR:-}"
-  log INFO "DNS_SERVERS_CONFIGURED=${DNS_SERVERS_CONFIGURED:-}"
-  log INFO "DNS_NAME_RESOLUTION=${DNS_NAME_RESOLUTION:-}"
-  log INFO "TIME_READINESS=${TIME_READINESS:-}"
-  log INFO "CLOCK_SKEW_SECONDS=${CLOCK_SKEW_SECONDS:-}"
-  log INFO "MAX_CLOCK_SKEW_SECONDS=${MAX_CLOCK_SKEW_SECONDS:-}"
-  log INFO "NTP_SOURCE_CLASS=${NTP_SOURCE_CLASS:-}"
-  log INFO "NTP_SELECTED_PEER=${NTP_SELECTED_PEER:-}"
-  log INFO "BRINGUP_READY=${BRINGUP_READY:-}"
-  log INFO "BRINGUP_EXECUTED=${BRINGUP_EXECUTED:-NO}"
-}
-POSTBOOT_HDR
-    cat <<'POSTBOOT_MAIN'
-
-main() {
-  write_state POST_BOOT_VERIFY
-  local ver code arch ubu py3ver kr
-  # 1) Noble OS confirmation
-  ver="$(grep -E '^VERSION_ID=' /etc/os-release | cut -d= -f2 | tr -d '"')"
-  code="$(grep -E '^VERSION_CODENAME=' /etc/os-release | cut -d= -f2 | tr -d '"')"
-  arch="$(dpkg --print-architecture)"
-  ubu="$(grep -E '^UBUNTU_CODENAME=' /etc/os-release | cut -d= -f2 | tr -d '"' || true)"
-  [[ "$ver" == "24.04" && "$code" == "noble" ]] || { log ERROR "not noble"; write_state FAILED; exit 1; }
-  if [[ -n "$ubu" && "$ubu" != "noble" ]]; then
-    log ERROR "UBUNTU_CODENAME=${ubu} (expected noble)"; write_state FAILED; exit 1
-  fi
-  [[ "$arch" == "amd64" ]] || { log ERROR "arch ${arch}"; write_state FAILED; exit 1; }
-  # Python3 must be Noble-series; Python2 residual alone is NOT a postboot failure.
-  py3ver="$(dpkg-query -W -f='${Version}' python3 2>/dev/null || true)"
-  [[ "$py3ver" == 3.12* ]] || { log ERROR "python3 not Noble-series (${py3ver})"; write_state FAILED; exit 1; }
-  log INFO "PYTHON3_SERIES_CHECK=PASS version=${py3ver}"
-  log INFO "PYTHON2_RESIDUAL_IGNORED_BY_PHASE1_POLICY=YES"
-  # Running-kernel series/flavor is enforced by the mutually exclusive AWS vs
-  # generic post-hop gates below (not by a generic-only inline regex). A valid
-  # Noble AWS kernel such as 7.0.0-1011-aws must not be rejected here.
-  kr="$(uname -r)"
-  log INFO "RUNNING_KERNEL=${kr}"
-  # 2) dpkg/apt health
-  dpkg --audit 2>/dev/null | grep -q . && { log ERROR "dpkg audit"; write_state FAILED; exit 1; }
-  apt-get check >/dev/null 2>&1 || { log ERROR "broken deps"; write_state FAILED; exit 1; }
-  [[ -d /opt/aelladata ]] || { log ERROR "aelladata missing"; write_state FAILED; exit 1; }
-  if grep -RqiE '(archive|security|old-releases)\.ubuntu\.com' /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null; then
-    log ERROR "external apt sources active"
-    write_state FAILED
-    exit 1
-  fi
-  if ! grep -RqiE 'noble' /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null; then
-    log WARN "noble suite not found in sources (may still be mid-transition)"
-  fi
-  [[ -f "$HISTORY_FILE" ]] || printf 'HOP_4: 22.04 -> 24.04 rc=0\n' >>"$HISTORY_FILE"
-  # Remove temporary keep-local conffile policy after successful Noble boot.
-  if [[ -f /etc/apt/apt.conf.d/97stellar-offline-conffile-policy ]]; then
-    preexisting="${STATE_ROOT}/critical-holds/97stellar-offline-conffile-policy.preexisting"
-    if [[ -f "$preexisting" ]]; then
-      cp -a "$preexisting" /etc/apt/apt.conf.d/97stellar-offline-conffile-policy
-      log INFO "NONINTERACTIVE_CONFFILE_POLICY_RESTORED=YES reason=postboot"
-    else
-      rm -f /etc/apt/apt.conf.d/97stellar-offline-conffile-policy
-      log INFO "NONINTERACTIVE_CONFFILE_POLICY_REMOVED=YES reason=postboot"
-    fi
-  fi
-  # 3) basic interface / default route
-  if ! check_basic_network_route; then
-    log ERROR "DEFAULT_ROUTE_CHECK=FAIL"
-    write_state FAILED
-    exit 1
-  fi
-  log INFO "DEFAULT_ROUTE_CHECK=PASS"
-  log INFO "BASIC_NETWORK_ROUTE=PASS"
-  # 4) DNS resolver inspect / limited auto-repair (before COMPLETED_NOBLE)
-  if ! check_and_repair_dns_resolver; then
-    emit_dns_time_result_contract || true
-    log ERROR "DNS_POSTBOOT_VALIDATION=FAIL"
-    log ERROR "DNS resolver validation/repair failed; not recording COMPLETED_NOBLE"
-    write_state FAILED
-    exit 1
-  fi
-  log INFO "DNS_POSTBOOT_VALIDATION=PASS"
-  # 5) time readiness (skew/unverifiable hard-fail; sync-only never hard-fails alone)
-  if ! check_time_readiness; then
-    emit_dns_time_result_contract || true
-    log ERROR "TIME_POSTBOOT_VALIDATION=FAIL"
-    log ERROR "time readiness failed; not recording COMPLETED_NOBLE"
-    write_state FAILED
-    exit 1
-  fi
-  log INFO "TIME_POSTBOOT_VALIDATION=PASS"
-  emit_dns_time_result_contract || true
-  # 6) Kernel post-hop gate — AWS and generic are mutually exclusive.
-  # Profile authority: detect_aws_upgrade_profile (persisted source_kernel_flavor,
-  # running *-aws, or linux-aws package presence). Do not apply the generic
-  # Noble-series regex to an AWS profile host.
-  local aws_profile
-  aws_profile="$(detect_aws_upgrade_profile 2>/dev/null || true)"
-  if [[ "$aws_profile" == "aws" ]]; then
-    if ! validate_aws_post_hop_kernel_gate "24.04"; then
-      log ERROR "AWS kernel post-hop validation failed; refusing COMPLETED_NOBLE"
-      write_state FAILED
-      exit 1
-    fi
-    log INFO "GENERIC_POST_HOP_KERNEL_GATE=SKIP reason=aws_profile"
-  else
-    if ! declare -F validate_generic_running_kernel_postboot >/dev/null 2>&1; then
-      log ERROR "GENERIC_POST_HOP_KERNEL_GATE=FAIL reason=helper_missing"
-      write_state FAILED
-      exit 1
-    fi
-    if ! validate_generic_running_kernel_postboot "24.04"; then
-      log ERROR "GENERIC_POST_HOP_KERNEL_GATE=FAIL"
-      write_state FAILED
-      exit 1
-    fi
-  fi
-  # 7) COMPLETED_NOBLE — only after DNS + time readiness + kernel gate
-  write_state COMPLETED_NOBLE
-  mkdir -p /etc/motd.d 2>/dev/null || true
-  cat >"$MOTD" <<EOF
-============================================================
- STELLAR DP OS UPGRADE - PHASE 1 COMPLETE (NOBLE)
-============================================================
-
-Ubuntu 24.04 Noble OS upgrade succeeded.
-OS validation: PASS
-Product validation: NOT run in Phase 1
-DP runtime recovery: NOT performed yet
-Phase 2 bringup: NOT started (will NOT auto-run)
-
-Required next actions (exact order):
-
-1. Shut down this DP server:
-
-   sudo shutdown -h now
-
-2. Wait until the VM is completely powered off.
-
-3. Create a powered-off VMware/hypervisor snapshot.
-
-4. Power on the VM.
-
-5. Run Phase 2 preflight, then bringup only AFTER the
-   powered-off snapshot exists (NOT auto-run by Phase 1):
-
-   # manual Phase 2 - never auto-started here
-   bringup_py3_dp_after_os_upgrade.sh --version 6.6.0 --skip-download
-
-Do NOT run Phase 2 bringup before the powered-off snapshot.
-Do NOT treat product runtime as validated yet.
-
-Markers:
-  PHASE1_OS_UPGRADE=COMPLETE
-  NOBLE_OS_VALIDATION=PASS
-  PRODUCT_VALIDATION=NOT_RUN_PHASE1
-  PHASE2_DP_BRINGUP=PENDING
-  NEXT_REQUIRED_ACTION=POWERED_OFF_SNAPSHOT
-
-============================================================
-EOF
-  systemctl disable stellar-offline-os-upgrade-postboot.service 2>/dev/null || true
-  log INFO "UPGRADE_PHASE=1"
-  log INFO "UPGRADE_MODE=OS_ONLY_PHASE1"
-  log INFO "state=COMPLETED_NOBLE"
-  log INFO "os_upgrade_result=COMPLETED_NOBLE"
-  log INFO "os_validation_result=PASS"
-  log INFO "product_validation_result=NOT_RUN_PHASE1"
-  log INFO "phase1_result=PASS"
-  log INFO "phase2_result=NOT_STARTED"
-  log INFO "PHASE1_OS_UPGRADE=COMPLETE"
-  log INFO "NOBLE_OS_VALIDATION=PASS"
-  log INFO "PRODUCT_VALIDATION=NOT_RUN_PHASE1"
-  log INFO "PHASE2_DP_BRINGUP=PENDING"
-  log INFO "NEXT_REQUIRED_ACTION=POWERED_OFF_SNAPSHOT"
-  log INFO "DNS_RESOLVER_STATE=${DNS_RESOLVER_STATE}"
-  log INFO "DNS_RESOLVER_REPAIR=${DNS_RESOLVER_REPAIR}"
-  log INFO "DNS_SERVERS_CONFIGURED=${DNS_SERVERS_CONFIGURED}"
-  log INFO "DNS_NAME_RESOLUTION=${DNS_NAME_RESOLUTION}"
-  log INFO "TIME_READINESS=${TIME_READINESS}"
-  log INFO "CLOCK_SKEW_SECONDS=${CLOCK_SKEW_SECONDS}"
-  log INFO "MAX_CLOCK_SKEW_SECONDS=${MAX_CLOCK_SKEW_SECONDS}"
-  log INFO "NTP_SOURCE_CLASS=${NTP_SOURCE_CLASS}"
-  log INFO "NTP_SELECTED_PEER=${NTP_SELECTED_PEER}"
-  log INFO "BRINGUP_READY=${BRINGUP_READY}"
-  log INFO "BRINGUP_EXECUTED=NO"
-  log INFO "post-boot verification PASS - COMPLETED_NOBLE"
-}
-main "$@"
-POSTBOOT_MAIN
-  } >"$(hostpath "$POSTBOOT_PATH")"
-  chmod 0755 "$(hostpath "$POSTBOOT_PATH")"
 
   cat >"$(hostpath /etc/systemd/system/${UNIT_NAME})" <<EOF
 [Unit]
@@ -10645,11 +10717,23 @@ handle_existing_state() {
       die "$EC_STATE" "FAIL_PREVIOUS_HOP_HANDOFF_REJECTED (state=${st} os=${ver})"
     fi
     log INFO "Noble with state='${st}' - running post-boot verification only"
+    # Validation-only recovery: refresh product-owned postboot from this wrapper
+    # before execution. A stale on-disk postboot (e.g. pre-PR30 generic-only
+    # kernel reject) must not remain authoritative merely because it exists.
+    log INFO "POSTBOOT_REFRESH=START reason=validation_only_reentry state=${st}"
+    if ! install_authoritative_postboot_runtime; then
+      log ERROR "POSTBOOT_REFRESH=FAIL; refusing validation-only recovery"
+      # Leave FAILED (or current non-COMPLETED state) and fail closed.
+      if [[ "$(read_state)" != "FAILED" ]]; then
+        write_state FAILED || true
+      fi
+      die "$EC_STATE" "authoritative postboot refresh failed; validation-only recovery aborted"
+    fi
     if [[ -x "$(hostpath "$POSTBOOT_PATH")" ]]; then
       bash "$(hostpath "$POSTBOOT_PATH")"
       exit $?
     fi
-    die "$EC_STATE" "Noble host but post-boot helper missing; manual validation required"
+    die "$EC_STATE" "Noble host but post-boot helper missing after refresh; manual validation required"
   fi
 
   # Live systemd/process evidence wins even if state file is stale.

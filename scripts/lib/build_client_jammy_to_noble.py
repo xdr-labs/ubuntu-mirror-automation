@@ -53,6 +53,8 @@ POSTBOOT_POLICY_REQUIRED_MARKERS = (
     "DNS_SERVERS_CONFIGURED=",
     "DNS_NAME_RESOLUTION=",
     "check_time_readiness()",
+    "run_ntpq_probe()",
+    "NTPQ_PROBE_TIMEOUT=YES",
     "TIME_READINESS=",
     "CLOCK_SKEW_SECONDS=",
     "MAX_CLOCK_SKEW_SECONDS=",
