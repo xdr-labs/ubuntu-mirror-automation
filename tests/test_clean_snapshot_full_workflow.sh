@@ -213,9 +213,9 @@ COMMAND_LIVE="$MM_LOG_DIR/dp-client-upgrade-commands.txt"
 gui_build_client_commands "$MIRROR_HTTP_URL" single "" >"$COMMAND_TMP"
 expect "FULL command structure validates" \
   mm_wf_validate_command_file_content "$COMMAND_TMP" FULL
-FULL_HOP_COUNT=$(grep -cE '^cd /home/aella && curl -fsSLo dp-launch-' "$COMMAND_TMP" || true)
+FULL_HOP_COUNT=$(grep -cE '^cd /home/aella && curl -fsSLo upgrade-(xenial-to-bionic|bionic-to-focal|focal-to-jammy|jammy-to-noble)\.sh\.download ' "$COMMAND_TMP" || true)
 expect "FULL command has four hops" test "$FULL_HOP_COUNT" = 4
-expect "FULL commands use LAUNCHER_V1" grep -q '^DP_OS_HOP_COMMAND_VERSION=LAUNCHER_V1$' "$COMMAND_TMP"
+expect "FULL commands use WRAPPER_V1" grep -q '^DP_OS_HOP_COMMAND_VERSION=WRAPPER_V1$' "$COMMAND_TMP"
 expect "FULL Phase2 still SUBSHELL_V2" grep -q '^DP_COMMAND_BLOCK_VERSION=SUBSHELL_V2$' "$COMMAND_TMP"
 expect "FULL hop commands are one-line" \
   test "$(gui_client_hop_command_line "$MIRROR_HTTP_URL" dp-offline-upgrade-xenial-to-bionic.sh | wc -l)" = 1

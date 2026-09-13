@@ -220,8 +220,8 @@ else
 fi
 
 
-# LAUNCHER_V1: wrong SHA must not execute; legacy launcher OS-hop must fail validation
-echo "--- LAUNCHER_V1 negatives ---"
+# LAUNCHER_V1 legacy fixture: wrong SHA / legacy OS-hop must fail validation
+echo "--- WRAPPER_V1 negatives (legacy LAUNCHER_V1 rejected) ---"
 grep -qE 'BASH_SUBSHELL' "${WORKDIR}/cmd.sh" \
   && fail "operator command still has BASH_SUBSHELL" || pass "operator command has no subshell guard"
 printf '%s\n' "$block" | grep -q 'sha256sum -c -' && pass "SHA pin present" || fail "SHA pin missing"

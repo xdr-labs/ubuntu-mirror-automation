@@ -273,11 +273,12 @@ Menu **7 Show DP Client Upgrade Commands**.
 - ESC, `q`, or Exit closes only the viewer and returns to the Mirror Manager main menu
 - only main-menu option **0** exits Mirror Manager
 - FULL mode Steps 0–9 in one view
-- each OS-hop command is exactly one physical line (`DP_OS_HOP_COMMAND_VERSION=LAUNCHER_V1`)
-- each hop line downloads `dp-launch-<hop>.sh` into a `.download` name, verifies a
+- each OS-hop command is exactly one physical line (`DP_OS_HOP_COMMAND_VERSION=WRAPPER_V1`)
+- each hop line downloads `upgrade-<hop>.sh` into a `.download` name, verifies a
   literal SHA256 embedded in the command (not an HTTP `.sha256` sidecar), renames,
-  then runs `bash ./dp-launch-<hop>.sh`
-- Phase 2 staging remains a three-line `DP_COMMAND_BLOCK_VERSION=SUBSHELL_V2` block
+  then runs `bash ./upgrade-<hop>.sh`
+- Phase 2 staging uses one hash-pinned `upgrade-phase2.sh` wrapper line
+  (`DP_COMMAND_BLOCK_VERSION=SUBSHELL_V2` semantics remain inside the wrapper)
 - file written atomically to `/var/log/ubuntu-mirror-automation/dp-client-upgrade-commands.txt`
 
 If blocked:
@@ -301,15 +302,15 @@ are not redownloaded for launcher-only client-set rebuilds.
 ## 11. Full command file generation verification
 
 ```bash
-sudo grep -cE '^cd /home/aella && curl -fsSLo dp-launch-' \
+sudo grep -cE '^cd /home/aella && curl -fsSLo upgrade-(xenial-to-bionic|bionic-to-focal|focal-to-jammy|jammy-to-noble)\.sh\.download ' \
   /var/log/ubuntu-mirror-automation/dp-client-upgrade-commands.txt
-sudo grep -cE '^DP_OS_HOP_COMMAND_VERSION=LAUNCHER_V1$' \
+sudo grep -cE '^DP_OS_HOP_COMMAND_VERSION=WRAPPER_V1$' \
   /var/log/ubuntu-mirror-automation/dp-client-upgrade-commands.txt
 sudo test -s /var/log/ubuntu-mirror-automation/dp-client-upgrade-commands.txt \
   && stat -c '%a' /var/log/ubuntu-mirror-automation/dp-client-upgrade-commands.txt
 ```
 
-**Expected:** launcher command count `4`, `LAUNCHER_V1` present, non-empty file mode `644`.
+**Expected:** wrapper command count `4`, `WRAPPER_V1` present, non-empty private file mode `600`.
 
 **Failure:** empty file or hop count 0 in FULL mode → do not use the file; regenerate via Menu 7 after readiness.
 
@@ -376,7 +377,7 @@ Retest PASS only when:
 
 - install reported HTTP state clearly
 - FULL prepare → HTTP enable → readiness PASS for one generation
-- Menu 7 emitted four one-line hash-pinned launcher commands (`LAUNCHER_V1`)
+- Menu 7 emitted four one-line hash-pinned wrapper commands (`WRAPPER_V1`)
 - DP Step 2 verified downloads without deleting prior `/home/aella` evidence on HTTP failure
 - safe resume / exit 29 behavior matches policy
 - no forbidden manual repairs were used
