@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""PTY lifecycle: main menu -> Menu 7 viewer -> close -> main menu visible again.
+"""PTY lifecycle: main menu -> Menu 7 dialog viewer -> close -> main menu visible again.
 
-Uses real whiptail. Proves Enter and ESC return without shell exit, blank
-screen, or pager, and that Ctrl-C restore helpers remain in place.
+Uses real dialog --textbox (framed GUI) plus whiptail main menu. Proves Enter
+and ESC return without shell exit, blank screen, or pager.
 """
 from __future__ import annotations
 
@@ -170,15 +170,10 @@ def _run_close_path(close_mode: str) -> dict[str, bool]:
         result["MENU7_COMMAND_CONTENT"] = True
 
         if close_mode == "ENTER":
-            # Focus OK/Return (Tab) then Enter.
-            os.write(master, b"\t\r")
-            time.sleep(0.15)
             os.write(master, b"\r")
         else:
-            # ESC activates Cancel/Return.
             os.write(master, b"\x1b")
-            time.sleep(0.15)
-            os.write(master, b"\x1b")
+        time.sleep(0.15)
 
         if not _wait_for(master, proc, buf, "MENU7_VIEWER_CLOSED=PASS", 6.0):
             raise RuntimeError(f"{close_mode}: viewer did not close")
@@ -281,8 +276,17 @@ def main() -> int:
         print("FAIL: mm_menu7_textbox missing", file=sys.stderr)
         return 1
     body = fn.group(0)
-    if re.search(r"(^|[^A-Za-z_])dialog([^A-Za-z_]|$)", body):
-        print("FAIL: dialog still used in mm_menu7_textbox", file=sys.stderr)
+    if "menu7_scroll_viewer.py" in body:
+        print("FAIL: raw terminal viewer still production path", file=sys.stderr)
+        return 1
+    if not re.search(r"(^|[^A-Za-z_])dialog([^A-Za-z_]|$)", body):
+        print("FAIL: dialog not used in mm_menu7_textbox", file=sys.stderr)
+        return 1
+    if "--textbox" not in body or "--no-mouse" not in body:
+        print("FAIL: mm_menu7_textbox missing dialog --textbox/--no-mouse", file=sys.stderr)
+        return 1
+    if re.search(r"(^|[^A-Za-z_])whiptail([^A-Za-z_]|$)", body):
+        print("FAIL: whiptail still used in mm_menu7_textbox", file=sys.stderr)
         return 1
     if re.search(r"(^|\s)clear(\s|$)", body, re.M):
         print("FAIL: clear still used in mm_menu7_textbox", file=sys.stderr)
