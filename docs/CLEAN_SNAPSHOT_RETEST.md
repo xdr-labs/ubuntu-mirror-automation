@@ -267,7 +267,7 @@ Menu **7 Show DP Client Upgrade Commands**.
 
 **Expected:**
 
-- one scrollable TUI viewer (`dialog --no-mouse --textbox`), not `less`, not a terminal reprint
+- one scrollable TUI viewer (`whiptail --textbox` with mouse tracking disabled), not `less`, not a terminal reprint
 - mouse click/drag selects text via the SSH terminal (dialog mouse handling is disabled)
 - keyboard navigation (Up/Down, PageUp/PageDown, Home/End) moves through the viewer
 - ESC, `q`, or Exit closes only the viewer and returns to the Mirror Manager main menu
