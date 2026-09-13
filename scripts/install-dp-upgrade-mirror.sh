@@ -240,31 +240,66 @@ mm_whiptail_textbox() {
   return 0
 }
 
-# Menu 7 only: dialog --textbox with mouse disabled so SSH terminals own
-# click/drag text selection. Never falls through to less, raw reprint, or
-# whiptail textbox. Exit/q/ESC closes only the viewer (not Mirror Manager).
+# Disable common xterm mouse-tracking modes so SSH clients keep native
+# click/drag text selection while Menu 7 is open (and after it closes).
+mm_menu7_disable_mouse_tracking() {
+  local seq=$'\033[?1000l\033[?1002l\033[?1003l\033[?1006l\033[?1015l'
+  local ttydev=""
+  # Only write when `tty` resolves a real device; avoids bash redirect noise
+  # in non-TTY harnesses where /dev/tty exists but cannot be opened.
+  ttydev="$(tty 2>/dev/null || true)"
+  if [[ -n "$ttydev" && -c "$ttydev" ]]; then
+    { printf '%s' "$seq" >"$ttydev"; } 2>/dev/null || true
+  fi
+  return 0
+}
+
+# Restore terminal attributes for the next whiptail main-menu paint.
+# Deliberately does NOT call `clear`: after dialog→whiptail transitions,
+# clear left a blank SSH frame until Ctrl-C (field Menu 7 hang).
+mm_menu7_tty_restore() {
+  local ttydev=""
+  mm_menu7_disable_mouse_tracking
+  ttydev="$(tty 2>/dev/null || true)"
+  if [[ -n "$ttydev" && -c "$ttydev" ]]; then
+    { tput rmcup || true
+      tput sgr0 || true
+      tput cnorm || true
+      stty sane || true
+    } </dev/null >"$ttydev" 2>/dev/null || true
+  fi
+  return 0
+}
+
+# Menu 7 only: same toolkit as the main menu (whiptail/newt) so Enter/Return
+# and ESC return without a dialog/whiptail TTY mismatch. Mouse tracking is
+# disabled for SSH copy/paste. Never uses dialog, less, raw reprint, or clear.
+# Closing the viewer returns to Mirror Manager; it does not exit the shell.
 mm_menu7_textbox() {
   local title="$1" file="$2"
-  local h w dialog_bin=""
+  local h w
   mm_term_size
   h=$((HEIGHT - 4))
   w=$((WIDTH - 6))
   if [[ "$h" -lt 12 ]]; then h=12; fi
   if [[ "$w" -lt 60 ]]; then w=60; fi
-  dialog_bin="$(command -v dialog 2>/dev/null || true)"
-  if [[ -n "$dialog_bin" && -x "$dialog_bin" ]]; then
-    # --no-mouse must be on the argv (do not rely only on DIALOGOPTS).
-    "$dialog_bin" --no-mouse --title "${title}" --textbox "$file" "$h" "$w" || true
-    clear 2>/dev/null || true
-    return 0
-  fi
-  mm_whiptail_msg "${title}" \
-    "MENU7_VIEWER=FAIL
-MENU7_VIEWER_REASON=dialog_missing
+  if ! mm_has_whiptail; then
+    mm_whiptail_msg "${title}" \
+      "MENU7_VIEWER=FAIL
+MENU7_VIEWER_REASON=whiptail_missing
 
-dialog is required to view DP client upgrade commands.
-Install dialog and reopen Menu 7 from the main menu."
-  return 1
+whiptail is required to view DP client upgrade commands.
+Install whiptail and reopen Menu 7 from the main menu."
+    return 1
+  fi
+  mm_menu7_disable_mouse_tracking
+  # Both OK and Cancel labeled "Return" so Enter and ESC clearly leave the
+  # viewer and redraw the Mirror Manager main menu (no undocumented keys).
+  whiptail --title "${title}" --fb \
+    --ok-button "Return" --cancel-button "Return" \
+    --textbox "$file" "$h" "$w" || true
+  mm_menu7_tty_restore
+  return 0
 }
 
 mm_has_dialog() {

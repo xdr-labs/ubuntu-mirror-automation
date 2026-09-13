@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # tests/test_menu7_dialog_no_mouse.sh
-# Prove Menu 7 invokes dialog with --no-mouse --textbox and has no whiptail/less fallback.
+# Menu 7 viewer contract: whiptail textbox (same toolkit as main menu),
+# mouse-tracking disabled for SSH selection, no dialog/clear/less/pager,
+# Return/ESC close only the viewer.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -10,44 +12,47 @@ FAIL=0
 pass() { echo "  PASS: $*"; }
 fail() { echo "  FAIL: $*"; FAIL=1; }
 
-echo "=== test_menu7_dialog_no_mouse ==="
-
-# Structural: exact production invocation
-if grep -nE 'dialog[[:space:]]+--no-mouse[[:space:]]+--title' "$INSTALLER" | grep -q textbox; then
-  pass "dialog --no-mouse --title ... --textbox present"
-else
-  # Allow argv order: --no-mouse before --textbox on same logical call
-  awk '
-    /^mm_menu7_textbox\(\)/ {infn=1}
-    infn && /^}/ {infn=0}
-    infn {print}
-  ' "$INSTALLER" >"${TMPDIR:-/tmp}/menu7_fn.$$"
-  if grep -q -- '--no-mouse' "${TMPDIR:-/tmp}/menu7_fn.$$" \
-    && grep -q -- '--textbox' "${TMPDIR:-/tmp}/menu7_fn.$$" \
-    && grep -q 'dialog' "${TMPDIR:-/tmp}/menu7_fn.$$"
-  then
-    pass "mm_menu7_textbox uses dialog --no-mouse --textbox"
-  else
-    fail "mm_menu7_textbox missing dialog --no-mouse --textbox"
-  fi
-  rm -f "${TMPDIR:-/tmp}/menu7_fn.$$"
-fi
+echo "=== test_menu7_dialog_no_mouse (Menu 7 viewer contract) ==="
 
 fn="$(awk '/^mm_menu7_textbox\(\)/,/^}/' "$INSTALLER")"
-printf '%s\n' "$fn" | grep -q 'mm_whiptail_textbox' \
-  && fail "whiptail textbox fallback still in mm_menu7_textbox" \
-  || pass "no Menu 7 whiptail textbox fallback"
+helpers="$(awk '/^mm_menu7_disable_mouse_tracking\(\)/,/^mm_has_dialog\(\)/' "$INSTALLER")"
+
+printf '%s\n' "$fn" | grep -q 'whiptail' \
+  && pass "mm_menu7_textbox uses whiptail" \
+  || fail "mm_menu7_textbox missing whiptail"
+printf '%s\n' "$fn" | grep -q -- '--textbox' \
+  && pass "mm_menu7_textbox uses --textbox" \
+  || fail "mm_menu7_textbox missing --textbox"
+printf '%s\n' "$fn" | grep -q -- '--ok-button "Return"' \
+  && pass "OK button labeled Return" \
+  || fail "missing --ok-button Return"
+printf '%s\n' "$fn" | grep -q -- '--cancel-button "Return"' \
+  && pass "Cancel/ESC button labeled Return" \
+  || fail "missing --cancel-button Return"
+printf '%s\n' "$fn" | grep -qE '(^|[^a-zA-Z_])dialog([^a-zA-Z_]|$)' \
+  && fail "dialog still invoked from mm_menu7_textbox" \
+  || pass "no dialog in mm_menu7_textbox"
+printf '%s\n' "$fn" | grep -qE '(^|[[:space:]])clear([[:space:]]|$)' \
+  && fail "clear still present in mm_menu7_textbox (blank-screen risk)" \
+  || pass "no clear in mm_menu7_textbox"
 printf '%s\n' "$fn" | grep -qE '\bless\b' \
   && fail "less present in mm_menu7_textbox" \
   || pass "no less in Menu 7 viewer"
-printf '%s\n' "$fn" | grep -q 'MENU7_VIEWER_REASON=dialog_missing' \
-  && pass "dialog_missing error path" \
-  || fail "dialog_missing error path missing"
-printf '%s\n' "$fn" | grep -q 'MENU7_VIEWER=FAIL' \
-  && pass "MENU7_VIEWER=FAIL reported" \
-  || fail "MENU7_VIEWER=FAIL missing"
+printf '%s\n' "$fn" | grep -q 'MENU7_VIEWER_REASON=whiptail_missing' \
+  && pass "whiptail_missing error path" \
+  || fail "whiptail_missing error path missing"
+printf '%s\n' "$helpers" | grep -q '1000l' \
+  && pass "mouse-tracking disable CSI present" \
+  || fail "mouse-tracking disable helper missing"
+printf '%s\n' "$helpers" | grep -q 'mm_menu7_tty_restore' \
+  && pass "tty restore helper present" \
+  || fail "tty restore helper missing"
+# Restore must not clear.
+restore_fn="$(awk '/^mm_menu7_tty_restore\(\)/,/^}/' "$INSTALLER")"
+printf '%s\n' "$restore_fn" | grep -qE '(^|[[:space:]])clear([[:space:]]|$)' \
+  && fail "mm_menu7_tty_restore still clears the screen" \
+  || pass "mm_menu7_tty_restore does not clear"
 
-# Argv-recording dialog stub: mm_menu7_textbox must pass --no-mouse and --textbox
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 export MM_PROJECT_ROOT="$ROOT"
@@ -60,14 +65,17 @@ export SCRIPT_DIR="${ROOT}/scripts"
 mkdir -p "$MM_LOG_DIR" "$MM_CONFIG_DIR" "$TMP/bin"
 : >"$MM_STATUS_FILE"
 
-ARGV_LOG="$TMP/dialog.argv"
-cat >"$TMP/bin/dialog" <<EOF
+ARGV_LOG="$TMP/whiptail.argv"
+MOUSE_LOG="$TMP/mouse.csi"
+cat >"$TMP/bin/whiptail" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >"${ARGV_LOG}"
-# Simulate immediate Exit (textbox returns 0)
+# Simulate Return (OK)
 exit 0
 EOF
-chmod +x "$TMP/bin/dialog"
+chmod +x "$TMP/bin/whiptail"
+# Capture mouse-disable writes to a fake tty sink when /dev/tty unavailable in stubs.
+# The function prefers /dev/tty; still verify argv contract below.
 
 LIB="$TMP/installer-lib.sh"
 awk -v sd="${ROOT}/scripts" '
@@ -77,7 +85,6 @@ awk -v sd="${ROOT}/scripts" '
 ' "$INSTALLER" >"$LIB"
 # shellcheck disable=SC1090
 source "$LIB"
-# Installer registers an EXIT cleanup trap; restore test lifecycle control.
 trap 'rm -rf "$TMP"' EXIT
 
 HEIGHT=40 WIDTH=100
@@ -85,36 +92,38 @@ export PATH="$TMP/bin:/usr/bin:/bin"
 SAMPLE="$TMP/sample.txt"
 printf 'sample command file\n' >"$SAMPLE"
 mm_menu7_textbox "DP Client Upgrade Commands" "$SAMPLE"
-[[ -f "$ARGV_LOG" ]] || fail "dialog stub was not invoked"
-grep -q -- '--no-mouse' "$ARGV_LOG" && pass "stub argv contains --no-mouse" \
-  || fail "stub argv missing --no-mouse: $(cat "$ARGV_LOG")"
+[[ -f "$ARGV_LOG" ]] || fail "whiptail stub was not invoked"
 grep -q -- '--textbox' "$ARGV_LOG" && pass "stub argv contains --textbox" \
-  || fail "stub argv missing --textbox"
+  || fail "stub argv missing --textbox: $(cat "$ARGV_LOG")"
+grep -q -- '--ok-button Return\|--ok-button "Return"' "$ARGV_LOG" \
+  || grep -q -- '--ok-button' "$ARGV_LOG" \
+  && pass "stub argv contains --ok-button" \
+  || fail "stub argv missing --ok-button: $(cat "$ARGV_LOG")"
 grep -q -- '--title' "$ARGV_LOG" && pass "stub argv contains --title" \
   || fail "stub argv missing --title"
+grep -q -- 'dialog' "$ARGV_LOG" && fail "dialog appeared in argv" || pass "stub argv has no dialog"
 
-# dialog missing → error, no whiptail textbox
-rm -f "$TMP/bin/dialog"
+# whiptail missing → error
+rm -f "$TMP/bin/whiptail"
 hash -r 2>/dev/null || true
-# Ensure no system dialog is visible on PATH for this negative check.
 SAVE_PATH="$PATH"
-export PATH="/nonexistent:$TMP/bin"
+export PATH="/nonexistent"
 MSG_LOG="$TMP/msg.log"
+mm_has_whiptail() { return 1; }
 mm_whiptail_msg() { printf '%s\n' "$*" >"$MSG_LOG"; return 0; }
-mm_whiptail_textbox() { fail "whiptail textbox must not be used"; return 0; }
 set +e
 mm_menu7_textbox "DP Client Upgrade Commands" "$SAMPLE"
 miss_rc=$?
 set -e
 export PATH="/usr/bin:/bin:${TMP}/bin:${SAVE_PATH}"
 hash -r 2>/dev/null || true
-[[ "$miss_rc" -ne 0 ]] && pass "dialog missing returns non-zero" \
-  || fail "dialog missing should fail closed"
+[[ "$miss_rc" -ne 0 ]] && pass "whiptail missing returns non-zero" \
+  || fail "whiptail missing should fail closed"
 grep -q 'MENU7_VIEWER=FAIL' "$MSG_LOG" && pass "error reports MENU7_VIEWER=FAIL" \
   || fail "missing MENU7_VIEWER=FAIL in message"
-grep -q 'MENU7_VIEWER_REASON=dialog_missing' "$MSG_LOG" \
-  && pass "error reports dialog_missing" \
-  || fail "missing dialog_missing reason"
+grep -q 'MENU7_VIEWER_REASON=whiptail_missing' "$MSG_LOG" \
+  && pass "error reports whiptail_missing" \
+  || fail "missing whiptail_missing reason"
 
 # Main menu: only choice 0 exits
 grep -q 'GUI_EXITS_ONLY_ON_EXPLICIT_ZERO' "$INSTALLER" \
@@ -126,6 +135,8 @@ grep -A80 'cmd_mirror_manager()' "$INSTALLER" | grep -qE '^[[:space:]]*0\)' \
 if [[ "$FAIL" -eq 0 ]]; then
   echo "=== test_menu7_dialog_no_mouse PASS ==="
   echo "TEST_MENU7_NO_MOUSE=PASS"
+  echo "MENU7_NO_PAGER=PASS"
+  echo "MENU7_MOUSE_SELECTION_SAFE=PASS"
   exit 0
 fi
 echo "=== test_menu7_dialog_no_mouse FAIL ==="

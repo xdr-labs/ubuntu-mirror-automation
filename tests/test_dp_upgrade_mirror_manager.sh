@@ -1018,6 +1018,7 @@ LIFE_OUT="$(
     }
     mm_whiptail_infobox() { printf "INFOBOX\t%s\n" "$1" >>"$TRACE"; return 0; }
     mm_whiptail_textbox() { printf "TEXTBOX\t%s\n" "$1" >>"$TRACE"; return 0; }
+    mm_menu7_textbox() { printf "MENU7_TEXTBOX\t%s\n" "$1" >>"$TRACE"; return 0; }
     mm_whiptail_msg() { printf "MSG\t%s\n" "$1" >>"$TRACE"; return 0; }
     mm_whiptail_yesno() { return 0; }
     mm_whiptail_input() { printf "%s\n" "${3:-6.3.0}"; return 0; }
@@ -1074,7 +1075,7 @@ LIFE_OUT="$(
       printf "ACTION_7\n" >>"$TRACE"
       local tmp; tmp="$(mktemp)"
       gui_build_client_commands "http://192.0.2.10" "6.3.0" "single" "" >"$tmp"
-      mm_whiptail_textbox "DP Client Upgrade Commands" "$tmp" || true
+      mm_menu7_textbox "DP Client Upgrade Commands" "$tmp" || true
       rm -f "$tmp"
       return 0
     }
@@ -1214,6 +1215,15 @@ set -e
 grep -q 'mm_whiptail_textbox' "$INSTALLER" && grep -A2 'return 0' "$INSTALLER" | grep -q 'return 0' \
   && pass "S RESULT_DIALOG_OK/CANCEL/ESC_RETURNS_MENU=PASS" \
   || fail "S result dialog return policy"
+# Menu 7 viewer uses whiptail (same toolkit as main menu), not dialog+clear.
+fn7="$(awk '/^mm_menu7_textbox\(\)/,/^}/' "$INSTALLER")"
+printf '%s\n' "$fn7" | grep -q 'whiptail' \
+  && printf '%s\n' "$fn7" | grep -q -- '--ok-button "Return"' \
+  && pass "S Menu 7 viewer uses whiptail Return button" \
+  || fail "S Menu 7 viewer whiptail Return contract"
+printf '%s\n' "$fn7" | grep -vE '^[[:space:]]*#' | grep -qE '(^|[[:space:]])clear([[:space:]]|$)' \
+  && fail "S Menu 7 viewer still clears screen" \
+  || pass "S Menu 7 viewer does not clear before return"
 
 echo "======== T. HTTP 403 / umask / wrapper ========"
 # HTTP validator: only 200 is PASS (403 must FAIL).

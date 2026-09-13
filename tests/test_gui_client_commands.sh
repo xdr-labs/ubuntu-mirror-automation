@@ -38,7 +38,9 @@ mkdir -p "${MM_CLIENT_ROOT}/lib"
 install -m 0755 "${ROOT}/client/stage-dp-phase2.sh" "${MM_CLIENT_ROOT}/stage-dp-phase2.sh"
 install -m 0755 "${ROOT}/client/bringup_py3_dp_lifecycle.sh" "${MM_CLIENT_ROOT}/bringup_py3_dp_lifecycle.sh"
 for hf in dp-offline-source-product-version.sh dp-phase2-operation-progress.sh \
-  dp-phase2-bringup-lifecycle.sh dp-phase2-ubuntu-prerequisites.sh
+  dp-phase2-bringup-lifecycle.sh dp-phase2-ubuntu-prerequisites.sh \
+  dp-phase2-time-readiness.sh dp-phase2-post-bringup-migration.sh \
+  dp-phase2-cluster-validation.sh
 do
   install -m 0755 "${ROOT}/client/lib/${hf}" "${MM_CLIENT_ROOT}/lib/${hf}"
 done
@@ -535,6 +537,11 @@ mm_wf_set_many \
   "HTTP_PUBLICATION_GENERATION_ID=gen-test-1" \
   "READINESS_VERIFIED_GENERATION_ID=gen-test-1"
 export MM_SKIP_HTTP_VALIDATE=1
+# Selective generation binding is covered by test_post_promotion_generation_binding.sh.
+# This Menu 7 section asserts viewer/command presentation, not selective freshness.
+mm_wf_selective_generation_current() { return 0; }
+# Fixture RFC5737 mirror IP is not on this host; URL resolution is covered elsewhere.
+mm_client_mirror_url() { printf '%s\n' "${MIRROR_HTTP_URL:-http://192.0.2.10}"; return 0; }
 # Satisfy launcher readiness for Menu 7 preflight (FULL mode).
 {
   cat <<EOF
@@ -627,15 +634,18 @@ grep -Fq "$gen_hop" "$(mm_client_commands_file)" \
 gen_stage="$(gui_phase2_stage_command_line "http://192.0.2.10" "6.6.0")"
 grep -Fq "$gen_stage" "$(mm_client_commands_file)" \
   || fail "saved file stage block differs from gui_phase2_stage_command_line"
-# Menu 7 production viewer must disable dialog mouse handling.
-grep -qE -- '--no-mouse' "$INSTALLER" \
-  && grep -A25 '^mm_menu7_textbox()' "$INSTALLER" | grep -q -- '--textbox' \
-  || fail "mm_menu7_textbox missing dialog --no-mouse/--textbox"
-grep -A30 '^mm_menu7_textbox()' "$INSTALLER" | grep -q 'mm_whiptail_textbox' \
-  && fail "Menu 7 still has whiptail textbox fallback" || true
-grep -A30 '^mm_menu7_textbox()' "$INSTALLER" | grep -q 'MENU7_VIEWER_REASON=dialog_missing' \
-  || fail "Menu 7 missing dialog_missing error path"
-grep -q 'less -S\|less ' <<<"$(grep -A30 '^mm_menu7_textbox()' "$INSTALLER")" \
+# Menu 7 production viewer: whiptail textbox + Return; no dialog/clear/less.
+fn="$(awk '/^mm_menu7_textbox\(\)/,/^}/' "$INSTALLER")"
+printf '%s\n' "$fn" | grep -q 'whiptail' \
+  && printf '%s\n' "$fn" | grep -q -- '--textbox' \
+  || fail "mm_menu7_textbox missing whiptail --textbox"
+printf '%s\n' "$fn" | grep -vE '^[[:space:]]*#' | grep -qE '(^|[^A-Za-z_])dialog([^A-Za-z_]|$)' \
+  && fail "Menu 7 still invokes dialog" || true
+printf '%s\n' "$fn" | grep -vE '^[[:space:]]*#' | grep -qE '(^|[[:space:]])clear([[:space:]]|$)' \
+  && fail "Menu 7 still uses clear (blank-screen risk)" || true
+printf '%s\n' "$fn" | grep -q 'MENU7_VIEWER_REASON=whiptail_missing' \
+  || fail "Menu 7 missing whiptail_missing error path"
+printf '%s\n' "$fn" | grep -qE '\bless\b' \
   && fail "Menu 7 textbox invokes less" || true
 pass "menu7 shows full instructions directly; no secondary viewer"
 
