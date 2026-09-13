@@ -257,7 +257,10 @@ containing `Bringup complete:` is not completion evidence. Do not check
 `aella_cli` until `BRINGUP_RESULT=PASS`. Absence of `aella_cli` after verified
 completion is a postcondition failure. `resume` is manual and conditional after
 `show status`. Duplicate bringup while a worker is running attaches to the
-existing run.
+existing run. After bringup PASS, use `--validate-cluster` (bounded
+non-interactive `show status` + `quit`) before recording cluster validation;
+do not treat pod "at least N expected" as a hard gate. Jumbo MTU on DP NICs is
+informational only (`PHASE2_MTU_HARD_FAIL=NO`).
 
 See [architecture-phase2-source-bringup.md](architecture-phase2-source-bringup.md).
 

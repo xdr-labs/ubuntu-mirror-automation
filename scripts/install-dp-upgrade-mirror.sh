@@ -1489,37 +1489,52 @@ EOF
 STEP 4 — RESUME DP SERVICES WHEN REQUIRED
 -----------------------------------------
 
-If the DP was paused, run \`aella_cli\` after bringup completes.
-Select or enter \`resume\`.
-Wait for resume to complete and allow several minutes for pods and host services to start.
-
-Resume is an aella_cli menu command.
-Do not run \`resume\` directly in the Linux bash shell.
-
-STEP 5 — VERIFY DP HEALTH
--------------------------
-
 BRINGUP_RESULT=PASS means the bringup process succeeded.
 It does NOT mean DP_UPGRADE_COMPLETE=YES.
+The DP may initially be paused.
 
-After resume (when required), wait for the DP services to start.
-Then run:
-  sudo bash /home/aella/bringup_py3_dp_after_os_upgrade.sh --validate-cluster
+Recommended sequence after bringup:
 
-Also run \`aella_cli\` and select or enter \`show status\`.
+1) Collect status (bounded, non-interactive):
+     sudo bash /home/aella/bringup_py3_dp_after_os_upgrade.sh --validate-cluster
 
-Confirm that:
-- All pods are running
+2) If status reports the system is paused, resume manually:
+     sudo /usr/bin/aella_cli
+   Then inside aella_cli:
+     resume
+     show status
+   Do not run \`resume\` in the Linux bash shell.
+   This wrapper never auto-runs resume.
+
+3) After services start, re-run:
+     sudo bash /home/aella/bringup_py3_dp_after_os_upgrade.sh --validate-cluster
+
+STEP 5 — VERIFY DP HEALTH / RECORD COMPLETION
+---------------------------------------------
+
+Confirm authoritative readiness signals such as:
 - All cluster nodes are ready
 - All host services are ready
 - License is valid
-- System Ready (or the normal ready state for this role)
+- Indices / models / provision ready when shown
+- Absence of explicit critical failure
 
-If SOURCE DP was 6.2 / 6.3 / 6.4, a post-bringup schema migration may be REQUIRED
-(operator-run; not auto-executed). Follow POST_BRINGUP_MIGRATION guidance from staging.
+Pod count phrases like "at least N expected" are informational.
+A healthy role may still show fewer pods or Missing pods for
+role-dependent services; do not treat the literal expected count
+as the sole PASS/FAIL gate.
 
-Only when cluster checks pass (and any required migration is recorded PASS):
+If SOURCE DP was 6.2 / 6.3 / 6.4, a post-bringup schema migration is REQUIRED
+(operator-run; never auto-executed):
+  sudo bash /opt/aelladata/da-upgrade/scripts/upgrade_script.sh ${ver}
+Then:
+  sudo bash /home/aella/bringup_py3_dp_after_os_upgrade.sh --record-post-bringup-migration PASS
+
+Only when the DP is not paused, readiness looks healthy, and any required
+migration is recorded PASS:
   sudo bash /home/aella/bringup_py3_dp_after_os_upgrade.sh --record-cluster-validation PASS
+
+DP_UPGRADE_COMPLETE=YES only after bringup PASS + migration OK + CLUSTER_VALIDATION=PASS.
 
 EOF
   else
@@ -1644,31 +1659,55 @@ ${bringup_cmd}
 EOF
     fi
     cat <<EOF
-STEP 8 — RESUME DP SERVICES
----------------------------
+STEP 8 — RESUME DP SERVICES WHEN REQUIRED
+-----------------------------------------
 
-After the bringup script completes, if \`aella_cli\` can be executed, run
-\`aella_cli\` and select or enter \`resume\` so that DP services start again.
-Wait for resume to complete and allow several minutes for pods and host services to start.
+BRINGUP_RESULT=PASS means the bringup process succeeded.
+It does NOT mean DP_UPGRADE_COMPLETE=YES.
+The DP may initially be paused.
 
-Resume is an aella_cli menu command.
-Do not run \`resume\` directly in the Linux bash shell.
+Recommended sequence after bringup:
 
-The DP health checks must be performed after resume.
-Pods and host services may not become ready until the DP services are resumed.
+1) Collect status (bounded, non-interactive):
+     sudo bash /home/aella/bringup_py3_dp_after_os_upgrade.sh --validate-cluster
 
-STEP 9 — VERIFY DP HEALTH
--------------------------
+2) If status reports the system is paused, resume manually:
+     sudo /usr/bin/aella_cli
+   Then inside aella_cli:
+     resume
+     show status
+   Do not run \`resume\` in the Linux bash shell.
+   This wrapper never auto-runs resume.
 
-After resume, wait for the DP services to start.
-Then run \`aella_cli\` and select or enter \`show status\`.
+3) After services start, re-run:
+     sudo bash /home/aella/bringup_py3_dp_after_os_upgrade.sh --validate-cluster
 
-Confirm that:
-- All pods are running
+STEP 9 — VERIFY DP HEALTH / RECORD COMPLETION
+---------------------------------------------
+
+Confirm authoritative readiness signals such as:
 - All cluster nodes are ready
 - All host services are ready
 - License is valid
-- System Ready (or the normal ready state for this role)
+- Indices / models / provision ready when shown
+- Absence of explicit critical failure
+
+Pod count phrases like "at least N expected" are informational.
+A healthy role may still show fewer pods or Missing pods for
+role-dependent services; do not treat the literal expected count
+as the sole PASS/FAIL gate.
+
+If SOURCE DP was 6.2 / 6.3 / 6.4, a post-bringup schema migration is REQUIRED
+(operator-run; never auto-executed):
+  sudo bash /opt/aelladata/da-upgrade/scripts/upgrade_script.sh ${ver}
+Then:
+  sudo bash /home/aella/bringup_py3_dp_after_os_upgrade.sh --record-post-bringup-migration PASS
+
+Only when the DP is not paused, readiness looks healthy, and any required
+migration is recorded PASS:
+  sudo bash /home/aella/bringup_py3_dp_after_os_upgrade.sh --record-cluster-validation PASS
+
+DP_UPGRADE_COMPLETE=YES only after bringup PASS + migration OK + CLUSTER_VALIDATION=PASS.
 
 The status may take several minutes to become ready after resume.
 Do not treat the DP as healthy immediately after running resume.

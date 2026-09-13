@@ -223,9 +223,10 @@ Menu 7 asks topology only (Single / Cluster). It never asks for Starting or Targ
    before OS mutation; safe pre-DRO rollback restores the original shell.
    Do not manually `chsh`/`usermod` as a prerequisite.)
 4. Stage DP 6.6.0 (`--target-version 6.6.0 --same-version-recovery`; source auto-detected)
-5. Bringup (`--worker-ips` optional)
-6. `aella_cli` → `resume`
-7. `aella_cli` → `show status`
+6. Bringup (`--worker-ips` optional)
+7. `--validate-cluster` (detect pause / readiness; bounded CLI)
+8. `aella_cli` → `resume` when paused (manual; never auto)
+9. `--validate-cluster` again, then record migration/validation as required
 
 **Phase 2 Only** (DP already on Ubuntu 24.04)
 
@@ -233,8 +234,8 @@ Menu 7 asks topology only (Single / Cluster). It never asks for Starting or Targ
 2. Verify Ubuntu 24.04 prerequisites
 3. Stage DP 6.6.0 (source auto-detected)
 4. Bringup
-5. Resume when required
-6. `show status`
+5. `--validate-cluster`; resume when required
+6. Record migration/validation; confirm authoritative readiness signals
 
 Upgrade Readiness status values are exactly: `PASS`, `NOT VERIFIED`, `NOT READY`, or `FAIL`.
 OS Upgrade Files may show `NOT REQUIRED` in Phase 2 Only mode.
