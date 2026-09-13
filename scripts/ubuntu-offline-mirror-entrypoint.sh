@@ -67,7 +67,7 @@ def wrapper_display_lines(wrapper, url, sha):
     )
     rendered = [line1, line2, line3]
     joined = "\n".join(rendered)
-    if re.search(r"curl[^|;]*\|[[:space:]]*(bash|sh)([[:space:]]|$)", joined):
+    if re.search(r"curl[^|;]*\|\s*(bash|sh)(\s|$)", joined):
         raise SystemExit("MENU7_DISPLAY_FORMAT=FAIL reason=curl_pipe_bash")
     if ".sha256" in joined or "dp-launch-" in joined:
         raise SystemExit("MENU7_DISPLAY_FORMAT=FAIL reason=trust_leak")
@@ -153,7 +153,7 @@ while i < len(lines):
 
     m = hop_pat.match(line)
     if m:
-        if re.search(r"curl[^|;]*\|[[:space:]]*(bash|sh)([[:space:]]|$)", line):
+        if re.search(r"curl[^|;]*\|\s*(bash|sh)(\s|$)", line):
             raise SystemExit("MENU7_DISPLAY_FORMAT=FAIL reason=curl_pipe_bash")
         out.extend(wrapper_display_lines(m.group("wrapper"), m.group("url"), m.group("sha")))
         hop_wrapped += 1
@@ -162,7 +162,7 @@ while i < len(lines):
 
     p2 = phase2_pat.match(line)
     if p2:
-        if re.search(r"curl[^|;]*\|[[:space:]]*(bash|sh)([[:space:]]|$)", line):
+        if re.search(r"curl[^|;]*\|\s*(bash|sh)(\s|$)", line):
             raise SystemExit("MENU7_DISPLAY_FORMAT=FAIL reason=curl_pipe_bash")
         if "for F in" in line or "BASH_SUBSHELL" in line:
             raise SystemExit("MENU7_DISPLAY_FORMAT=FAIL reason=phase2_legacy_bootstrap")

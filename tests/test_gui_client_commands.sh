@@ -634,17 +634,18 @@ grep -Fq "$gen_hop" "$(mm_client_commands_file)" \
 gen_stage="$(gui_phase2_stage_command_line "http://192.0.2.10" "6.6.0")"
 grep -Fq "$gen_stage" "$(mm_client_commands_file)" \
   || fail "saved file stage block differs from gui_phase2_stage_command_line"
-# Menu 7 production viewer: whiptail textbox + Return; no dialog/clear/less.
+# Menu 7 production viewer: custom scroll viewer; no whiptail/dialog/clear/less.
 fn="$(awk '/^mm_menu7_textbox\(\)/,/^}/' "$INSTALLER")"
-printf '%s\n' "$fn" | grep -q 'whiptail' \
-  && printf '%s\n' "$fn" | grep -q -- '--textbox' \
-  || fail "mm_menu7_textbox missing whiptail --textbox"
+printf '%s\n' "$fn" | grep -q 'menu7_scroll_viewer.py' \
+  || fail "mm_menu7_textbox missing scroll viewer"
 printf '%s\n' "$fn" | grep -vE '^[[:space:]]*#' | grep -qE '(^|[^A-Za-z_])dialog([^A-Za-z_]|$)' \
   && fail "Menu 7 still invokes dialog" || true
-printf '%s\n' "$fn" | grep -vE '^[[:space:]]*#' | grep -qE '(^|[[:space:]])clear([[:space:]]|$)' \
-  && fail "Menu 7 still uses clear (blank-screen risk)" || true
-printf '%s\n' "$fn" | grep -q 'MENU7_VIEWER_REASON=whiptail_missing' \
-  || fail "Menu 7 missing whiptail_missing error path"
+printf '%s\n' "$fn" | grep -vE '^[[:space:]]*#' | grep -qE '(^|[^A-Za-z_])whiptail([^A-Za-z_]|$)' \
+  && fail "Menu 7 still invokes whiptail" || true
+printf '%s\n' "$fn" | grep -qE '(^|[[:space:]])clear([[:space:]]|$)' \
+  && fail "Menu 7 still clears screen after viewer" || true
+printf '%s\n' "$fn" | grep -q 'MENU7_VIEWER_REASON=scroll_viewer_missing' \
+  || fail "Menu 7 missing scroll_viewer_missing error path"
 printf '%s\n' "$fn" | grep -qE '\bless\b' \
   && fail "Menu 7 textbox invokes less" || true
 pass "menu7 shows full instructions directly; no secondary viewer"

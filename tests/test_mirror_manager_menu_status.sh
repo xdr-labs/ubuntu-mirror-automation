@@ -153,35 +153,41 @@ labels_from_collect
 [[ "$HTTP_L" == "Enable HTTP Distribution [COMPLETED]" ]] || fail "C4 http=$HTTP_L"
 [[ "${MM_WF_PROGRESS_COUNT}" -eq 3 ]] && pass "C4 progress=3" || fail "C4 progress=${MM_WF_PROGRESS_COUNT}"
 
-# Case 5 — readiness PASS
+# Case 5 — readiness PASS (persisted receipts only; Menu 4 remains authoritative)
 mm_status_set UPGRADE_READINESS PASS
-mm_record_readiness_validated
+mm_status_set READINESS_RESULT PASS
+mm_status_set READINESS_ARTIFACT_FINGERPRINT "$(mm_artifact_fingerprint)"
+mm_status_set READINESS_CONFIG_FINGERPRINT "$(mm_config_fingerprint)"
 labels_from_collect
 [[ "$READY_L" == "Verify Upgrade Readiness [COMPLETED]" ]] || fail "C5 ready=$READY_L"
 [[ "${MM_WF_PROGRESS_COUNT}" -eq 4 ]] && pass "C5 all COMPLETED" || fail "C5 progress=${MM_WF_PROGRESS_COUNT}"
 echo "$PROG" | grep -q 'Progress: 4 of 4' && pass "C5 progress text" || fail "C5 progress text=$PROG"
 
-# Case 6 — nginx stop clears HTTP + readiness
+# Case 6 — main-menu redraw uses persisted receipts; live nginx failure alone
+# does not rewrite labels (authoritative recheck is Menu 3 / Menu 4).
 mock_nginx_fail
 labels_from_collect
-[[ "$HTTP_L" == "Enable HTTP Distribution" ]] || fail "C6 http still completed"
-[[ "$READY_L" == "Verify Upgrade Readiness" ]] || fail "C6 ready still completed"
-pass "C6 nginx stop clears HTTP/readiness"
+[[ "$HTTP_L" == "Enable HTTP Distribution [COMPLETED]" ]] || fail "C6 http label=$HTTP_L"
+[[ "$READY_L" == "Verify Upgrade Readiness [COMPLETED]" ]] || fail "C6 ready label=$READY_L"
+pass "C6 persisted labels survive live nginx failure on redraw"
 
-# Case 7 — bundle mtime/size change clears download + readiness
+# Case 7 — artifact mtime change alone does not clear persisted menu labels.
+# Menu 4 remains the authoritative readiness re-validation gate.
 mock_nginx_ok
 mm_status_set HTTP_DISTRIBUTION ENABLED
 mm_status_set HTTP_CONFIGURATION_READY PASS
 mm_status_set UPGRADE_READINESS PASS
-mm_record_readiness_validated
+mm_status_set READINESS_RESULT PASS
+mm_status_set READINESS_ARTIFACT_FINGERPRINT "$(mm_artifact_fingerprint)"
+mm_status_set READINESS_CONFIG_FINGERPRINT "$(mm_config_fingerprint)"
 # mutate bundle
 printf 'CHANGED\n' >>"${MM_DP_PHASE2_ROOT}/6.6.0/dp_bundle_6.6.0-current.tar"
 labels_from_collect
-[[ "$DOWN_L" == "Download and Prepare Upgrade Files" ]] || fail "C7 download still completed"
-[[ "$READY_L" == "Verify Upgrade Readiness" ]] || fail "C7 ready still completed"
-pass "C7 artifact change clears download/readiness"
+[[ "$DOWN_L" == "Download and Prepare Upgrade Files [COMPLETED]" ]] || fail "C7 download=$DOWN_L"
+[[ "$READY_L" == "Verify Upgrade Readiness [COMPLETED]" ]] || fail "C7 ready=$READY_L"
+pass "C7 persisted labels survive artifact mtime change on redraw"
 
-# Case 8 — stale readiness PASS + HTTP 404
+# Case 8 — live HTTP probe failure alone does not clear persisted labels.
 seed_artifacts
 mm_status_set HTTP_DISTRIBUTION ENABLED
 mm_status_set HTTP_CONFIGURATION_READY PASS
@@ -192,9 +198,19 @@ mm_status_set READINESS_CONFIG_FINGERPRINT "$(mm_config_fingerprint)"
 mm_nginx_distribution_live() { return 0; }
 mm_http_required_urls_ok() { return 1; }
 labels_from_collect
-[[ "$READY_L" == "Verify Upgrade Readiness" ]] || fail "C8 stale readiness visible"
-[[ "$HTTP_L" == "Enable HTTP Distribution" ]] || fail "C8 http still completed with 404"
-pass "C8 stale readiness + HTTP fail clears labels"
+[[ "$READY_L" == "Verify Upgrade Readiness [COMPLETED]" ]] || fail "C8 ready=$READY_L"
+[[ "$HTTP_L" == "Enable HTTP Distribution [COMPLETED]" ]] || fail "C8 http=$HTTP_L"
+pass "C8 persisted labels survive live HTTP fail on redraw"
+
+# Case 8b — clearing persisted receipts demotes labels without live probes.
+mm_status_set HTTP_DISTRIBUTION DISABLED
+mm_status_set HTTP_CONFIGURATION_READY FAIL
+mm_status_set UPGRADE_READINESS FAIL
+mm_status_set READINESS_RESULT FAIL
+labels_from_collect
+[[ "$HTTP_L" == "Enable HTTP Distribution" ]] || fail "C8b http still completed"
+[[ "$READY_L" == "Verify Upgrade Readiness" ]] || fail "C8b ready still completed"
+pass "C8b cleared receipts demote HTTP/readiness labels"
 
 # Case 9 — utility menus never get COMPLETED in dispatch tags
 INST="${ROOT}/scripts/install-dp-upgrade-mirror.sh"
@@ -215,7 +231,13 @@ awk '
   in_fn && /^}/ { exit((t1 && t2 && t3 && t4 && !bad) ? 0 : 1) }
 ' "$INST" && pass "C10 menu dispatch tags 1-4 bare" || fail "C10 menu dispatch tags"
 
-# Menu render must not invoke full SHA helpers
+# Menu render must not invoke full SHA helpers or live HTTP collectors.
+collect_fn="$(awk '/^mm_collect_workflow_status\(\)/,/^}/' "${ROOT}/scripts/lib/mirror_manager_common.sh")"
+if printf '%s\n' "$collect_fn" | grep -qE 'mm_http_completed|mm_http_required_urls|curl |sha256sum|mm_download_completed|mm_readiness_completed'; then
+  fail "mm_collect_workflow_status still does live/heavy work"
+else
+  pass "MAIN_MENU_REDRAW_LIGHTWEIGHT=PASS"
+fi
 if grep -n 'mm_collect_workflow_status\|mm_configuration_completed\|mm_download_completed\|mm_http_completed\|mm_readiness_completed' \
   "${ROOT}/scripts/lib/mirror_manager_common.sh" | grep -E 'sha256sum|mm_verify_sha256'; then
   fail "menu status collectors call SHA256"

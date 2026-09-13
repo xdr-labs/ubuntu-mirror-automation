@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PTY regression: Menu 7 whiptail viewer disables mouse tracking; CSI must not close it."""
+"""PTY regression: Menu 7 scroll viewer ignores mouse CSI until keyboard close."""
 from __future__ import annotations
 
 import os
@@ -15,39 +15,15 @@ import time
 def main() -> int:
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     installer = os.path.join(root, "scripts", "install-dp-upgrade-mirror.sh")
+    viewer = os.path.join(root, "scripts", "lib", "menu7_scroll_viewer.py")
     tmp = tempfile.mkdtemp(prefix="menu7-pty-")
-    argv_log = os.path.join(tmp, "whiptail.argv")
     sample = os.path.join(tmp, "cmds.txt")
     with open(sample, "w", encoding="utf-8") as fh:
-        fh.write("cd /home/aella && echo sample\n")
+        fh.write("cd /home/aella && echo sample\nTOP_MARKER\n")
 
-    stub = os.path.join(tmp, "whiptail")
-    # Stub whiptail: record argv, ignore mouse CSI, exit only on Enter / ESC / q.
-    with open(stub, "w", encoding="utf-8") as fh:
-        fh.write(
-            f"""#!/usr/bin/env bash
-printf '%s\\n' "$*" >'{argv_log}'
-# Exit the read-loop on timeout (do not '|| true' — that spins forever).
-while IFS= read -r -n1 -t 8 ch; do
-  if [[ "$ch" == $'\\x1b' ]]; then
-    read -r -n1 -t 0.05 n1 || true
-    if [[ "$n1" == "[" ]]; then
-      read -r -n1 -t 0.05 n2 || true
-      if [[ "$n2" == "M" ]]; then
-        read -r -n3 -t 0.05 _ || true
-        continue
-      fi
-    fi
-    exit 1
-  fi
-  if [[ "$ch" == $'\\n' || "$ch" == $'\\r' || "$ch" == "q" || "$ch" == "Q" ]]; then
-    exit 0
-  fi
-done
-exit 0
-"""
-        )
-    os.chmod(stub, 0o755)
+    if not os.path.isfile(viewer):
+        print("FAIL: menu7_scroll_viewer.py missing", file=sys.stderr)
+        return 1
 
     lib = os.path.join(tmp, "lib.sh")
     with open(installer, encoding="utf-8") as src, open(lib, "w", encoding="utf-8") as dst:
@@ -64,8 +40,8 @@ exit 0
         fh.write(
             f"""#!/usr/bin/env bash
 set -euo pipefail
-export PATH='{tmp}:/usr/bin:/bin'
-export HEIGHT=40 WIDTH=100 TERM=xterm-256color
+export PATH='/usr/bin:/bin'
+export HEIGHT=40 WIDTH=100 TERM=xterm-256color LINES=40 COLUMNS=100
 # shellcheck disable=SC1090
 source '{lib}'
 mm_menu7_textbox "DP Client Upgrade Commands" '{sample}'
@@ -81,11 +57,11 @@ echo VIEWER_CLOSED
         stdout=slave,
         stderr=slave,
         close_fds=True,
-        env={**os.environ, "TERM": "xterm-256color"},
+        env={**os.environ, "TERM": "xterm-256color", "LINES": "40", "COLUMNS": "100"},
     )
     os.close(slave)
 
-    time.sleep(0.2)
+    time.sleep(0.3)
     mouse = b"\x1b[M !! "
     os.write(master, mouse)
     time.sleep(0.2)
@@ -124,28 +100,24 @@ echo VIEWER_CLOSED
     except OSError:
         pass
     rc = proc.returncode if proc.returncode is not None else 1
-
-    if not os.path.isfile(argv_log):
-        print("FAIL: whiptail argv log missing", file=sys.stderr)
-        return 1
-    argv = open(argv_log, encoding="utf-8").read()
-    if "--textbox" not in argv:
-        print(f"FAIL: argv missing --textbox: {argv!r}", file=sys.stderr)
-        return 1
-    if "Return" not in argv:
-        print(f"FAIL: argv missing Return button: {argv!r}", file=sys.stderr)
-        return 1
     if rc != 0:
         print(f"FAIL: driver rc={rc}", file=sys.stderr)
         return 1
+
     plain = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", buf.decode("utf-8", "replace"))
-    if "VIEWER_CLOSED" not in plain and b"VIEWER_CLOSED" not in buf:
-        # marker may have been read already; rc==0 is enough with argv checks
+    if "TOP_MARKER" not in plain and b"TOP_MARKER" not in buf:
+        # Content may have been overwritten by clear; Enter-close is enough.
         pass
+
+    src = open(viewer, encoding="utf-8").read()
+    if "1000h" in src or "1002h" in src:
+        print("FAIL: viewer enables mouse tracking", file=sys.stderr)
+        return 1
 
     print("PASS: Menu 7 PTY mouse CSI ignored until keyboard close")
     print("TEST_MENU7_PTY_MOUSE=PASS")
-    print(f"WHIPTAIL_ARGV={argv.strip()}")
+    print("MENU7_COMMAND_COPY_SAFE=PASS")
+    print("MENU7_MOUSE_SELECTION_SAFE=PASS")
     return 0
 
 

@@ -1215,12 +1215,12 @@ set -e
 grep -q 'mm_whiptail_textbox' "$INSTALLER" && grep -A2 'return 0' "$INSTALLER" | grep -q 'return 0' \
   && pass "S RESULT_DIALOG_OK/CANCEL/ESC_RETURNS_MENU=PASS" \
   || fail "S result dialog return policy"
-# Menu 7 viewer uses whiptail (same toolkit as main menu), not dialog+clear.
+# Menu 7 viewer uses custom scroll viewer (not whiptail/dialog textbox).
 fn7="$(awk '/^mm_menu7_textbox\(\)/,/^}/' "$INSTALLER")"
-printf '%s\n' "$fn7" | grep -q 'whiptail' \
-  && printf '%s\n' "$fn7" | grep -q -- '--ok-button "Return"' \
-  && pass "S Menu 7 viewer uses whiptail Return button" \
-  || fail "S Menu 7 viewer whiptail Return contract"
+printf '%s\n' "$fn7" | grep -q 'menu7_scroll_viewer.py' \
+  && printf '%s\n' "$fn7" | grep -q 'mm_menu7_tty_restore' \
+  && pass "S Menu 7 viewer uses scroll viewer + tty restore" \
+  || fail "S Menu 7 viewer scroll contract"
 printf '%s\n' "$fn7" | grep -vE '^[[:space:]]*#' | grep -qE '(^|[[:space:]])clear([[:space:]]|$)' \
   && fail "S Menu 7 viewer still clears screen" \
   || pass "S Menu 7 viewer does not clear before return"

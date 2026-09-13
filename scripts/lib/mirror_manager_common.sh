@@ -1494,6 +1494,24 @@ mm_client_commands_stale() {
   return 1
 }
 
+# True (0) when generation bindings agree that the published command file may
+# be viewed without rebuild. Fail closed on any missing/mismatched binding.
+mm_menu7_command_file_generation_current() {
+  local ready cmd_gen client_gen http_gen
+  if ! declare -F mm_wf_get >/dev/null 2>&1; then
+    return 1
+  fi
+  ready="$(mm_wf_get READINESS_VERIFIED_GENERATION_ID)"
+  cmd_gen="$(mm_wf_get COMMAND_FILE_GENERATION_ID)"
+  client_gen="$(mm_wf_get CLIENT_SET_GENERATION_ID)"
+  http_gen="$(mm_wf_get HTTP_PUBLICATION_GENERATION_ID)"
+  [[ -n "$ready" && -n "$cmd_gen" && -n "$client_gen" && -n "$http_gen" ]] || return 1
+  [[ "$ready" == "$cmd_gen" ]] || return 1
+  [[ "$ready" == "$client_gen" ]] || return 1
+  [[ "$ready" == "$http_gen" ]] || return 1
+  return 0
+}
+
 mm_mark_client_commands_fresh() {
   local ready
   mm_normalize_preparation_mode
@@ -1952,8 +1970,12 @@ mm_readiness_completed() {
   return 0
 }
 
-# Populate MM_WF_* for menu + status screens (cheap; no full SHA256).
+# Populate MM_WF_* for menu + status screens from persisted workflow receipts.
+# Intentionally avoids live HTTP probes, recursive finds, client provenance
+# Python, and artifact re-fingerprinting on every main-menu redraw. Authoritative
+# validation remains on Menu 3 / Menu 4 (and other explicit actions).
 mm_collect_workflow_status() {
+  local download_ck http_dist http_cfg ready_ck ready_res
   MM_WF_CONFIG_COMPLETED=0
   MM_WF_DOWNLOAD_COMPLETED=0
   MM_WF_HTTP_COMPLETED=0
@@ -1961,19 +1983,36 @@ mm_collect_workflow_status() {
   MM_WF_PROGRESS_COUNT=0
   mm_load_gui_config
   engine_resolve_paths 2>/dev/null || true
-  if mm_configuration_completed; then
+
+  if [[ "$(mm_status_get CONFIGURATION_READY 2>/dev/null || true)" == "PASS" ]] \
+    && [[ -f "${MM_CONFIG_FILE:-}" ]]; then
     MM_WF_CONFIG_COMPLETED=1
     MM_WF_PROGRESS_COUNT=$((MM_WF_PROGRESS_COUNT + 1))
   fi
-  if mm_download_completed; then
-    MM_WF_DOWNLOAD_COMPLETED=1
-    MM_WF_PROGRESS_COUNT=$((MM_WF_PROGRESS_COUNT + 1))
-  fi
-  if mm_http_completed; then
+
+  download_ck="$(mm_status_get DOWNLOAD_PREPARE_RESULT 2>/dev/null || true)"
+  case "$download_ck" in
+    PASS|REUSED)
+      if [[ -n "$(mm_status_get DOWNLOAD_ARTIFACT_FINGERPRINT 2>/dev/null || true)" ]]; then
+        MM_WF_DOWNLOAD_COMPLETED=1
+        MM_WF_PROGRESS_COUNT=$((MM_WF_PROGRESS_COUNT + 1))
+      fi
+      ;;
+  esac
+
+  http_dist="$(mm_status_get HTTP_DISTRIBUTION 2>/dev/null || true)"
+  http_cfg="$(mm_status_get HTTP_CONFIGURATION_READY 2>/dev/null || true)"
+  if [[ "$http_dist" == "ENABLED" && "$http_cfg" == "PASS" \
+    && "${MM_WF_DOWNLOAD_COMPLETED}" -eq 1 ]]; then
     MM_WF_HTTP_COMPLETED=1
     MM_WF_PROGRESS_COUNT=$((MM_WF_PROGRESS_COUNT + 1))
   fi
-  if mm_readiness_completed; then
+
+  ready_ck="$(mm_status_get UPGRADE_READINESS 2>/dev/null || true)"
+  ready_res="$(mm_status_get READINESS_RESULT 2>/dev/null || true)"
+  if [[ "$ready_ck" == "PASS" && "$ready_res" == "PASS" \
+    && "${MM_WF_HTTP_COMPLETED}" -eq 1 \
+    && -n "$(mm_status_get READINESS_ARTIFACT_FINGERPRINT 2>/dev/null || true)" ]]; then
     MM_WF_READINESS_COMPLETED=1
     MM_WF_PROGRESS_COUNT=$((MM_WF_PROGRESS_COUNT + 1))
   fi

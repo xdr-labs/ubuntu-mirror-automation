@@ -271,33 +271,40 @@ mm_menu7_tty_restore() {
   return 0
 }
 
-# Menu 7 only: same toolkit as the main menu (whiptail/newt) so Enter/Return
-# and ESC return without a dialog/whiptail TTY mismatch. Mouse tracking is
-# disabled for SSH copy/paste. Never uses dialog, less, raw reprint, or clear.
-# Closing the viewer returns to Mirror Manager; it does not exit the shell.
+# Menu 7 only: custom scroll viewer (not whiptail/dialog textbox).
+# newt textbox keeps focus on Return and does not scroll command text with
+# Up/Down in SSH field use. dialog textbox scrolled but required clear/rmcup
+# transitions that blanked the next whiptail main menu (PR33).
+# This viewer owns Up/Down/PgUp/PgDn/Home/End, never enables mouse tracking,
+# never uses less/clear-on-exit, and returns to Mirror Manager on Enter/ESC.
 mm_menu7_textbox() {
   local title="$1" file="$2"
-  local h w
+  local h w viewer=""
   mm_term_size
-  h=$((HEIGHT - 4))
-  w=$((WIDTH - 6))
+  h=$((HEIGHT - 2))
+  w=$((WIDTH - 2))
   if [[ "$h" -lt 12 ]]; then h=12; fi
   if [[ "$w" -lt 60 ]]; then w=60; fi
-  if ! mm_has_whiptail; then
+  viewer="${SCRIPT_DIR}/lib/menu7_scroll_viewer.py"
+  if [[ ! -f "$viewer" ]]; then
     mm_whiptail_msg "${title}" \
       "MENU7_VIEWER=FAIL
-MENU7_VIEWER_REASON=whiptail_missing
+MENU7_VIEWER_REASON=scroll_viewer_missing
 
-whiptail is required to view DP client upgrade commands.
-Install whiptail and reopen Menu 7 from the main menu."
+Menu 7 scroll viewer is missing from the installed runtime.
+Reinstall ubuntu-offline-mirror and reopen Menu 7."
+    return 1
+  fi
+  if [[ ! -f "$file" ]]; then
+    mm_whiptail_msg "${title}" \
+      "MENU7_VIEWER=FAIL
+MENU7_VIEWER_REASON=command_file_missing"
     return 1
   fi
   mm_menu7_disable_mouse_tracking
-  # Both OK and Cancel labeled "Return" so Enter and ESC clearly leave the
-  # viewer and redraw the Mirror Manager main menu (no undocumented keys).
-  whiptail --title "${title}" --fb \
-    --ok-button "Return" --cancel-button "Return" \
-    --textbox "$file" "$h" "$w" || true
+  # Preserve caller shell options; viewer manages its own TTY cbreak mode.
+  LINES="$h" COLUMNS="$w" \
+    python3 "$viewer" --title "$title" --file "$file" --height "$h" --width "$w" || true
   mm_menu7_tty_restore
   return 0
 }
@@ -350,15 +357,34 @@ HTTP configuration will continue automatically after verification completes."
   return 0
 }
 
+# Emit GUI_TRANSITION timing when debug/instrumentation is enabled.
+# Normal production UI stays quiet (no per-transition noise).
+mm_gui_transition_log() {
+  local action="$1" elapsed_ms="$2"
+  if [[ "${MM_DEBUG_GUI:-0}" == "1" || "${MM_GUI_TRANSITION_LOG:-0}" == "1" ]]; then
+    printf 'GUI_TRANSITION action=%s elapsed_ms=%s\n' "$action" "$elapsed_ms" >&2
+  fi
+  return 0
+}
+
+mm_gui_now_ms() {
+  python3 -c 'import time; print(int(time.time()*1000))' 2>/dev/null || date +%s000
+}
+
 # Isolate GUI actions from set -e: backend FAIL must show a dialog, not exit the menu.
 gui_run_action() {
   local action_name="$1"
   shift
-  local action_rc=0
+  local action_rc=0 start_ms end_ms elapsed_ms=0
+  start_ms="$(mm_gui_now_ms)"
   if [[ "${MM_DEBUG_GUI:-0}" == "1" ]]; then
     mm_info "GUI_ACTION_START action=${action_name}"
   fi
   "$@" || action_rc=$?
+  end_ms="$(mm_gui_now_ms)"
+  elapsed_ms=$((end_ms - start_ms))
+  [[ "$elapsed_ms" -lt 0 ]] && elapsed_ms=0
+  mm_gui_transition_log "$action_name" "$elapsed_ms"
   if [[ "${MM_DEBUG_GUI:-0}" == "1" ]]; then
     mm_info "GUI_ACTION_END action=${action_name} rc=${action_rc}"
   fi
@@ -1692,25 +1718,47 @@ Typical next steps:
     return 0
   fi
 
-  # Local + advertised HTTP smoke (lightweight; fail closed).
-  if declare -F engine_http_local_smoke >/dev/null 2>&1; then
-    if [[ "${MM_SKIP_HTTP_VALIDATE:-0}" != "1" ]] \
-      && ! engine_http_local_smoke >/dev/null 2>&1; then
-      mm_whiptail_msg "DP Client Upgrade Commands — Blocked" \
-        "DP_CLIENT_COMMANDS_AVAILABLE=NO
+  out_file="$(mm_client_commands_file)"
+  if mm_is_phase2_only; then
+    title="DP Phase 2 Upgrade Commands"
+  else
+    title="DP Client Upgrade Commands"
+  fi
+
+  # Fast path: when Menu 4 already verified this generation and the published
+  # command file is current, view it read-only. Do NOT re-run HTTP smoke or
+  # rebuild/sign commands merely because the operator opened Menu 7.
+  if ! mm_client_commands_stale \
+    && [[ -f "$out_file" && -s "$out_file" ]] \
+    && mm_menu7_command_file_generation_current; then
+    export MENU7_CACHED_OPEN_PATH=PASS
+    mm_menu7_textbox "$title" "$out_file" || true
+    return 0
+  fi
+
+  # Rebuild path only: command file missing/stale/invalid for this generation.
+  # HTTP smoke remains Menu 3/4 authoritative work — not a Menu 7 view tax.
+  # Optional MM_MENU7_HTTP_SMOKE=1 re-enables smoke for diagnostics.
+  if [[ "${MM_MENU7_HTTP_SMOKE:-0}" == "1" ]]; then
+    if declare -F engine_http_local_smoke >/dev/null 2>&1; then
+      if [[ "${MM_SKIP_HTTP_VALIDATE:-0}" != "1" ]] \
+        && ! engine_http_local_smoke >/dev/null 2>&1; then
+        mm_whiptail_msg "DP Client Upgrade Commands — Blocked" \
+          "DP_CLIENT_COMMANDS_AVAILABLE=NO
 BLOCK_REASON=LOCAL_HTTP_SMOKE_FAIL
 REQUIRED_ACTION=Enable HTTP Distribution"
-      return 0
+        return 0
+      fi
     fi
-  fi
-  if declare -F engine_http_advertised_smoke >/dev/null 2>&1; then
-    if [[ "${MM_SKIP_HTTP_VALIDATE:-0}" != "1" ]] \
-      && ! engine_http_advertised_smoke >/dev/null 2>&1; then
-      mm_whiptail_msg "DP Client Upgrade Commands — Blocked" \
-        "DP_CLIENT_COMMANDS_AVAILABLE=NO
+    if declare -F engine_http_advertised_smoke >/dev/null 2>&1; then
+      if [[ "${MM_SKIP_HTTP_VALIDATE:-0}" != "1" ]] \
+        && ! engine_http_advertised_smoke >/dev/null 2>&1; then
+        mm_whiptail_msg "DP Client Upgrade Commands — Blocked" \
+          "DP_CLIENT_COMMANDS_AVAILABLE=NO
 BLOCK_REASON=ADVERTISED_HTTP_SMOKE_FAIL
 REQUIRED_ACTION=Enable HTTP Distribution"
-      return 0
+        return 0
+      fi
     fi
   fi
 
@@ -1766,8 +1814,8 @@ New commands will be generated for: $(mm_preparation_mode_label)"
   fi
 
   tmp="$(mktemp)"
+  export MENU7_CACHED_OPEN_PATH=MISS
   gui_build_client_commands "$mirror" "$topology" "$dl_worker_ips" "$da_worker_ips" "${WORKER_SSH_PASSWORD:-}" >"$tmp"
-  out_file="$(mm_client_commands_file)"
   ready_gen="$(mm_wf_get READINESS_VERIFIED_GENERATION_ID)"
   if ! mm_wf_atomic_publish_command_file "$tmp" "$out_file" "${PREPARATION_MODE}" "$ready_gen"; then
     mm_whiptail_msg "DP Client Upgrade Commands" \
@@ -1780,12 +1828,8 @@ Required action: Regenerate Full-mode artifacts / Verify Upgrade Readiness"
     rm -f "$tmp"
     return 0
   fi
-  if mm_is_phase2_only; then
-    title="DP Phase 2 Upgrade Commands"
-  else
-    title="DP Client Upgrade Commands"
-  fi
-  # Show the full step list in one TUI textbox — no secondary viewer menu,
+  rm -f "$tmp"
+  # Show the full step list in one scrollable viewer — no secondary menu,
   # no less pager, no terminal reprint after GUI close.
   mm_menu7_textbox "$title" "$out_file" || true
   return 0
@@ -1810,12 +1854,16 @@ EOF
   while true; do
     local choice="" menu_rc=0
     local configuration_label download_label http_label readiness_label progress_line
+    local menu_start_ms menu_end_ms
+    menu_start_ms="$(mm_gui_now_ms)"
     mm_collect_workflow_status
     configuration_label="$(mm_menu_label "Configuration" "${MM_WF_CONFIG_COMPLETED}")"
     download_label="$(mm_menu_label "Download and Prepare Upgrade Files" "${MM_WF_DOWNLOAD_COMPLETED}")"
     http_label="$(mm_menu_label "Enable HTTP Distribution" "${MM_WF_HTTP_COMPLETED}")"
     readiness_label="$(mm_menu_label "Verify Upgrade Readiness" "${MM_WF_READINESS_COMPLETED}")"
     progress_line="$(mm_workflow_progress_text)"
+    menu_end_ms="$(mm_gui_now_ms)"
+    mm_gui_transition_log "main_menu_redraw" "$((menu_end_ms - menu_start_ms))"
     choice="$(mm_whiptail_menu \
       "DP Ubuntu Upgrade Mirror Manager" \
       "Workflow: Configuration → Download → Enable HTTP → Verify Readiness
