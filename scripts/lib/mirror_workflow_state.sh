@@ -1562,7 +1562,7 @@ mm_wf_validate_command_file_content() {
       fi
       printf 'DP_OS_HOP_COMMAND_VERSION=WRAPPER_V1\n'
       for n in 0 1 2 3 4 5 6 7 8 9; do
-        if ! grep -qE "STEP ${n} —|Step ${n} —" "$file"; then
+        if ! grep -qE "^STEP ${n} —|^Step ${n} —" "$file"; then
           printf 'COMMAND_FILE_BUILD=FAIL\n'
           printf 'COMMAND_FILE_MISSING_STEP=%s\n' "$n"
           return 1
@@ -1589,10 +1589,14 @@ mm_wf_validate_command_file_content() {
           "COMMAND_FILE_PHASE2_STAGE_COUNT=${stage_count}"
         return 1
       }
-      # Single topology: exactly one STEP 7 bringup. Cluster (7A/7B): one or two.
-      local bringup_min=1 bringup_max=1
-      if grep -qE '^STEP 7A —|^STEP 3A —' "$file"; then
-        bringup_max=2
+      # Single topology: exactly one STEP 7 bringup.
+      # Cluster: exactly one executable per configured master section
+      # ("Run this command on the DL/DA MASTER ONLY"), not merely 1..2.
+      local bringup_min=1 bringup_max=1 configured_masters=0
+      configured_masters="$(grep -cE '^Run this command on the (DL|DA) MASTER ONLY\.$' "$file" || true)"
+      if [[ "$configured_masters" -ge 1 ]]; then
+        bringup_min="$configured_masters"
+        bringup_max="$configured_masters"
       fi
       if [[ "$bringup_executable_count" -lt "$bringup_min" \
         || "$bringup_executable_count" -gt "$bringup_max" ]]; then
@@ -1655,10 +1659,13 @@ mm_wf_validate_command_file_content() {
           "COMMAND_FILE_PHASE2_STAGE_COUNT=${stage_count}"
         return 1
       }
-      # Single topology: exactly one STEP 3 bringup. Cluster (3A/3B): one or two.
-      local bringup_min=1 bringup_max=1
-      if grep -qE '^STEP 7A —|^STEP 3A —' "$file"; then
-        bringup_max=2
+      # Single topology: exactly one STEP 3 bringup.
+      # Cluster: exactly one executable per configured master section.
+      local bringup_min=1 bringup_max=1 configured_masters=0
+      configured_masters="$(grep -cE '^Run this command on the (DL|DA) MASTER ONLY\.$' "$file" || true)"
+      if [[ "$configured_masters" -ge 1 ]]; then
+        bringup_min="$configured_masters"
+        bringup_max="$configured_masters"
       fi
       if [[ "$bringup_executable_count" -lt "$bringup_min" \
         || "$bringup_executable_count" -gt "$bringup_max" ]]; then

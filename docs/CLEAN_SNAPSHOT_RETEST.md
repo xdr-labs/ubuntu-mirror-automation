@@ -320,7 +320,7 @@ sudo test -s /var/log/ubuntu-mirror-automation/dp-client-upgrade-commands.txt \
 
 ## 12. DP Step 2 execution
 
-On the DP (after hypervisor snapshot), copy the **entire one-line Step 2 launcher
+On the DP (after hypervisor snapshot), copy the **entire one-line Step 2 WRAPPER_V1
 command** from the viewer into the DP terminal once. Do not edit the embedded SHA256.
 Do not trust an HTTP `.sha256` sidecar as the operator trust anchor.
 
@@ -329,19 +329,19 @@ Use keyboard navigation to move through the viewer.
 
 **Expected:**
 
-1. HTTP download of the hop launcher into `.download`
-2. literal SHA256 verification PASS, then rename to the final launcher name
-3. launcher authenticates the existing `dp-client-command-runner.sh` (keyring FPR,
+1. HTTP download of `upgrade-<hop>.sh` into `.download`
+2. literal SHA256 verification PASS, then rename to the final wrapper name
+3. wrapper authenticates the existing `dp-launch-<hop>.sh` / runner path (keyring FPR,
    `gpgv`, runner SHA bindings)
 4. runner authenticates and executes the unchanged OS-hop client
 
 **Failure interpretation:**
 
 - connection refused / HTTP 403/404 → Mirror HTTP not ready; return to Menu 3/4
-- launcher SHA mismatch → stop; previous final launcher (if any) is not replaced
+- wrapper SHA mismatch → stop; previous final wrapper (if any) is not replaced
 - runner/keyring/signature / hop SHA mismatch → stop; do not proceed
 
-**Stop if:** any verification fails before `sudo bash` (execution count must remain 0).
+**Stop if:** any verification fails before hop execution (execution count must remain 0).
 
 ---
 
@@ -365,7 +365,7 @@ Proceed to the next OS hop only when:
 
 1. current hop completed successfully
 2. Mirror HTTP + readiness generations are still current
-3. the next hop one-line launcher command is copied complete from Menu 7
+3. the next hop one-line WRAPPER_V1 command is copied complete from Menu 7
 
 Do not reuse a command file generated under a different Mirror IP, mode, or client generation.
 

@@ -126,7 +126,8 @@ selective tree under `SELECTIVE_ROOT`, local signing keypair.
 |------|------|
 | `client/dp-client-hop-launcher.sh.in` | Authoritative OS-hop launcher template |
 | `scripts/lib/build_client_launchers.py` | Deterministic generator for four hop launchers |
-| `client/dp-launch-<hop>.sh` (published) | Hash-pinned Menu 7 operator entrypoint |
+| `client/dp-launch-<hop>.sh` (published) | Inner hop launcher (verified by WRAPPER_V1 `upgrade-<hop>.sh`) |
+| `client/upgrade-<hop>.sh` (published) | Hash-pinned Menu 7 operator entrypoint (WRAPPER_V1) |
 | `client/dp-client-command-runner.sh` | Verified command execution wrapper |
 | `scripts/install-dp-upgrade-mirror.sh` | Menu 7 command file generator |
 | `scripts/lib/mirror_workflow_state.sh` | Generation-bound workflow KV store |
