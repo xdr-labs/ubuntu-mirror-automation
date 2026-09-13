@@ -219,24 +219,19 @@ def _run_path(close_mode: str) -> dict[str, bool]:
         if any(f"STEP_{i}_MARKER" in _visible_after(buf, start) for i in range(10)):
             result["MENU7_PAGEUP"] = True
 
-        # Up: start from End so upward motion reveals earlier unique markers.
-        os.write(master, b"\x1bOF")
-        _drain(master, buf, 0.25)
-        start = len(buf)
+        # Up proof from a clean mid-viewport: Home → Down → Up must re-show TOP.
+        # (Up from End alone can leave focus on the Return button in dialog.)
+        os.write(master, b"\x1bOH")
+        _drain(master, buf, 0.35)
         for _ in range(40):
+            os.write(master, b"\x1bOB")
+            _drain(master, buf, 0.03)
+        start = len(buf)
+        for _ in range(45):
             os.write(master, b"\x1bOA")
             _drain(master, buf, 0.03)
-        for _ in range(20):
-            os.write(master, b"k")
-            _drain(master, buf, 0.03)
         vis = _visible_after(buf, start)
-        if (
-            "TOP_MARKER" in vis
-            or "STEP_9_MARKER" in vis
-            or "STEP_5_MARKER" in vis
-            or any(f"STEP_{i}_MARKER" in vis for i in range(10))
-            or any(f"pad-end-{n}" in vis for n in range(40))
-        ):
+        if "TOP_MARKER" in vis or any(f"lead-pad-{n}" in vis for n in range(0, 30)):
             result["MENU7_UP_SCROLL"] = True
 
         if close_mode == "ENTER":
