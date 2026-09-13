@@ -351,7 +351,11 @@ start_or_monitor() {
     if p2b_discover_aella_cli; then
       echo "AELLA_CLI_AVAILABLE=YES"
       echo "AELLA_CLI_PATH=${AELLA_CLI_PATH}"
-      echo "NEXT_COMMAND=sudo ${AELLA_CLI_PATH}"
+      echo "AELLA_CLI_READY=YES"
+      echo "CLUSTER_VALIDATION=PENDING"
+      echo "DP_UPGRADE_COMPLETE=NO"
+      echo "NEXT_COMMAND=sudo bash ${P2B_WRAPPER_PATH} --validate-cluster"
+      echo "OPERATOR_NOTE=Bringup already completed; do not re-run bringup. Validate cluster, resume if paused, then record validation/migration as required."
     fi
     return 0
   fi

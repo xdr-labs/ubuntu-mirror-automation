@@ -250,3 +250,9 @@ Source resolution always runs before bundle download or artifact mutation.
 - Instructional `Bringup complete:` text is not completion evidence.
 - Do not run `aella_cli` until `BRINGUP_RESULT=PASS`.
 - `resume` remains manual and conditional after `show status`.
+- After bringup PASS, prefer `--validate-cluster` (bounded `show status` +
+  `quit`; never literal `EOF`) before recording cluster validation.
+- Pod count "at least N expected" is informational — not a hard PASS/FAIL gate.
+- Jumbo MTU preflight is informational (`PHASE2_MTU_HARD_FAIL=NO`).
+- `BRINGUP_RESULT=PASS` never implies `DP_UPGRADE_COMPLETE=YES`; migration and
+  cluster validation remain separate operator-confirmed gates.
