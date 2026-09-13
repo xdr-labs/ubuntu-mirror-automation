@@ -70,6 +70,18 @@ cat >"${CLIENT_ROOT}/lib/dp-phase2-ubuntu-prerequisites.sh" <<'HELPER5'
 #!/usr/bin/env bash
 PREREQ_HELPER_LOADED=YES
 HELPER5
+cat >"${CLIENT_ROOT}/lib/dp-phase2-time-readiness.sh" <<'HELPER6'
+#!/usr/bin/env bash
+TIME_HELPER_LOADED=YES
+HELPER6
+cat >"${CLIENT_ROOT}/lib/dp-phase2-post-bringup-migration.sh" <<'HELPER7'
+#!/usr/bin/env bash
+MIGRATION_HELPER_LOADED=YES
+HELPER7
+cat >"${CLIENT_ROOT}/lib/dp-phase2-cluster-validation.sh" <<'HELPER8'
+#!/usr/bin/env bash
+CLUSTER_VALIDATION_HELPER_LOADED=YES
+HELPER8
 cat >"${CLIENT_ROOT}/bringup_py3_dp_lifecycle.sh" <<'HELPER4'
 #!/usr/bin/env bash
 LIFECYCLE_WRAPPER_LOADED=YES

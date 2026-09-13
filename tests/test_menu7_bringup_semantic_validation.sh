@@ -165,19 +165,22 @@ grep -q 'COMMAND_FILE_LAUNCHER_SHA_PINNING=PASS' "$TMP/full-val.out" \
 grep -q 'DP_OS_HOP_COMMAND_VERSION=WRAPPER_V1' "$TMP/full-val.out" \
   && pass "F WRAPPER_V1" || fail "F WRAPPER_V1"
 
-# --- Failure evidence retained via logger helper (no command body / secrets) ---
+# Failure evidence must include FAILURE_REASON
 EVID="$TMP/evid.txt"
-printf '%s\n' 'COMMAND_FILE_BUILD=FAIL' 'COMMAND_FILE_BRINGUP_EXECUTABLE_COUNT=0' \
+printf '%s\n' 'COMMAND_FILE_BUILD=FAIL' 'COMMAND_FILE_FAILURE_REASON=BRINGUP_EXECUTABLE_COUNT' \
+  'COMMAND_FILE_BRINGUP_EXECUTABLE_COUNT=0' \
   'COMMAND_FILE_PHASE2_WRAPPER_VALIDATION=FAIL' >"$EVID"
 LOGGED="$TMP/logged.txt"
 mm_error() { printf '%s\n' "$*" >>"$LOGGED"; }
 mm_wf_log_command_file_validation_evidence "$EVID"
+grep -q 'MENU7_COMMAND_FILE_VALIDATION COMMAND_FILE_FAILURE_REASON=BRINGUP_EXECUTABLE_COUNT' "$LOGGED" \
+  && pass "logger emits FAILURE_REASON" || fail "logger missing FAILURE_REASON"
 grep -q 'MENU7_COMMAND_FILE_VALIDATION COMMAND_FILE_BRINGUP_EXECUTABLE_COUNT=0' "$LOGGED" \
-  && pass "logger helper emits bringup executable evidence" \
-  || fail "logger helper missing bringup evidence"
+  && pass "logger emits bringup executable evidence" \
+  || fail "logger missing bringup evidence"
 grep -q 'MENU7_COMMAND_FILE_VALIDATION COMMAND_FILE_PHASE2_WRAPPER_VALIDATION=FAIL' "$LOGGED" \
-  && pass "logger helper emits phase2 wrapper evidence" \
-  || fail "logger helper missing phase2 evidence"
+  && pass "logger emits phase2 wrapper evidence" \
+  || fail "logger missing phase2 evidence"
 # Ensure we never log password-bearing lines from a command body.
 SECRET_EVID="$TMP/secret-evid.txt"
 printf '%s\n' 'COMMAND_FILE_BUILD=FAIL' \

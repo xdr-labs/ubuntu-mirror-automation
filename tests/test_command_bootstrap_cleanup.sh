@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tests/test_command_bootstrap_cleanup.sh
-# Prove Menu 7 LAUNCHER_V1 hop launcher: caller cwd/EXIT trap preserved,
+# Prove Menu 7 WRAPPER_V1 hop wrapper: caller cwd/EXIT trap preserved,
 # ephemeral GNUPGHOME inside launcher, workdir cleaned, no ~/.gnupg creation.
 set -euo pipefail
 
