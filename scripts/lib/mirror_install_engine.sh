@@ -1333,7 +1333,7 @@ engine_phase2_install_private_upstream() {
   local src="$1"
   local ver="${2:-${TARGET_DP_VERSION:-${PHASE2_TARGET_VERSION}}}"
   local dir dest dest_sha prov tmp tmp_sha tmp_prov sidecar_src sidecar_digest actual_sha1
-  local parent
+  local parent parent_n cache_n
   [[ -f "$src" && -s "$src" ]] || return 1
   engine_phase2_upstream_allowlisted "$src" || return 1
   dir="$(engine_phase2_private_upstream_dir "$ver")"
@@ -1344,10 +1344,16 @@ engine_phase2_install_private_upstream() {
   engine_phase2_chmod_private_dir "$dir" || return 1
   # Only harden parents inside the private cache tree — never chmod host
   # ancestors outside MM_CACHE_ROOT (e.g. fixture /tmp/tmp.* or /var).
+  # Compare canonical paths so a symlink under the cache root cannot escape.
   parent="$(dirname "$dir")"
-  if [[ -d "$parent" && -n "${MM_CACHE_ROOT:-}" \
-    && ( "$parent" == "$MM_CACHE_ROOT" || "$parent" == "$MM_CACHE_ROOT"/* ) ]]; then
-    engine_phase2_chmod_private_dir "$parent" || return 1
+  if [[ -d "$parent" && -n "${MM_CACHE_ROOT:-}" ]]; then
+    parent_n="$(realpath -m "$parent" 2>/dev/null || printf '%s' "$parent")"
+    cache_n="$(realpath -m "$MM_CACHE_ROOT" 2>/dev/null || printf '%s' "$MM_CACHE_ROOT")"
+    parent_n="${parent_n%/}"
+    cache_n="${cache_n%/}"
+    if [[ "$parent_n" == "$cache_n" || "$parent_n" == "$cache_n"/* ]]; then
+      engine_phase2_chmod_private_dir "$parent" || return 1
+    fi
   fi
   tmp="${dest}.new.$$"
   tmp_sha="${dest_sha}.new.$$"
