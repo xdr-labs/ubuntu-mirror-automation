@@ -79,7 +79,6 @@ UM_RUNTIME_SCRIPT_LIB_PYTHON_EXECUTABLES=(
   xenial_bionic_upgrade_analysis.py
   selective_mirror.py
   validate_selective_mirror.py
-  menu7_scroll_viewer.py
 )
 
 # Extra files under scripts/lib/ (subdirectories). Includes Phase 2 bringup

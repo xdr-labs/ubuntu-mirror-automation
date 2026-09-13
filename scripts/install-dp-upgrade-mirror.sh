@@ -255,15 +255,15 @@ mm_menu7_disable_mouse_tracking() {
 }
 
 # Restore terminal attributes for the next whiptail main-menu paint.
-# Deliberately does NOT call `clear`: after dialog→whiptail transitions,
-# clear left a blank SSH frame until Ctrl-C (field Menu 7 hang).
+# Deliberately does NOT call `clear` or `reset`: clear after dialog left a
+# blank SSH frame until Ctrl-C (original Menu 7 hang). Prefer the smallest
+# restore that lets whiptail repaint immediately.
 mm_menu7_tty_restore() {
   local ttydev=""
   mm_menu7_disable_mouse_tracking
   ttydev="$(tty 2>/dev/null || true)"
   if [[ -n "$ttydev" && -c "$ttydev" ]]; then
-    { tput rmcup || true
-      tput sgr0 || true
+    { tput sgr0 || true
       tput cnorm || true
       stty sane || true
     } </dev/null >"$ttydev" 2>/dev/null || true
@@ -271,28 +271,26 @@ mm_menu7_tty_restore() {
   return 0
 }
 
-# Menu 7 only: custom scroll viewer (not whiptail/dialog textbox).
-# newt textbox keeps focus on Return and does not scroll command text with
-# Up/Down in SSH field use. dialog textbox scrolled but required clear/rmcup
-# transitions that blanked the next whiptail main menu (PR33).
-# This viewer owns Up/Down/PgUp/PgDn/Home/End, never enables mouse tracking,
-# never uses less/clear-on-exit, and returns to Mirror Manager on Enter/ESC.
+# Menu 7 only: framed dialog --textbox (same GUI family as Mirror Manager).
+# --no-mouse keeps SSH click/drag selection. Exit label is "Return".
+# NEVER call clear after dialog — that blanked the next whiptail main menu.
+# Scroll: Up/Down/PgUp/PgDn/Home/End (dialog textbox). Enter/ESC return.
 mm_menu7_textbox() {
   local title="$1" file="$2"
-  local h w viewer=""
+  local h w dialog_bin=""
   mm_term_size
-  h=$((HEIGHT - 2))
-  w=$((WIDTH - 2))
+  h=$((HEIGHT - 4))
+  w=$((WIDTH - 6))
   if [[ "$h" -lt 12 ]]; then h=12; fi
   if [[ "$w" -lt 60 ]]; then w=60; fi
-  viewer="${SCRIPT_DIR}/lib/menu7_scroll_viewer.py"
-  if [[ ! -f "$viewer" ]]; then
+  dialog_bin="$(command -v dialog 2>/dev/null || true)"
+  if [[ -z "$dialog_bin" || ! -x "$dialog_bin" ]]; then
     mm_whiptail_msg "${title}" \
       "MENU7_VIEWER=FAIL
-MENU7_VIEWER_REASON=scroll_viewer_missing
+MENU7_VIEWER_REASON=dialog_missing
 
-Menu 7 scroll viewer is missing from the installed runtime.
-Reinstall ubuntu-offline-mirror and reopen Menu 7."
+dialog is required to view DP client upgrade commands.
+Install dialog and reopen Menu 7 from the main menu."
     return 1
   fi
   if [[ ! -f "$file" ]]; then
@@ -302,9 +300,9 @@ MENU7_VIEWER_REASON=command_file_missing"
     return 1
   fi
   mm_menu7_disable_mouse_tracking
-  # Preserve caller shell options; viewer manages its own TTY cbreak mode.
-  LINES="$h" COLUMNS="$w" \
-    python3 "$viewer" --title "$title" --file "$file" --height "$h" --width "$w" || true
+  # --no-mouse must be on argv (do not rely only on DIALOGOPTS).
+  "$dialog_bin" --no-mouse --title "${title}" --exit-label "Return" \
+    --textbox "$file" "$h" "$w" || true
   mm_menu7_tty_restore
   return 0
 }

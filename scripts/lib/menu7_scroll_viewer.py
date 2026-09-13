@@ -1,13 +1,9 @@
 #!/usr/bin/env python3
-"""Menu 7 command-file scroll viewer for Mirror Manager SSH sessions.
+"""Non-production helper previously used for Menu 7 scroll experiments.
 
-Plain-terminal viewport (no newt/dialog textbox). Mouse tracking is never
-enabled so SSH clients keep native click/drag copy selection. Keyboard:
-
-  Up / Down / PageUp / PageDown / Home / End  — scroll
-  Enter / ESC / q                            — return to caller
-
-Does not invoke a pager. Exits 0 on normal return.
+Production Menu 7 uses framed `dialog --textbox` via mm_menu7_textbox().
+This module is retained only as an optional offline helper / experiment and
+must not be invoked from the Mirror Manager operator path.
 """
 from __future__ import annotations
 

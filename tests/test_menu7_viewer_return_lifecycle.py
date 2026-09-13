@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""PTY lifecycle: main menu -> Menu 7 viewer -> close -> main menu visible again.
+"""PTY lifecycle: main menu -> Menu 7 dialog viewer -> close -> main menu visible again.
 
-Uses the real Menu 7 scroll viewer plus whiptail main menu. Proves Enter and
-ESC return without shell exit, blank screen, or pager, and that Ctrl-C restore
-helpers remain in place.
+Uses real dialog --textbox (framed GUI) plus whiptail main menu. Proves Enter
+and ESC return without shell exit, blank screen, or pager.
 """
 from __future__ import annotations
 
@@ -277,11 +276,14 @@ def main() -> int:
         print("FAIL: mm_menu7_textbox missing", file=sys.stderr)
         return 1
     body = fn.group(0)
-    if "menu7_scroll_viewer.py" not in body:
-        print("FAIL: mm_menu7_textbox missing scroll viewer", file=sys.stderr)
+    if "menu7_scroll_viewer.py" in body:
+        print("FAIL: raw terminal viewer still production path", file=sys.stderr)
         return 1
-    if re.search(r"(^|[^A-Za-z_])dialog([^A-Za-z_]|$)", body):
-        print("FAIL: dialog still used in mm_menu7_textbox", file=sys.stderr)
+    if not re.search(r"(^|[^A-Za-z_])dialog([^A-Za-z_]|$)", body):
+        print("FAIL: dialog not used in mm_menu7_textbox", file=sys.stderr)
+        return 1
+    if "--textbox" not in body or "--no-mouse" not in body:
+        print("FAIL: mm_menu7_textbox missing dialog --textbox/--no-mouse", file=sys.stderr)
         return 1
     if re.search(r"(^|[^A-Za-z_])whiptail([^A-Za-z_]|$)", body):
         print("FAIL: whiptail still used in mm_menu7_textbox", file=sys.stderr)
