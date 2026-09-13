@@ -25,6 +25,9 @@ CURL_BIN="${CURL_BIN:-curl}"
 NTPQ_BIN="${NTPQ_BIN:-ntpq}"
 NTPWAIT_BIN="${NTPWAIT_BIN:-ntpwait}"
 TIMEDATECTL_BIN="${TIMEDATECTL_BIN:-timedatectl}"
+# Bound every ntpq probe; unbounded ntpq can hang postboot indefinitely (field).
+NTPQ_PROBE_TIMEOUT_SECONDS="${NTPQ_PROBE_TIMEOUT_SECONDS:-20}"
+NTPQ_PROBE_OUTPUT=""
 
 postboot_policy_log() {
   local level="$1"; shift
@@ -458,6 +461,59 @@ run_ntpwait_probe() {
   fi
 }
 
+# Run one ntpq invocation under a hard wall-clock bound.
+# Sets NTPQ_PROBE_OUTPUT on success. On timeout logs NTPQ_PROBE_TIMEOUT=YES and
+# leaves NTPQ_PROBE_OUTPUT empty (never treat timed-out output as sync proof).
+run_ntpq_probe() {
+  local probe="${1:-}"
+  shift || true
+  local timeout_secs="${NTPQ_PROBE_TIMEOUT_SECONDS:-20}"
+  local out="" rc=0 pid waited=0
+  NTPQ_PROBE_OUTPUT=""
+  [[ -n "$probe" ]] || return 1
+  command -v "$NTPQ_BIN" >/dev/null 2>&1 || return 1
+  if ! is_positive_integer "$timeout_secs"; then
+    timeout_secs=20
+  fi
+
+  if command -v timeout >/dev/null 2>&1; then
+    out="$(timeout "$timeout_secs" "$NTPQ_BIN" "$@" 2>/dev/null)" || rc=$?
+    if [[ "$rc" -eq 124 ]]; then
+      postboot_policy_log WARN "NTPQ_PROBE_TIMEOUT=YES probe=${probe}"
+      return 1
+    fi
+    [[ "$rc" -eq 0 ]] || return 1
+    NTPQ_PROBE_OUTPUT="$out"
+    return 0
+  fi
+
+  # Portable fallback when coreutils timeout(1) is unavailable.
+  local out_file
+  out_file="$(mktemp "${TMPDIR:-/tmp}/ntpq-probe.XXXXXX")" || return 1
+  "$NTPQ_BIN" "$@" >"$out_file" 2>/dev/null &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    if ((waited >= timeout_secs)); then
+      kill -TERM "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      rm -f "$out_file"
+      postboot_policy_log WARN "NTPQ_PROBE_TIMEOUT=YES probe=${probe}"
+      return 1
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  wait "$pid" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    rm -f "$out_file"
+    return 1
+  fi
+  out="$(cat "$out_file" 2>/dev/null || true)"
+  rm -f "$out_file"
+  NTPQ_PROBE_OUTPUT="$out"
+  return 0
+}
+
 check_time_readiness() {
   local ntpq_text="" rv_text="" td="" ref="" skew="" ref_peer=""
   TIME_READINESS="FAIL_TIME_UNVERIFIABLE"
@@ -474,8 +530,19 @@ check_time_readiness() {
   fi
 
   if command -v "$NTPQ_BIN" >/dev/null 2>&1; then
-    ntpq_text="$("$NTPQ_BIN" -pn 2>/dev/null || "$NTPQ_BIN" -p 2>/dev/null || true)"
-    rv_text="$("$NTPQ_BIN" rv 2>/dev/null || true)"
+    # Every ntpq form is bounded. If -pn times out/fails, -p is still bounded.
+    if run_ntpq_probe pn -pn; then
+      ntpq_text="$NTPQ_PROBE_OUTPUT"
+    elif run_ntpq_probe p -p; then
+      ntpq_text="$NTPQ_PROBE_OUTPUT"
+    else
+      ntpq_text=""
+    fi
+    if run_ntpq_probe rv rv; then
+      rv_text="$NTPQ_PROBE_OUTPUT"
+    else
+      rv_text=""
+    fi
   fi
   NTP_SELECTED_PEER="$(selected_ntp_peer_from_text "$ntpq_text")"
   [[ -n "$NTP_SELECTED_PEER" ]] || NTP_SELECTED_PEER="NONE"

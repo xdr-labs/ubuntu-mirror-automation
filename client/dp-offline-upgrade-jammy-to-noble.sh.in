@@ -5177,6 +5177,9 @@ write_state() {
 }
 
 # Inlined by scripts/lib/build_client_jammy_to_noble.py (single-file; no runtime include).
+# Hermetic fixture helpers must live inside the installed postboot payload —
+# the outer wrapper definitions are not visible after POSTBOOT_REFRESH.
+@@HERMETIC_ESCAPES_HELPER@@
 @@POSTBOOT_POLICY_LIB@@
 
 check_time_readiness_phase1() {

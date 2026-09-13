@@ -30,10 +30,10 @@ PIN_UPGRADER_TAR_SHA256='447f54cbdfb9f57d32ddb02fcf0a0abb0184059cc0f680e806d2337
 PIN_UPGRADER_GPG_SHA256='7af99394662fe6d9fbe4ba7f6efd4818f5594e82e553aaaf659144a80ff53bfe'
 PIN_PLAN_CHECKSUM='7711448ed858306e082c0cf72185d1137d1839e48f368fc29aa681fae85dc81c'
 PIN_DISCOVERY_CHECKSUM='d7bdbce25b5fa32f6fee972297f8def449ca495efed93ebb470ef8d22b7c5ddf'
-PIN_MANIFEST_SHA256='f6412731634a025db518d25905e6458242c7d01940f5394cf4bf1bb1527ee0fd'
+PIN_MANIFEST_SHA256='2d5ce491417271c359e5e51c06c56541abce94749de32f0a54fdd9a8b6f1d7c9'
 PIN_SAMPLE_DEB_URL='http://127.0.0.1/hops/jammy-to-noble/ubuntu/pool/main/a/accountsservice/accountsservice_23.13.9-2ubuntu6_amd64.deb'
 PIN_CONFIRM_PHRASE='UPGRADE-JAMMY-TO-NOBLE'
-PIN_GENERATED_AT='2026-09-12T15:22:06Z'
+PIN_GENERATED_AT='2026-09-13T01:32:15Z'
 PIN_PROFILE_NAME='offline-upgrade-selective'
 
 PIN_KEY_B64='mQENBGqh/tYBCAC2mUohxJinGmVgSKvmjoG/5oEUtsHlFr/Cc1UtLiwdBif2Gx0RjxU3anHltzw4
@@ -117,22 +117,22 @@ ZDkzZWJiNDcwZWY4ZDIyYjdjNWRkZiIsCiAgImF3c19zZW1hbnRpY19jb250cmFjdF9zaGEyNTYi
 OiAiOGQ4MWZhMTBkNzQ4ZWI4OTJjNjAwMmNiYjY1MTA3MzNiNmE4YWEyYjNiNDRlMWMyOWM4ZmMw
 NjA2YzMwMTU2YiIsCiAgImNvbmZpcm1fcGhyYXNlIjogIlVQR1JBREUtSkFNTVktVE8tTk9CTEUi
 LAogICJjbGllbnRfcHJvdmVuYW5jZV9zY2hlbWFfdmVyc2lvbiI6ICIyIiwKICAiY2xpZW50X2J1
-aWxkX2lucHV0X3NoYTI1NiI6ICJjMGZlOTMxNmYxY2Q2ZTdmMGI4OGI0ZjllNGY0MjUxNmM2MTVj
-NTBjNTE3NGJhMTU2Yjk1NWU3Yzg0ODVhNjBmIiwKICAiY2xpZW50X3NvdXJjZV9yZXZpc2lvbiI6
-ICJhZTA3OGM2NzA4MzEyMWI3OThhZTFjOThjNjdjZDQyMjIzNWMwZDQ0IiwKICAiY2xpZW50X3Nv
+aWxkX2lucHV0X3NoYTI1NiI6ICIyMWQ0ZGQyNTRhMmFkMGJiYWFmNmNjZjRkYjk4YjI4N2Y5MWNi
+MGNmOTk5YWU1MTA3ZjgzNTdkMTQ0NmQwYzQ2IiwKICAiY2xpZW50X3NvdXJjZV9yZXZpc2lvbiI6
+ICI3M2VmYzExOWUxM2U3NDMwNDdiMWZhNDBlZThhOWNjOWY4Y2NhZDcyIiwKICAiY2xpZW50X3Nv
 dXJjZV90cmVlX3N0YXRlIjogImRpcnR5IiwKICAiY2xpZW50X2NvbW1hbmRfYmxvY2tfdmVyc2lv
 biI6ICJTVUJTSEVMTF9WMiIsCiAgImNsaWVudF9taXJyb3JfYmFzZV91cmwiOiAiaHR0cDovLzEy
 Ny4wLjAuMSIsCiAgImNsaWVudF9zaWduaW5nX2ZpbmdlcnByaW50IjogIjc2QTYzQjNGOUNCOEIw
 OTk1NUMyODk0M0M3N0RDMUZGMjNCRjMxQjUiLAogICJjbGllbnRfcnVudGltZV9tYW5pZmVzdF9z
 aGEyNTYiOiAiNzE0MjQ0Nzg5NzBhMmNhZTI3ZjNjMGE4YzY3YWYxZjk3N2NmODI0ZjQ0NmRiNTFh
-MDNhM2Q0MmYzZDdlMmZjNyIsCiAgImNsaWVudF9idWlsZGVyc19zaGEyNTYiOiAiMWY1ZDE5NDhh
-MDQ0OTZiZjdiNjZjOTI4MTA2ZTUyYjkxYWMxOWJjODJlZDYyNjNmZTQ3N2M1OTFiYjQwMzE5MCIs
-CiAgImNsaWVudF90ZW1wbGF0ZXNfc2hhMjU2IjogIjA2ZWQxMDkxNWQ0NmM3MDU0OTMyNWQzNmQy
-NjIwZDhlNWUxN2YzMjFiYzRmYjBiNThjNmRiNmM0NzhiYmZjMjciLAogICJjbGllbnRfc2hhcmVk
+MDNhM2Q0MmYzZDdlMmZjNyIsCiAgImNsaWVudF9idWlsZGVyc19zaGEyNTYiOiAiNTY0ODBmNjQy
+YjkyYzQ2NDVhZjZiOTg0ODQyMDU2YzgyYjVhNGNlYjYwZDhlNmJhMTc0ODkzMjM4OWVmN2IwMiIs
+CiAgImNsaWVudF90ZW1wbGF0ZXNfc2hhMjU2IjogIjFjNjhkZjM5YzUxNTc0ODc1NzU1N2NjYWIx
+NzE2NmQwYTAwNjU5ZGJmY2NkNWZlMzdlZTg1NmNjMjM0MmIzMTkiLAogICJjbGllbnRfc2hhcmVk
 X2hlbHBlcnNfc2hhMjU2IjogImEwZGRjZTlkMjk3Zjc2YTM1ZTViYzhhN2Y4OGZlMWViODhkNDVm
 YjUzMmE3NTQ0YmM3NWI5ZjE4ODY0MzJlZTMiLAogICJjbGllbnRfcnVubmVyX3NoYTI1NiI6ICI2
 MDkxNGFkNTcyN2VlY2ZkNzY0NDBkYTFlOTM2ZTRlZjllMDZhN2E2NzljOWJiZGUxZDk0NDliYzU1
-YjNmNzMxIiwKICAiZ2VuZXJhdGVkX2F0IjogIjIwMjYtMDktMTJUMTU6MjI6MDZaIiwKICAiYW5u
+YjNmNzMxIiwKICAiZ2VuZXJhdGVkX2F0IjogIjIwMjYtMDktMTNUMDE6MzI6MTVaIiwKICAiYW5u
 b3VuY2VtZW50cyI6IHsKICAgICJSZWxlYXNlQW5ub3VuY2VtZW50IjogImQxZTgyZDJlNzcwNjYz
 YjYzYWM5OWIzOWUzYWE0MzZkZmI3MzExMzljNjcxNjNkYjQ0MzkyYjkzMjg0ZWZkNjMiLAogICAg
 IlJlbGVhc2VBbm5vdW5jZW1lbnQuaHRtbCI6ICJlNzFkMTRkZjA5M2NlNWU0NTdmN2MzYmE4OWM1
@@ -12229,6 +12229,135 @@ write_state() {
 }
 
 # Inlined by scripts/lib/build_client_jammy_to_noble.py (single-file; no runtime include).
+# Hermetic fixture helpers must live inside the installed postboot payload —
+# the outer wrapper definitions are not visible after POSTBOOT_REFRESH.
+# shellcheck shell=bash
+# Shared hermetic fixture-escape policy for offline OS upgrade clients.
+# Injected into single-file clients at build / stub-render time.
+# Compatible with Bash 4.3+ and safe under `set -Eeuo pipefail`.
+#
+# Contract:
+# - Production must never honor test/fixture controls from the environment alone.
+# - Fixture behavior requires MM_HERMETIC_TEST_MODE=1 AND the specific control.
+# - Call dp_offline_enforce_production_fixture_policy early in main() before
+#   TEST_ROOT / SYSTEMCTL_BIN fixture paths take effect.
+
+dp_offline_hermetic_test_mode() {
+  [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" ]]
+}
+
+# True when hermetic fixtures are permitted (companion flag checked by caller).
+dp_offline_hermetic_fixtures_enabled() {
+  dp_offline_hermetic_test_mode
+}
+
+# Category-C fixture controls: alter trust, identity, topology, confirmation,
+# package mutation, systemctl behavior, or upgrade success/failure semantics.
+# Keep this list the single inventory shared by all four hop clients.
+dp_offline_category_c_fixture_vars() {
+  printf '%s\n' \
+    DP_OFFLINE_TEST_ROOT \
+    STELLAR_OFFLINE_TEST_ROOT \
+    DP_OFFLINE_TEST_HANDOFF \
+    DP_OFFLINE_FAKE_DP_VERSION \
+    DP_OFFLINE_FAKE_ROLE \
+    DP_OFFLINE_FAKE_MIRROR_TRUST \
+    DP_OFFLINE_FAKE_CONFIRM \
+    DP_OFFLINE_FAKE_KERNEL \
+    DP_OFFLINE_FAKE_UNHOLD_FAIL \
+    DP_OFFLINE_FAKE_UNHOLD_STILL_HELD \
+    DP_OFFLINE_FAKE_HOLD_FAIL \
+    DP_OFFLINE_FAKE_SHELL_CHANGE_FAIL \
+    DP_OFFLINE_FAKE_SHELL_CHANGE_FAIL_USER \
+    DP_OFFLINE_FAKE_SHELL_CHSH_FAIL \
+    DP_OFFLINE_FAKE_SHELL_NOOP_SUCCESS \
+    DP_OFFLINE_FAKE_FAIL_AFTER_UNHOLD \
+    DP_OFFLINE_FORCE_NONINTERACTIVE \
+    DP_OFFLINE_FORCE_MONITOR \
+    DP_OFFLINE_UPGRADE_MODE \
+    STELLAR_OFFLINE_FORCE_SEMANTIC_GATE_FAIL \
+    STELLAR_OFFLINE_FORCE_DRO_PRE_TRANSITION_FAIL \
+    STELLAR_OFFLINE_SMOKE_STOP_BEFORE_DRO \
+    DP_OFFLINE_FAKE_PYTHON2_CLASS \
+    DP_OFFLINE_FAKE_PYTHON2_PACKAGES \
+    DP_OFFLINE_FAKE_PYTHON2_RDEPENDS \
+    DP_OFFLINE_FAKE_PYTHON2_NO_CANDIDATE \
+    DP_OFFLINE_FAKE_PYTHON2_PRODUCT_REMOVE \
+    DP_OFFLINE_FAKE_PYTHON2_SIM_PLAN \
+    DP_OFFLINE_FAKE_LXD_CLASS \
+    DP_OFFLINE_FAKE_LXD_CONTAINERS \
+    DP_OFFLINE_FAKE_LXD_IMAGES \
+    DP_OFFLINE_FAKE_LXD_STORAGE \
+    DP_OFFLINE_FAKE_LXD_WAITREADY \
+    DP_OFFLINE_FAKE_LXD_TIMEOUT \
+    DP_OFFLINE_FAKE_LXD_JSON_PARSE \
+    DP_OFFLINE_FAKE_LXD_REMOVAL_SIM \
+    DP_OFFLINE_FAKE_LXD_NETWORK_RISK \
+    DP_OFFLINE_FAKE_LXD_TARGET_SELECTED \
+    DP_OFFLINE_FAKE_LXD_DO_REMOVE \
+    STELLAR_OFFLINE_FAKE_NTP_UID_PROCS \
+    STELLAR_OFFLINE_FAKE_NTP_UID_PROCS_AFTER_STOP \
+    STELLAR_OFFLINE_FAKE_LEGACY_NTP_PACKAGE \
+    STELLAR_OFFLINE_FAKE_NTPSEC_PACKAGE \
+    STELLAR_OFFLINE_FAKE_LEGACY_NTP_UNIT_FRAGMENT \
+    STELLAR_OFFLINE_FAKE_LEGACY_NTP_UNIT_OWNED \
+    STELLAR_OFFLINE_FAKE_LEGACY_NTP_ACTIVE \
+    STELLAR_OFFLINE_FAKE_DEFAULT_ROUTE \
+    STELLAR_OFFLINE_FAKE_SYSTEMCTL_STOP \
+    DP_OFFLINE_FAKE_LXD_WAITREADY_DELAY_SECS \
+    DP_OFFLINE_FAKE_LXD_TIMEOUT_ONCE \
+    DP_OFFLINE_FAKE_LXD_JSON_PARSE_FAIL
+}
+
+# Resolve TEST_ROOT only under hermetic fixtures.
+dp_offline_resolve_test_root() {
+  if dp_offline_hermetic_fixtures_enabled; then
+    printf '%s' "${DP_OFFLINE_TEST_ROOT:-}"
+  else
+    printf '%s' ""
+  fi
+}
+
+# Resolve SYSTEMCTL_BIN: production always uses systemctl; fixture override
+# requires hermetic mode.
+dp_offline_resolve_systemctl_bin() {
+  if dp_offline_hermetic_fixtures_enabled; then
+    printf '%s' "${SYSTEMCTL_BIN:-systemctl}"
+  else
+    printf '%s' "systemctl"
+  fi
+}
+
+# Fail closed in production when any Category-C fixture control is present, or
+# when SYSTEMCTL_BIN is overridden away from the default binary name.
+dp_offline_enforce_production_fixture_policy() {
+  if dp_offline_hermetic_test_mode; then
+    return 0
+  fi
+
+  local var val bad=""
+  while IFS= read -r var; do
+    [[ -n "$var" ]] || continue
+    # Bash 4.3-safe indirect expansion.
+    eval "val=\${${var}-}"
+    if [[ -n "$val" ]]; then
+      bad="${bad}${bad:+ }${var}"
+    fi
+  done < <(dp_offline_category_c_fixture_vars)
+
+  if [[ -n "${SYSTEMCTL_BIN:-}" && "${SYSTEMCTL_BIN}" != "systemctl" ]]; then
+    bad="${bad}${bad:+ }SYSTEMCTL_BIN"
+  fi
+
+  if [[ -n "$bad" ]]; then
+    printf 'ERROR: FIXTURE_ESCAPE_PRODUCTION_FORBIDDEN vars=%s (require MM_HERMETIC_TEST_MODE=1)\n' "$bad" >&2
+    return 1
+  fi
+
+  SYSTEMCTL_BIN="systemctl"
+  return 0
+}
+
 #!/usr/bin/env bash
 # Shared postboot DNS resolver repair and local-clock readiness policy.
 # This file is inlined by build_client_jammy_to_noble.py into the generated
@@ -12256,6 +12385,9 @@ CURL_BIN="${CURL_BIN:-curl}"
 NTPQ_BIN="${NTPQ_BIN:-ntpq}"
 NTPWAIT_BIN="${NTPWAIT_BIN:-ntpwait}"
 TIMEDATECTL_BIN="${TIMEDATECTL_BIN:-timedatectl}"
+# Bound every ntpq probe; unbounded ntpq can hang postboot indefinitely (field).
+NTPQ_PROBE_TIMEOUT_SECONDS="${NTPQ_PROBE_TIMEOUT_SECONDS:-20}"
+NTPQ_PROBE_OUTPUT=""
 
 postboot_policy_log() {
   local level="$1"; shift
@@ -12689,6 +12821,59 @@ run_ntpwait_probe() {
   fi
 }
 
+# Run one ntpq invocation under a hard wall-clock bound.
+# Sets NTPQ_PROBE_OUTPUT on success. On timeout logs NTPQ_PROBE_TIMEOUT=YES and
+# leaves NTPQ_PROBE_OUTPUT empty (never treat timed-out output as sync proof).
+run_ntpq_probe() {
+  local probe="${1:-}"
+  shift || true
+  local timeout_secs="${NTPQ_PROBE_TIMEOUT_SECONDS:-20}"
+  local out="" rc=0 pid waited=0
+  NTPQ_PROBE_OUTPUT=""
+  [[ -n "$probe" ]] || return 1
+  command -v "$NTPQ_BIN" >/dev/null 2>&1 || return 1
+  if ! is_positive_integer "$timeout_secs"; then
+    timeout_secs=20
+  fi
+
+  if command -v timeout >/dev/null 2>&1; then
+    out="$(timeout "$timeout_secs" "$NTPQ_BIN" "$@" 2>/dev/null)" || rc=$?
+    if [[ "$rc" -eq 124 ]]; then
+      postboot_policy_log WARN "NTPQ_PROBE_TIMEOUT=YES probe=${probe}"
+      return 1
+    fi
+    [[ "$rc" -eq 0 ]] || return 1
+    NTPQ_PROBE_OUTPUT="$out"
+    return 0
+  fi
+
+  # Portable fallback when coreutils timeout(1) is unavailable.
+  local out_file
+  out_file="$(mktemp "${TMPDIR:-/tmp}/ntpq-probe.XXXXXX")" || return 1
+  "$NTPQ_BIN" "$@" >"$out_file" 2>/dev/null &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    if ((waited >= timeout_secs)); then
+      kill -TERM "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      rm -f "$out_file"
+      postboot_policy_log WARN "NTPQ_PROBE_TIMEOUT=YES probe=${probe}"
+      return 1
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  wait "$pid" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    rm -f "$out_file"
+    return 1
+  fi
+  out="$(cat "$out_file" 2>/dev/null || true)"
+  rm -f "$out_file"
+  NTPQ_PROBE_OUTPUT="$out"
+  return 0
+}
+
 check_time_readiness() {
   local ntpq_text="" rv_text="" td="" ref="" skew="" ref_peer=""
   TIME_READINESS="FAIL_TIME_UNVERIFIABLE"
@@ -12705,8 +12890,19 @@ check_time_readiness() {
   fi
 
   if command -v "$NTPQ_BIN" >/dev/null 2>&1; then
-    ntpq_text="$("$NTPQ_BIN" -pn 2>/dev/null || "$NTPQ_BIN" -p 2>/dev/null || true)"
-    rv_text="$("$NTPQ_BIN" rv 2>/dev/null || true)"
+    # Every ntpq form is bounded. If -pn times out/fails, -p is still bounded.
+    if run_ntpq_probe pn -pn; then
+      ntpq_text="$NTPQ_PROBE_OUTPUT"
+    elif run_ntpq_probe p -p; then
+      ntpq_text="$NTPQ_PROBE_OUTPUT"
+    else
+      ntpq_text=""
+    fi
+    if run_ntpq_probe rv rv; then
+      rv_text="$NTPQ_PROBE_OUTPUT"
+    else
+      rv_text=""
+    fi
   fi
   NTP_SELECTED_PEER="$(selected_ntp_peer_from_text "$ntpq_text")"
   [[ -n "$NTP_SELECTED_PEER" ]] || NTP_SELECTED_PEER="NONE"
