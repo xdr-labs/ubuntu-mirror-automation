@@ -925,6 +925,11 @@ EOF
 }
 
 gui_verify_readiness() {
+  # Menu 4 is artifact/network readiness only (HTTP layout + published client
+  # generation binding). It intentionally does NOT generate or dry-validate
+  # Menu 7 operator commands — those require topology/worker credentials and
+  # remain Menu 7-only. UPGRADE_READINESS=PASS can therefore coexist with a
+  # later Menu 7 generation failure (invalid worker config, command grammar).
   load_mirror_defaults
   mm_load_gui_config
   engine_resolve_paths
@@ -1370,6 +1375,19 @@ gui_build_client_commands() {
     if [[ -z "$dl_worker_ips" && -z "$da_worker_ips" ]]; then
       echo "CLUSTER_WORKER_IPS_REQUIRED=YES" >&2
       return 1
+    fi
+    # Fail closed on malformed worker IP lists even when callers bypass Menu 7.
+    if [[ -n "$dl_worker_ips" ]]; then
+      dl_worker_ips="$(mm_validate_worker_ips "$dl_worker_ips")" || {
+        echo "DL_WORKER_IPS_INVALID=YES" >&2
+        return 1
+      }
+    fi
+    if [[ -n "$da_worker_ips" ]]; then
+      da_worker_ips="$(mm_validate_worker_ips "$da_worker_ips")" || {
+        echo "DA_WORKER_IPS_INVALID=YES" >&2
+        return 1
+      }
     fi
     # Password must be configured in Mirror Manager, but is never written into
     # the published command file (runtime prompt instead).
@@ -1855,6 +1873,8 @@ New commands will be generated for: $(mm_preparation_mode_label)"
   gui_build_client_commands "$mirror" "$topology" "$dl_worker_ips" "$da_worker_ips" "${WORKER_SSH_PASSWORD:-}" >"$tmp"
   ready_gen="$(mm_wf_get READINESS_VERIFIED_GENERATION_ID)"
   if ! mm_wf_atomic_publish_command_file "$tmp" "$out_file" "${PREPARATION_MODE}" "$ready_gen"; then
+    # Candidate never replaces live; delete after validation evidence is logged.
+    rm -f "$tmp"
     mm_whiptail_msg "DP Client Upgrade Commands" \
       "COMMAND_FILE_BUILD=FAIL
 
@@ -1862,9 +1882,9 @@ Generated command content failed validation.
 The previous live command file (if any) was preserved.
 
 Required action: Regenerate Full-mode artifacts / Verify Upgrade Readiness"
-    rm -f "$tmp"
     return 0
   fi
+  # Successful publish moves tmp into place; rm is a no-op if already gone.
   rm -f "$tmp"
   # Show the full step list in one scrollable viewer — no secondary menu,
   # no less pager, no terminal reprint after GUI close.

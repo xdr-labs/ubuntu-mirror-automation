@@ -66,16 +66,16 @@ Verify Upgrade Readiness (Menu 4)
 Menu 7 — DP Client Upgrade Commands
   └─ install-dp-upgrade-mirror.sh generate path
        ├─ mirror_workflow_state.sh generation gates
-       ├─ LAUNCHER_V1 one-line hash-pinned launcher commands
-       ├─ SUBSHELL_V2 three-line Phase 2 stage block
-       └─ published dp-launch-<hop>.sh (+ .sha256 for client-set validation)
+       ├─ WRAPPER_V1 one-line hash-pinned upgrade-<hop>.sh commands
+       ├─ WRAPPER_V1 one-line upgrade-phase2.sh stage (inner SUBSHELL_V2)
+       └─ published upgrade-<hop>.sh / dp-launch-<hop>.sh (+ .sha256 for client-set)
 
 DP execution (off Mirror Server)
-  └─ Step 2 one-line launcher command
-       ├─ curl launcher → `.download`
+  └─ Step 2 one-line wrapper command
+       ├─ curl upgrade-<hop>.sh → `.download`
        ├─ literal SHA256 pin (operator trust anchor; not HTTP sidecar)
-       ├─ bash ./dp-launch-<hop>.sh
-       └─ launcher authenticates existing runner
+       ├─ bash ./upgrade-<hop>.sh
+       └─ wrapper authenticates existing launcher/runner
             ├─ isolated temp workdir + ephemeral GNUPGHOME
             ├─ gpgv + EXPECTED_FPR pin
             ├─ runner-manifest / hop script SHA bindings
@@ -126,7 +126,8 @@ selective tree under `SELECTIVE_ROOT`, local signing keypair.
 |------|------|
 | `client/dp-client-hop-launcher.sh.in` | Authoritative OS-hop launcher template |
 | `scripts/lib/build_client_launchers.py` | Deterministic generator for four hop launchers |
-| `client/dp-launch-<hop>.sh` (published) | Hash-pinned Menu 7 operator entrypoint |
+| `client/dp-launch-<hop>.sh` (published) | Inner hop launcher (verified by WRAPPER_V1 `upgrade-<hop>.sh`) |
+| `client/upgrade-<hop>.sh` (published) | Hash-pinned Menu 7 operator entrypoint (WRAPPER_V1) |
 | `client/dp-client-command-runner.sh` | Verified command execution wrapper |
 | `scripts/install-dp-upgrade-mirror.sh` | Menu 7 command file generator |
 | `scripts/lib/mirror_workflow_state.sh` | Generation-bound workflow KV store |
@@ -329,12 +330,13 @@ See [CLEAN_SNAPSHOT_RETEST.md](CLEAN_SNAPSHOT_RETEST.md):
 
 ## Security contracts (unchanged)
 
-- Menu 7 OS-hop commands are `LAUNCHER_V1` one-liners with a literal launcher SHA256
+- Menu 7 OS-hop commands are `WRAPPER_V1` one-liners with a literal wrapper SHA256
   embedded in the copied command. The HTTP `.sha256` sidecar is **not** the operator
   trust anchor.
-- The launcher authenticates the existing runner (`EXPECTED_FPR`, `gpgv`, runner SHA).
+- The wrapper authenticates the existing launcher/runner (`EXPECTED_FPR`, `gpgv`, runner SHA).
 - The runner authenticates and executes the unchanged OS-hop client.
-- Phase 2 staging remains `SUBSHELL_V2` three-line command blocks.
+- Phase 2 staging uses a `WRAPPER_V1` `upgrade-phase2.sh` one-liner; inner helper
+  bootstrap remains `SUBSHELL_V2` inside the published wrapper.
 - Private signing key never published under HTTP client root.
 - Fail-closed APT authentication (exit 18) for mirror problems; exit 29 for real
   in-flight OS transition evidence.

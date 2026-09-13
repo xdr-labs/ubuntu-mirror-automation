@@ -174,7 +174,8 @@ python3 "$RUNTIME/scripts/lib/build_client_launchers.py" \
   --mirror-base-url "$MIRROR_HTTP_URL" \
   --signing-fingerprint "$FPR" \
   --expected-keyring-sha256 "$STAGE_KR_SHA" >/dev/null
-expect "launchers staged" test -f "$STAGE/dp-launch-xenial-to-bionic.sh"
+expect "wrappers and launchers staged" \
+  test -f "$STAGE/upgrade-xenial-to-bionic.sh" -a -f "$STAGE/dp-launch-xenial-to-bionic.sh"
 CLIENT_GEN="client-fixture-1"
 mm_wf_write_client_set_metadata "$STAGE" "$CLIENT_GEN" "$FPR" \
   "$MIRROR_HTTP_URL" FULL
@@ -265,7 +266,7 @@ python3 "$RUNTIME/scripts/lib/build_client_launchers.py" \
   --mirror-base-url "$LOCAL_MIRROR" \
   --signing-fingerprint "$FPR" \
   --expected-keyring-sha256 "$LIVE_KR_SHA" >/dev/null
-STEP2_SHA=$(sha256sum "$MM_CLIENT_ROOT/dp-launch-xenial-to-bionic.sh" | awk '{print $1}')
+STEP2_SHA=$(sha256sum "$MM_CLIENT_ROOT/upgrade-xenial-to-bionic.sh" | awk '{print $1}')
 STEP2=$(gui_client_hop_command_line "$LOCAL_MIRROR" \
   dp-offline-upgrade-xenial-to-bionic.sh "$STEP2_SHA")
 expect "Step 2 generator emits one line" test "$(printf '%s\n' "$STEP2" | wc -l)" = 1
@@ -292,11 +293,11 @@ BAD_STEP2=$(gui_client_hop_command_line "$LOCAL_MIRROR" \
   dp-offline-upgrade-xenial-to-bionic.sh "$(printf '%064d' 1)")
 printf '%s\n' "$BAD_STEP2" | rewrite_command >"$TMP/bad-fpr.sh"
 if env PATH="$STUB_BIN:/usr/bin:/bin" bash "$TMP/bad-fpr.sh" >/dev/null 2>&1; then
-  fail "wrong launcher SHA unexpectedly succeeded"
+  fail "wrong wrapper SHA unexpectedly succeeded"
 else
-  pass "wrong launcher SHA rejected"
+  pass "wrong wrapper SHA rejected"
 fi
-expect "wrong launcher SHA causes zero executions" test "$(wc -l <"$RUNS")" = 0
+expect "wrong wrapper SHA causes zero executions" test "$(wc -l <"$RUNS")" = 0
 
 # Stale config identity blocks Menu 7 preflight.
 printf '\nACPS_USERNAME=changed-fixture\n' >>"$MM_CONFIG_FILE"

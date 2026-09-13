@@ -1310,6 +1310,21 @@ mm_wf_count_bringup_executable_invocations() {
   grep -cE "$(mm_wf_bringup_executable_line_regex)" "$file" || true
 }
 
+# Emit fail-closed Menu 7 validation evidence with a stable primary reason.
+# Extra args are additional evidence lines (KEY=VALUE), not free-form prose.
+mm_wf_command_file_fail() {
+  local reason="$1"
+  shift || true
+  printf 'COMMAND_FILE_BUILD=FAIL\n'
+  printf 'COMMAND_FILE_FAILURE_REASON=%s\n' "$reason"
+  local line
+  for line in "$@"; do
+    [[ -n "$line" ]] || continue
+    printf '%s\n' "$line"
+  done
+  return 1
+}
+
 # Validate the upgrade-phase2.sh WRAPPER_V1 one-liner.
 mm_wf_validate_phase2_wrapper_at() {
   local file="$1" expected_mirror="${2:-}"
@@ -1475,15 +1490,14 @@ mm_wf_validate_command_file_content() {
   local mirror_url="${MIRROR_HTTP_URL:-}"
 
   if [[ ! -f "$file" || ! -s "$file" ]]; then
-    printf 'COMMAND_FILE_BUILD=FAIL\n'
-    printf 'COMMAND_FILE_EMPTY=YES\n'
+    mm_wf_command_file_fail EMPTY "COMMAND_FILE_EMPTY=YES"
     return 1
   fi
 
   if ! grep -qE '^DP_COMMAND_BLOCK_VERSION=SUBSHELL_V2$' "$file"; then
-    printf 'COMMAND_FILE_BUILD=FAIL\n'
-    printf 'COMMAND_FILE_BLOCK_VERSION=FAIL\n'
-    printf 'COMMAND_FILE_LEGACY_NON_SUBSHELL=YES\n'
+    mm_wf_command_file_fail BLOCK_VERSION \
+      "COMMAND_FILE_BLOCK_VERSION=FAIL" \
+      "COMMAND_FILE_LEGACY_NON_SUBSHELL=YES"
     return 1
   fi
   printf 'DP_COMMAND_BLOCK_VERSION=SUBSHELL_V2\n'
@@ -1531,13 +1545,11 @@ mm_wf_validate_command_file_content() {
   printf 'COMMAND_FILE_MAX_PHYSICAL_LINE_LENGTH=%s\n' "$max_phys"
 
   if grep -qE 'curl[^|;]*\|[[:space:]]*(bash|sh)([[:space:]]|$)' "$file"; then
-    printf 'COMMAND_FILE_BUILD=FAIL\n'
-    printf 'COMMAND_FILE_CURL_PIPE_BASH=YES\n'
+    mm_wf_command_file_fail CURL_PIPE_BASH "COMMAND_FILE_CURL_PIPE_BASH=YES"
     return 1
   fi
   if grep -qE 'BASH_SUBSHELL|DP_COMMAND_SUBSHELL_REQUIRED=YES|for F in' "$file"; then
-    printf 'COMMAND_FILE_BUILD=FAIL\n'
-    printf 'COMMAND_FILE_PHASE2_LEGACY_SUBSHELL=YES\n'
+    mm_wf_command_file_fail PHASE2_LEGACY_SUBSHELL "COMMAND_FILE_PHASE2_LEGACY_SUBSHELL=YES"
     return 1
   fi
 
@@ -1550,7 +1562,7 @@ mm_wf_validate_command_file_content() {
       fi
       printf 'DP_OS_HOP_COMMAND_VERSION=WRAPPER_V1\n'
       for n in 0 1 2 3 4 5 6 7 8 9; do
-        if ! grep -qE "STEP ${n} —|Step ${n} —" "$file"; then
+        if ! grep -qE "^STEP ${n} —|^Step ${n} —" "$file"; then
           printf 'COMMAND_FILE_BUILD=FAIL\n'
           printf 'COMMAND_FILE_MISSING_STEP=%s\n' "$n"
           return 1
@@ -1573,31 +1585,30 @@ mm_wf_validate_command_file_content() {
         return 1
       }
       [[ "$stage_count" -eq 1 ]] || {
-        printf 'COMMAND_FILE_BUILD=FAIL\n'
-        printf 'COMMAND_FILE_PHASE2_STAGE_COUNT=%s\n' "$stage_count"
+        mm_wf_command_file_fail PHASE2_STAGE_COUNT \
+          "COMMAND_FILE_PHASE2_STAGE_COUNT=${stage_count}"
         return 1
       }
-      # Single topology: exactly one STEP 7 bringup. Cluster (7A/7B): one or two.
-      local bringup_min=1 bringup_max=1
-      if grep -qE '^STEP 7A —|^STEP 3A —' "$file"; then
-        bringup_max=2
+      # Single topology: exactly one STEP 7 bringup.
+      # Cluster: exactly one executable per configured master section
+      # ("Run this command on the DL/DA MASTER ONLY"), not merely 1..2.
+      local bringup_min=1 bringup_max=1 configured_masters=0
+      configured_masters="$(grep -cE '^Run this command on the (DL|DA) MASTER ONLY\.$' "$file" || true)"
+      if [[ "$configured_masters" -ge 1 ]]; then
+        bringup_min="$configured_masters"
+        bringup_max="$configured_masters"
       fi
       if [[ "$bringup_executable_count" -lt "$bringup_min" \
         || "$bringup_executable_count" -gt "$bringup_max" ]]; then
-        printf 'COMMAND_FILE_BUILD=FAIL\n'
-        printf 'COMMAND_FILE_BRINGUP_EXECUTABLE_COUNT=%s\n' "$bringup_executable_count"
-        printf 'COMMAND_FILE_BRINGUP_EXECUTABLE_VALIDATION=FAIL\n'
+        mm_wf_command_file_fail BRINGUP_EXECUTABLE_COUNT \
+          "COMMAND_FILE_BRINGUP_EXECUTABLE_COUNT=${bringup_executable_count}" \
+          "COMMAND_FILE_BRINGUP_EXECUTABLE_VALIDATION=FAIL"
         return 1
       fi
-      # Bringup still uses sudo bash; OS-hop/Phase2 wrapper operator commands must not.
-      grep -q "sudo bash" "$file" || {
-        printf 'COMMAND_FILE_BUILD=FAIL\n'
-        printf 'COMMAND_FILE_SUDO_BASH=MISSING\n'
-        return 1
-      }
+      # Executable bringup grammar already requires sudo bash; do not accept
+      # arbitrary prose "sudo bash" mentions as a substitute.
       if grep -qE "^\( .*HOP=" "$file"; then
-        printf 'COMMAND_FILE_BUILD=FAIL\n'
-        printf 'COMMAND_FILE_OS_HOP_LEGACY_BLOCK=YES\n'
+        mm_wf_command_file_fail OS_HOP_LEGACY_BLOCK "COMMAND_FILE_OS_HOP_LEGACY_BLOCK=YES"
         return 1
       fi
 
@@ -1605,7 +1616,7 @@ mm_wf_validate_command_file_content() {
       local idx=0 hs
       for hs in "${hop_starts[@]}"; do
         if ! mm_wf_validate_os_hop_launcher_at "$file" "$hs" "${hops[$idx]}" "$mirror_url"; then
-          printf 'COMMAND_FILE_BUILD=FAIL\n'
+          mm_wf_command_file_fail OS_HOP_LAUNCHER_VALIDATION
           return 1
         fi
         idx=$((idx + 1))
@@ -1613,7 +1624,7 @@ mm_wf_validate_command_file_content() {
       printf 'COMMAND_FILE_LAUNCHER_SHA_PINNING=PASS\n'
 
       if ! mm_wf_validate_phase2_wrapper_at "$file" "$mirror_url"; then
-        printf 'COMMAND_FILE_BUILD=FAIL\n'
+        mm_wf_command_file_fail PHASE2_WRAPPER_VALIDATION
         return 1
       fi
 
@@ -1621,10 +1632,10 @@ mm_wf_validate_command_file_content() {
       while IFS= read -r line || [[ -n "$line" ]]; do
         lineno=$((lineno + 1))
         if [[ "$line" =~ \\[[:space:]]*$ ]]; then
-          printf 'COMMAND_FILE_BUILD=FAIL\n'
-          printf 'COMMAND_FILE_CONTINUATION_VALIDATION=FAIL\n'
-          printf 'COMMAND_FILE_ARBITRARY_BACKSLASH=YES\n'
-          printf 'COMMAND_FILE_ARBITRARY_BACKSLASH_LINE=%s\n' "$lineno"
+          mm_wf_command_file_fail CONTINUATION_VALIDATION \
+            "COMMAND_FILE_CONTINUATION_VALIDATION=FAIL" \
+            "COMMAND_FILE_ARBITRARY_BACKSLASH=YES" \
+            "COMMAND_FILE_ARBITRARY_BACKSLASH_LINE=${lineno}"
           return 1
         fi
       done <"$file"
@@ -1632,58 +1643,54 @@ mm_wf_validate_command_file_content() {
       ;;
     PHASE2_ONLY)
       if [[ "$hop_count" -ne 0 || "$legacy_hop_count" -ne 0 ]]; then
-        printf 'COMMAND_FILE_BUILD=FAIL\n'
-        printf 'COMMAND_FILE_OS_HOP_COUNT=%s\n' "$hop_count"
-        printf 'COMMAND_FILE_OS_HOP_LAUNCHER_COUNT=%s\n' "$launcher_count"
+        mm_wf_command_file_fail OS_HOP_COUNT \
+          "COMMAND_FILE_OS_HOP_COUNT=${hop_count}" \
+          "COMMAND_FILE_OS_HOP_LAUNCHER_COUNT=${launcher_count}"
         return 1
       fi
       printf 'COMMAND_FILE_OS_HOP_LAUNCHER_COUNT=0\n'
       printf 'COMMAND_FILE_OS_HOP_LEGACY_BLOCK_COUNT=0\n'
       grep -q 'Required OS: Ubuntu 24.04' "$file" || {
-        printf 'COMMAND_FILE_BUILD=FAIL\n'
-        printf 'COMMAND_FILE_REQUIRED_OS=MISSING\n'
+        mm_wf_command_file_fail REQUIRED_OS "COMMAND_FILE_REQUIRED_OS=MISSING"
         return 1
       }
       [[ "$stage_count" -eq 1 ]] || {
-        printf 'COMMAND_FILE_BUILD=FAIL\n'
-        printf 'COMMAND_FILE_PHASE2_STAGE_COUNT=%s\n' "$stage_count"
+        mm_wf_command_file_fail PHASE2_STAGE_COUNT \
+          "COMMAND_FILE_PHASE2_STAGE_COUNT=${stage_count}"
         return 1
       }
-      # Single topology: exactly one STEP 3 bringup. Cluster (3A/3B): one or two.
-      local bringup_min=1 bringup_max=1
-      if grep -qE '^STEP 7A —|^STEP 3A —' "$file"; then
-        bringup_max=2
+      # Single topology: exactly one STEP 3 bringup.
+      # Cluster: exactly one executable per configured master section.
+      local bringup_min=1 bringup_max=1 configured_masters=0
+      configured_masters="$(grep -cE '^Run this command on the (DL|DA) MASTER ONLY\.$' "$file" || true)"
+      if [[ "$configured_masters" -ge 1 ]]; then
+        bringup_min="$configured_masters"
+        bringup_max="$configured_masters"
       fi
       if [[ "$bringup_executable_count" -lt "$bringup_min" \
         || "$bringup_executable_count" -gt "$bringup_max" ]]; then
-        printf 'COMMAND_FILE_BUILD=FAIL\n'
-        printf 'COMMAND_FILE_BRINGUP_EXECUTABLE_COUNT=%s\n' "$bringup_executable_count"
-        printf 'COMMAND_FILE_BRINGUP_EXECUTABLE_VALIDATION=FAIL\n'
+        mm_wf_command_file_fail BRINGUP_EXECUTABLE_COUNT \
+          "COMMAND_FILE_BRINGUP_EXECUTABLE_COUNT=${bringup_executable_count}" \
+          "COMMAND_FILE_BRINGUP_EXECUTABLE_VALIDATION=FAIL"
         return 1
       fi
-      grep -q "sudo bash" "$file" || {
-        printf 'COMMAND_FILE_BUILD=FAIL\n'
-        printf 'COMMAND_FILE_SUDO_BASH=MISSING\n'
-        return 1
-      }
       max_block_lines=1
       if ! mm_wf_validate_phase2_wrapper_at "$file" "$mirror_url"; then
-        printf 'COMMAND_FILE_BUILD=FAIL\n'
+        mm_wf_command_file_fail PHASE2_WRAPPER_VALIDATION
         return 1
       fi
       lineno=0
       while IFS= read -r line || [[ -n "$line" ]]; do
         lineno=$((lineno + 1))
         if [[ "$line" =~ \\[[:space:]]*$ ]]; then
-          printf 'COMMAND_FILE_BUILD=FAIL\n'
-          printf 'COMMAND_FILE_CONTINUATION_VALIDATION=FAIL\n'
+          mm_wf_command_file_fail CONTINUATION_VALIDATION \
+            "COMMAND_FILE_CONTINUATION_VALIDATION=FAIL"
           return 1
         fi
       done <"$file"
       ;;
     *)
-      printf 'COMMAND_FILE_BUILD=FAIL\n'
-      printf 'COMMAND_FILE_MODE_INVALID=%s\n' "$mode"
+      mm_wf_command_file_fail MODE_INVALID "COMMAND_FILE_MODE_INVALID=${mode}"
       return 1
       ;;
   esac
@@ -1697,11 +1704,28 @@ mm_wf_validate_command_file_content() {
 mm_wf_log_command_file_validation_evidence() {
   # Log structural COMMAND_FILE_*/DP_* evidence keys only (no command body / secrets).
   local evidence_file="$1"
-  local eline
+  local eline reason=""
   [[ -f "$evidence_file" ]] || return 0
   if ! declare -F mm_error >/dev/null 2>&1; then
     return 0
   fi
+  reason="$(awk -F= '$1=="COMMAND_FILE_FAILURE_REASON"{print $2; exit}' "$evidence_file" 2>/dev/null || true)"
+  if [[ -z "$reason" ]]; then
+    if grep -q 'COMMAND_FILE_BRINGUP_EXECUTABLE_VALIDATION=FAIL' "$evidence_file" 2>/dev/null; then
+      reason=BRINGUP_EXECUTABLE_COUNT
+    elif grep -q 'COMMAND_FILE_EMPTY=YES' "$evidence_file" 2>/dev/null; then
+      reason=EMPTY
+    elif grep -q 'COMMAND_FILE_CURL_PIPE_BASH=YES' "$evidence_file" 2>/dev/null; then
+      reason=CURL_PIPE_BASH
+    elif grep -q 'COMMAND_FILE_PHASE2_WRAPPER_VALIDATION=FAIL' "$evidence_file" 2>/dev/null; then
+      reason=PHASE2_WRAPPER_VALIDATION
+    elif grep -q 'COMMAND_FILE_CONTINUATION_VALIDATION=FAIL' "$evidence_file" 2>/dev/null; then
+      reason=CONTINUATION_VALIDATION
+    else
+      reason=VALIDATION_FAIL
+    fi
+  fi
+  mm_error "MENU7_COMMAND_FILE_VALIDATION COMMAND_FILE_FAILURE_REASON=${reason}"
   while IFS= read -r eline || [[ -n "$eline" ]]; do
     case "$eline" in
       COMMAND_FILE_*|DP_*)
@@ -1718,9 +1742,11 @@ mm_wf_atomic_publish_command_file() {
   evidence="$(mktemp)"
   if ! mm_wf_validate_command_file_content "$tmp" "$mode" | tee "$evidence"; then
     printf 'COMMAND_FILE_ATOMIC_PUBLISH=FAIL\n'
-    cat "$evidence"
+    # Re-emit only safe structural evidence (never the candidate command body).
+    grep -E '^(COMMAND_FILE_|DP_)' "$evidence" || true
     mm_wf_log_command_file_validation_evidence "$evidence"
     rm -f "$evidence"
+    # Candidate remains for caller cleanup; never replace live dest.
     return 1
   fi
   sha="$(sha256sum "$tmp" | awk '{print $1}')"
