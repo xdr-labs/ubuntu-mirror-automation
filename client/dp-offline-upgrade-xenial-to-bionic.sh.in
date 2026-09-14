@@ -2347,8 +2347,8 @@ run_os_preflight() {
 
   check_dpkg_health || die "$EC_DPKG" "dpkg/apt health check failed"
 
-  # BIOS/grub-pc: prove install_devices maps to current root parent disk
-  # (reconcile stale EBS/by-id bindings) before confirmation / DRO.
+  # BIOS/grub-pc: read-only inspect/classify of install_devices (no debconf mutation).
+  # Authoritative rebind happens in the runner pre-DRO gate after confirmation.
   if declare -F run_grub_install_device_preflight >/dev/null 2>&1; then
     run_grub_install_device_preflight || die "$EC_PRE_DRO_GATE" "GRUB_INSTALL_DEVICE_PREFLIGHT=FAIL"
   fi
@@ -5931,12 +5931,12 @@ main() {
   LAST_COMMAND="apt-get check"
   run_cmd apt-get check || fail_stage 1 "apt-get check failed on source repository"
 
-  # Fail closed before package transition: stale grub-pc/install_devices must
-  # be reconciled to the current root parent disk (BIOS/grub-pc only).
+  # Fail closed before package transition: authoritative grub-pc/install_devices
+  # reconciliation (transactional) to the current root parent disk (BIOS/grub-pc).
   set_stage "GRUB_INSTALL_DEVICE_PREFLIGHT"
   LAST_COMMAND="validate grub-pc install_devices"
-  if declare -F run_grub_install_device_preflight >/dev/null 2>&1; then
-    if ! run_grub_install_device_preflight; then
+  if declare -F run_grub_install_device_reconcile >/dev/null 2>&1; then
+    if ! run_grub_install_device_reconcile; then
       log ERROR "PACKAGE_TRANSITION_STARTED=NO"
       fail_stage 1 "GRUB_INSTALL_DEVICE_PREFLIGHT=FAIL"
     fi

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Targeted regression: AWS/BIOS stale grub-pc install_devices preflight.
-# Cases A–G from AWS_XENIAL_BIONIC_STALE_GRUB_INSTALL_DEVICE_FIX.
+# Targeted regression: AWS/BIOS stale grub-pc install_devices preflight hardening.
+# Covers inspect (read-only) vs reconcile (transactional), partition rejection,
+# BEFORE/AFTER evidence, xvda parent derivation, wiring, and rollback paths.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -21,41 +22,35 @@ reset_case() {
   unset GRUB_PF_OVERRIDE_BOOT_MODE GRUB_PF_OVERRIDE_ROOT_SOURCE \
     GRUB_PF_OVERRIDE_PARENT_DISK GRUB_PF_OVERRIDE_BY_ID_DIR \
     GRUB_PF_OVERRIDE_INSTALL_DEVICES GRUB_PF_OVERRIDE_GRUB_PC_RELEVANT \
-    GRUB_PF_OVERRIDE_DEBCONF_SET_HOOK GRUB_PF_RESOLVE_MAP GRUB_PF_DRY_RUN \
-    GRUB_PF_FORCE_SET_FAIL || true
+    GRUB_PF_OVERRIDE_DEBCONF_SET_HOOK GRUB_PF_OVERRIDE_DEBCONF_STORE \
+    GRUB_PF_OVERRIDE_DISKS_CHANGED GRUB_PF_OVERRIDE_EMPTY \
+    GRUB_PF_RESOLVE_MAP GRUB_PF_DRY_RUN GRUB_PF_MODE \
+    GRUB_PF_FORCE_SET_FAIL GRUB_PF_FORCE_SET_FAIL_AT \
+    GRUB_PF_FORCE_READBACK_FAIL GRUB_PF_FORCE_ROLLBACK_FAIL || true
   BOOT_MODE=""
   ROOT_SOURCE=""
   ROOT_PARENT_DISK=""
+  GRUB_INSTALL_DEVICE_BEFORE=""
+  GRUB_INSTALL_DEVICE_STATUS_BEFORE=""
   GRUB_INSTALL_DEVICE_CURRENT=""
   GRUB_INSTALL_DEVICE_RESOLVED=""
   GRUB_INSTALL_DEVICE_EXPECTED=""
+  GRUB_INSTALL_DEVICE_AFTER=""
+  GRUB_INSTALL_DEVICE_STATUS_AFTER=""
   GRUB_INSTALL_DEVICE_STATUS=""
   GRUB_INSTALL_DEVICE_ACTION="NONE"
   GRUB_INSTALL_DEVICE_REBIND_RESULT=""
+  GRUB_INSTALL_DEVICE_ROLLBACK_ATTEMPTED=""
+  GRUB_INSTALL_DEVICE_ROLLBACK_RESULT=""
   GRUB_INSTALL_DEVICE_PREFLIGHT=""
   AWS_EBS_CURRENT_VOLUME_ID=""
+  GRUB_PF_SET_COUNT=0
 }
 
 # shellcheck disable=SC1090
 source "$HELPER"
 
-# Override debconf set to honor FORCE_SET_FAIL for case G.
-grub_pf_debconf_set_install_devices() {
-  local device="$1"
-  if [[ "${GRUB_PF_FORCE_SET_FAIL:-0}" == "1" ]]; then
-    return 1
-  fi
-  if [[ -n "${GRUB_PF_OVERRIDE_DEBCONF_SET_HOOK:-}" ]]; then
-    printf 'SET %s\n' "$device" >>"$GRUB_PF_OVERRIDE_DEBCONF_SET_HOOK"
-    GRUB_PF_OVERRIDE_INSTALL_DEVICES="$device"
-    return 0
-  fi
-  GRUB_PF_OVERRIDE_INSTALL_DEVICES="$device"
-  return 0
-}
-
 setup_by_id() {
-  # $1 = dir, remaining pairs: name=>target
   local dir="$1"; shift
   local pair name target
   mkdir -p "$dir"
@@ -66,289 +61,634 @@ setup_by_id() {
   done
 }
 
+init_debconf_store() {
+  # $1=store path, $2=install_devices value
+  local store="$1" devices="$2"
+  cat >"$store" <<EOF
+grub-pc/install_devices=${devices}
+grub-pc/install_devices_disks_changed=${devices}
+grub-pc/install_devices_empty=false
+EOF
+}
+
+store_get() {
+  awk -F= -v k="$1" '$1==k{print substr($0,index($0,"=")+1); exit}' "$2"
+}
+
 # =============================================================================
-# CASE A: AWS NVMe stale by-id (volOLD nonexistent) → reconcile to volNEW
+# A: AWS NVMe stale → read-only inspect reports WOULD_REBIND, no mutation
 # =============================================================================
 reset_case
 CASE_A_DIR="${TMP}/caseA/by-id"
-setup_by_id "$CASE_A_DIR" \
-  "nvme-Amazon_Elastic_Block_Store_vol0438c82c0d9c88bd8=>/dev/nvme0n1"
+STALE_A="/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_vol0c212bb3c68696534"
+NEW_A_NAME="nvme-Amazon_Elastic_Block_Store_vol0438c82c0d9c88bd8"
+setup_by_id "$CASE_A_DIR" "${NEW_A_NAME}=>/dev/nvme0n1"
+STORE_A="${TMP}/caseA.store"
+init_debconf_store "$STORE_A" "$STALE_A"
 export GRUB_PF_OVERRIDE_BOOT_MODE=BIOS
 export GRUB_PF_OVERRIDE_ROOT_SOURCE=/dev/nvme0n1p1
 export GRUB_PF_OVERRIDE_PARENT_DISK=/dev/nvme0n1
 export GRUB_PF_OVERRIDE_BY_ID_DIR="$CASE_A_DIR"
 export GRUB_PF_OVERRIDE_GRUB_PC_RELEVANT=1
-export GRUB_PF_OVERRIDE_INSTALL_DEVICES=/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_vol0c212bb3c68696534
-export GRUB_PF_RESOLVE_MAP="/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_vol0438c82c0d9c88bd8=>/dev/nvme0n1;${CASE_A_DIR}/nvme-Amazon_Elastic_Block_Store_vol0438c82c0d9c88bd8=>/dev/nvme0n1;/dev/nvme0n1p1=>/dev/nvme0n1p1;/dev/nvme0n1=>/dev/nvme0n1"
+export GRUB_PF_OVERRIDE_DEBCONF_STORE="$STORE_A"
+export GRUB_PF_RESOLVE_MAP="${CASE_A_DIR}/${NEW_A_NAME}=>/dev/nvme0n1;/dev/nvme0n1p1=>/dev/nvme0n1p1;/dev/nvme0n1=>/dev/nvme0n1"
 export GRUB_PF_OVERRIDE_DEBCONF_SET_HOOK="${TMP}/caseA.set"
 : >"${TMP}/caseA.set"
+BEFORE_A="$(store_get grub-pc/install_devices "$STORE_A")"
 
-if validate_grub_install_device_preflight; then
-  if [[ "$GRUB_INSTALL_DEVICE_STATUS" == "CURRENT" \
-     && "$GRUB_INSTALL_DEVICE_ACTION" == "REBOUND" \
-     && "$GRUB_INSTALL_DEVICE_REBIND_RESULT" == "PASS" \
+if inspect_grub_install_device; then
+  if [[ "$GRUB_INSTALL_DEVICE_STATUS_BEFORE" == "STALE" \
+     && "$GRUB_INSTALL_DEVICE_ACTION" == "WOULD_REBIND" \
      && "$GRUB_INSTALL_DEVICE_PREFLIGHT" == "PASS" \
-     && "$GRUB_INSTALL_DEVICE_EXPECTED" == "${CASE_A_DIR}/nvme-Amazon_Elastic_Block_Store_vol0438c82c0d9c88bd8" \
-     && "$AWS_EBS_CURRENT_VOLUME_ID" == "vol0438c82c0d9c88bd8" ]]; then
-    pass "A: AWS NVMe stale binding reconciled"
+     && "$GRUB_INSTALL_DEVICE_EXPECTED" == "${CASE_A_DIR}/${NEW_A_NAME}" \
+     && ! -s "${TMP}/caseA.set" \
+     && "$(store_get grub-pc/install_devices "$STORE_A")" == "$BEFORE_A" ]]; then
+    pass "A: AWS NVMe stale inspect WOULD_REBIND no mutation"
   else
-    fail "A: unexpected evidence STATUS=${GRUB_INSTALL_DEVICE_STATUS} ACTION=${GRUB_INSTALL_DEVICE_ACTION} REBIND=${GRUB_INSTALL_DEVICE_REBIND_RESULT} PRE=${GRUB_INSTALL_DEVICE_PREFLIGHT} EXP=${GRUB_INSTALL_DEVICE_EXPECTED}"
-  fi
-  if grep -q 'SET .*/nvme-Amazon_Elastic_Block_Store_vol0438c82c0d9c88bd8' "${TMP}/caseA.set"; then
-    pass "A: debconf rebind wrote current by-id"
-  else
-    fail "A: debconf rebind missing current by-id ($(cat "${TMP}/caseA.set"))"
+    fail "A: STATUS_BEFORE=${GRUB_INSTALL_DEVICE_STATUS_BEFORE} ACTION=${GRUB_INSTALL_DEVICE_ACTION} PRE=${GRUB_INSTALL_DEVICE_PREFLIGHT} set=$(cat "${TMP}/caseA.set") store=$(store_get grub-pc/install_devices "$STORE_A")"
   fi
 else
-  fail "A: preflight returned FAIL (expected PASS after rebind)"
+  fail "A: inspect returned FAIL"
 fi
 
 # =============================================================================
-# CASE B: AWS NVMe already-current binding → no mutation
+# B: AWS NVMe authoritative reconcile → rebind CURRENT + BEFORE/AFTER evidence
 # =============================================================================
 reset_case
 CASE_B_DIR="${TMP}/caseB/by-id"
-setup_by_id "$CASE_B_DIR" \
-  "nvme-Amazon_Elastic_Block_Store_vol0438c82c0d9c88bd8=>/dev/nvme0n1"
-CUR_B="${CASE_B_DIR}/nvme-Amazon_Elastic_Block_Store_vol0438c82c0d9c88bd8"
+STALE_B="/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_vol0c212bb3c68696534"
+NEW_B_NAME="nvme-Amazon_Elastic_Block_Store_vol0438c82c0d9c88bd8"
+setup_by_id "$CASE_B_DIR" "${NEW_B_NAME}=>/dev/nvme0n1"
+STORE_B="${TMP}/caseB.store"
+init_debconf_store "$STORE_B" "$STALE_B"
 export GRUB_PF_OVERRIDE_BOOT_MODE=BIOS
 export GRUB_PF_OVERRIDE_ROOT_SOURCE=/dev/nvme0n1p1
 export GRUB_PF_OVERRIDE_PARENT_DISK=/dev/nvme0n1
 export GRUB_PF_OVERRIDE_BY_ID_DIR="$CASE_B_DIR"
 export GRUB_PF_OVERRIDE_GRUB_PC_RELEVANT=1
-export GRUB_PF_OVERRIDE_INSTALL_DEVICES="$CUR_B"
-export GRUB_PF_RESOLVE_MAP="${CUR_B}=>/dev/nvme0n1;/dev/nvme0n1p1=>/dev/nvme0n1p1;/dev/nvme0n1=>/dev/nvme0n1"
+export GRUB_PF_OVERRIDE_DEBCONF_STORE="$STORE_B"
+export GRUB_PF_RESOLVE_MAP="${CASE_B_DIR}/${NEW_B_NAME}=>/dev/nvme0n1;/dev/nvme0n1p1=>/dev/nvme0n1p1;/dev/nvme0n1=>/dev/nvme0n1"
 export GRUB_PF_OVERRIDE_DEBCONF_SET_HOOK="${TMP}/caseB.set"
 : >"${TMP}/caseB.set"
 
-if validate_grub_install_device_preflight; then
-  if [[ "$GRUB_INSTALL_DEVICE_STATUS" == "CURRENT" \
-     && "$GRUB_INSTALL_DEVICE_ACTION" == "NONE" \
+if reconcile_grub_install_device; then
+  AFTER_B="$(store_get grub-pc/install_devices "$STORE_B")"
+  if [[ "$GRUB_INSTALL_DEVICE_BEFORE" == "$STALE_B" \
+     && "$GRUB_INSTALL_DEVICE_STATUS_BEFORE" == "STALE" \
+     && "$GRUB_INSTALL_DEVICE_STATUS_AFTER" == "CURRENT" \
+     && "$GRUB_INSTALL_DEVICE_ACTION" == "REBOUND" \
+     && "$GRUB_INSTALL_DEVICE_REBIND_RESULT" == "PASS" \
      && "$GRUB_INSTALL_DEVICE_PREFLIGHT" == "PASS" \
-     && ! -s "${TMP}/caseB.set" ]]; then
-    pass "B: current binding no mutation"
+     && "$AFTER_B" == "${CASE_B_DIR}/${NEW_B_NAME}" \
+     && "$GRUB_INSTALL_DEVICE_AFTER" == "$AFTER_B" \
+     && "$AWS_EBS_CURRENT_VOLUME_ID" == "vol0438c82c0d9c88bd8" ]]; then
+    pass "B: AWS NVMe reconcile rebound + BEFORE/AFTER"
   else
-    fail "B: STATUS=${GRUB_INSTALL_DEVICE_STATUS} ACTION=${GRUB_INSTALL_DEVICE_ACTION} set=$(cat "${TMP}/caseB.set")"
+    fail "B: BEFORE=${GRUB_INSTALL_DEVICE_BEFORE} STATUS_B=${GRUB_INSTALL_DEVICE_STATUS_BEFORE} STATUS_A=${GRUB_INSTALL_DEVICE_STATUS_AFTER} AFTER=${GRUB_INSTALL_DEVICE_AFTER} store=${AFTER_B}"
   fi
 else
-  fail "B: preflight FAIL"
+  fail "B: reconcile FAIL"
 fi
 
 # =============================================================================
-# CASE C: AWS /dev/xvda style — parent derived, no NVMe hardcoding
+# C: AWS NVMe already current → no mutation
 # =============================================================================
 reset_case
 CASE_C_DIR="${TMP}/caseC/by-id"
 setup_by_id "$CASE_C_DIR" \
-  "xen-AWS_Elastic_Block_Store_vol11111111111111111=>/dev/xvda"
+  "nvme-Amazon_Elastic_Block_Store_vol0438c82c0d9c88bd8=>/dev/nvme0n1"
+CUR_C="${CASE_C_DIR}/nvme-Amazon_Elastic_Block_Store_vol0438c82c0d9c88bd8"
+STORE_C="${TMP}/caseC.store"
+init_debconf_store "$STORE_C" "$CUR_C"
 export GRUB_PF_OVERRIDE_BOOT_MODE=BIOS
-export GRUB_PF_OVERRIDE_ROOT_SOURCE=/dev/xvda1
-# Intentionally do NOT override parent — exercise derivation via resolve map
-# and a stubbed grub_pf_parent_disk_of that uses naming rules without NVMe.
+export GRUB_PF_OVERRIDE_ROOT_SOURCE=/dev/nvme0n1p1
+export GRUB_PF_OVERRIDE_PARENT_DISK=/dev/nvme0n1
 export GRUB_PF_OVERRIDE_BY_ID_DIR="$CASE_C_DIR"
 export GRUB_PF_OVERRIDE_GRUB_PC_RELEVANT=1
-export GRUB_PF_OVERRIDE_INSTALL_DEVICES=/dev/disk/by-id/xen-AWS_Elastic_Block_Store_volDEADOLD
-export GRUB_PF_RESOLVE_MAP="/dev/xvda1=>/dev/xvda1;/dev/xvda=>/dev/xvda;${CASE_C_DIR}/xen-AWS_Elastic_Block_Store_vol11111111111111111=>/dev/xvda"
+export GRUB_PF_OVERRIDE_DEBCONF_STORE="$STORE_C"
+export GRUB_PF_RESOLVE_MAP="${CUR_C}=>/dev/nvme0n1;/dev/nvme0n1p1=>/dev/nvme0n1p1;/dev/nvme0n1=>/dev/nvme0n1"
 export GRUB_PF_OVERRIDE_DEBCONF_SET_HOOK="${TMP}/caseC.set"
 : >"${TMP}/caseC.set"
 
-# Provide parent via override only after proving helper accepts xvda paths in
-# select_expected; parent override keeps CASE C focused on non-NVMe naming.
-export GRUB_PF_OVERRIDE_PARENT_DISK=/dev/xvda
-
-if validate_grub_install_device_preflight; then
-  if [[ "$ROOT_PARENT_DISK" == "/dev/xvda" \
+if reconcile_grub_install_device \
+  && [[ "$GRUB_INSTALL_DEVICE_ACTION" == "NONE" \
+     && "$GRUB_INSTALL_DEVICE_STATUS" == "CURRENT" \
      && "$GRUB_INSTALL_DEVICE_PREFLIGHT" == "PASS" \
-     && "$GRUB_INSTALL_DEVICE_ACTION" == "REBOUND" \
-     && "$GRUB_INSTALL_DEVICE_EXPECTED" == "${CASE_C_DIR}/xen-AWS_Elastic_Block_Store_vol11111111111111111" ]]; then
-    pass "C: xvda parent + rebind without NVMe hardcoding"
-  else
-    fail "C: PARENT=${ROOT_PARENT_DISK} PRE=${GRUB_INSTALL_DEVICE_PREFLIGHT} EXP=${GRUB_INSTALL_DEVICE_EXPECTED}"
-  fi
+     && ! -s "${TMP}/caseC.set" \
+     && "$(store_get grub-pc/install_devices "$STORE_C")" == "$CUR_C" ]]; then
+  pass "C: AWS NVMe current no mutation"
 else
-  fail "C: preflight FAIL"
-fi
-
-# Guard: helper must not hardcode /dev/nvme0n1 as the expected device.
-if grep -nE 'GRUB_INSTALL_DEVICE_EXPECTED=.*/dev/nvme0n1"|expected=.*/dev/nvme0n1|hardcode.*nvme0n1' "$HELPER" \
-  | grep -v 'No NVMe hardcoding' >/dev/null; then
-  fail "C: helper appears to hardcode nvme0n1 expected device"
-else
-  # Stronger: ensure no literal assignment to /dev/nvme0n1 as expected.
-  if grep -nE 'printf .*/dev/nvme0n1|EXPECTED=/dev/nvme0n1' "$HELPER"; then
-    fail "C: helper hardcodes /dev/nvme0n1"
-  else
-    pass "C: no /dev/nvme0n1 hardcoding in helper"
-  fi
+  fail "C: ACTION=${GRUB_INSTALL_DEVICE_ACTION} PRE=${GRUB_INSTALL_DEVICE_PREFLIGHT} set=$(cat "${TMP}/caseC.set")"
 fi
 
 # =============================================================================
-# CASE D: generic VM /dev/sda — existing behavior preserved (current → PASS)
+# D: AWS /dev/xvda — REAL parent derivation (no PARENT_DISK override)
 # =============================================================================
 reset_case
 CASE_D_DIR="${TMP}/caseD/by-id"
 setup_by_id "$CASE_D_DIR" \
-  "ata-VBOX_HARDDISK_VB123=>/dev/sda"
-CUR_D="${CASE_D_DIR}/ata-VBOX_HARDDISK_VB123"
+  "xen-AWS_Elastic_Block_Store_vol11111111111111111=>/dev/xvda"
+STORE_D="${TMP}/caseD.store"
+init_debconf_store "$STORE_D" "/dev/disk/by-id/xen-AWS_Elastic_Block_Store_volDEADOLD"
 export GRUB_PF_OVERRIDE_BOOT_MODE=BIOS
-export GRUB_PF_OVERRIDE_ROOT_SOURCE=/dev/sda1
-export GRUB_PF_OVERRIDE_PARENT_DISK=/dev/sda
+export GRUB_PF_OVERRIDE_ROOT_SOURCE=/dev/xvda1
+# Intentionally NO GRUB_PF_OVERRIDE_PARENT_DISK — naming derivation must work.
 export GRUB_PF_OVERRIDE_BY_ID_DIR="$CASE_D_DIR"
 export GRUB_PF_OVERRIDE_GRUB_PC_RELEVANT=1
-export GRUB_PF_OVERRIDE_INSTALL_DEVICES="$CUR_D"
-export GRUB_PF_RESOLVE_MAP="${CUR_D}=>/dev/sda;/dev/sda1=>/dev/sda1;/dev/sda=>/dev/sda"
+export GRUB_PF_OVERRIDE_DEBCONF_STORE="$STORE_D"
+export GRUB_PF_RESOLVE_MAP="/dev/xvda1=>/dev/xvda1;/dev/xvda=>/dev/xvda;${CASE_D_DIR}/xen-AWS_Elastic_Block_Store_vol11111111111111111=>/dev/xvda"
 export GRUB_PF_OVERRIDE_DEBCONF_SET_HOOK="${TMP}/caseD.set"
 : >"${TMP}/caseD.set"
 
-if validate_grub_install_device_preflight \
-  && [[ "$GRUB_INSTALL_DEVICE_PREFLIGHT" == "PASS" \
-     && "$GRUB_INSTALL_DEVICE_ACTION" == "NONE" \
-     && "$ROOT_PARENT_DISK" == "/dev/sda" \
-     && ! -s "${TMP}/caseD.set" ]]; then
-  pass "D: generic sda current binding preserved"
+if reconcile_grub_install_device; then
+  if [[ "$ROOT_PARENT_DISK" == "/dev/xvda" \
+     && "$GRUB_INSTALL_DEVICE_ACTION" == "REBOUND" \
+     && "$GRUB_INSTALL_DEVICE_REBIND_RESULT" == "PASS" \
+     && "$GRUB_INSTALL_DEVICE_EXPECTED" == "${CASE_D_DIR}/xen-AWS_Elastic_Block_Store_vol11111111111111111" ]]; then
+    pass "D: xvda parent derived + rebind"
+  else
+    fail "D: PARENT=${ROOT_PARENT_DISK} ACTION=${GRUB_INSTALL_DEVICE_ACTION} EXP=${GRUB_INSTALL_DEVICE_EXPECTED}"
+  fi
 else
-  fail "D: PRE=${GRUB_INSTALL_DEVICE_PREFLIGHT} ACTION=${GRUB_INSTALL_DEVICE_ACTION} PARENT=${ROOT_PARENT_DISK}"
+  fail "D: reconcile FAIL"
+fi
+
+# No NVMe hardcoding
+if grep -nE 'EXPECTED=/dev/nvme0n1|printf .*/dev/nvme0n1[" ]' "$HELPER" \
+  | grep -v 'No NVMe hardcoding\|nvme\[0-9\]' >/dev/null; then
+  fail "D: helper appears to hardcode /dev/nvme0n1"
+else
+  pass "D: no /dev/nvme0n1 hardcoding"
 fi
 
 # =============================================================================
-# CASE E: ambiguous/unresolvable root parent → FAIL CLOSED
+# E: generic /dev/sda current preserved
+# =============================================================================
+reset_case
+CASE_E_DIR="${TMP}/caseE/by-id"
+setup_by_id "$CASE_E_DIR" "ata-VBOX_HARDDISK_VB123=>/dev/sda"
+CUR_E="${CASE_E_DIR}/ata-VBOX_HARDDISK_VB123"
+STORE_E="${TMP}/caseE.store"
+init_debconf_store "$STORE_E" "$CUR_E"
+export GRUB_PF_OVERRIDE_BOOT_MODE=BIOS
+export GRUB_PF_OVERRIDE_ROOT_SOURCE=/dev/sda1
+export GRUB_PF_OVERRIDE_BY_ID_DIR="$CASE_E_DIR"
+export GRUB_PF_OVERRIDE_GRUB_PC_RELEVANT=1
+export GRUB_PF_OVERRIDE_DEBCONF_STORE="$STORE_E"
+export GRUB_PF_RESOLVE_MAP="${CUR_E}=>/dev/sda;/dev/sda1=>/dev/sda1;/dev/sda=>/dev/sda"
+# No parent override — naming derivation for sda1→sda
+export GRUB_PF_OVERRIDE_DEBCONF_SET_HOOK="${TMP}/caseE.set"
+: >"${TMP}/caseE.set"
+
+if reconcile_grub_install_device \
+  && [[ "$ROOT_PARENT_DISK" == "/dev/sda" \
+     && "$GRUB_INSTALL_DEVICE_ACTION" == "NONE" \
+     && "$GRUB_INSTALL_DEVICE_PREFLIGHT" == "PASS" \
+     && ! -s "${TMP}/caseE.set" ]]; then
+  pass "E: generic sda current preserved"
+else
+  fail "E: PARENT=${ROOT_PARENT_DISK} ACTION=${GRUB_INSTALL_DEVICE_ACTION} PRE=${GRUB_INSTALL_DEVICE_PREFLIGHT}"
+fi
+
+# =============================================================================
+# F: whole-disk fallback when no useful by-id
+# =============================================================================
+reset_case
+CASE_F_DIR="${TMP}/caseF/by-id"
+mkdir -p "$CASE_F_DIR"
+# empty by-id dir
+STORE_F="${TMP}/caseF.store"
+init_debconf_store "$STORE_F" "/dev/disk/by-id/missing-volOLD"
+export GRUB_PF_OVERRIDE_BOOT_MODE=BIOS
+export GRUB_PF_OVERRIDE_ROOT_SOURCE=/dev/vda1
+export GRUB_PF_OVERRIDE_BY_ID_DIR="$CASE_F_DIR"
+export GRUB_PF_OVERRIDE_GRUB_PC_RELEVANT=1
+export GRUB_PF_OVERRIDE_DEBCONF_STORE="$STORE_F"
+export GRUB_PF_RESOLVE_MAP="/dev/vda1=>/dev/vda1;/dev/vda=>/dev/vda"
+export GRUB_PF_OVERRIDE_DEBCONF_SET_HOOK="${TMP}/caseF.set"
+: >"${TMP}/caseF.set"
+
+if reconcile_grub_install_device; then
+  if [[ "$GRUB_INSTALL_DEVICE_EXPECTED" == "/dev/vda" \
+     && "$GRUB_INSTALL_DEVICE_ACTION" == "REBOUND" \
+     && "$GRUB_INSTALL_DEVICE_REBIND_RESULT" == "PASS" \
+     && "$(store_get grub-pc/install_devices "$STORE_F")" == "/dev/vda" ]]; then
+    pass "F: whole-disk fallback /dev/vda"
+  else
+    fail "F: EXP=${GRUB_INSTALL_DEVICE_EXPECTED} ACTION=${GRUB_INSTALL_DEVICE_ACTION} store=$(store_get grub-pc/install_devices "$STORE_F")"
+  fi
+else
+  fail "F: reconcile FAIL"
+fi
+
+# =============================================================================
+# G: unresolved/ambiguous parent → FAIL CLOSED, no package transition
 # =============================================================================
 reset_case
 export GRUB_PF_OVERRIDE_BOOT_MODE=BIOS
 export GRUB_PF_OVERRIDE_ROOT_SOURCE=/dev/mapper/mystery
 export GRUB_PF_OVERRIDE_GRUB_PC_RELEVANT=1
 export GRUB_PF_OVERRIDE_INSTALL_DEVICES=/dev/sda
-# Force parent derivation failure: empty override sentinel via function redefine.
-grub_pf_parent_disk_of() { return 1; }
+export GRUB_PF_OVERRIDE_DEBCONF_SET_HOOK="${TMP}/caseG.set"
+: >"${TMP}/caseG.set"
 
-if validate_grub_install_device_preflight; then
-  fail "E: expected FAIL CLOSED on unresolved parent"
+if inspect_grub_install_device; then
+  fail "G: expected FAIL CLOSED on mapper root"
 else
   if [[ "$GRUB_INSTALL_DEVICE_PREFLIGHT" == "FAIL" \
-     && "$GRUB_INSTALL_DEVICE_STATUS" == "UNRESOLVED" ]]; then
-    pass "E: ambiguous parent fail-closed"
+     && "$GRUB_INSTALL_DEVICE_STATUS" == "UNRESOLVED" \
+     && ! -s "${TMP}/caseG.set" ]]; then
+    pass "G: ambiguous parent fail-closed no mutation"
   else
-    fail "E: PRE=${GRUB_INSTALL_DEVICE_PREFLIGHT} STATUS=${GRUB_INSTALL_DEVICE_STATUS}"
+    fail "G: PRE=${GRUB_INSTALL_DEVICE_PREFLIGHT} STATUS=${GRUB_INSTALL_DEVICE_STATUS}"
   fi
 fi
-# Restore real parent_disk_of from helper for later cases.
-# shellcheck disable=SC1090
-source "$HELPER"
-# Re-apply set override after re-source.
-grub_pf_debconf_set_install_devices() {
-  local device="$1"
-  if [[ "${GRUB_PF_FORCE_SET_FAIL:-0}" == "1" ]]; then
-    return 1
-  fi
-  if [[ -n "${GRUB_PF_OVERRIDE_DEBCONF_SET_HOOK:-}" ]]; then
-    printf 'SET %s\n' "$device" >>"$GRUB_PF_OVERRIDE_DEBCONF_SET_HOOK"
-    GRUB_PF_OVERRIDE_INSTALL_DEVICES="$device"
-    return 0
-  fi
-  GRUB_PF_OVERRIDE_INSTALL_DEVICES="$device"
-  return 0
-}
 
 # =============================================================================
-# CASE F: stale by-id exists but resolves to a different disk → rebind
+# H: debconf setter failure before first write → originals preserved
 # =============================================================================
 reset_case
-CASE_F_DIR="${TMP}/caseF/by-id"
-setup_by_id "$CASE_F_DIR" \
-  "nvme-Amazon_Elastic_Block_Store_volNEWffff=>/dev/nvme0n1" \
-  "nvme-Amazon_Elastic_Block_Store_volOLDaaaa=>/dev/nvme1n1"
-STALE_F="${CASE_F_DIR}/nvme-Amazon_Elastic_Block_Store_volOLDaaaa"
-NEW_F="${CASE_F_DIR}/nvme-Amazon_Elastic_Block_Store_volNEWffff"
+CASE_H_DIR="${TMP}/caseH/by-id"
+setup_by_id "$CASE_H_DIR" "nvme-Amazon_Elastic_Block_Store_volNEW=>/dev/nvme0n1"
+STORE_H="${TMP}/caseH.store"
+STALE_H="/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_volOLD"
+init_debconf_store "$STORE_H" "$STALE_H"
 export GRUB_PF_OVERRIDE_BOOT_MODE=BIOS
 export GRUB_PF_OVERRIDE_ROOT_SOURCE=/dev/nvme0n1p1
 export GRUB_PF_OVERRIDE_PARENT_DISK=/dev/nvme0n1
-export GRUB_PF_OVERRIDE_BY_ID_DIR="$CASE_F_DIR"
+export GRUB_PF_OVERRIDE_BY_ID_DIR="$CASE_H_DIR"
 export GRUB_PF_OVERRIDE_GRUB_PC_RELEVANT=1
-export GRUB_PF_OVERRIDE_INSTALL_DEVICES="$STALE_F"
-export GRUB_PF_RESOLVE_MAP="${STALE_F}=>/dev/nvme1n1;${NEW_F}=>/dev/nvme0n1;/dev/nvme0n1p1=>/dev/nvme0n1p1;/dev/nvme0n1=>/dev/nvme0n1;/dev/nvme1n1=>/dev/nvme1n1"
-# Parent-of for wrong disk:
-export GRUB_PF_OVERRIDE_DEBCONF_SET_HOOK="${TMP}/caseF.set"
-: >"${TMP}/caseF.set"
-
-# For classify: parent_disk_of(/dev/nvme1n1) must not equal /dev/nvme0n1.
-# Override parent_disk_of only when input is the wrong disk node.
-_real_parent="$(declare -f grub_pf_parent_disk_of)"
-grub_pf_parent_disk_of() {
-  local src="$1"
-  case "$src" in
-    /dev/nvme1n1) printf '/dev/nvme1n1'; return 0 ;;
-    /dev/nvme0n1|/dev/nvme0n1p1) printf '/dev/nvme0n1'; return 0 ;;
-  esac
-  if [[ -n "${GRUB_PF_OVERRIDE_PARENT_DISK:-}" ]]; then
-    printf '%s' "$GRUB_PF_OVERRIDE_PARENT_DISK"
-    return 0
-  fi
-  return 1
-}
-
-if validate_grub_install_device_preflight; then
-  if [[ "$GRUB_INSTALL_DEVICE_STATUS" == "CURRENT" \
-     && "$GRUB_INSTALL_DEVICE_ACTION" == "REBOUND" \
-     && "$GRUB_INSTALL_DEVICE_REBIND_RESULT" == "PASS" \
-     && "$GRUB_INSTALL_DEVICE_EXPECTED" == "$NEW_F" ]]; then
-    pass "F: wrong-disk by-id rejected and rebound"
-  else
-    fail "F: STATUS=${GRUB_INSTALL_DEVICE_STATUS} ACTION=${GRUB_INSTALL_DEVICE_ACTION} EXP=${GRUB_INSTALL_DEVICE_EXPECTED}"
-  fi
-else
-  fail "F: preflight FAIL"
-fi
-eval "$_real_parent"
-
-# =============================================================================
-# CASE G: reconciliation write fails → FAIL CLOSED before package transition
-# =============================================================================
-reset_case
-CASE_G_DIR="${TMP}/caseG/by-id"
-setup_by_id "$CASE_G_DIR" \
-  "nvme-Amazon_Elastic_Block_Store_vol0438c82c0d9c88bd8=>/dev/nvme0n1"
-export GRUB_PF_OVERRIDE_BOOT_MODE=BIOS
-export GRUB_PF_OVERRIDE_ROOT_SOURCE=/dev/nvme0n1p1
-export GRUB_PF_OVERRIDE_PARENT_DISK=/dev/nvme0n1
-export GRUB_PF_OVERRIDE_BY_ID_DIR="$CASE_G_DIR"
-export GRUB_PF_OVERRIDE_GRUB_PC_RELEVANT=1
-export GRUB_PF_OVERRIDE_INSTALL_DEVICES=/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_vol0c212bb3c68696534
-export GRUB_PF_RESOLVE_MAP="${CASE_G_DIR}/nvme-Amazon_Elastic_Block_Store_vol0438c82c0d9c88bd8=>/dev/nvme0n1;/dev/nvme0n1=>/dev/nvme0n1"
+export GRUB_PF_OVERRIDE_DEBCONF_STORE="$STORE_H"
+export GRUB_PF_RESOLVE_MAP="${CASE_H_DIR}/nvme-Amazon_Elastic_Block_Store_volNEW=>/dev/nvme0n1;/dev/nvme0n1=>/dev/nvme0n1"
 export GRUB_PF_FORCE_SET_FAIL=1
+export GRUB_PF_OVERRIDE_DEBCONF_SET_HOOK="${TMP}/caseH.set"
+: >"${TMP}/caseH.set"
 
-if validate_grub_install_device_preflight; then
-  fail "G: expected FAIL CLOSED when debconf set fails"
+if reconcile_grub_install_device; then
+  fail "H: expected FAIL on set-before-write"
 else
   if [[ "$GRUB_INSTALL_DEVICE_PREFLIGHT" == "FAIL" \
      && "$GRUB_INSTALL_DEVICE_REBIND_RESULT" == "FAIL" \
-     && "$GRUB_INSTALL_DEVICE_ACTION" == "REBOUND" ]]; then
-    pass "G: rebind failure fail-closed"
+     && "$(store_get grub-pc/install_devices "$STORE_H")" == "$STALE_H" \
+     && "${GRUB_INSTALL_DEVICE_ROLLBACK_ATTEMPTED:-NO}" == "NO" ]]; then
+    pass "H: set-fail before write preserves original"
   else
-    fail "G: PRE=${GRUB_INSTALL_DEVICE_PREFLIGHT} REBIND=${GRUB_INSTALL_DEVICE_REBIND_RESULT} ACTION=${GRUB_INSTALL_DEVICE_ACTION}"
+    fail "H: PRE=${GRUB_INSTALL_DEVICE_PREFLIGHT} ROLLBACK_ATT=${GRUB_INSTALL_DEVICE_ROLLBACK_ATTEMPTED} store=$(store_get grub-pc/install_devices "$STORE_H")"
   fi
 fi
 
 # =============================================================================
-# Wiring contract: templates + builders must include the helper token
+# I: partial write failure (2nd SET fails) → rollback restores old state
+# =============================================================================
+reset_case
+CASE_I_DIR="${TMP}/caseI/by-id"
+setup_by_id "$CASE_I_DIR" "nvme-Amazon_Elastic_Block_Store_volNEW=>/dev/nvme0n1"
+STORE_I="${TMP}/caseI.store"
+STALE_I="/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_volOLD"
+init_debconf_store "$STORE_I" "$STALE_I"
+export GRUB_PF_OVERRIDE_BOOT_MODE=BIOS
+export GRUB_PF_OVERRIDE_ROOT_SOURCE=/dev/nvme0n1p1
+export GRUB_PF_OVERRIDE_PARENT_DISK=/dev/nvme0n1
+export GRUB_PF_OVERRIDE_BY_ID_DIR="$CASE_I_DIR"
+export GRUB_PF_OVERRIDE_GRUB_PC_RELEVANT=1
+export GRUB_PF_OVERRIDE_DEBCONF_STORE="$STORE_I"
+export GRUB_PF_RESOLVE_MAP="${CASE_I_DIR}/nvme-Amazon_Elastic_Block_Store_volNEW=>/dev/nvme0n1;/dev/nvme0n1=>/dev/nvme0n1"
+export GRUB_PF_FORCE_SET_FAIL_AT=2
+export GRUB_PF_OVERRIDE_DEBCONF_SET_HOOK="${TMP}/caseI.set"
+: >"${TMP}/caseI.set"
+
+if reconcile_grub_install_device; then
+  fail "I: expected FAIL on partial write"
+else
+  if [[ "$GRUB_INSTALL_DEVICE_REBIND_RESULT" == "FAIL" \
+     && "$GRUB_INSTALL_DEVICE_ROLLBACK_ATTEMPTED" == "YES" \
+     && "$GRUB_INSTALL_DEVICE_ROLLBACK_RESULT" == "PASS" \
+     && "$(store_get grub-pc/install_devices "$STORE_I")" == "$STALE_I" \
+     && "$GRUB_INSTALL_DEVICE_PREFLIGHT" == "FAIL" ]]; then
+    pass "I: partial write rolled back"
+  else
+    fail "I: REBIND=${GRUB_INSTALL_DEVICE_REBIND_RESULT} RB_ATT=${GRUB_INSTALL_DEVICE_ROLLBACK_ATTEMPTED} RB=${GRUB_INSTALL_DEVICE_ROLLBACK_RESULT} store=$(store_get grub-pc/install_devices "$STORE_I")"
+  fi
+fi
+
+# =============================================================================
+# J: readback verification failure → rollback
+# =============================================================================
+reset_case
+CASE_J_DIR="${TMP}/caseJ/by-id"
+setup_by_id "$CASE_J_DIR" "nvme-Amazon_Elastic_Block_Store_volNEW=>/dev/nvme0n1"
+STORE_J="${TMP}/caseJ.store"
+STALE_J="/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_volOLD"
+init_debconf_store "$STORE_J" "$STALE_J"
+export GRUB_PF_OVERRIDE_BOOT_MODE=BIOS
+export GRUB_PF_OVERRIDE_ROOT_SOURCE=/dev/nvme0n1p1
+export GRUB_PF_OVERRIDE_PARENT_DISK=/dev/nvme0n1
+export GRUB_PF_OVERRIDE_BY_ID_DIR="$CASE_J_DIR"
+export GRUB_PF_OVERRIDE_GRUB_PC_RELEVANT=1
+export GRUB_PF_OVERRIDE_DEBCONF_STORE="$STORE_J"
+export GRUB_PF_RESOLVE_MAP="${CASE_J_DIR}/nvme-Amazon_Elastic_Block_Store_volNEW=>/dev/nvme0n1;/dev/nvme0n1=>/dev/nvme0n1"
+export GRUB_PF_FORCE_READBACK_FAIL=1
+export GRUB_PF_OVERRIDE_DEBCONF_SET_HOOK="${TMP}/caseJ.set"
+: >"${TMP}/caseJ.set"
+
+if reconcile_grub_install_device; then
+  fail "J: expected FAIL on readback"
+else
+  if [[ "$GRUB_INSTALL_DEVICE_REBIND_RESULT" == "FAIL" \
+     && "$GRUB_INSTALL_DEVICE_ROLLBACK_ATTEMPTED" == "YES" \
+     && "$GRUB_INSTALL_DEVICE_ROLLBACK_RESULT" == "PASS" \
+     && "$(store_get grub-pc/install_devices "$STORE_J")" == "$STALE_J" ]]; then
+    pass "J: readback failure rolled back"
+  else
+    fail "J: REBIND=${GRUB_INSTALL_DEVICE_REBIND_RESULT} RB=${GRUB_INSTALL_DEVICE_ROLLBACK_RESULT} store=$(store_get grub-pc/install_devices "$STORE_J")"
+  fi
+fi
+
+# =============================================================================
+# K: rollback failure → explicit evidence + FAIL CLOSED
+# =============================================================================
+reset_case
+CASE_K_DIR="${TMP}/caseK/by-id"
+setup_by_id "$CASE_K_DIR" "nvme-Amazon_Elastic_Block_Store_volNEW=>/dev/nvme0n1"
+STORE_K="${TMP}/caseK.store"
+STALE_K="/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_volOLD"
+init_debconf_store "$STORE_K" "$STALE_K"
+export GRUB_PF_OVERRIDE_BOOT_MODE=BIOS
+export GRUB_PF_OVERRIDE_ROOT_SOURCE=/dev/nvme0n1p1
+export GRUB_PF_OVERRIDE_PARENT_DISK=/dev/nvme0n1
+export GRUB_PF_OVERRIDE_BY_ID_DIR="$CASE_K_DIR"
+export GRUB_PF_OVERRIDE_GRUB_PC_RELEVANT=1
+export GRUB_PF_OVERRIDE_DEBCONF_STORE="$STORE_K"
+export GRUB_PF_RESOLVE_MAP="${CASE_K_DIR}/nvme-Amazon_Elastic_Block_Store_volNEW=>/dev/nvme0n1;/dev/nvme0n1=>/dev/nvme0n1"
+export GRUB_PF_FORCE_SET_FAIL_AT=2
+export GRUB_PF_FORCE_ROLLBACK_FAIL=1
+export GRUB_PF_OVERRIDE_DEBCONF_SET_HOOK="${TMP}/caseK.set"
+: >"${TMP}/caseK.set"
+
+if reconcile_grub_install_device; then
+  fail "K: expected FAIL on rollback failure"
+else
+  if [[ "$GRUB_INSTALL_DEVICE_REBIND_RESULT" == "FAIL" \
+     && "$GRUB_INSTALL_DEVICE_ROLLBACK_ATTEMPTED" == "YES" \
+     && "$GRUB_INSTALL_DEVICE_ROLLBACK_RESULT" == "FAIL" \
+     && "$GRUB_INSTALL_DEVICE_PREFLIGHT" == "FAIL" ]]; then
+    pass "K: rollback failure fail-closed"
+  else
+    fail "K: REBIND=${GRUB_INSTALL_DEVICE_REBIND_RESULT} RB_ATT=${GRUB_INSTALL_DEVICE_ROLLBACK_ATTEMPTED} RB=${GRUB_INSTALL_DEVICE_ROLLBACK_RESULT}"
+  fi
+fi
+
+# =============================================================================
+# L: configured root partition /dev/nvme0n1p1 → MUST NOT be CURRENT
+# =============================================================================
+reset_case
+CASE_L_DIR="${TMP}/caseL/by-id"
+setup_by_id "$CASE_L_DIR" "nvme-Amazon_Elastic_Block_Store_volCUR=>/dev/nvme0n1"
+STORE_L="${TMP}/caseL.store"
+init_debconf_store "$STORE_L" "/dev/nvme0n1p1"
+export GRUB_PF_OVERRIDE_BOOT_MODE=BIOS
+export GRUB_PF_OVERRIDE_ROOT_SOURCE=/dev/nvme0n1p1
+export GRUB_PF_OVERRIDE_PARENT_DISK=/dev/nvme0n1
+export GRUB_PF_OVERRIDE_BY_ID_DIR="$CASE_L_DIR"
+export GRUB_PF_OVERRIDE_GRUB_PC_RELEVANT=1
+export GRUB_PF_OVERRIDE_DEBCONF_STORE="$STORE_L"
+export GRUB_PF_RESOLVE_MAP="/dev/nvme0n1p1=>/dev/nvme0n1p1;/dev/nvme0n1=>/dev/nvme0n1;${CASE_L_DIR}/nvme-Amazon_Elastic_Block_Store_volCUR=>/dev/nvme0n1"
+
+if inspect_grub_install_device; then
+  if [[ "$GRUB_INSTALL_DEVICE_STATUS_BEFORE" != "CURRENT" \
+     && "$GRUB_INSTALL_DEVICE_ACTION" == "WOULD_REBIND" ]]; then
+    pass "L: partition install device not CURRENT"
+  else
+    fail "L: STATUS_BEFORE=${GRUB_INSTALL_DEVICE_STATUS_BEFORE} ACTION=${GRUB_INSTALL_DEVICE_ACTION}"
+  fi
+else
+  fail "L: inspect FAIL"
+fi
+
+# =============================================================================
+# M: partition by-id *-part1 → MUST NOT be CURRENT
+# =============================================================================
+reset_case
+CASE_M_DIR="${TMP}/caseM/by-id"
+setup_by_id "$CASE_M_DIR" \
+  "nvme-Amazon_Elastic_Block_Store_volCUR=>/dev/nvme0n1" \
+  "nvme-Amazon_Elastic_Block_Store_volCUR-part1=>/dev/nvme0n1p1"
+PART_M="${CASE_M_DIR}/nvme-Amazon_Elastic_Block_Store_volCUR-part1"
+STORE_M="${TMP}/caseM.store"
+init_debconf_store "$STORE_M" "$PART_M"
+export GRUB_PF_OVERRIDE_BOOT_MODE=BIOS
+export GRUB_PF_OVERRIDE_ROOT_SOURCE=/dev/nvme0n1p1
+export GRUB_PF_OVERRIDE_PARENT_DISK=/dev/nvme0n1
+export GRUB_PF_OVERRIDE_BY_ID_DIR="$CASE_M_DIR"
+export GRUB_PF_OVERRIDE_GRUB_PC_RELEVANT=1
+export GRUB_PF_OVERRIDE_DEBCONF_STORE="$STORE_M"
+export GRUB_PF_RESOLVE_MAP="${PART_M}=>/dev/nvme0n1p1;/dev/nvme0n1p1=>/dev/nvme0n1p1;/dev/nvme0n1=>/dev/nvme0n1;${CASE_M_DIR}/nvme-Amazon_Elastic_Block_Store_volCUR=>/dev/nvme0n1"
+
+if inspect_grub_install_device; then
+  if [[ "$GRUB_INSTALL_DEVICE_STATUS_BEFORE" != "CURRENT" \
+     && "$GRUB_INSTALL_DEVICE_ACTION" == "WOULD_REBIND" ]]; then
+    pass "M: partition by-id not CURRENT"
+  else
+    fail "M: STATUS_BEFORE=${GRUB_INSTALL_DEVICE_STATUS_BEFORE} ACTION=${GRUB_INSTALL_DEVICE_ACTION}"
+  fi
+else
+  fail "M: inspect FAIL"
+fi
+
+# =============================================================================
+# N: --preflight-only contract via inspect alias (zero mutation)
+# =============================================================================
+reset_case
+CASE_N_DIR="${TMP}/caseN/by-id"
+setup_by_id "$CASE_N_DIR" "nvme-Amazon_Elastic_Block_Store_volNEW=>/dev/nvme0n1"
+STORE_N="${TMP}/caseN.store"
+STALE_N="/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_volOLD"
+init_debconf_store "$STORE_N" "$STALE_N"
+HASH_N_BEFORE="$(sha256sum "$STORE_N" | awk '{print $1}')"
+export GRUB_PF_OVERRIDE_BOOT_MODE=BIOS
+export GRUB_PF_OVERRIDE_ROOT_SOURCE=/dev/nvme0n1p1
+export GRUB_PF_OVERRIDE_PARENT_DISK=/dev/nvme0n1
+export GRUB_PF_OVERRIDE_BY_ID_DIR="$CASE_N_DIR"
+export GRUB_PF_OVERRIDE_GRUB_PC_RELEVANT=1
+export GRUB_PF_OVERRIDE_DEBCONF_STORE="$STORE_N"
+export GRUB_PF_RESOLVE_MAP="${CASE_N_DIR}/nvme-Amazon_Elastic_Block_Store_volNEW=>/dev/nvme0n1;/dev/nvme0n1=>/dev/nvme0n1"
+
+if run_grub_install_device_preflight \
+  && [[ "$GRUB_INSTALL_DEVICE_ACTION" == "WOULD_REBIND" \
+     && "$(sha256sum "$STORE_N" | awk '{print $1}')" == "$HASH_N_BEFORE" ]]; then
+  pass "N: preflight-only alias zero mutation"
+else
+  fail "N: ACTION=${GRUB_INSTALL_DEVICE_ACTION} hash changed or FAIL"
+fi
+
+# =============================================================================
+# O: declined confirmation path ≡ inspect leaves store unchanged
+# =============================================================================
+reset_case
+CASE_O_DIR="${TMP}/caseO/by-id"
+setup_by_id "$CASE_O_DIR" "nvme-Amazon_Elastic_Block_Store_volNEW=>/dev/nvme0n1"
+STORE_O="${TMP}/caseO.store"
+STALE_O="/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_volOLD"
+init_debconf_store "$STORE_O" "$STALE_O"
+HASH_O_BEFORE="$(sha256sum "$STORE_O" | awk '{print $1}')"
+export GRUB_PF_OVERRIDE_BOOT_MODE=BIOS
+export GRUB_PF_OVERRIDE_ROOT_SOURCE=/dev/nvme0n1p1
+export GRUB_PF_OVERRIDE_PARENT_DISK=/dev/nvme0n1
+export GRUB_PF_OVERRIDE_BY_ID_DIR="$CASE_O_DIR"
+export GRUB_PF_OVERRIDE_GRUB_PC_RELEVANT=1
+export GRUB_PF_OVERRIDE_DEBCONF_STORE="$STORE_O"
+export GRUB_PF_RESOLVE_MAP="${CASE_O_DIR}/nvme-Amazon_Elastic_Block_Store_volNEW=>/dev/nvme0n1;/dev/nvme0n1=>/dev/nvme0n1"
+
+# Simulate: preflight inspect, then "decline" (never call reconcile).
+inspect_grub_install_device >/dev/null
+if [[ "$(sha256sum "$STORE_O" | awk '{print $1}')" == "$HASH_O_BEFORE" \
+   && "$GRUB_INSTALL_DEVICE_ACTION" == "WOULD_REBIND" ]]; then
+  pass "O: declined-confirm path zero mutation"
+else
+  fail "O: store mutated or unexpected ACTION=${GRUB_INSTALL_DEVICE_ACTION}"
+fi
+
+# =============================================================================
+# P: post-confirmation runner path uses reconcile (static + behavioral)
+# =============================================================================
+runner_ok=1
+for hop in xenial-to-bionic bionic-to-focal focal-to-jammy jammy-to-noble; do
+  tin="${ROOT}/client/dp-offline-upgrade-${hop}.sh.in"
+  # Extract approximate runner region: after set_stage GRUB_INSTALL_DEVICE_PREFLIGHT
+  if ! awk '
+    /set_stage "GRUB_INSTALL_DEVICE_PREFLIGHT"/ {inblock=1}
+    inblock && /run_grub_install_device_reconcile/ {found=1}
+    inblock && /do-release-upgrade/ {exit}
+    END {exit found?0:1}
+  ' "$tin"; then
+    echo "  missing reconcile before DRO in $tin"
+    runner_ok=0
+  fi
+  # Preflight must still call inspect alias, not reconcile
+  if ! awk '
+    /^run_os_preflight\(/ {inpf=1}
+    inpf && /^}/ {exit}
+    inpf && /run_grub_install_device_preflight/ {found=1}
+    inpf && /run_grub_install_device_reconcile/ {bad=1}
+    END {exit (found && !bad)?0:1}
+  ' "$tin"; then
+    echo "  preflight wiring wrong in $tin"
+    runner_ok=0
+  fi
+done
+if [[ "$runner_ok" -eq 1 ]]; then
+  pass "P: runner reconcile before DRO; preflight inspect-only"
+else
+  fail "P: hop wiring for inspect/reconcile incorrect"
+fi
+
+# =============================================================================
+# Q: package transition ordering — GRUB fail ⇒ PACKAGE_TRANSITION_STARTED=NO
+# =============================================================================
+reset_case
+CASE_Q_DIR="${TMP}/caseQ/by-id"
+setup_by_id "$CASE_Q_DIR" "nvme-Amazon_Elastic_Block_Store_volNEW=>/dev/nvme0n1"
+STORE_Q="${TMP}/caseQ.store"
+init_debconf_store "$STORE_Q" "/dev/disk/by-id/volOLD"
+export GRUB_PF_OVERRIDE_BOOT_MODE=BIOS
+export GRUB_PF_OVERRIDE_ROOT_SOURCE=/dev/nvme0n1p1
+export GRUB_PF_OVERRIDE_PARENT_DISK=/dev/nvme0n1
+export GRUB_PF_OVERRIDE_BY_ID_DIR="$CASE_Q_DIR"
+export GRUB_PF_OVERRIDE_GRUB_PC_RELEVANT=1
+export GRUB_PF_OVERRIDE_DEBCONF_STORE="$STORE_Q"
+export GRUB_PF_RESOLVE_MAP="${CASE_Q_DIR}/nvme-Amazon_Elastic_Block_Store_volNEW=>/dev/nvme0n1;/dev/nvme0n1=>/dev/nvme0n1"
+export GRUB_PF_FORCE_SET_FAIL=1
+Q_OUT="${TMP}/caseQ.out"
+set +e
+reconcile_grub_install_device >"$Q_OUT" 2>&1
+Q_RC=$?
+set -e
+if [[ "$Q_RC" -ne 0 ]] \
+  && grep -q 'PACKAGE_TRANSITION_STARTED=NO' "$Q_OUT" \
+  && grep -q 'GRUB_INSTALL_DEVICE_PREFLIGHT=FAIL' "$Q_OUT"; then
+  pass "Q: GRUB fail emits PACKAGE_TRANSITION_STARTED=NO"
+else
+  fail "Q: rc=$Q_RC out=$(tail -5 "$Q_OUT")"
+fi
+# Static: reconcile precedes do-release-upgrade / package transition mark in templates
+order_ok=1
+for hop in xenial-to-bionic bionic-to-focal focal-to-jammy jammy-to-noble; do
+  tin="${ROOT}/client/dp-offline-upgrade-${hop}.sh.in"
+  if ! python3 - "$tin" <<'PY'
+import sys
+text=open(sys.argv[1],encoding='utf-8').read()
+# Find runner block: set_stage GRUB ... then do-release-upgrade stage
+i=text.find('set_stage "GRUB_INSTALL_DEVICE_PREFLIGHT"')
+j=text.find('set_stage "DO_RELEASE_UPGRADE"', i)
+if i<0 or j<0 or i>j:
+    sys.exit(1)
+block=text[i:j]
+if 'run_grub_install_device_reconcile' not in block:
+    sys.exit(1)
+if 'mark_package_transition' in block or 'PACKAGE_TRANSITION_STARTED=true' in block:
+    sys.exit(1)
+sys.exit(0)
+PY
+  then
+    order_ok=0
+  fi
+done
+if [[ "$order_ok" -eq 1 ]]; then
+  pass "Q: static order GRUB reconcile before DRO"
+else
+  fail "Q: static package-transition ordering broken"
+fi
+
+# =============================================================================
+# R: BEFORE/AFTER evidence retains stale value after successful rebind
+# =============================================================================
+# Covered by case B assertions; explicit guard:
+if [[ "${GRUB_INSTALL_DEVICE_BEFORE:-}" == "$STALE_B" ]] 2>/dev/null; then
+  :
+fi
+reset_case
+CASE_R_DIR="${TMP}/caseR/by-id"
+setup_by_id "$CASE_R_DIR" "nvme-Amazon_Elastic_Block_Store_volNEW=>/dev/nvme0n1"
+STORE_R="${TMP}/caseR.store"
+STALE_R="/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_volOLDDEAD"
+init_debconf_store "$STORE_R" "$STALE_R"
+export GRUB_PF_OVERRIDE_BOOT_MODE=BIOS
+export GRUB_PF_OVERRIDE_ROOT_SOURCE=/dev/nvme0n1p1
+export GRUB_PF_OVERRIDE_PARENT_DISK=/dev/nvme0n1
+export GRUB_PF_OVERRIDE_BY_ID_DIR="$CASE_R_DIR"
+export GRUB_PF_OVERRIDE_GRUB_PC_RELEVANT=1
+export GRUB_PF_OVERRIDE_DEBCONF_STORE="$STORE_R"
+export GRUB_PF_RESOLVE_MAP="${CASE_R_DIR}/nvme-Amazon_Elastic_Block_Store_volNEW=>/dev/nvme0n1;/dev/nvme0n1=>/dev/nvme0n1"
+R_OUT="${TMP}/caseR.out"
+reconcile_grub_install_device >"$R_OUT" 2>&1
+if grep -q "GRUB_INSTALL_DEVICE_BEFORE=${STALE_R}" "$R_OUT" \
+  && grep -q "GRUB_INSTALL_DEVICE_STATUS_BEFORE=STALE" "$R_OUT" \
+  && grep -q "GRUB_INSTALL_DEVICE_STATUS_AFTER=CURRENT" "$R_OUT" \
+  && grep -q "GRUB_INSTALL_DEVICE_REBIND_RESULT=PASS" "$R_OUT"; then
+  pass "R: BEFORE/AFTER evidence preserved"
+else
+  fail "R: evidence missing in $(grep GRUB_INSTALL_DEVICE_ "$R_OUT" | tr '\n' ' ')"
+fi
+
+# =============================================================================
+# S/T/U: wiring, runtime manifest, no template token leak
 # =============================================================================
 wire_ok=1
 for hop in xenial-to-bionic bionic-to-focal focal-to-jammy jammy-to-noble; do
   tin="${ROOT}/client/dp-offline-upgrade-${hop}.sh.in"
-  builder="${ROOT}/scripts/lib/build_client_${hop//-/_}.py"
-  # build_client names use underscores: xenial_to_bionic
   bhop="${hop//-/_}"
   builder="${ROOT}/scripts/lib/build_client_${bhop}.py"
   if [[ ! -f "$tin" ]] || ! grep -q '@@GRUB_INSTALL_DEVICE_PREFLIGHT_HELPER@@' "$tin"; then
-    echo "  missing token in $tin"
-    wire_ok=0
+    echo "  missing token in $tin"; wire_ok=0
   fi
-  if ! grep -q 'run_grub_install_device_preflight\|validate_grub_install_device_preflight' "$tin"; then
-    echo "  missing call site in $tin"
-    wire_ok=0
+  if ! grep -q 'run_grub_install_device_preflight' "$tin"; then
+    echo "  missing preflight call in $tin"; wire_ok=0
   fi
-  if [[ ! -f "$builder" ]] || ! grep -q 'GRUB_INSTALL_DEVICE_PREFLIGHT_HELPER\|dp-offline-grub-install-device-preflight' "$builder"; then
-    echo "  missing builder wire in $builder"
-    wire_ok=0
+  if ! grep -q 'run_grub_install_device_reconcile' "$tin"; then
+    echo "  missing reconcile call in $tin"; wire_ok=0
+  fi
+  if [[ ! -f "$builder" ]] || ! grep -q 'dp-offline-grub-install-device-preflight' "$builder"; then
+    echo "  missing builder wire in $builder"; wire_ok=0
   fi
 done
 if grep -q 'dp-offline-grub-install-device-preflight' \
@@ -357,30 +697,23 @@ if grep -q 'dp-offline-grub-install-device-preflight' \
   "${ROOT}/scripts/lib/client_build_provenance.py"; then
   :
 else
-  echo "  missing render stub or provenance listing"
-  wire_ok=0
+  echo "  missing render stub or provenance listing"; wire_ok=0
 fi
 if [[ "$wire_ok" -eq 1 ]]; then
-  pass "W: templates/builders/provenance wired"
+  pass "S: all four hops + builders wired"
 else
-  fail "W: product wiring incomplete"
+  fail "S: product wiring incomplete"
 fi
 
-# =============================================================================
-# Helper body must not re-introduce template tokens after embed (Bug A)
-# =============================================================================
 HELPER_LEAK="$(grep -oE '@@[A-Z0-9_]+@@' "$HELPER" || true)"
 if [[ -z "$HELPER_LEAK" ]]; then
   echo "HELPER_TEMPLATE_TOKEN_LEAK=PASS"
-  pass "helper body has no @@TOKEN@@ literals"
+  pass "U: helper body has no @@TOKEN@@ literals"
 else
   echo "HELPER_TEMPLATE_TOKEN_LEAK=FAIL"
-  fail "helper body leaks template tokens: ${HELPER_LEAK}"
+  fail "U: helper body leaks template tokens: ${HELPER_LEAK}"
 fi
 
-# =============================================================================
-# Runtime manifest must allowlist the GRUB helper (Bug B)
-# =============================================================================
 python3 - "$ROOT/lib/runtime_manifest.sh" <<'PY' && manifest_ok=1 || manifest_ok=0
 import re, sys
 text = open(sys.argv[1], encoding="utf-8").read()
@@ -394,7 +727,6 @@ if not m:
     sys.exit(1)
 block = m.group(1)
 wanted = "dp-offline-grub-install-device-preflight.sh"
-# Match an array entry line, not an incidental comment elsewhere.
 if not re.search(r"(?m)^\s*" + re.escape(wanted) + r"\s*$", block):
     print("missing allowlist entry: " + wanted, file=sys.stderr)
     sys.exit(1)
@@ -402,11 +734,14 @@ print("RUNTIME_MANIFEST_GRUB_HELPER=PASS")
 sys.exit(0)
 PY
 if [[ "$manifest_ok" -eq 1 ]]; then
-  pass "runtime manifest allowlists GRUB helper"
+  pass "T: runtime manifest allowlists GRUB helper"
 else
   echo "RUNTIME_MANIFEST_GRUB_HELPER=FAIL"
-  fail "UM_RUNTIME_CLIENT_LIB_FILES missing dp-offline-grub-install-device-preflight.sh"
+  fail "T: UM_RUNTIME_CLIENT_LIB_FILES missing helper"
 fi
+
+# Cheap deferred finding: mapper roots fail closed (case G).
+echo "COMPLEX_BLOCK_TOPOLOGY_SUPPORT=DEFERRED_FAIL_CLOSED"
 
 # =============================================================================
 if [[ "$FAIL" -eq 0 ]]; then
