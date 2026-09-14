@@ -130,15 +130,35 @@ cp -a "${HTTP_ROOT}/client/upgrade-${HOP}.sh" "${WORKDIR}/menu7-upgrade-A.sh"
 cp -a "${HTTP_ROOT}/client/dp-launch-${HOP}.sh" "${WORKDIR}/menu7-launch-A.sh"
 WRAPPER_A_SHA="$(sha256sum "${WORKDIR}/menu7-upgrade-A.sh" | awk '{print $1}')"
 
+if grep -Fq 'cd /home/aella' "${WORKDIR}/menu7-upgrade-A.sh"; then
+  fail "generated wrapper must not hardcode cd /home/aella"
+else
+  pass "generated wrapper has no hardcoded /home/aella"
+fi
+grep -q 'mktemp -d' "${WORKDIR}/menu7-upgrade-A.sh" \
+  && pass "generated wrapper uses portable temp workdir" \
+  || fail "generated wrapper missing mktemp workdir"
+grep -q "LAUNCHER_SHA256=" "${WORKDIR}/menu7-upgrade-A.sh" \
+  && pass "generated wrapper retains LAUNCHER_SHA256 verify" \
+  || fail "generated wrapper missing LAUNCHER_SHA256"
+grep -Eq 'curl\|[[:space:]]*bash|curl[[:space:]]+\|[[:space:]]*bash' "${WORKDIR}/menu7-upgrade-A.sh" \
+  && fail "generated wrapper must not use curl|bash" \
+  || pass "generated wrapper does not use curl|bash"
+grep -q '^exec ' "${WORKDIR}/menu7-upgrade-A.sh" \
+  && fail "generated wrapper must not exec (EXIT trap cleanup)" \
+  || pass "generated wrapper avoids exec for trap cleanup"
+
 run_saved_menu7_wrapper() {
   local wrapper="$1"
-  local home="$2"
-  mkdir -p "$home"
+  local run_dir="$2"
+  local home_env="${3:-$run_dir}"
+  mkdir -p "$run_dir"
   # Simulate operator pasting Menu 7: download live wrapper by pinned SHA then exec.
   # For CASE A/E the live wrapper matches; for B/C the old saved wrapper bytes are used
   # directly (already copied while gen A was current).
   (
-    cd "$home"
+    cd "$run_dir"
+    export HOME="$home_env"
     cp -f "$wrapper" "./upgrade-${HOP}.sh"
     bash "./upgrade-${HOP}.sh"
   )
@@ -152,6 +172,29 @@ cat >"${WORKDIR}/bin/sudo" <<'EOF'
 exec "$@"
 EOF
 chmod 0755 "${WORKDIR}/bin/sudo"
+
+# Portability: HOME nonexistent + arbitrary non-project cwd.
+NONEXIST_HOME="${WORKDIR}/no-such-home-$$"
+ARBITRARY_CWD="${WORKDIR}/arbitrary-cwd"
+mkdir -p "$ARBITRARY_CWD"
+if OUT_PORT="$(run_saved_menu7_wrapper "${WORKDIR}/menu7-upgrade-A.sh" "$ARBITRARY_CWD" "$NONEXIST_HOME" 2>&1)"; then
+  echo "$OUT_PORT" | grep -q 'STUB_UPGRADE_OK' \
+    && pass "portable: executes with nonexistent HOME from arbitrary cwd" \
+    || fail "portable: executed but missing stub marker"
+else
+  fail "portable: unexpectedly failed: $OUT_PORT"
+fi
+if OUT_ROOT="$(
+  cd /
+  export HOME="$NONEXIST_HOME"
+  bash "${WORKDIR}/menu7-upgrade-A.sh" 2>&1
+)"; then
+  echo "$OUT_ROOT" | grep -q 'STUB_UPGRADE_OK' \
+    && pass "portable: executes without requiring cwd=/home/aella" \
+    || fail "portable: cwd-independent run missing stub"
+else
+  fail "portable: cwd-independent run failed: $OUT_ROOT"
+fi
 
 # CASE A
 if OUT_A="$(run_saved_menu7_wrapper "${WORKDIR}/menu7-upgrade-A.sh" "${WORKDIR}/run-A" 2>&1)"; then

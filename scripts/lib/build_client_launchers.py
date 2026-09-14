@@ -41,17 +41,19 @@ TEMPLATE_REL = "client/dp-client-hop-launcher.sh.in"
 
 # Operator-facing bootstrap. Literal LAUNCHER_SHA256 is the inner trust anchor;
 # Menu 7 separately pins this wrapper's own SHA256. Never curl|bash.
+# Uses a private mktemp workdir (not $HOME /cwd) so cleanup is guaranteed after
+# launcher completion/failure — do not exec (would skip the EXIT trap).
 OS_UPGRADE_WRAPPER_TEMPLATE = """#!/usr/bin/env bash
 set -euo pipefail
-cd /home/aella
 L='@@LAUNCHER@@'
-D="${L}.download"
 MIRROR='@@MIRROR_BASE@@'
 LAUNCHER_SHA256='@@LAUNCHER_SHA256@@'
+W="$(mktemp -d)"
+trap 'rm -rf "$W"' EXIT
+D="${W}/${L}.download"
 curl -fsSLo "$D" "${MIRROR}/client/${L}"
 printf '%s  %s\\n' "$LAUNCHER_SHA256" "$D" | sha256sum -c -
-mv -f "$D" "$L"
-exec bash "./$L"
+bash "$D"
 """
 
 

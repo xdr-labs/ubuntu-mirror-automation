@@ -142,7 +142,6 @@ phase2_upgrade_wrapper_write() {
   cat >"$dest" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-cd /home/aella
 MIRROR='${mirror}'
 VER='${ver}'
 SCRIPT='stage-dp-phase2.sh'
@@ -212,7 +211,6 @@ EOF
   cat >"$recovery" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-cd /home/aella
 MIRROR='${mirror}'
 VER='${ver}'
 SCRIPT='stage-dp-phase2.sh'
