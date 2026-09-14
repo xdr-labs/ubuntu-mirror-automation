@@ -18,6 +18,8 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/acps_auth.sh"
 ACPS_CURL_CONNECT_TIMEOUT="${ACPS_CURL_CONNECT_TIMEOUT:-30}"
 ACPS_CURL_RETRIES="${ACPS_CURL_RETRIES:-5}"
 ACPS_CURL_RETRY_DELAY="${ACPS_CURL_RETRY_DELAY:-5}"
+ACPS_CURL_SPEED_LIMIT="${ACPS_CURL_SPEED_LIMIT:-1024}"
+ACPS_CURL_SPEED_TIME="${ACPS_CURL_SPEED_TIME:-120}"
 ACPS_PROGRESS_INTERVAL_SEC="${ACPS_PROGRESS_INTERVAL_SEC:-3}"
 
 acps_cache_dir() {
@@ -871,6 +873,8 @@ acps_download_one() {
     --retry "$ACPS_CURL_RETRIES"
     --retry-delay "$ACPS_CURL_RETRY_DELAY"
     --retry-all-errors
+    --speed-limit "$ACPS_CURL_SPEED_LIMIT"
+    --speed-time "$ACPS_CURL_SPEED_TIME"
     --continue-at -
     -o "$part"
   )

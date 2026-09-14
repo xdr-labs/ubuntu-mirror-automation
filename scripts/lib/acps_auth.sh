@@ -135,6 +135,12 @@ acps_install_netrc_auth() {
   host="$(printf '%s' "${ACPS_EFFECTIVE_BASE}" | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##' | cut -d/ -f1 | cut -d@ -f2 | cut -d: -f1)"
   [[ -n "$host" ]] || return 1
   [[ -n "$user" && -n "$pass" ]] || return 1
+  # .netrc token grammar: whitespace/newlines break curl token parsing.
+  # Other special characters are preserved literally (curl reads the password
+  # token as-is). Reject only characters that split tokens.
+  if [[ "$host" =~ [[:space:]] || "$user" =~ [[:space:]] || "$pass" =~ [[:space:]] ]]; then
+    _acps_auth_die "ACPS_NETRC=FAIL reason=whitespace_in_credentials_unsupported"
+  fi
   machine="$host"
   (
     umask 077
