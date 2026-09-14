@@ -94,6 +94,7 @@ CLIENT_SET_GENERATION_ID=keyring-trust-fixture
 CLIENT_SIGNING_FINGERPRINT=${LEG_FPR}
 MIRROR_HTTP_URL=http://127.0.0.1
 PREPARATION_MODE=FULL
+CLIENT_BUILD_INPUT_SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 EOF
 
 write_manifest() {
@@ -106,6 +107,7 @@ open(path, "w", encoding="utf-8").write(json.dumps({
     "hop": hop,
     "script": script,
     "script_sha256": sha,
+    "client_build_input_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 }, indent=2) + "\n")
 PY
   gpg --homedir "$signer_home" --batch --yes --detach-sign --armor \
@@ -132,7 +134,8 @@ python3 "${ROOT}/scripts/lib/build_client_launchers.py" \
   --output-dir "${HTTP_ROOT}/client" \
   --mirror-base-url "$MIRROR" \
   --signing-fingerprint "$LEG_FPR" \
-  --expected-keyring-sha256 "$LEG_SHA" >/dev/null
+  --expected-keyring-sha256 "$LEG_SHA" \
+    --expected-client-build-input-sha256 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" >/dev/null
 
 LAUNCHER="${HTTP_ROOT}/client/dp-launch-${HOP}.sh"
 grep -q "EXPECTED_KEYRING_SHA256='${LEG_SHA}'" "$LAUNCHER" \
@@ -203,7 +206,8 @@ set +e
   cd "$(mktemp -d)"
   curl -fsSLo public-keyring.gpg "${MIRROR}/client/public-keyring.gpg"
   bash "${HTTP_ROOT}/client/dp-client-command-runner.sh" \
-    "$MIRROR" "$HOP" "$SCRIPT" "$LEG_FPR" "$COMBINED_SHA"
+    "$MIRROR" "$HOP" "$SCRIPT" "$LEG_FPR" "$COMBINED_SHA" \
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 ) >"${WORKDIR}/out-runner-sha.txt" 2>&1
 rrc=$?
 set -e

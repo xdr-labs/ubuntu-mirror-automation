@@ -173,12 +173,14 @@ python3 "$RUNTIME/scripts/lib/build_client_launchers.py" \
   --output-dir "$STAGE" \
   --mirror-base-url "$MIRROR_HTTP_URL" \
   --signing-fingerprint "$FPR" \
-  --expected-keyring-sha256 "$STAGE_KR_SHA" >/dev/null
+  --expected-keyring-sha256 "$STAGE_KR_SHA" \
+  --expected-client-build-input-sha256 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" >/dev/null
 expect "wrappers and launchers staged" \
   test -f "$STAGE/upgrade-xenial-to-bionic.sh" -a -f "$STAGE/dp-launch-xenial-to-bionic.sh"
 CLIENT_GEN="client-fixture-1"
 mm_wf_write_client_set_metadata "$STAGE" "$CLIENT_GEN" "$FPR" \
-  "$MIRROR_HTTP_URL" FULL
+  "$MIRROR_HTTP_URL" FULL \
+  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 if mm_verify_http_public_tree_permissions "$STAGE" client >/dev/null 2>&1; then
   fail "0700 prepublish tree was accepted"
 else
@@ -265,7 +267,8 @@ python3 "$RUNTIME/scripts/lib/build_client_launchers.py" \
   --output-dir "$MM_CLIENT_ROOT" \
   --mirror-base-url "$LOCAL_MIRROR" \
   --signing-fingerprint "$FPR" \
-  --expected-keyring-sha256 "$LIVE_KR_SHA" >/dev/null
+  --expected-keyring-sha256 "$LIVE_KR_SHA" \
+    --expected-client-build-input-sha256 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" >/dev/null
 STEP2_SHA=$(sha256sum "$MM_CLIENT_ROOT/upgrade-xenial-to-bionic.sh" | awk '{print $1}')
 STEP2=$(gui_client_hop_command_line "$LOCAL_MIRROR" \
   dp-offline-upgrade-xenial-to-bionic.sh "$STEP2_SHA")

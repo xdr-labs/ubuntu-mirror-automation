@@ -10,9 +10,12 @@
 #   Menu 7 wrapper SHA → launcher SHA → embedded EXPECTED_KEYRING_SHA256
 #   → downloaded public-keyring.gpg byte-identical → primary FPR match
 #   → exactly one pub key → gpgv
+#   → embedded EXPECTED_CLIENT_BUILD_INPUT_SHA256 must match live client-set.env
+#     and signed hop manifest (exact generation binding)
 #
 # Placeholders (replaced by scripts/lib/build_client_launchers.py):
 #   @@MIRROR_BASE@@  @@EXPECTED_FPR@@  @@EXPECTED_KEYRING_SHA256@@
+#   @@EXPECTED_CLIENT_BUILD_INPUT_SHA256@@
 #   @@HOP@@  @@SCRIPT@@  @@LAUNCHER_SCHEMA_VERSION@@
 #
 # Assumption: production Mirror client signing keyrings contain exactly one
@@ -24,6 +27,7 @@ DP_OS_HOP_LAUNCHER_SCHEMA='@@LAUNCHER_SCHEMA_VERSION@@'
 MIRROR_BASE='@@MIRROR_BASE@@'
 EXPECTED_FPR='@@EXPECTED_FPR@@'
 EXPECTED_KEYRING_SHA256='@@EXPECTED_KEYRING_SHA256@@'
+EXPECTED_CLIENT_BUILD_INPUT_SHA256='@@EXPECTED_CLIENT_BUILD_INPUT_SHA256@@'
 HOP='@@HOP@@'
 SCRIPT='@@SCRIPT@@'
 
@@ -39,6 +43,10 @@ die() {
   || die "invalid embedded EXPECTED_KEYRING_SHA256"
 [[ "$EXPECTED_KEYRING_SHA256" =~ ^[0-9A-Fa-f]{64}$ ]] \
   || die "EXPECTED_KEYRING_SHA256 must be 64 hex characters"
+[[ -n "$EXPECTED_CLIENT_BUILD_INPUT_SHA256" && ${#EXPECTED_CLIENT_BUILD_INPUT_SHA256} -eq 64 ]] \
+  || die "invalid embedded EXPECTED_CLIENT_BUILD_INPUT_SHA256"
+[[ "$EXPECTED_CLIENT_BUILD_INPUT_SHA256" =~ ^[0-9A-Fa-f]{64}$ ]] \
+  || die "EXPECTED_CLIENT_BUILD_INPUT_SHA256 must be 64 hex characters"
 [[ -n "$HOP" && "$HOP" != *__UNREPLACED__* ]] || die "invalid embedded HOP"
 [[ -n "$SCRIPT" && "$SCRIPT" == "dp-offline-upgrade-${HOP}.sh" ]] || die "SCRIPT/HOP binding mismatch"
 [[ -n "$DP_OS_HOP_LAUNCHER_SCHEMA" && "$DP_OS_HOP_LAUNCHER_SCHEMA" != *__UNREPLACED__* ]] \
@@ -81,4 +89,5 @@ fi
 gpgv --keyring "./$K" "${M}.asc" "$M"
 sha256sum -c "$M"
 sha256sum -c "${R}.sha256"
-bash "$R" "$MIRROR_BASE" "$HOP" "$SCRIPT" "$EXPECTED_FPR" "$EXPECTED_KEYRING_SHA256"
+bash "$R" "$MIRROR_BASE" "$HOP" "$SCRIPT" "$EXPECTED_FPR" "$EXPECTED_KEYRING_SHA256" \
+  "$EXPECTED_CLIENT_BUILD_INPUT_SHA256"

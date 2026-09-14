@@ -16,9 +16,9 @@ and four operator-facing OS-hop wrappers that download/verify those launchers:
   upgrade-jammy-to-noble.sh
 
 Deterministic for the same template bytes, Mirror URL, signing fingerprint,
-exact public-keyring SHA256, hop mapping, launcher schema version, and
-resulting launcher SHA256. Never embeds timestamps, random values, temp
-paths, hostnames, inodes, or private-key material.
+exact public-keyring SHA256, CLIENT_BUILD_INPUT_SHA256, hop mapping, launcher
+schema version, and resulting launcher SHA256. Never embeds timestamps,
+random values, temp paths, hostnames, inodes, or private-key material.
 """
 from __future__ import print_function
 
@@ -28,7 +28,7 @@ import os
 import re
 import sys
 
-LAUNCHER_SCHEMA_VERSION = "2"
+LAUNCHER_SCHEMA_VERSION = "3"
 
 HOPS = (
     ("xenial-to-bionic", "dp-offline-upgrade-xenial-to-bionic.sh"),
@@ -86,8 +86,21 @@ def _normalize_keyring_sha256(keyring_sha256):
     return digest
 
 
+def _normalize_build_input_sha256(build_input_sha256):
+    digest = (build_input_sha256 or "").lower().replace(" ", "")
+    if not re.match(r"^[0-9a-f]{64}$", digest):
+        raise RuntimeError("LAUNCHER_EXPECTED_CLIENT_BUILD_INPUT_SHA256_INVALID")
+    return digest
+
+
 def render_launcher(
-    template_text, mirror_base, expected_fpr, expected_keyring_sha256, hop, script
+    template_text,
+    mirror_base,
+    expected_fpr,
+    expected_keyring_sha256,
+    expected_client_build_input_sha256,
+    hop,
+    script,
 ):
     text = template_text
     replacements = {
@@ -95,6 +108,7 @@ def render_launcher(
         "@@MIRROR_BASE@@": mirror_base,
         "@@EXPECTED_FPR@@": expected_fpr,
         "@@EXPECTED_KEYRING_SHA256@@": expected_keyring_sha256,
+        "@@EXPECTED_CLIENT_BUILD_INPUT_SHA256@@": expected_client_build_input_sha256,
         "@@HOP@@": hop,
         "@@SCRIPT@@": script,
     }
@@ -150,6 +164,7 @@ def build_launchers(
     mirror_base_url,
     signing_fingerprint,
     expected_keyring_sha256,
+    expected_client_build_input_sha256,
 ):
     root = os.path.abspath(project_root)
     out = os.path.abspath(output_dir)
@@ -161,10 +176,19 @@ def build_launchers(
     mirror = _normalize_mirror(mirror_base_url)
     fpr = _normalize_fpr(signing_fingerprint)
     keyring_sha = _normalize_keyring_sha256(expected_keyring_sha256)
+    build_input_sha = _normalize_build_input_sha256(expected_client_build_input_sha256)
     os.makedirs(out, exist_ok=True)
     results = []
     for hop, script in HOPS:
-        body = render_launcher(template_text, mirror, fpr, keyring_sha, hop, script)
+        body = render_launcher(
+            template_text,
+            mirror,
+            fpr,
+            keyring_sha,
+            build_input_sha,
+            hop,
+            script,
+        )
         name = "dp-launch-%s.sh" % hop
         path = os.path.join(out, name)
         with open(path, "w", encoding="utf-8", newline="\n") as fh:
@@ -211,6 +235,11 @@ def main(argv=None):
         help="SHA256 of the exact public-keyring.gpg bytes to pin into launchers",
     )
     parser.add_argument(
+        "--expected-client-build-input-sha256",
+        required=True,
+        help="CLIENT_BUILD_INPUT_SHA256 to pin into launchers for exact generation binding",
+    )
+    parser.add_argument(
         "--print-env",
         action="store_true",
         help="Emit LAUNCHER_* evidence lines after generation",
@@ -223,6 +252,7 @@ def main(argv=None):
             args.mirror_base_url,
             args.signing_fingerprint,
             args.expected_keyring_sha256,
+            args.expected_client_build_input_sha256,
         )
         if args.print_env:
             print("LAUNCHER_SCHEMA_VERSION=%s" % LAUNCHER_SCHEMA_VERSION)
@@ -230,6 +260,10 @@ def main(argv=None):
             print(
                 "LAUNCHER_EXPECTED_KEYRING_SHA256=%s"
                 % _normalize_keyring_sha256(args.expected_keyring_sha256)
+            )
+            print(
+                "LAUNCHER_EXPECTED_CLIENT_BUILD_INPUT_SHA256=%s"
+                % _normalize_build_input_sha256(args.expected_client_build_input_sha256)
             )
             for item in results:
                 print(

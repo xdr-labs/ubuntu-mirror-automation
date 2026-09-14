@@ -33,7 +33,8 @@ python3 "$ROOT/scripts/lib/build_client_launchers.py" \
   --output-dir "$MM_CLIENT_ROOT" \
   --mirror-base-url "$MIRROR_HTTP_URL" \
   --signing-fingerprint "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" \
-  --expected-keyring-sha256 "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" >/dev/null
+  --expected-keyring-sha256 "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" \
+    --expected-client-build-input-sha256 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" >/dev/null
 
 # shellcheck source=/dev/null
 source "$ROOT/scripts/lib/phase2_helper_generation.sh"

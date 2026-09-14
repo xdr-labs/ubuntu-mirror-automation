@@ -1589,15 +1589,50 @@ mm_wf_validate_command_file_content() {
           "COMMAND_FILE_PHASE2_STAGE_COUNT=${stage_count}"
         return 1
       }
-      # Single topology: exactly one STEP 7 bringup.
-      # Cluster: exactly one executable per configured master section
-      # ("Run this command on the DL/DA MASTER ONLY"), not merely 1..2.
-      local bringup_min=1 bringup_max=1 configured_masters=0
-      configured_masters="$(grep -cE '^Run this command on the (DL|DA) MASTER ONLY\.$' "$file" || true)"
+      # Single topology: exactly one STEP 7 bringup (no DL/DA master sections).
+      # Cluster: role-aware — at most one DL and one DA master section, and
+      # executable bringup count must equal the number of distinct role sections.
+      # When DL_WORKER_IPS / DA_WORKER_IPS are set (Menu 7 publish path), require
+      # exact role presence so DL_ONLY cannot accept an unexpected DA executable
+      # and DL_DA cannot accept two DL / zero DA even when total count is 2.
+      local bringup_min=1 bringup_max=1
+      local dl_sections=0 da_sections=0 configured_masters=0
+      local expect_dl="" expect_da=""
+      dl_sections="$(grep -cE '^Run this command on the DL MASTER ONLY\.$' "$file" || true)"
+      da_sections="$(grep -cE '^Run this command on the DA MASTER ONLY\.$' "$file" || true)"
+      if [[ "$dl_sections" -gt 1 || "$da_sections" -gt 1 ]]; then
+        mm_wf_command_file_fail BRINGUP_ROLE_DUPLICATE \
+          "COMMAND_FILE_BRINGUP_DL_SECTION_COUNT=${dl_sections}" \
+          "COMMAND_FILE_BRINGUP_DA_SECTION_COUNT=${da_sections}" \
+          "COMMAND_FILE_BRINGUP_EXECUTABLE_VALIDATION=FAIL"
+        return 1
+      fi
+      configured_masters=$((dl_sections + da_sections))
       if [[ "$configured_masters" -ge 1 ]]; then
         bringup_min="$configured_masters"
         bringup_max="$configured_masters"
       fi
+      if [[ -n "${DL_WORKER_IPS:-}" || -n "${DA_WORKER_IPS:-}" ]]; then
+        expect_dl=0
+        expect_da=0
+        [[ -n "${DL_WORKER_IPS:-}" ]] && expect_dl=1
+        [[ -n "${DA_WORKER_IPS:-}" ]] && expect_da=1
+        if [[ "$dl_sections" -ne "$expect_dl" || "$da_sections" -ne "$expect_da" ]]; then
+          mm_wf_command_file_fail BRINGUP_ROLE_MISMATCH \
+            "COMMAND_FILE_BRINGUP_DL_SECTION_COUNT=${dl_sections}" \
+            "COMMAND_FILE_BRINGUP_DA_SECTION_COUNT=${da_sections}" \
+            "COMMAND_FILE_BRINGUP_EXPECTED_DL=${expect_dl}" \
+            "COMMAND_FILE_BRINGUP_EXPECTED_DA=${expect_da}" \
+            "COMMAND_FILE_BRINGUP_EXECUTABLE_VALIDATION=FAIL"
+          return 1
+        fi
+        bringup_min=$((expect_dl + expect_da))
+        bringup_max="$bringup_min"
+        [[ "$bringup_min" -ge 1 ]] || bringup_min=1
+        [[ "$bringup_max" -ge 1 ]] || bringup_max=1
+      fi
+      printf 'COMMAND_FILE_BRINGUP_DL_SECTION_COUNT=%s\n' "$dl_sections"
+      printf 'COMMAND_FILE_BRINGUP_DA_SECTION_COUNT=%s\n' "$da_sections"
       if [[ "$bringup_executable_count" -lt "$bringup_min" \
         || "$bringup_executable_count" -gt "$bringup_max" ]]; then
         mm_wf_command_file_fail BRINGUP_EXECUTABLE_COUNT \
@@ -1660,13 +1695,43 @@ mm_wf_validate_command_file_content() {
         return 1
       }
       # Single topology: exactly one STEP 3 bringup.
-      # Cluster: exactly one executable per configured master section.
-      local bringup_min=1 bringup_max=1 configured_masters=0
-      configured_masters="$(grep -cE '^Run this command on the (DL|DA) MASTER ONLY\.$' "$file" || true)"
+      # Cluster: role-aware section/count binding (same rules as FULL).
+      local bringup_min=1 bringup_max=1
+      local dl_sections=0 da_sections=0 configured_masters=0
+      local expect_dl="" expect_da=""
+      dl_sections="$(grep -cE '^Run this command on the DL MASTER ONLY\.$' "$file" || true)"
+      da_sections="$(grep -cE '^Run this command on the DA MASTER ONLY\.$' "$file" || true)"
+      if [[ "$dl_sections" -gt 1 || "$da_sections" -gt 1 ]]; then
+        mm_wf_command_file_fail BRINGUP_ROLE_DUPLICATE \
+          "COMMAND_FILE_BRINGUP_DL_SECTION_COUNT=${dl_sections}" \
+          "COMMAND_FILE_BRINGUP_DA_SECTION_COUNT=${da_sections}" \
+          "COMMAND_FILE_BRINGUP_EXECUTABLE_VALIDATION=FAIL"
+        return 1
+      fi
+      configured_masters=$((dl_sections + da_sections))
       if [[ "$configured_masters" -ge 1 ]]; then
         bringup_min="$configured_masters"
         bringup_max="$configured_masters"
       fi
+      if [[ -n "${DL_WORKER_IPS:-}" || -n "${DA_WORKER_IPS:-}" ]]; then
+        expect_dl=0
+        expect_da=0
+        [[ -n "${DL_WORKER_IPS:-}" ]] && expect_dl=1
+        [[ -n "${DA_WORKER_IPS:-}" ]] && expect_da=1
+        if [[ "$dl_sections" -ne "$expect_dl" || "$da_sections" -ne "$expect_da" ]]; then
+          mm_wf_command_file_fail BRINGUP_ROLE_MISMATCH \
+            "COMMAND_FILE_BRINGUP_DL_SECTION_COUNT=${dl_sections}" \
+            "COMMAND_FILE_BRINGUP_DA_SECTION_COUNT=${da_sections}" \
+            "COMMAND_FILE_BRINGUP_EXPECTED_DL=${expect_dl}" \
+            "COMMAND_FILE_BRINGUP_EXPECTED_DA=${expect_da}" \
+            "COMMAND_FILE_BRINGUP_EXECUTABLE_VALIDATION=FAIL"
+          return 1
+        fi
+        bringup_min=$((expect_dl + expect_da))
+        bringup_max="$bringup_min"
+      fi
+      printf 'COMMAND_FILE_BRINGUP_DL_SECTION_COUNT=%s\n' "$dl_sections"
+      printf 'COMMAND_FILE_BRINGUP_DA_SECTION_COUNT=%s\n' "$da_sections"
       if [[ "$bringup_executable_count" -lt "$bringup_min" \
         || "$bringup_executable_count" -gt "$bringup_max" ]]; then
         mm_wf_command_file_fail BRINGUP_EXECUTABLE_COUNT \
