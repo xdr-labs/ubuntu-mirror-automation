@@ -79,6 +79,20 @@ UM_RUNTIME_SCRIPT_LIB_PYTHON_EXECUTABLES=(
   xenial_bionic_upgrade_analysis.py
   selective_mirror.py
   validate_selective_mirror.py
+  sync_by_hash.py
+  sync_release_upgraders.py
+  sync_legacy_releases.py
+  validate_upgrade_profile.py
+  validate_release_upgraders.py
+  validate_legacy_releases.py
+  validate_security_compat.py
+)
+
+# ---------------------------------------------------------------------------
+# scripts/*.py helpers invoked via python3 <path> (not under scripts/lib/)
+# ---------------------------------------------------------------------------
+UM_RUNTIME_SCRIPT_PYTHON_HELPERS=(
+  build-selective-mirror-plan.py
 )
 
 # Extra files under scripts/lib/ (subdirectories). Includes Phase 2 bringup
@@ -152,6 +166,9 @@ um_runtime_emit_installed_relative_paths() {
     printf 'lib/%s\n' "$f"
   done
   for f in "${UM_RUNTIME_SCRIPT_ENTRYPOINTS[@]}"; do
+    printf 'scripts/%s\n' "$f"
+  done
+  for f in "${UM_RUNTIME_SCRIPT_PYTHON_HELPERS[@]}"; do
     printf 'scripts/%s\n' "$f"
   done
   for f in \
@@ -310,6 +327,12 @@ um_runtime_install_tree() {
   done
 
   for f in "${UM_RUNTIME_SCRIPT_ENTRYPOINTS[@]}"; do
+    um_runtime_install_one \
+      "${src_root}/scripts/${f}" \
+      "${runtime}/scripts/${f}" 0755
+  done
+
+  for f in "${UM_RUNTIME_SCRIPT_PYTHON_HELPERS[@]}"; do
     um_runtime_install_one \
       "${src_root}/scripts/${f}" \
       "${runtime}/scripts/${f}" 0755

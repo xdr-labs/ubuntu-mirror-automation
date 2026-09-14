@@ -347,10 +347,13 @@ EOF
   fi
   local py profile ml
   py="$(resolve_validate_upgrade_profile_py)" || {
-    warn "validate_upgrade_profile.py missing — skipping pre-sync profile gate"
-    return 0
+    error "validate_upgrade_profile.py missing — profile check NOT_AVAILABLE"
+    return 1
   }
-  profile="$(resolve_upgrade_profile_json)" || return 0
+  profile="$(resolve_upgrade_profile_json)" || {
+    error "offline-upgrade-profile.json missing — profile check NOT_AVAILABLE"
+    return 1
+  }
   ml="/etc/apt/mirror.list"
   [[ -f "$ml" ]] || ml="${PROJECT_ROOT}/templates/mirror.list"
   mkdir -p "$OFFLINE_DIR"
@@ -1423,6 +1426,8 @@ resolve_selective_mirror_py() {
   local cand
   for cand in \
     "${PROJECT_ROOT}/scripts/lib/selective_mirror.py" \
+    "${SCRIPT_DIR}/lib/selective_mirror.py" \
+    "/usr/local/lib/ubuntu-mirror/scripts/lib/selective_mirror.py" \
     "/usr/local/lib/ubuntu-mirror/selective_mirror.py"
   do
     [[ -f "$cand" ]] && { printf '%s\n' "$cand"; return 0; }
@@ -1434,6 +1439,8 @@ resolve_validate_selective_py() {
   local cand
   for cand in \
     "${PROJECT_ROOT}/scripts/lib/validate_selective_mirror.py" \
+    "${SCRIPT_DIR}/lib/validate_selective_mirror.py" \
+    "/usr/local/lib/ubuntu-mirror/scripts/lib/validate_selective_mirror.py" \
     "/usr/local/lib/ubuntu-mirror/validate_selective_mirror.py"
   do
     [[ -f "$cand" ]] && { printf '%s\n' "$cand"; return 0; }
@@ -1445,6 +1452,8 @@ resolve_build_selective_plan_py() {
   local cand
   for cand in \
     "${PROJECT_ROOT}/scripts/build-selective-mirror-plan.py" \
+    "${SCRIPT_DIR}/build-selective-mirror-plan.py" \
+    "/usr/local/lib/ubuntu-mirror/scripts/build-selective-mirror-plan.py" \
     "/usr/local/lib/ubuntu-mirror/build-selective-mirror-plan.py"
   do
     [[ -f "$cand" ]] && { printf '%s\n' "$cand"; return 0; }
