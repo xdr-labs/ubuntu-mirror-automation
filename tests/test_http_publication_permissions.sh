@@ -22,6 +22,8 @@ source "$LIB"
 
 SPOOL="${WORKDIR}/var/spool/apt-mirror"
 LIVE="${SPOOL}/client"
+export MM_MIRROR_ROOT="$SPOOL"
+export BASE_PATH="$SPOOL"
 mkdir -p "$SPOOL"
 chmod 0755 "$SPOOL"
 

@@ -2042,6 +2042,11 @@ def materialize(plan_path, selective_root, allow_download=True, sign=True,
                 up_size = int(up_size) if up_size not in (None, '') else None
             except (TypeError, ValueError):
                 up_size = None
+            # Executable upgrade artifacts require deterministic identity.
+            if not up_sha:
+                raise RuntimeError(
+                    'release upgrader missing sha256: %s' % name
+                )
             if up_sha or up_size is not None:
                 if destination_matches(dst, up_sha, up_size):
                     stats['exists'] = stats.get('exists', 0) + 1
@@ -2209,12 +2214,19 @@ def _verify_result_is_current(verify_result, plan, staging):
         or verify_result.get('selective_plan_checksum')
         or ''
     )
-    if plan_ck and ver_plan and plan_ck != ver_plan:
-        return False, ERROR_VERIFY_STALE, 'plan_checksum mismatch'
+    # Authoritative plan identity requires matching verify identity (missing = fail).
+    if plan_ck:
+        if not ver_plan:
+            return False, ERROR_VERIFY_STALE, 'plan_checksum missing from verify'
+        if plan_ck != ver_plan:
+            return False, ERROR_VERIFY_STALE, 'plan_checksum mismatch'
     disc = plan.get('discovery_artifact_checksum') or ''
     ver_disc = verify_result.get('discovery_artifact_checksum') or ''
-    if disc and ver_disc and disc != ver_disc:
-        return False, ERROR_VERIFY_STALE, 'discovery_artifact_checksum mismatch'
+    if disc:
+        if not ver_disc:
+            return False, ERROR_VERIFY_STALE, 'discovery_artifact_checksum missing from verify'
+        if disc != ver_disc:
+            return False, ERROR_VERIFY_STALE, 'discovery_artifact_checksum mismatch'
     snap = verify_result.get('repository_content_checksum') or ''
     if snap and os.path.isdir(staging):
         # Import locally to avoid circular import at module load

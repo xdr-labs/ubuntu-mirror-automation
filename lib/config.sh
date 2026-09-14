@@ -538,8 +538,15 @@ um_migrate_selective_runtime() {
   uom_dest="$(um_uom_install_path)"
   mkdir -p "$(dirname "$uom_dest")"
   um_migrate_atomic_install "${src_root}/scripts/ubuntu-offline-mirror.sh" "$uom_dest" 0755 || rc=1
+  # Public bin must remain the Menu 7 presentation entrypoint (not a symlink to
+  # core). Replacing it with ln -sfn core caused post-migrate GUI drift (G2).
   if [[ "${UM_DRY_RUN:-0}" != "1" ]]; then
-    ln -sfn "$uom_dest" "${bindir}/ubuntu-offline-mirror" 2>/dev/null || true
+    local wrapper="${src_root}/scripts/ubuntu-offline-mirror-entrypoint.sh"
+    if [[ -f "$wrapper" ]]; then
+      um_migrate_atomic_install "$wrapper" "${bindir}/ubuntu-offline-mirror" 0755 || rc=1
+    else
+      ln -sfn "$uom_dest" "${bindir}/ubuntu-offline-mirror" 2>/dev/null || true
+    fi
   fi
 
   local f

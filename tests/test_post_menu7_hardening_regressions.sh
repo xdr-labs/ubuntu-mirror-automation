@@ -176,5 +176,32 @@ source "$TMP/escape.conf"
   && pass "F2 conf serialization escapes specials" \
   || fail "F2 conf serialization broke value (${PATH_VAL:-})"
 
+# --- E2: HTTP normalizer refuses paths outside approved mirror root ---
+# shellcheck source=/dev/null
+source "${ROOT}/scripts/lib/http_publication_permissions.sh"
+outside="$TMP/outside-client"
+mkdir -p "$outside"
+chmod 0700 "$outside"
+export MM_MIRROR_ROOT="$TMP/approved-spool"
+mkdir -p "$MM_MIRROR_ROOT"
+set +e
+out="$(mm_normalize_http_public_tree_permissions "$outside" client 2>&1)"
+rc=$?
+set -e
+[[ "$rc" -ne 0 ]] && printf '%s' "$out" | grep -q 'HTTP_PUBLIC_ROOT_CONTAINMENT=FAIL' \
+  && pass "E2 outside-root normalize rejected" \
+  || fail "E2 containment not enforced (rc=${rc} out=${out})"
+
+# --- ACPS resume uses Content-Range (not blind continue-at) ---
+grep -q 'ACPS_CONTENT_RANGE_MISMATCH' "${ROOT}/scripts/lib/acps_acquire.sh" \
+  && ! grep -qE '^[[:space:]]*--continue-at[[:space:]]+-' "${ROOT}/scripts/lib/acps_acquire.sh" \
+  && pass "ACPS Content-Range resume contract" \
+  || fail "ACPS still uses blind continue-at or missing range check"
+
+# --- G2: migrate preserves entrypoint wrapper ---
+grep -q 'ubuntu-offline-mirror-entrypoint.sh' "${ROOT}/lib/config.sh" \
+  && pass "G2 migrate installs entrypoint wrapper" \
+  || fail "G2 migrate still only symlinks core"
+
 [[ "$FAIL" -eq 0 ]] || exit 1
 echo "PASS test_post_menu7_hardening_regressions"

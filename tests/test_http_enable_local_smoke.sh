@@ -35,6 +35,8 @@ source "${ROOT}/scripts/lib/http_publication_permissions.sh"
 SPOOL="${WORKDIR}/spool"
 CLIENT="${SPOOL}/client"
 DP="${SPOOL}/dp-phase2/6.6.0"
+export MM_MIRROR_ROOT="$SPOOL"
+export BASE_PATH="$SPOOL"
 PORT="$(python3 - <<'PY'
 import socket
 s = socket.socket()

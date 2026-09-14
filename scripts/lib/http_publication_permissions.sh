@@ -392,19 +392,42 @@ mm_http_verify_public_entry_types() {
 mm_normalize_http_public_tree_permissions() {
   local root="${1:-}"
   local kind="${2:-auto}"
-  local path base want mode spool
+  local path base want mode spool approved approved_resolved root_resolved
 
   [[ -n "$root" && -d "$root" ]] || return 1
 
+  # Containment: only normalize trees under an approved publication root.
+  # Dual-hermetic fixtures may opt into arbitrary roots.
+  approved="${MM_MIRROR_ROOT:-${BASE_PATH:-/var/spool/apt-mirror}}"
+  root_resolved="$(realpath -m "$root" 2>/dev/null || printf '%s' "$root")"
+  approved_resolved="$(realpath -m "$approved" 2>/dev/null || printf '%s' "$approved")"
+  if [[ "$root_resolved" != "$approved_resolved" \
+    && "$root_resolved" != "$approved_resolved"/* ]]; then
+    if [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" \
+      && "${MM_ALLOW_ARBITRARY_TEST_ROOTS:-0}" == "1" ]]; then
+      :
+    else
+      _mm_http_perm_error \
+        "HTTP_PUBLIC_ROOT_CONTAINMENT=FAIL path=${root_resolved} approved=${approved_resolved}"
+      return 1
+    fi
+  fi
+
   # Spool parents must allow nginx traversal (/var/spool/apt-mirror and children).
-  spool="$(dirname "$root")"
+  # Only chmod parents that themselves remain under the approved root.
+  spool="$(dirname "$root_resolved")"
   if [[ -d "$spool" ]]; then
-    chmod 0755 "$spool" 2>/dev/null || true
+    if [[ "$spool" == "$approved_resolved" || "$spool" == "$approved_resolved"/* \
+      || "$spool" == "$approved_resolved" ]]; then
+      chmod 0755 "$spool" 2>/dev/null || true
+    fi
     if [[ "$(basename "$spool")" != "apt-mirror" ]]; then
       local gp
       gp="$(dirname "$spool")"
       if [[ -d "$gp" && "$(basename "$gp")" == "apt-mirror" ]]; then
-        chmod 0755 "$gp" 2>/dev/null || true
+        if [[ "$gp" == "$approved_resolved" || "$gp" == "$approved_resolved"/* ]]; then
+          chmod 0755 "$gp" 2>/dev/null || true
+        fi
       fi
     fi
   fi

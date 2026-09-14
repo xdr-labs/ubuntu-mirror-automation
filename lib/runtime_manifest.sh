@@ -28,9 +28,12 @@ UM_RUNTIME_LIB_SHELL_FILES=(
 # ---------------------------------------------------------------------------
 UM_RUNTIME_SCRIPT_ENTRYPOINTS=(
   ubuntu-offline-mirror.sh
+  ubuntu-offline-mirror-entrypoint.sh
   install-dp-upgrade-mirror.sh
   rebuild-publish-clients.sh
   prepare-phase2-ubuntu-prerequisites.sh
+  mirrorctl
+  mirror-dashboard.sh
 )
 
 # ---------------------------------------------------------------------------
@@ -86,6 +89,7 @@ UM_RUNTIME_SCRIPT_LIB_PYTHON_EXECUTABLES=(
   validate_release_upgraders.py
   validate_legacy_releases.py
   validate_security_compat.py
+  derive_upgrade_requirements.py
 )
 
 # ---------------------------------------------------------------------------
@@ -93,6 +97,7 @@ UM_RUNTIME_SCRIPT_LIB_PYTHON_EXECUTABLES=(
 # ---------------------------------------------------------------------------
 UM_RUNTIME_SCRIPT_PYTHON_HELPERS=(
   build-selective-mirror-plan.py
+  fetch-pocket-packages-indexes.py
 )
 
 # Extra files under scripts/lib/ (subdirectories). Includes Phase 2 bringup

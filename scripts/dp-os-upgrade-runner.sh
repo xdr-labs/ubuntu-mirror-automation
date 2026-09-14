@@ -180,7 +180,7 @@ runner_execute_hop() {
   if [[ "$cur" != "$from_ver" ]]; then
     # If already at target (resume after reboot), skip to validate
     if [[ "$cur" == "$to_ver" ]]; then
-      osu_transition_state HOP_VALIDATING "already_at_target" || true
+      osu_transition_state HOP_VALIDATING "already_at_target" || { osu_set_failed "cannot_transition_already_at_target"; return 1; }
       if osu_post_hop_validate "$to_ver" "$to_code"; then
         runner_snapshot_after "$hop_dir"
         cat >"${hop_dir}/validation.json" <<EOF
@@ -305,7 +305,7 @@ runner_continue_current_release_update() {
   }
   ST_LAST_STEP="current_release_updated"
   ST_NEXT_ACTION="RUN_RELEASE_UPGRADE"
-  osu_write_state_json "$(osu_build_state_json)" || true
+  osu_write_state_json "$(osu_build_state_json)" || { osu_set_failed "state_persistence_failed"; return 1; }
 
   runner_continue_release_upgrade "$hop_num" "$hop_dir" "$from_ver" "$from_code" "$to_ver" "$to_code"
   return $?
@@ -319,7 +319,7 @@ runner_continue_release_upgrade() {
   # Preserve verified current-release completion across state step labels
   ST_LAST_STEP="current_release_updated"
   ST_NEXT_ACTION="RUN_RELEASE_UPGRADE"
-  osu_write_state_json "$(osu_build_state_json)" || true
+  osu_write_state_json "$(osu_build_state_json)" || { osu_set_failed "state_persistence_failed"; return 1; }
   if osu_honor_pause_boundary; then exit "$EXIT_PAUSED"; fi
 
   case "$ST_STATE" in
@@ -341,7 +341,7 @@ runner_continue_release_upgrade() {
     osu_transition_state HOP_RELEASE_UPGRADE_RUNNING "release_upgrade_running" || return 1
     ST_LAST_STEP="current_release_updated"
     ST_NEXT_ACTION="RUN_RELEASE_UPGRADE"
-    osu_write_state_json "$(osu_build_state_json)" || true
+    osu_write_state_json "$(osu_build_state_json)" || { osu_set_failed "state_persistence_failed"; return 1; }
   fi
   if ! runner_run_do_release_upgrade "$hop_dir" "$to_code"; then
     osu_set_failed "do_release_upgrade_failed"
@@ -445,7 +445,7 @@ runner_handle_reboot_resume() {
               return 1
             }
           fi
-          osu_write_state_json "$(osu_build_state_json)" || true
+          osu_write_state_json "$(osu_build_state_json)" || { osu_set_failed "state_persistence_failed"; return 1; }
           runner_resume_mid_hop
           return $?
           ;;
@@ -551,7 +551,7 @@ EOF
       exit "$EXIT_RESUME_REQUIRED"
       ;;
     VALIDATE)
-      osu_transition_state HOP_VALIDATING "classified_validate" || true
+      osu_transition_state HOP_VALIDATING "classified_validate" || { osu_set_failed "cannot_transition_classified_validate"; return 1; }
       if osu_post_hop_validate "$ST_TARGET_OS" "$ST_TARGET_CODENAME"; then
         hop_dir="$(runner_setup_hop_dirs "$ST_CURRENT_HOP" "$ST_CURRENT_CODENAME" "$ST_TARGET_CODENAME")"
         runner_snapshot_after "$hop_dir"
@@ -570,7 +570,7 @@ EOF
       runner_write_hop_plan "$hop_dir" "$ST_CURRENT_OS" "$ST_CURRENT_CODENAME" "$ST_TARGET_OS" "$ST_TARGET_CODENAME"
       if [[ "$ST_STATE" == "HOP_PRECHECK" || "$ST_STATE" == "RESUME_REQUIRED" ]]; then
         if [[ "$ST_STATE" == "RESUME_REQUIRED" ]]; then
-          osu_transition_state HOP_PRECHECK "resume_release_upgrade" || true
+          osu_transition_state HOP_PRECHECK "resume_release_upgrade" || { osu_set_failed "cannot_transition_resume_release_upgrade"; return 1; }
         fi
         # HOP_PRECHECK -> HOP_RELEASE_UPGRADE_STARTING (never HOP_SOURCE_PREPARING)
         runner_continue_release_upgrade "$ST_CURRENT_HOP" "$hop_dir" \
@@ -588,7 +588,7 @@ EOF
       runner_write_hop_plan "$hop_dir" "$ST_CURRENT_OS" "$ST_CURRENT_CODENAME" "$ST_TARGET_OS" "$ST_TARGET_CODENAME"
       if [[ "$ST_STATE" != "HOP_CURRENT_RELEASE_UPDATING" && "$ST_STATE" != "HOP_SOURCE_READY" ]]; then
         if [[ "$ST_STATE" != "HOP_PRECHECK" ]]; then
-          osu_transition_state HOP_PRECHECK "resume_current_release" || true
+          osu_transition_state HOP_PRECHECK "resume_current_release" || { osu_set_failed "cannot_transition_resume_current_release"; return 1; }
         fi
       fi
       if ! osu_live_precheck; then
@@ -617,14 +617,14 @@ EOF
           hop_dir="$(runner_setup_hop_dirs "$ST_CURRENT_HOP" "$ST_CURRENT_CODENAME" "$ST_TARGET_CODENAME")"
           OSU_CURRENT_HOP_DIR="$hop_dir"
           if [[ "$ST_STATE" != "HOP_PRECHECK" ]]; then
-            osu_transition_state HOP_PRECHECK "resume_not_started_release" || true
+            osu_transition_state HOP_PRECHECK "resume_not_started_release" || { osu_set_failed "cannot_transition_resume_not_started_release"; return 1; }
           fi
           runner_continue_release_upgrade "$ST_CURRENT_HOP" "$hop_dir" \
             "$ST_CURRENT_OS" "$ST_CURRENT_CODENAME" "$ST_TARGET_OS" "$ST_TARGET_CODENAME"
           return $?
         fi
         if [[ "$ST_STATE" != "HOP_PRECHECK" && "$ST_STATE" != "HOP_SOURCE_PREPARING" && "$ST_STATE" != "HOP_SOURCE_READY" && "$ST_STATE" != "HOP_CURRENT_RELEASE_UPDATING" ]]; then
-          osu_transition_state HOP_PRECHECK "resume_not_started" || true
+          osu_transition_state HOP_PRECHECK "resume_not_started" || { osu_set_failed "cannot_transition_resume_not_started"; return 1; }
         fi
         runner_execute_hop "$ST_CURRENT_HOP" "$ST_CURRENT_OS" "$ST_CURRENT_CODENAME" "$ST_TARGET_OS" "$ST_TARGET_CODENAME"
         return $?
@@ -666,7 +666,7 @@ runner_next_hop_or_complete() {
     ST_HOPS_THIS_RUN=$(( ${ST_HOPS_THIS_RUN:-0} + 1 ))
     ST_CURRENT_OS="$cur"
     ST_CURRENT_CODENAME="$(osu_current_os_codename)"
-    osu_write_state_json "$(osu_build_state_json)" || true
+    osu_write_state_json "$(osu_build_state_json)" || { osu_set_failed "state_persistence_failed"; return 1; }
     if declare -F osu_should_checkpoint_after_hop >/dev/null 2>&1 && osu_should_checkpoint_after_hop "$cur"; then
       runner_enter_checkpoint
     fi
@@ -811,12 +811,12 @@ main() {
         fi
       fi
       # retryable resume / MODE=retry: go back to hop precheck
-      osu_transition_state HOP_PRECHECK "retry_from_blocked" || true
+      osu_transition_state HOP_PRECHECK "retry_from_blocked" || { osu_set_failed "cannot_transition_retry_from_blocked"; return 1; }
       ;;
   esac
 
   if osu_pause_active; then
-    osu_transition_state PAUSED "pause_marker" || true
+    osu_transition_state PAUSED "pause_marker" || { osu_set_failed "cannot_transition_pause_marker"; exit "${EXIT_FAILED:-30}"; }
     exit "$EXIT_PAUSED"
   fi
 
