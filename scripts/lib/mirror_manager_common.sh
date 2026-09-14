@@ -2565,6 +2565,10 @@ mm_client_launchers_ready() {
   [[ -f "${root}/public-keyring.gpg" && -s "${root}/public-keyring.gpg" ]] || return 1
   kr_sha="$(sha256sum "${root}/public-keyring.gpg" | awk '{print $1}')"
   [[ -n "$kr_sha" ]] || return 1
+  local build_input
+  build_input="$(mm_parse_env_metadata_get "$meta" CLIENT_BUILD_INPUT_SHA256 2>/dev/null || true)"
+  build_input="$(printf '%s' "$build_input" | tr 'A-F' 'a-f' | tr -d '[:space:]')"
+  [[ -n "$build_input" && ${#build_input} -eq 64 ]] || return 1
   for hop in xenial-to-bionic bionic-to-focal focal-to-jammy jammy-to-noble; do
     launcher="dp-launch-${hop}.sh"
     [[ -f "${root}/${launcher}" && -s "${root}/${launcher}" ]] || return 1
@@ -2578,6 +2582,7 @@ mm_client_launchers_ready() {
     grep -Fq "${mirror%/}" "${root}/${launcher}" || return 1
     grep -q "EXPECTED_FPR='${fpr}'" "${root}/${launcher}" || return 1
     grep -q "EXPECTED_KEYRING_SHA256='${kr_sha}'" "${root}/${launcher}" || return 1
+    grep -q "EXPECTED_CLIENT_BUILD_INPUT_SHA256='${build_input}'" "${root}/${launcher}" || return 1
     grep -q 'dp-client-command-runner.sh' "${root}/${launcher}" || return 1
     if grep -qE 'BEGIN PGP PRIVATE KEY|ACPS_PASS|PASSWORD=' "${root}/${launcher}"; then
       return 1

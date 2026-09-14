@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 # (0644/0755), not host umask / checkout group-write bits.
 CLIENT_PROVENANCE_SCHEMA_VERSION = "2"
 COMMAND_BLOCK_VERSION = "SUBSHELL_V2"
-LAUNCHER_SCHEMA_VERSION = "2"
+LAUNCHER_SCHEMA_VERSION = "3"
 # Must match um_runtime_install_tree executable entrypoints in
 # lib/runtime_manifest.sh for every path that participates in FILE_DIGEST.
 _RUNTIME_EXECUTABLE_ENTRYPOINTS = frozenset(
@@ -689,6 +689,12 @@ def verify_client_set_integrity(
         if ("EXPECTED_KEYRING_SHA256='%s'" % keyring_sha) not in launcher_text \
                 and ('EXPECTED_KEYRING_SHA256="%s"' % keyring_sha) not in launcher_text:
             raise RuntimeError("CLIENT_LAUNCHER_KEYRING_SHA_MISMATCH hop=" + hop)
+        build_input = (disk_meta.get("CLIENT_BUILD_INPUT_SHA256", "") or "").lower()
+        if not re.match(r"^[0-9a-f]{64}$", build_input):
+            raise RuntimeError("CLIENT_LAUNCHER_BUILD_INPUT_METADATA_INVALID")
+        if ("EXPECTED_CLIENT_BUILD_INPUT_SHA256='%s'" % build_input) not in launcher_text \
+                and ('EXPECTED_CLIENT_BUILD_INPUT_SHA256="%s"' % build_input) not in launcher_text:
+            raise RuntimeError("CLIENT_LAUNCHER_BUILD_INPUT_MISMATCH hop=" + hop)
         if "dp-client-command-runner.sh" not in launcher_text:
             raise RuntimeError("CLIENT_LAUNCHER_RUNNER_INVOKE_MISSING hop=" + hop)
         meta_key = "CLIENT_LAUNCHER_%s_SHA256" % hop.upper().replace("-", "_")

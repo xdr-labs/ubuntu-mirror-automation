@@ -32,7 +32,8 @@ python3 "$ROOT/scripts/lib/build_client_launchers.py" \
   --output-dir "$MM_CLIENT_ROOT" \
   --mirror-base-url "$MIRROR_HTTP_URL" \
   --signing-fingerprint "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" \
-  --expected-keyring-sha256 "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" >/dev/null
+  --expected-keyring-sha256 "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" \
+    --expected-client-build-input-sha256 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" >/dev/null
 
 # shellcheck source=/dev/null
 source "$ROOT/scripts/lib/phase2_helper_generation.sh"
@@ -246,6 +247,75 @@ set -e
 [[ "$bad_ip_rc" -ne 0 ]] && pass "invalid worker IPs rejected" || fail "invalid worker IPs accepted"
 [[ "$no_pw_rc" -ne 0 ]] && pass "missing cluster password rejected" \
   || fail "missing cluster password accepted"
+
+# Role-specific bringup binding (not merely total executable count).
+# DL_DA + two DL sections / zero DA must FAIL even when executable count == 2.
+sed 's/Run this command on the DA MASTER ONLY\./Run this command on the DL MASTER ONLY./' \
+  "$TMP/full-dual.txt" >"$TMP/two-dl-zero-da.txt"
+set +e
+DL_WORKER_IPS='10.0.0.1' DA_WORKER_IPS='10.0.0.2' \
+  mm_wf_validate_command_file_content "$TMP/two-dl-zero-da.txt" FULL \
+  >"$TMP/two-dl.out" 2>/dev/null
+two_dl_rc=$?
+set -e
+[[ "$two_dl_rc" -ne 0 ]] \
+  && grep -q 'COMMAND_FILE_FAILURE_REASON=BRINGUP_ROLE_DUPLICATE' "$TMP/two-dl.out" \
+  && pass "DL_DA two-DL zero-DA rejected" \
+  || fail "DL_DA two-DL zero-DA not rejected"
+
+# DL_ONLY config + unexpected DA executable must FAIL.
+{
+  cat "$TMP/full-dl.txt"
+  echo
+  echo 'Run this command on the DA MASTER ONLY.'
+  echo
+  echo 'sudo bash /home/aella/bringup_py3_dp_after_os_upgrade.sh --version 6.6.0 --skip-download --worker-ips 10.0.0.99 --prompt-worker-password'
+} >"$TMP/dl-plus-unexpected-da.txt"
+set +e
+DL_WORKER_IPS='10.0.0.1' DA_WORKER_IPS='' \
+  mm_wf_validate_command_file_content "$TMP/dl-plus-unexpected-da.txt" FULL \
+  >"$TMP/dl-unexp.out" 2>/dev/null
+dl_unexp_rc=$?
+set -e
+[[ "$dl_unexp_rc" -ne 0 ]] \
+  && grep -qE 'COMMAND_FILE_FAILURE_REASON=BRINGUP_ROLE_(MISMATCH|DUPLICATE)' "$TMP/dl-unexp.out" \
+  && pass "DL_ONLY unexpected DA executable rejected" \
+  || fail "DL_ONLY unexpected DA executable accepted"
+
+# DA_ONLY + unexpected DL executable must FAIL.
+{
+  cat "$TMP/full-da.txt"
+  echo
+  echo 'Run this command on the DL MASTER ONLY.'
+  echo
+  echo 'sudo bash /home/aella/bringup_py3_dp_after_os_upgrade.sh --version 6.6.0 --skip-download --worker-ips 10.0.0.88 --prompt-worker-password'
+} >"$TMP/da-plus-unexpected-dl.txt"
+set +e
+DL_WORKER_IPS='' DA_WORKER_IPS='10.0.0.2' \
+  mm_wf_validate_command_file_content "$TMP/da-plus-unexpected-dl.txt" FULL \
+  >"$TMP/da-unexp.out" 2>/dev/null
+da_unexp_rc=$?
+set -e
+[[ "$da_unexp_rc" -ne 0 ]] \
+  && grep -qE 'COMMAND_FILE_FAILURE_REASON=BRINGUP_ROLE_(MISMATCH|DUPLICATE)' "$TMP/da-unexp.out" \
+  && pass "DA_ONLY unexpected DL executable rejected" \
+  || fail "DA_ONLY unexpected DL executable accepted"
+
+# Positive config-aware role binding for generated dual/dl/da files.
+set +e
+DL_WORKER_IPS='10.0.0.1' DA_WORKER_IPS='10.0.0.2' \
+  mm_wf_validate_command_file_content "$TMP/full-dual.txt" FULL >/dev/null 2>&1
+dual_role_rc=$?
+DL_WORKER_IPS='10.0.0.1' DA_WORKER_IPS='' \
+  mm_wf_validate_command_file_content "$TMP/full-dl.txt" FULL >/dev/null 2>&1
+dl_role_rc=$?
+DL_WORKER_IPS='' DA_WORKER_IPS='10.0.0.2' \
+  mm_wf_validate_command_file_content "$TMP/full-da.txt" FULL >/dev/null 2>&1
+da_role_rc=$?
+set -e
+[[ "$dual_role_rc" -eq 0 ]] && pass "DL_DA role binding PASS" || fail "DL_DA role binding FAIL"
+[[ "$dl_role_rc" -eq 0 ]] && pass "DL_ONLY role binding PASS" || fail "DL_ONLY role binding FAIL"
+[[ "$da_role_rc" -eq 0 ]] && pass "DA_ONLY role binding PASS" || fail "DA_ONLY role binding FAIL"
 
 if [[ "$FAIL" -eq 0 ]]; then
   echo "=== test_menu7_generation_matrix PASS ==="

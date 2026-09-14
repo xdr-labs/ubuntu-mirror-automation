@@ -79,7 +79,9 @@ for hop in "${HOPS[@]}"; do
 import json, sys
 hop, script, sha, path = sys.argv[1:5]
 open(path, "w", encoding="utf-8").write(json.dumps({
-    "hop": hop, "script": script, "script_sha256": sha, "fixture": True,
+    "hop": hop, "script": script, "script_sha256": sha,
+    "client_build_input_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "fixture": True,
 }, indent=2) + "\n")
 PY
   gpg --homedir "$GPG_HOME" --batch --yes --detach-sign --armor \
@@ -97,12 +99,15 @@ OUT_B="${WORKDIR}/launchers-b"
 python3 "$LAUNCHER_BUILDER" \
   --project-root "$ROOT" --output-dir "$OUT_A" \
   --mirror-base-url "$MIRROR" --signing-fingerprint "$FPR" \
-  --expected-keyring-sha256 "$KR_SHA" --print-env \
+  --expected-keyring-sha256 "$KR_SHA" \
+  --expected-client-build-input-sha256 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+  --print-env \
   >"${WORKDIR}/launcher-a.env"
 python3 "$LAUNCHER_BUILDER" \
   --project-root "$ROOT" --output-dir "$OUT_B" \
   --mirror-base-url "$MIRROR" --signing-fingerprint "$FPR" \
-  --expected-keyring-sha256 "$KR_SHA" >/dev/null
+  --expected-keyring-sha256 "$KR_SHA" \
+  --expected-client-build-input-sha256 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" >/dev/null
 for hop in "${HOPS[@]}"; do
   name="dp-launch-${hop}.sh"
   if cmp -s "${OUT_A}/${name}" "${OUT_B}/${name}"; then
@@ -123,6 +128,9 @@ for hop in "${HOPS[@]}"; do
     && pass "${hop}: embedded FPR" || fail "${hop}: embedded FPR"
   grep -q "EXPECTED_KEYRING_SHA256='${KR_SHA}'" "${CLIENT_ROOT}/${name}" \
     && pass "${hop}: embedded keyring SHA" || fail "${hop}: embedded keyring SHA"
+  grep -q "EXPECTED_CLIENT_BUILD_INPUT_SHA256='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'" \
+    "${CLIENT_ROOT}/${name}" \
+    && pass "${hop}: embedded build-input SHA" || fail "${hop}: embedded build-input SHA"
   grep -q "HOP='${hop}'" "${CLIENT_ROOT}/${name}" \
     && pass "${hop}: embedded hop" || fail "${hop}: embedded hop"
   grep -q "SCRIPT='dp-offline-upgrade-${hop}.sh'" "${CLIENT_ROOT}/${name}" \
@@ -140,6 +148,7 @@ MIRROR_HTTP_URL=${MIRROR}
 PREPARATION_MODE=FULL
 CLIENT_LAUNCHER_SCHEMA_VERSION=1
 CLIENT_MIRROR_BASE_URL=${MIRROR}
+CLIENT_BUILD_INPUT_SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 EOF
   for hop in "${HOPS[@]}"; do
     name="dp-launch-${hop}.sh"
@@ -326,8 +335,9 @@ if [[ "$REAL_GNUPG_BEFORE" -eq 0 && -e /home/aella/.gnupg ]]; then
 else
   pass "no new /home/aella/.gnupg"
 fi
-RUN_COUNT="$(grep -c 'STUB_UPGRADE_OK' "${WORKDIR}/launch-ok.out" 2>/dev/null || echo 0)"
-if [[ "${RUN_COUNT:-0}" -eq 1 ]] || [[ "$OK_RC" -eq 0 ]]; then
+RUN_COUNT="$(grep -c 'STUB_UPGRADE_OK' "${WORKDIR}/launch-ok.out" 2>/dev/null || true)"
+RUN_COUNT="${RUN_COUNT:-0}"
+if [[ "$RUN_COUNT" -eq 1 ]] || [[ "$OK_RC" -eq 0 ]]; then
   pass "launcher authenticates and invokes runner once (rc=${OK_RC} count=${RUN_COUNT})"
 else
   echo "  INFO launcher rc=${OK_RC}"
@@ -358,7 +368,8 @@ set +e
 bash -c "$(cat "${WORKDIR}/op-ok.sh")" >"${WORKDIR}/op-ok.out" 2>"${WORKDIR}/op-ok.err"
 OP_RC=$?
 set -e
-SUCCESS_COUNT="$(grep -c 'STUB_UPGRADE_OK' "${WORKDIR}/op-ok.out" 2>/dev/null || echo 0)"
+SUCCESS_COUNT="$(grep -c 'STUB_UPGRADE_OK' "${WORKDIR}/op-ok.out" 2>/dev/null || true)"
+SUCCESS_COUNT="${SUCCESS_COUNT:-0}"
 [[ "${SUCCESS_COUNT:-0}" -eq 1 || "$OP_RC" -eq 0 ]] \
   && pass "SUCCESS_WRAPPER_EXECUTION_COUNT=1 (rc=${OP_RC})" \
   || fail "success execution count"

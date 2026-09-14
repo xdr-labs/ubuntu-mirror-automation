@@ -6,6 +6,9 @@
 #   - EXPECTED_FPR matches the sole primary key fingerprint
 #   - detached runner-manifest signature verifies (gpgv)
 #   - runner SHA256 matches the signed manifest / sidecar
+#   - EXPECTED_CLIENT_BUILD_INPUT_SHA256 matches live client-set.env and the
+#     signed hop manifest (exact generation binding; same signing key alone
+#     must not allow an old Menu 7 command to execute a republished set)
 #
 # This helper never trusts HTTP alone. It independently re-checks the keyring
 # SHA256 + fingerprint (exact trust, not "fingerprint exists somewhere"),
@@ -23,12 +26,15 @@ HOP=""
 SCRIPT=""
 EXPECTED_FPR=""
 EXPECTED_KEYRING_SHA256=""
+EXPECTED_CLIENT_BUILD_INPUT_SHA256=""
 
 usage() {
   cat <<EOF
 Usage: bash ${SCRIPT_NAME} --mirror-base URL --hop HOP --script FILE \\
-          --expected-fingerprint FPR --expected-keyring-sha256 SHA256
-   or: bash ${SCRIPT_NAME} MIRROR_BASE HOP SCRIPT EXPECTED_FPR EXPECTED_KEYRING_SHA256
+          --expected-fingerprint FPR --expected-keyring-sha256 SHA256 \\
+          --expected-client-build-input-sha256 SHA256
+   or: bash ${SCRIPT_NAME} MIRROR_BASE HOP SCRIPT EXPECTED_FPR \\
+          EXPECTED_KEYRING_SHA256 EXPECTED_CLIENT_BUILD_INPUT_SHA256
 
 Downloads and authenticates one OS-hop upgrade client, then executes it.
 EOF
@@ -61,6 +67,10 @@ while [[ $# -gt 0 ]]; do
       EXPECTED_KEYRING_SHA256="${2:-}"
       shift 2
       ;;
+    --expected-client-build-input-sha256)
+      EXPECTED_CLIENT_BUILD_INPUT_SHA256="${2:-}"
+      shift 2
+      ;;
     -m)
       MIRROR_BASE="${2:-}"
       shift 2
@@ -79,6 +89,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     -k)
       EXPECTED_KEYRING_SHA256="${2:-}"
+      shift 2
+      ;;
+    -b)
+      EXPECTED_CLIENT_BUILD_INPUT_SHA256="${2:-}"
       shift 2
       ;;
     -h|--help)
@@ -119,18 +133,29 @@ if [[ -z "$EXPECTED_KEYRING_SHA256" && $# -ge 1 ]]; then
   EXPECTED_KEYRING_SHA256="$1"
   shift
 fi
+if [[ -z "$EXPECTED_CLIENT_BUILD_INPUT_SHA256" && $# -ge 1 ]]; then
+  EXPECTED_CLIENT_BUILD_INPUT_SHA256="$1"
+  shift
+fi
 
 [[ -n "$MIRROR_BASE" ]] || die "missing --mirror-base"
 [[ -n "$HOP" ]] || die "missing --hop"
 [[ -n "$SCRIPT" ]] || die "missing --script"
 [[ -n "$EXPECTED_FPR" ]] || die "missing --expected-fingerprint"
 [[ -n "$EXPECTED_KEYRING_SHA256" ]] || die "missing --expected-keyring-sha256"
+[[ -n "$EXPECTED_CLIENT_BUILD_INPUT_SHA256" ]] \
+  || die "missing --expected-client-build-input-sha256"
 EXPECTED_FPR="${EXPECTED_FPR^^}"
 EXPECTED_FPR="${EXPECTED_FPR// /}"
 [[ ${#EXPECTED_FPR} -eq 40 ]] || die "EXPECTED_FPR must be 40 hex chars"
 EXPECTED_KEYRING_SHA256="$(printf '%s' "$EXPECTED_KEYRING_SHA256" | tr 'A-F' 'a-f' | tr -d '[:space:]')"
 [[ ${#EXPECTED_KEYRING_SHA256} -eq 64 ]] || die "EXPECTED_KEYRING_SHA256 must be 64 hex chars"
 [[ "$EXPECTED_KEYRING_SHA256" =~ ^[0-9a-f]{64}$ ]] || die "EXPECTED_KEYRING_SHA256 must be hex"
+EXPECTED_CLIENT_BUILD_INPUT_SHA256="$(printf '%s' "$EXPECTED_CLIENT_BUILD_INPUT_SHA256" | tr 'A-F' 'a-f' | tr -d '[:space:]')"
+[[ ${#EXPECTED_CLIENT_BUILD_INPUT_SHA256} -eq 64 ]] \
+  || die "EXPECTED_CLIENT_BUILD_INPUT_SHA256 must be 64 hex chars"
+[[ "$EXPECTED_CLIENT_BUILD_INPUT_SHA256" =~ ^[0-9a-f]{64}$ ]] \
+  || die "EXPECTED_CLIENT_BUILD_INPUT_SHA256 must be hex"
 
 MIRROR_BASE="${MIRROR_BASE%/}"
 
@@ -173,10 +198,23 @@ curl -fsSLo client-manifest.json.asc \
   "${MIRROR_BASE}/client/${HOP}/client-manifest.json.asc" \
   || die "download client-manifest.json.asc failed"
 
+test -s client-set.env || die "client-set.env empty"
 test -s "${SCRIPT}" || die "${SCRIPT} empty"
 test -s "${SCRIPT}.sha256" || die "${SCRIPT}.sha256 empty"
 test -s client-manifest.json || die "client-manifest.json empty"
 test -s client-manifest.json.asc || die "client-manifest.json.asc empty"
+
+# Exact generation binding: Menu 7 / launcher pin must match published provenance.
+ENV_BUILD_INPUT="$(awk -F= '$1=="CLIENT_BUILD_INPUT_SHA256"{print tolower($2); exit}' \
+  client-set.env 2>/dev/null || true)"
+ENV_BUILD_INPUT="$(printf '%s' "$ENV_BUILD_INPUT" | tr -d '[:space:]')"
+[[ -n "$ENV_BUILD_INPUT" ]] \
+  || die "GENERATION_BINDING=FAIL reason=client_set_env_missing_build_input"
+[[ ${#ENV_BUILD_INPUT} -eq 64 && "$ENV_BUILD_INPUT" =~ ^[0-9a-f]{64}$ ]] \
+  || die "GENERATION_BINDING=FAIL reason=client_set_env_build_input_invalid"
+if [[ "$ENV_BUILD_INPUT" != "$EXPECTED_CLIENT_BUILD_INPUT_SHA256" ]]; then
+  die "GENERATION_BINDING=FAIL reason=client_set_env_mismatch got=${ENV_BUILD_INPUT}"
+fi
 
 gpgv --keyring ./public-keyring.gpg client-manifest.json.asc client-manifest.json \
   || die "gpgv client-manifest failed"
@@ -186,6 +224,19 @@ MANIFEST_HOP="$(python3 -c 'import json;print(json.load(open("client-manifest.js
 
 MANIFEST_SCRIPT="$(python3 -c 'import json;print(json.load(open("client-manifest.json")).get("script",""))' 2>/dev/null || true)"
 [[ "$MANIFEST_SCRIPT" == "$SCRIPT" ]] || die "manifest script mismatch got=${MANIFEST_SCRIPT}"
+
+MANIFEST_BUILD_INPUT="$(python3 -c 'import json;print((json.load(open("client-manifest.json")).get("client_build_input_sha256","") or "").lower())' 2>/dev/null || true)"
+MANIFEST_BUILD_INPUT="$(printf '%s' "$MANIFEST_BUILD_INPUT" | tr -d '[:space:]')"
+[[ -n "$MANIFEST_BUILD_INPUT" ]] \
+  || die "GENERATION_BINDING=FAIL reason=manifest_missing_build_input"
+[[ ${#MANIFEST_BUILD_INPUT} -eq 64 && "$MANIFEST_BUILD_INPUT" =~ ^[0-9a-f]{64}$ ]] \
+  || die "GENERATION_BINDING=FAIL reason=manifest_build_input_invalid"
+if [[ "$MANIFEST_BUILD_INPUT" != "$EXPECTED_CLIENT_BUILD_INPUT_SHA256" ]]; then
+  die "GENERATION_BINDING=FAIL reason=manifest_mismatch got=${MANIFEST_BUILD_INPUT}"
+fi
+if [[ "$MANIFEST_BUILD_INPUT" != "$ENV_BUILD_INPUT" ]]; then
+  die "GENERATION_BINDING=FAIL reason=env_manifest_divergence"
+fi
 
 CALC="$(sha256sum "${SCRIPT}" | awk '{print $1}')"
 MANIFEST_SHA="$(python3 -c 'import json;print(json.load(open("client-manifest.json")).get("script_sha256",""))' 2>/dev/null || true)"

@@ -59,6 +59,7 @@ CLIENT_SET_GENERATION_ID=fixture-gen-1
 CLIENT_SIGNING_FINGERPRINT=${FPR}
 MIRROR_HTTP_URL=http://127.0.0.1
 PREPARATION_MODE=FULL
+CLIENT_BUILD_INPUT_SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 EOF
 chmod 0644 "${HTTP_ROOT}/client/client-set.env"
 
@@ -80,6 +81,7 @@ open(path, "w", encoding="utf-8").write(json.dumps({
     "hop": hop,
     "script": script,
     "script_sha256": sha,
+    "client_build_input_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "fixture": True,
 }, indent=2) + "\n")
 PY
@@ -104,10 +106,13 @@ python3 "${ROOT}/scripts/lib/build_client_launchers.py" \
   --output-dir "${HTTP_ROOT}/client" \
   --mirror-base-url "$MIRROR" \
   --signing-fingerprint "$FPR" \
-    --expected-keyring-sha256 "$(sha256sum "$KR" | awk '{print $1}')" >/dev/null
+  --expected-keyring-sha256 "$(sha256sum "$KR" | awk '{print $1}')" \
+  --expected-client-build-input-sha256 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" >/dev/null
 export MM_CLIENT_ROOT="${HTTP_ROOT}/client"
 LAUNCHER="dp-launch-${HOP}.sh"
 LAUNCHER_SHA="$(sha256sum "${HTTP_ROOT}/client/${LAUNCHER}" | awk '{print $1}')"
+WRAPPER="upgrade-${HOP}.sh"
+WRAPPER_SHA="$(sha256sum "${HTTP_ROOT}/client/${WRAPPER}" | awk '{print $1}')"
 
 LIB="${WORKDIR}/installer-lib.sh"
 awk -v sd="${ROOT}/scripts" '
@@ -118,14 +123,14 @@ awk -v sd="${ROOT}/scripts" '
 # shellcheck disable=SC1090
 source "$LIB"
 
-block="$(gui_client_hop_command_line "$MIRROR" "$SCRIPT" "$LAUNCHER_SHA")"
+block="$(gui_client_hop_command_line "$MIRROR" "$SCRIPT" "$WRAPPER_SHA")"
 [[ "$(printf '%s\n' "$block" | wc -l | tr -d ' ')" == "1" ]] \
   && pass "generator emits one physical line" \
   || fail "generator not one physical line"
 printf '%s\n' "$block" >"${WORKDIR}/cmd.sh"
-grep -q "'${LAUNCHER_SHA}'" "${WORKDIR}/cmd.sh" \
-  && pass "literal launcher SHA pinned in command" \
-  || fail "launcher SHA missing from command"
+grep -q "'${WRAPPER_SHA}'" "${WORKDIR}/cmd.sh" \
+  && pass "literal wrapper SHA pinned in command" \
+  || fail "wrapper SHA missing from command"
 grep -q 'mktemp -d' "${HTTP_ROOT}/client/${LAUNCHER}" \
   && pass "isolated workdir present in launcher" \
   || fail "isolated workdir missing"

@@ -61,6 +61,7 @@ CLIENT_SET_GENERATION_ID=fixture-gen-1
 CLIENT_SIGNING_FINGERPRINT=${FPR}
 MIRROR_HTTP_URL=http://127.0.0.1
 PREPARATION_MODE=FULL
+CLIENT_BUILD_INPUT_SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 EOF
 install -m 0755 "${ROOT}/client/dp-client-command-runner.sh" \
   "${HTTP_ROOT}/client/dp-client-command-runner.sh"
@@ -71,7 +72,9 @@ python3 - "$HOP" "$SCRIPT" "$SCRIPT_SHA" "${HTTP_ROOT}/client/${HOP}/client-mani
 import json, sys
 hop, script, sha, path = sys.argv[1:5]
 open(path, "w", encoding="utf-8").write(json.dumps({
-    "hop": hop, "script": script, "script_sha256": sha, "fixture": True,
+    "hop": hop, "script": script, "script_sha256": sha,
+    "client_build_input_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "fixture": True,
 }, indent=2) + "\n")
 PY
 gpg --homedir "$GPG_HOME" --batch --yes --detach-sign --armor \
@@ -93,7 +96,8 @@ python3 "${ROOT}/scripts/lib/build_client_launchers.py" \
   --output-dir "${HTTP_ROOT}/client" \
   --mirror-base-url "$MIRROR" \
   --signing-fingerprint "$FPR" \
-    --expected-keyring-sha256 "$(sha256sum "$KR" | awk '{print $1}')" >/dev/null
+  --expected-keyring-sha256 "$(sha256sum "$KR" | awk '{print $1}')" \
+  --expected-client-build-input-sha256 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" >/dev/null
 export MM_CLIENT_ROOT="${HTTP_ROOT}/client"
 
 LIB="${WORKDIR}/installer-lib.sh"
@@ -105,10 +109,11 @@ awk -v sd="${ROOT}/scripts" '
 # shellcheck disable=SC1090
 source "$LIB"
 
-# Operator downloads/verifies launcher; lifecycle checks run against the launcher itself.
+# Operator downloads/verifies OS-hop wrapper; lifecycle checks run against launcher.
 LAUNCHER="dp-launch-${HOP}.sh"
-LAUNCHER_SHA="$(sha256sum "${HTTP_ROOT}/client/${LAUNCHER}" | awk '{print $1}')"
-block="$(gui_client_hop_command_line "$MIRROR" "$SCRIPT" "$LAUNCHER_SHA")"
+WRAPPER="upgrade-${HOP}.sh"
+WRAPPER_SHA="$(sha256sum "${HTTP_ROOT}/client/${WRAPPER}" | awk '{print $1}')"
+block="$(gui_client_hop_command_line "$MIRROR" "$SCRIPT" "$WRAPPER_SHA")"
 block="${block//\/home\/aella/$FAKE_HOME}"
 printf '%s\n' "$block" >"${WORKDIR}/cmd.sh"
 [[ "$(wc -l <"${WORKDIR}/cmd.sh" | tr -d ' ')" == "1" ]] \
@@ -211,12 +216,13 @@ else
   pass "truncated command invokes runner zero times"
 fi
 # Complete command: count runner invocations via stub marker
-RUN_COUNT="$(grep -c 'STUB_UPGRADE_OK' "${WORKDIR}/run-ok.out" 2>/dev/null || echo 0)"
-if [[ "${RUN_COUNT:-0}" -ge 1 ]] || [[ "$OK_RC" -eq 0 ]]; then
+RUN_COUNT="$(grep -c 'STUB_UPGRADE_OK' "${WORKDIR}/run-ok.out" 2>/dev/null || true)"
+RUN_COUNT="${RUN_COUNT:-0}"
+if [[ "$RUN_COUNT" -ge 1 ]] || [[ "$OK_RC" -eq 0 ]]; then
   pass "complete launcher command invokes runner (count>=1 or rc0)"
 else
-  grep -q "bash ./${LAUNCHER}" "${WORKDIR}/cmd.sh" \
-    && pass "operator command invokes verified launcher" || fail "launcher invoke missing"
+  grep -qE "bash \\./${WRAPPER}|bash \\./upgrade-" "${WORKDIR}/cmd.sh" \
+    && pass "operator command invokes verified wrapper" || fail "wrapper invoke missing"
 fi
 
 

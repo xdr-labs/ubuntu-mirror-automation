@@ -44,6 +44,7 @@ EOF
 HOP='${hop}'
 EXPECTED_FPR='${fpr}'
 EXPECTED_KEYRING_SHA256='${keyring_sha}'
+EXPECTED_CLIENT_BUILD_INPUT_SHA256='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 MIRROR_BASE='${mirror}'
 # ${mirror}
 exec "\$(dirname "\$0")/dp-client-command-runner.sh" "\$@"
@@ -109,7 +110,9 @@ EOF
     printf 'MIRROR_HTTP_URL=%s\n' "$mirror"
     printf 'CLIENT_SIGNING_FINGERPRINT=%s\n' "$fpr"
     printf 'PREPARATION_MODE=%s\n' "$mode"
-    printf 'CLIENT_LAUNCHER_SCHEMA_VERSION=2\n'
+    printf 'CLIENT_LAUNCHER_SCHEMA_VERSION=3\n'
+    printf 'CLIENT_BUILD_INPUT_SHA256=%s\n' \
+      'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
     for hop in xenial-to-bionic bionic-to-focal focal-to-jammy jammy-to-noble; do
       launcher="dp-launch-${hop}.sh"
       sha="$(sha256sum "${root}/${launcher}" | awk '{print $1}')"

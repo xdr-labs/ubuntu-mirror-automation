@@ -595,6 +595,7 @@ if ! python3 "$LAUNCHER_BUILDER" \
   --mirror-base-url "$MIRROR_BASE" \
   --signing-fingerprint "$LOCAL_KEY_FINGERPRINT" \
   --expected-keyring-sha256 "$LAUNCHER_KEYRING_SHA256" \
+  --expected-client-build-input-sha256 "$CLIENT_BUILD_INPUT_SHA256" \
   --print-env >>"$EVIDENCE_LOG"
 then
   fail_build "" "launcher_build" "LAUNCHER_BUILD=FAIL" 1
