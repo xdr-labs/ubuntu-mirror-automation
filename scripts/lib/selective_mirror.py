@@ -402,11 +402,39 @@ def acquire_with_component_correction(
 
 
 class _CaptureRedirects(HTTPRedirectHandler):
+    """Follow redirects only within the approved host set for the request."""
+
+    _OFFICIAL_HOSTS = frozenset({
+        'archive.ubuntu.com',
+        'security.ubuntu.com',
+        'old-releases.ubuntu.com',
+        'cdimage.ubuntu.com',
+        'ports.ubuntu.com',
+    })
+
     def __init__(self):
         HTTPRedirectHandler.__init__(self)
         self.chain = []
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new_host = (urlparse(newurl).hostname or '').lower()
+        orig_host = (urlparse(req.full_url).hostname or '').lower()
+        if new_host and new_host != orig_host:
+            official = self._OFFICIAL_HOSTS
+            if orig_host in official:
+                if new_host not in official:
+                    raise HTTPError(
+                        newurl, 403,
+                        'redirect host not allowlisted: %s' % new_host,
+                        headers, fp,
+                    )
+            elif new_host not in official and new_host != orig_host:
+                # Non-official (fixture) origins may not escape to another host.
+                raise HTTPError(
+                    newurl, 403,
+                    'redirect host not allowlisted: %s' % new_host,
+                    headers, fp,
+                )
         self.chain.append(OrderedDict([
             ('status', int(code)),
             ('url', newurl),
@@ -1605,10 +1633,19 @@ def quarantine_mismatch_staging(
     state_dir = os.path.join(selective_root, 'state')
     receipt = expected_receipt_path or os.path.join(state_dir, 'materialize.json')
 
-    known = set(known_selective_roots or [])
-    known.add(selective_root)
+    # Configured/known roots are authoritative. Never add the caller-supplied
+    # selective_root to the whitelist before validating it (that made the
+    # allowlist check tautological).
+    known = set()
+    for k in (known_selective_roots or []):
+        if k:
+            known.add(os.path.abspath(k))
     # Always accept the canonical spool path when present on this host.
     known.add('/var/spool/apt-mirror/selective')
+    for env_key in ('SELECTIVE_MIRROR_ROOT', 'MM_SELECTIVE_ROOT'):
+        env_root = (os.environ.get(env_key) or '').strip()
+        if env_root:
+            known.add(os.path.abspath(env_root))
 
     def _fail(msg, **extra):
         ctx = OrderedDict([
@@ -1619,9 +1656,13 @@ def quarantine_mismatch_staging(
         ctx.update(extra)
         raise SelectiveProvenanceError(ERROR_QUARANTINE, msg, context=ctx)
 
-    if selective_root not in known and os.path.realpath(selective_root) not in {
-        os.path.realpath(k) for k in known
-    }:
+    known_real = set()
+    for k in known:
+        try:
+            known_real.add(os.path.realpath(k))
+        except (OSError, ValueError):
+            pass
+    if selective_root not in known and os.path.realpath(selective_root) not in known_real:
         _fail('selective_root is not a known managed path')
     if not os.path.isdir(staging):
         _fail('staging root missing', staging_root=staging)
@@ -2217,6 +2258,26 @@ def _write_publish_result(state, result):
     write_json(os.path.join(state, PUBLISH_RESULT_LEGACY), result)
 
 
+def _selective_publish_test_bypass_permitted():
+    """Dual-hermetic gate for production trust-bypass publish options."""
+    return (
+        os.environ.get('MM_HERMETIC_TEST_MODE', '') == '1'
+        and os.environ.get('MM_ALLOW_SELECTIVE_PUBLISH_TEST_BYPASS', '') == '1'
+    )
+
+
+def _require_selective_publish_test_bypass(flag_names):
+    if _selective_publish_test_bypass_permitted():
+        return
+    names = ','.join(flag_names)
+    raise SystemExit(
+        'SELECTIVE_PUBLISH_TEST_BYPASS=FAIL flags=%s '
+        'require MM_HERMETIC_TEST_MODE=1 and '
+        'MM_ALLOW_SELECTIVE_PUBLISH_TEST_BYPASS=1 together'
+        % names
+    )
+
+
 def atomic_publish(selective_root, require_verify_pass=True, http_base='http://127.0.0.1',
                    run_post_publish=True, plan_path=None, run_nginx_preflight=True):
     """Atomic publish of staging → published with post-publish HTTP smoke + READY.
@@ -2225,6 +2286,16 @@ def atomic_publish(selective_root, require_verify_pass=True, http_base='http://1
     Before promoting staging, production nginx must already point at the
     selective canonical root (SELECTIVE_NGINX_EFFECTIVE_ROOT_MISMATCH otherwise).
     """
+    bypass_flags = []
+    if not require_verify_pass:
+        bypass_flags.append('allow-unverified')
+    if not run_post_publish:
+        bypass_flags.append('skip-post-publish')
+    if not run_nginx_preflight:
+        bypass_flags.append('skip-nginx-preflight')
+    if bypass_flags:
+        _require_selective_publish_test_bypass(bypass_flags)
+
     import validate_selective_mirror as vsm
 
     state = os.path.join(selective_root, 'state')
