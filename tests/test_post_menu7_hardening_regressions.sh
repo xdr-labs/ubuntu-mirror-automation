@@ -198,6 +198,20 @@ grep -q 'ACPS_CONTENT_RANGE_MISMATCH' "${ROOT}/scripts/lib/acps_acquire.sh" \
   && pass "ACPS Content-Range resume contract" \
   || fail "ACPS still uses blind continue-at or missing range check"
 
+# --- Release-upgrader SHA256 required before fetch ---
+grep -q 'release upgrader missing sha256' "${ROOT}/scripts/lib/selective_mirror.py" \
+  && pass "upgrader SHA256 required before fetch" \
+  || fail "upgrader empty-SHA guard missing"
+
+# --- Durable DP state persistence fail-closed (runner + safety helpers) ---
+! grep -nE 'osu_write_state_json "\$\(osu_build_state_json\)" \|\| true' \
+    "${ROOT}/scripts/dp-os-upgrade-runner.sh" \
+  && grep -q 'state_persistence_failed' "${ROOT}/scripts/dp-os-upgrade-runner.sh" \
+  && grep -q 'refusing to continue with uncertain durable state' \
+    "${ROOT}/scripts/lib/dp-os-upgrade-common.sh" \
+  && pass "durable state fail-closed contracts" \
+  || fail "durable state fail-closed contracts missing"
+
 # --- G2: migrate preserves entrypoint wrapper ---
 grep -q 'ubuntu-offline-mirror-entrypoint.sh' "${ROOT}/lib/config.sh" \
   && pass "G2 migrate installs entrypoint wrapper" \
