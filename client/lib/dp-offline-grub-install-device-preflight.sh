@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # Shared BIOS/grub-pc install_devices preflight for offline OS-hop clients.
 #
-# Injected at build time via @@GRUB_INSTALL_DEVICE_PREFLIGHT_HELPER@@.
+# Injected at build time through the GRUB install-device preflight helper token.
 # Directly sourceable by fixture tests.
 #
 # Correctness is based on resolved block-device identity (root → parent disk),

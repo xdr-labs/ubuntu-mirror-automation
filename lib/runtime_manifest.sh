@@ -160,6 +160,7 @@ UM_RUNTIME_CLIENT_LIB_FILES=(
   dp-phase2-cluster-validation.sh
   dp-offline-durable-write.sh
   dp-offline-lxd-inventory.sh
+  dp-offline-grub-install-device-preflight.sh
 )
 
 # Relative paths under the installed runtime root that must exist after install.
