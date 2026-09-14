@@ -24,7 +24,7 @@ um_state_root() {
 }
 
 um_ensure_state_dir() {
-  mkdir -p "$(um_state_root)" 2>/dev/null || true
+  mkdir -p "$(um_state_root)" || return 1
 }
 
 um_state_marker() {
@@ -32,9 +32,10 @@ um_state_marker() {
 }
 
 um_mark_state() {
-  local name="$1"
-  um_ensure_state_dir
-  date -Is >"$(um_state_marker "$name")" 2>/dev/null || true
+  local name="$1" marker
+  um_ensure_state_dir || return 1
+  marker="$(um_state_marker "$name")"
+  date -Is >"$marker" || return 1
 }
 
 um_has_marker() {
@@ -180,14 +181,26 @@ if pub_st != 'PASS':
     reasons.append('publish validation_result!=PASS')
 if pub_phase != 'post_publish':
     reasons.append('publish phase!=post_publish')
-if plan_ck and ver_plan and plan_ck != ver_plan:
-    reasons.append('plan checksum mismatch (verify)')
-if plan_ck and pub_plan and plan_ck != pub_plan:
-    reasons.append('plan checksum mismatch (publish)')
-if disc and ver_disc and disc != ver_disc:
-    reasons.append('discovery checksum mismatch (verify)')
-if disc and pub_disc and disc != pub_disc:
-    reasons.append('discovery checksum mismatch (publish)')
+# Authoritative plan identity requires matching verify/publish identity.
+# Missing identity is failure (not "not comparable").
+if plan_ck:
+    if not ver_plan:
+        reasons.append('plan checksum missing from verify')
+    elif plan_ck != ver_plan:
+        reasons.append('plan checksum mismatch (verify)')
+    if not pub_plan:
+        reasons.append('plan checksum missing from publish')
+    elif plan_ck != pub_plan:
+        reasons.append('plan checksum mismatch (publish)')
+if disc:
+    if not ver_disc:
+        reasons.append('discovery checksum missing from verify')
+    elif disc != ver_disc:
+        reasons.append('discovery checksum mismatch (verify)')
+    if not pub_disc:
+        reasons.append('discovery checksum missing from publish')
+    elif disc != pub_disc:
+        reasons.append('discovery checksum mismatch (publish)')
 if not os.path.islink(current):
     reasons.append('current symlink missing')
 elif not os.path.isdir(os.path.realpath(current)):

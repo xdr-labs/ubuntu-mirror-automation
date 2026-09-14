@@ -3065,11 +3065,14 @@ osu_commands_tsv_append() {
     (
       trap - EXIT
       flock -w 60 9 || exit 1
-      printf '%s\n' "$line" >>"$tsv"
+      printf '%s\n' "$line" >>"$tsv" || exit 1
       exit 0
-    ) 9>"$lockf" || true
+    ) 9>"$lockf" || {
+      osu_log ERROR "commands.tsv evidence append failed (lock or write)"
+      return 1
+    }
   else
-    printf '%s\n' "$line" >>"$tsv"
+    printf '%s\n' "$line" >>"$tsv" || return 1
   fi
   chmod 0640 "$tsv" 2>/dev/null || true
 }
@@ -3892,7 +3895,10 @@ osu_honor_pause_boundary() {
     osu_log WARN "pause active — stopping at safe boundary"
     osu_transition_state PAUSED "pause_boundary" "operator_pause" || {
       ST_STATE=PAUSED
-      osu_write_state_json "$(osu_build_state_json)" || true
+      if ! osu_write_state_json "$(osu_build_state_json)"; then
+        osu_log ERROR "PAUSED state persistence failed — refusing to continue with uncertain durable state"
+        exit "${EXIT_FAILED:-30}"
+      fi
     }
     return 0
   fi
@@ -5290,7 +5296,10 @@ osu_set_blocked() {
   fi
   osu_transition_state BLOCKED "blocked" "$reason" || {
     ST_STATE=BLOCKED
-    osu_write_state_json "$(osu_build_state_json)" || true
+    if ! osu_write_state_json "$(osu_build_state_json)"; then
+      osu_log ERROR "BLOCKED state persistence failed — refusing to continue with uncertain durable state"
+      exit "${EXIT_FAILED:-30}"
+    fi
   }
 }
 
@@ -5300,7 +5309,10 @@ osu_set_failed() {
   ST_LAST_ERROR="$reason"
   osu_transition_state FAILED "failed" "$reason" || {
     ST_STATE=FAILED
-    osu_write_state_json "$(osu_build_state_json)" || true
+    if ! osu_write_state_json "$(osu_build_state_json)"; then
+      osu_log ERROR "FAILED state persistence failed — refusing to continue with uncertain durable state"
+      exit "${EXIT_FAILED:-30}"
+    fi
   }
 }
 
