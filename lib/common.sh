@@ -115,8 +115,10 @@ um_warn()  { um_log WARN "$*"; }
 um_error() { um_log ERROR "$*"; }
 
 um_die() {
-  um_error "$*"
-  exit "${2:-1}"
+  local msg="$1"
+  local code="${2:-1}"
+  um_error "$msg"
+  exit "$code"
 }
 
 # ---------------------------------------------------------------------------
@@ -156,11 +158,11 @@ um_run_shell() {
 # ---------------------------------------------------------------------------
 um_backup_session_dir() {
   # Session backup root: /var/backups/ubuntu-mirror/<timestamp>/
-  if [[ -n "${UM_BACKUP_SESSION:-}" ]]; then
-    printf '%s\n' "$UM_BACKUP_SESSION"
-    return
+  # Must initialize UM_BACKUP_SESSION in the caller's shell (not only inside a
+  # command-substitution subshell), otherwise one reinstall scatters backups.
+  if [[ -z "${UM_BACKUP_SESSION:-}" ]]; then
+    UM_BACKUP_SESSION="${BACKUP_DIR:-/var/backups/ubuntu-mirror}/$(um_datetime_tag)"
   fi
-  UM_BACKUP_SESSION="${BACKUP_DIR:-/var/backups/ubuntu-mirror}/$(um_datetime_tag)"
   printf '%s\n' "$UM_BACKUP_SESSION"
 }
 
@@ -175,7 +177,10 @@ um_backup_file() {
     return 0
   fi
   if [[ -z "$bdir" ]]; then
-    bdir="$(um_backup_session_dir)"
+    if [[ -z "${UM_BACKUP_SESSION:-}" ]]; then
+      UM_BACKUP_SESSION="${BACKUP_DIR:-/var/backups/ubuntu-mirror}/$(um_datetime_tag)"
+    fi
+    bdir="$UM_BACKUP_SESSION"
   fi
   if [[ "${UM_DRY_RUN:-0}" == "1" ]]; then
     printf '[DRY-RUN] Would backup %s -> %s/\n' "$path" "$bdir"
@@ -213,7 +218,7 @@ um_install_file() {
   fi
 
   if [[ -e "$dest" ]]; then
-    um_backup_file "$dest" >/dev/null || true
+    um_backup_file "$dest" >/dev/null || um_die "Required backup failed before overwrite: $dest"
   fi
 
   if [[ "${UM_DRY_RUN:-0}" == "1" ]]; then
@@ -232,28 +237,30 @@ um_install_file() {
 
 um_write_file() {
   # um_write_file <dest> <mode> <<EOF ... EOF  (via stdin)
+  # Preserves exact stdin bytes including a trailing newline (no command-sub strip).
   local dest="$1"
   local mode="${2:-0644}"
-  local tmp dir content
+  local tmp dir
 
-  content="$(cat)"
-  if [[ -f "$dest" ]]; then
-    if printf '%s' "$content" | cmp -s - "$dest"; then
-      um_info "Unchanged: $dest"
-      return 0
-    fi
-    um_backup_file "$dest" >/dev/null || true
+  tmp="$(mktemp "${dest}.XXXXXX" 2>/dev/null || mktemp)"
+  cat >"$tmp" || { rm -f "$tmp"; um_die "Failed to read stdin for $dest"; }
+  if [[ -f "$dest" ]] && cmp -s "$tmp" "$dest"; then
+    rm -f "$tmp"
+    um_info "Unchanged: $dest"
+    return 0
+  fi
+  if [[ -e "$dest" ]]; then
+    um_backup_file "$dest" >/dev/null || { rm -f "$tmp"; um_die "Required backup failed before overwrite: $dest"; }
   fi
 
   if [[ "${UM_DRY_RUN:-0}" == "1" ]]; then
+    rm -f "$tmp"
     um_info "DRY-RUN: write $dest (mode $mode)"
     return 0
   fi
 
   dir="$(dirname "$dest")"
   mkdir -p "$dir"
-  tmp="${dest}.tmp.$$"
-  printf '%s' "$content" >"$tmp"
   chmod "$mode" "$tmp"
   mv -f "$tmp" "$dest"
   um_ok "Wrote: $dest"

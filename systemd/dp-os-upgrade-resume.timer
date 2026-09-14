@@ -5,6 +5,7 @@ Description=Periodic retry for retryable DP OS upgrade BLOCKED state
 OnBootSec=5min
 OnUnitActiveSec=15min
 AccuracySec=1min
+RandomizedDelaySec=120
 Persistent=true
 Unit=dp-os-upgrade-resume.service
 

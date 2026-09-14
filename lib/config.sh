@@ -219,7 +219,7 @@ um_resolve_mirror_mode() {
       um_die "UNSUPPORTED_MINIMAL_PROFILE: MIRROR_MODE=minimal is not supported" 2
       ;;
     *)
-      MIRROR_MODE="selective"
+      um_die "Unsupported MIRROR_MODE=${MIRROR_MODE} (required: selective / offline-upgrade-selective)" 2
       ;;
   esac
   um_apply_mirror_mode_components
@@ -243,17 +243,31 @@ um_persist_mirror_mode_to_conf() {
 }
 
 # Set or append KEY="value" in a conf file (preserves unrelated keys).
+# Escapes \, ", $, and ` inside double quotes. Newlines are rejected.
 um_conf_set_key() {
   local conf="$1" key="$2" value="$3"
-  local tmp
+  local tmp escaped
   [[ -f "$conf" ]] || return 1
+  if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then
+    um_error "um_conf_set_key rejects newline in ${key}"
+    return 1
+  fi
+  escaped="$value"
+  escaped="${escaped//\\/\\\\}"
+  escaped="${escaped//\"/\\\"}"
+  escaped="${escaped//\$/\\\$}"
+  escaped="${escaped//\`/\\\`}"
   tmp="$(mktemp "${conf}.XXXXXX")"
   if grep -qE "^${key}=" "$conf" 2>/dev/null; then
-    # shellcheck disable=SC2001
-    sed "s|^${key}=.*|${key}=\"${value}\"|" "$conf" >"$tmp"
+    awk -v k="$key" -v v="${key}=\"${escaped}\"" '
+      BEGIN { done=0 }
+      index($0, k "=") == 1 && !done { print v; done=1; next }
+      { print }
+      END { if (!done) print v }
+    ' "$conf" >"$tmp"
   else
     cat "$conf" >"$tmp"
-    printf '\n%s="%s"\n' "$key" "$value" >>"$tmp"
+    printf '\n%s="%s"\n' "$key" "$escaped" >>"$tmp"
   fi
   chmod --reference="$conf" "$tmp" 2>/dev/null || chmod 0644 "$tmp"
   mv -f "$tmp" "$conf"
@@ -596,7 +610,9 @@ um_migrate_selective_runtime() {
   else
     um_warn "No runtime config at $conf — installing from source mirror.conf"
     um_migrate_atomic_install "${src_root}/mirror.conf" "$conf" 0644 || rc=1
-    um_migrate_selective_runtime_config "$conf" || true
+    if ! um_migrate_selective_runtime_config "$conf"; then
+      rc=1
+    fi
   fi
 
   # systemd unit content only (no start / no timer enable)
