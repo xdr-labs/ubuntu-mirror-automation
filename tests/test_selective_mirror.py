@@ -33,6 +33,10 @@ import selective_mirror as sm  # noqa: E402
 import validate_selective_mirror as vsm  # noqa: E402
 import validate_upgrade_profile as vup  # noqa: E402
 
+# Dual-hermetic gate for publish trust-bypass options used by unit fixtures.
+os.environ.setdefault('MM_HERMETIC_TEST_MODE', '1')
+os.environ.setdefault('MM_ALLOW_SELECTIVE_PUBLISH_TEST_BYPASS', '1')
+
 PROFILE = os.path.join(ROOT, 'config', 'offline-upgrade-profile.json')
 DISCOVERY = os.path.join(ROOT, 'artifacts', 'upgrade-discovery')
 
@@ -1035,7 +1039,9 @@ class SelectiveIntegrationSurfaceTests(unittest.TestCase):
     def test_mirrorctl_stops_selective_processes(self):
         body = open(os.path.join(ROOT, 'scripts', 'mirrorctl')).read()
         self.assertIn('materialize-selective', body)
-        self.assertIn('selective_mirror', body)
+        self.assertIn('systemctl stop apt-mirror.service', body)
+        self.assertIn('um_apt_mirror_pids', body)
+        self.assertNotIn('pkill -f', body)
 
     def test_systemd_unit_runs_materialize_selective(self):
         body = open(os.path.join(ROOT, 'templates', 'apt-mirror.service')).read()
@@ -2247,6 +2253,53 @@ class StagingProvenanceResumeTests(unittest.TestCase):
             self.assertEqual(ctx.exception.error_code, sm.ERROR_QUARANTINE)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_quarantine_rejects_unknown_selective_root(self):
+        """Caller-supplied path must not auto-whitelist itself (E1)."""
+        tmp = tempfile.mkdtemp(prefix='sel-qunk-')
+        try:
+            selective = os.path.join(tmp, 'evil-selective')
+            staging = os.path.join(selective, 'staging')
+            os.makedirs(os.path.join(staging, 'hops'))
+            write(os.path.join(selective, 'state', 'materialize.json'), json.dumps({
+                'validation_result': 'PASS',
+                'staging_root': staging,
+                'plan_checksum': 'abc12345deadbeef',
+            }))
+            with self.assertRaises(sm.SelectiveProvenanceError) as ctx:
+                sm.quarantine_mismatch_staging(
+                    selective, known_selective_roots=[],
+                )
+            self.assertEqual(ctx.exception.error_code, sm.ERROR_QUARANTINE)
+            self.assertIn('not a known managed path', str(ctx.exception))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_publish_test_bypass_requires_dual_hermetic(self):
+        """CLI/API trust bypasses need MM_HERMETIC + companion (D2)."""
+        old_h = os.environ.get('MM_HERMETIC_TEST_MODE')
+        old_b = os.environ.get('MM_ALLOW_SELECTIVE_PUBLISH_TEST_BYPASS')
+        try:
+            os.environ['MM_HERMETIC_TEST_MODE'] = '0'
+            os.environ.pop('MM_ALLOW_SELECTIVE_PUBLISH_TEST_BYPASS', None)
+            with self.assertRaises(SystemExit) as ctx:
+                sm._require_selective_publish_test_bypass(['skip-post-publish'])
+            self.assertIn('SELECTIVE_PUBLISH_TEST_BYPASS=FAIL', str(ctx.exception))
+            os.environ['MM_HERMETIC_TEST_MODE'] = '1'
+            os.environ.pop('MM_ALLOW_SELECTIVE_PUBLISH_TEST_BYPASS', None)
+            with self.assertRaises(SystemExit):
+                sm._require_selective_publish_test_bypass(['skip-post-publish'])
+            os.environ['MM_ALLOW_SELECTIVE_PUBLISH_TEST_BYPASS'] = '1'
+            sm._require_selective_publish_test_bypass(['skip-post-publish'])
+        finally:
+            if old_h is None:
+                os.environ.pop('MM_HERMETIC_TEST_MODE', None)
+            else:
+                os.environ['MM_HERMETIC_TEST_MODE'] = old_h
+            if old_b is None:
+                os.environ.pop('MM_ALLOW_SELECTIVE_PUBLISH_TEST_BYPASS', None)
+            else:
+                os.environ['MM_ALLOW_SELECTIVE_PUBLISH_TEST_BYPASS'] = old_b
 
     def test_quarantine_atomic_rename_preserves_data(self):
         tmp = tempfile.mkdtemp(prefix='sel-qok-')
