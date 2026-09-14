@@ -348,7 +348,10 @@ seed_ready_workflow COMMANDS_GENERATED
 PREPARATION_MODE=PHASE2_ONLY
 mm_save_gui_config_full >/dev/null
 expect "I09 class PREPARE_INPUT" test "$(mm_wf_get CONFIG_CHANGE_CLASS)" = "PREPARE_INPUT"
-expect "I09 demote CONFIGURED" test "$(mm_wf_state)" = "CONFIGURED"
+expect "I09 demote PREPARED" test "$(mm_wf_state)" = "PREPARED"
+expect "I09 OS preserved" test "$(mm_wf_get OS_CORE_GENERATION_ID)" = "os-gen-ready-1"
+expect "I09 Phase2 preserved" test "$(mm_wf_get PHASE2_GENERATION_ID)" = "p2-gen-ready-1"
+expect "I09 client cleared" test -z "$(mm_wf_get CLIENT_SET_GENERATION_ID)"
 expect "I09 next Download and Prepare" \
   test "$(mm_wf_get NEXT_REQUIRED_ACTION)" = "Download and Prepare"
 
@@ -359,7 +362,9 @@ seed_ready_workflow COMMANDS_GENERATED
 PREPARATION_MODE=FULL
 mm_save_gui_config_full >/dev/null
 expect "I10 class PREPARE_INPUT" test "$(mm_wf_get CONFIG_CHANGE_CLASS)" = "PREPARE_INPUT"
-expect "I10 demote CONFIGURED" test "$(mm_wf_state)" = "CONFIGURED"
+expect "I10 demote PREPARED" test "$(mm_wf_state)" = "PREPARED"
+expect "I10 OS preserved" test "$(mm_wf_get OS_CORE_GENERATION_ID)" = "os-gen-ready-1"
+expect "I10 client cleared" test -z "$(mm_wf_get CLIENT_SET_GENERATION_ID)"
 
 # --- I11/I12 command file + dashboard markers ---
 PREPARATION_MODE=PHASE2_ONLY

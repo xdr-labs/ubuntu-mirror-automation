@@ -783,7 +783,62 @@ mm_wf_invalidate_after_config_change() {
       return 0
       ;;
     PREPARE_INPUT|INITIAL|*)
-      # Full demotion to CONFIGURED — Download and Prepare required.
+      # Preparation-mode / prepare-identity changes require Download and Prepare.
+      # When heavy artifact generations already exist, preserve them and only
+      # clear client publication / HTTP / readiness / commands. This keeps
+      # FULL <-> PHASE2_ONLY mode switches in STATE 2 (no compatible client
+      # generation bound, but normal prepare can publish one) instead of an
+      # impossible cleared-binding + unreusable selective-bound client set.
+      os_gen="$(mm_wf_get OS_CORE_GENERATION_ID)"
+      p2_gen="$(mm_wf_get PHASE2_GENERATION_ID)"
+      if [[ -n "${os_gen}${p2_gen}" ]]; then
+        mm_wf_set_many \
+          "WORKFLOW_STATE=PREPARED" \
+          "OS_CORE_GENERATION_ID=${os_gen}" \
+          "PHASE2_GENERATION_ID=${p2_gen}" \
+          "CLIENT_SET_GENERATION_ID=" \
+          "CLIENT_SIGNING_FINGERPRINT=" \
+          "CLIENT_BUILD_INPUT_SHA256=" \
+          "CLIENT_SOURCE_REVISION=" \
+          "CLIENT_RUNTIME_MANIFEST_SHA256=" \
+          "CLIENT_COMMAND_BLOCK_VERSION=" \
+          "CLIENT_PROVENANCE_SCHEMA_VERSION=" \
+          "SELECTIVE_PLAN_CHECKSUM=" \
+          "SELECTIVE_DISCOVERY_ARTIFACT_CHECKSUM=" \
+          "SELECTIVE_AWS_SEMANTIC_CONTRACT_SHA256=" \
+          "READINESS_SELECTIVE_PLAN_CHECKSUM=" \
+          "READINESS_SELECTIVE_DISCOVERY_ARTIFACT_CHECKSUM=" \
+          "READINESS_SELECTIVE_AWS_SEMANTIC_CONTRACT_SHA256=" \
+          "HTTP_PUBLICATION_GENERATION_ID=" \
+          "READINESS_VERIFIED_GENERATION_ID=" \
+          "COMMAND_FILE_GENERATION_ID=" \
+          "VERIFIED_UTC=" \
+          "HTTP_REENABLE_REQUIRED=YES" \
+          "CONFIG_CHANGE_CLASS=${cls}" \
+          "STALE_REASON=${MM_WF_STALE_REASON}" \
+          "NEXT_REQUIRED_ACTION=${MM_WF_NEXT_REQUIRED_ACTION}" \
+          "PREPARATION_MODE=${PREPARATION_MODE:-FULL}" \
+          || true
+        mm_wf_store_layer_identities || true
+        if declare -F mm_status_set >/dev/null 2>&1; then
+          mm_status_set WORKFLOW_STATE PREPARED
+          mm_status_set UPGRADE_READINESS FAIL
+          mm_status_set READINESS_RESULT ""
+          mm_status_set READINESS_CONFIG_FINGERPRINT ""
+          mm_status_set HTTP_DISTRIBUTION ""
+          mm_status_set HTTP_CONFIGURATION_READY ""
+          mm_status_set CLIENT_COMMANDS_MODE ""
+          mm_status_set CONFIG_CHANGE_CLASS "$cls"
+          mm_status_set NEXT_REQUIRED_ACTION "${MM_WF_NEXT_REQUIRED_ACTION}"
+          mm_status_set STALE_REASON "${MM_WF_STALE_REASON}"
+        fi
+        if declare -F mm_client_commands_file >/dev/null 2>&1; then
+          rm -f "$(mm_client_commands_file)" 2>/dev/null || true
+        fi
+        mm_wf_info "WORKFLOW_STALE class=${cls} demote=PREPARED preserve_artifacts=YES"
+        return 0
+      fi
+      # No heavy artifact generations yet — full demotion to CONFIGURED.
       mm_wf_mark_configured || return 0
       mm_wf_set_many \
         "CONFIG_CHANGE_CLASS=${cls}" \
