@@ -1547,6 +1547,10 @@ load_release_upgrade_started_flag_for_current_hop() {
 # Build-time inlined from client/lib/dp-offline-apt-preflight-sandbox.sh
 @@APT_PREFLIGHT_SANDBOX_HELPER@@
 
+# Shared BIOS/grub-pc install_devices preflight (stale EBS/by-id rebind).
+# Build-time inlined from client/lib/dp-offline-grub-install-device-preflight.sh
+@@GRUB_INSTALL_DEVICE_PREFLIGHT_HELPER@@
+
 source_suite_still_bionic() {
   local sl
   sl="$(hostpath /etc/apt/sources.list)"
@@ -2659,6 +2663,12 @@ run_os_preflight() {
   fi
 
   check_dpkg_health || die "$EC_DPKG" "dpkg/apt health check failed"
+
+  # BIOS/grub-pc: prove install_devices maps to current root parent disk
+  # (reconcile stale EBS/by-id bindings) before confirmation / DRO.
+  if declare -F run_grub_install_device_preflight >/dev/null 2>&1; then
+    run_grub_install_device_preflight || die "$EC_PRE_DRO_GATE" "GRUB_INSTALL_DEVICE_PREFLIGHT=FAIL"
+  fi
 
   detect_partial_release_transition
 
@@ -6285,6 +6295,17 @@ main() {
   run_cmd apt-get update || fail_stage 1 "apt-get update failed on source repository"
   LAST_COMMAND="apt-get check"
   run_cmd apt-get check || fail_stage 1 "apt-get check failed on source repository"
+
+  # Fail closed before package transition: stale grub-pc/install_devices must
+  # be reconciled to the current root parent disk (BIOS/grub-pc only).
+  set_stage "GRUB_INSTALL_DEVICE_PREFLIGHT"
+  LAST_COMMAND="validate grub-pc install_devices"
+  if declare -F run_grub_install_device_preflight >/dev/null 2>&1; then
+    if ! run_grub_install_device_preflight; then
+      log ERROR "PACKAGE_TRANSITION_STARTED=NO"
+      fail_stage 1 "GRUB_INSTALL_DEVICE_PREFLIGHT=FAIL"
+    fi
+  fi
 
   LAST_COMMAND="do-release-upgrade --help"
   if ! do-release-upgrade --help 2>&1 | grep -q DistUpgradeViewNonInteractive; then

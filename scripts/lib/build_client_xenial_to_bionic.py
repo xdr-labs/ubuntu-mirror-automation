@@ -574,6 +574,21 @@ def render_script(template_path, replacements, aws_contract_body=""):
     with open(apt_path, "r", encoding="utf-8") as fh:
         apt_body = fh.read().rstrip("\n") + "\n"
     body = body.replace(apt_token, apt_body)
+    grub_token = "@@GRUB_INSTALL_DEVICE_PREFLIGHT_HELPER@@"
+    grub_path = os.path.join(
+        os.path.dirname(os.path.abspath(template_path)),
+        "lib",
+        "dp-offline-grub-install-device-preflight.sh",
+    )
+    if grub_token not in body:
+        raise BuildError("template missing token {}".format(grub_token))
+    if not os.path.isfile(grub_path):
+        raise BuildError(
+            "missing GRUB install-device preflight helper: {}".format(grub_path)
+        )
+    with open(grub_path, "r", encoding="utf-8") as fh:
+        grub_body = fh.read().rstrip("\n") + "\n"
+    body = body.replace(grub_token, grub_body)
     durable_token = "@@DURABLE_WRITE_HELPER@@"
     durable_path = os.path.join(
         os.path.dirname(os.path.abspath(template_path)),
