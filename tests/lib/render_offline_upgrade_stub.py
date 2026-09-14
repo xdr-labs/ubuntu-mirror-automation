@@ -17,6 +17,7 @@ HELPERS = (
     ("@@DESTRUCTIVE_CONFIRMATION_HELPER@@", "dp-offline-destructive-confirmation.sh"),
     ("@@RELEASE_UPGRADE_RECONCILIATION_HELPER@@", "dp-offline-release-upgrade-reconciliation.sh"),
     ("@@APT_PREFLIGHT_SANDBOX_HELPER@@", "dp-offline-apt-preflight-sandbox.sh"),
+    ("@@GRUB_INSTALL_DEVICE_PREFLIGHT_HELPER@@", "dp-offline-grub-install-device-preflight.sh"),
     ("@@DURABLE_WRITE_HELPER@@", "dp-offline-durable-write.sh"),
     ("@@SOURCE_PRODUCT_HELPER@@", "dp-offline-source-product-version.sh"),
     ("@@LXD_INVENTORY_HELPER@@", "dp-offline-lxd-inventory.sh"),
