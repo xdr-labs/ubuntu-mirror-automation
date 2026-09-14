@@ -367,6 +367,48 @@ else
 fi
 
 # =============================================================================
+# Helper body must not re-introduce template tokens after embed (Bug A)
+# =============================================================================
+HELPER_LEAK="$(grep -oE '@@[A-Z0-9_]+@@' "$HELPER" || true)"
+if [[ -z "$HELPER_LEAK" ]]; then
+  echo "HELPER_TEMPLATE_TOKEN_LEAK=PASS"
+  pass "helper body has no @@TOKEN@@ literals"
+else
+  echo "HELPER_TEMPLATE_TOKEN_LEAK=FAIL"
+  fail "helper body leaks template tokens: ${HELPER_LEAK}"
+fi
+
+# =============================================================================
+# Runtime manifest must allowlist the GRUB helper (Bug B)
+# =============================================================================
+python3 - "$ROOT/lib/runtime_manifest.sh" <<'PY' && manifest_ok=1 || manifest_ok=0
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+m = re.search(
+    r"^UM_RUNTIME_CLIENT_LIB_FILES=\((.*?)\)",
+    text,
+    re.M | re.S,
+)
+if not m:
+    print("UM_RUNTIME_CLIENT_LIB_FILES block not found", file=sys.stderr)
+    sys.exit(1)
+block = m.group(1)
+wanted = "dp-offline-grub-install-device-preflight.sh"
+# Match an array entry line, not an incidental comment elsewhere.
+if not re.search(r"(?m)^\s*" + re.escape(wanted) + r"\s*$", block):
+    print("missing allowlist entry: " + wanted, file=sys.stderr)
+    sys.exit(1)
+print("RUNTIME_MANIFEST_GRUB_HELPER=PASS")
+sys.exit(0)
+PY
+if [[ "$manifest_ok" -eq 1 ]]; then
+  pass "runtime manifest allowlists GRUB helper"
+else
+  echo "RUNTIME_MANIFEST_GRUB_HELPER=FAIL"
+  fail "UM_RUNTIME_CLIENT_LIB_FILES missing dp-offline-grub-install-device-preflight.sh"
+fi
+
+# =============================================================================
 if [[ "$FAIL" -eq 0 ]]; then
   echo "ALL PASS"
   exit 0
