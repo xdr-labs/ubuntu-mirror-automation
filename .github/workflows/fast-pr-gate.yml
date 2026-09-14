@@ -1,0 +1,59 @@
+# Fast PR quality gate — syntax, runtime closure, security contracts, Menu 7 quick
+# regressions. Does NOT run the full suite, R2/ACPS redownload, or real DP upgrade.
+name: fast-pr-gate
+
+on:
+  pull_request:
+  push:
+    branches: [main, harden/**]
+
+concurrency:
+  group: fast-pr-gate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fast-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Shell syntax (bash -n)
+        run: |
+          set -euo pipefail
+          mapfile -t shells < <(git ls-files '*.sh' 'scripts/mirrorctl' 'install.sh' 'uninstall.sh' 'validate.sh')
+          for f in "${shells[@]}"; do
+            bash -n "$f"
+          done
+          echo "bash -n PASS (${#shells[@]} files)"
+
+      - name: Python compile
+        run: |
+          set -euo pipefail
+          mapfile -t pys < <(git ls-files 'scripts/**/*.py' 'scripts/*.py' 'tests/*.py' 'lib/**/*.py' 2>/dev/null || true)
+          # Prefer tracked py under scripts/ and tests/
+          mapfile -t pys < <(git ls-files '*.py' | grep -E '^(scripts/|tests/|lib/)' || true)
+          python3 -m py_compile "${pys[@]}"
+          echo "py_compile PASS (${#pys[@]} files)"
+
+      - name: Runtime manifest closure
+        run: bash tests/test_runtime_manifest_closure.sh
+
+      - name: Post-Menu7 hardening regressions
+        run: bash tests/test_post_menu7_hardening_regressions.sh
+
+      - name: Production security escape contracts
+        run: bash tests/test_production_security_escapes.sh
+
+      - name: Selective quarantine / publish dual-hermetic
+        run: |
+          python3 -m unittest \
+            tests.test_selective_mirror.StagingProvenanceResumeTests \
+            tests.test_selective_mirror.SelectiveIntegrationSurfaceTests \
+            -v
+
+      - name: Menu 7 / exact-generation quick regressions
+        run: |
+          set -euo pipefail
+          bash tests/test_menu7_bringup_semantic_validation.sh
+          bash tests/test_dp_exact_generation_binding.sh

@@ -293,7 +293,17 @@ um_bootstrap_install_runtime() {
   local sbin_link="${UM_UOM_INSTALL_PATH:-/usr/local/sbin/ubuntu-offline-mirror.sh}"
   mkdir -p "$(dirname "$sbin_link")" "${bindir}"
   ln -sfn "${runtime}/scripts/ubuntu-offline-mirror.sh" "$sbin_link"
-  ln -sfn "${runtime}/scripts/ubuntu-offline-mirror.sh" "${bindir}/ubuntu-offline-mirror"
+  # Public bin is the Menu 7 presentation wrapper when present; else core.
+  if [[ -f "${runtime}/scripts/ubuntu-offline-mirror-entrypoint.sh" ]]; then
+    local tmp_bin
+    tmp_bin="${bindir}/.ubuntu-offline-mirror.tmp.$$"
+    install -m 0755 "${runtime}/scripts/ubuntu-offline-mirror-entrypoint.sh" "$tmp_bin"
+    mv -f "$tmp_bin" "${bindir}/ubuntu-offline-mirror"
+  else
+    ln -sfn "${runtime}/scripts/ubuntu-offline-mirror.sh" "${bindir}/ubuntu-offline-mirror"
+  fi
+  ln -sfn "${runtime}/scripts/mirrorctl" "${bindir}/mirrorctl"
+  ln -sfn "${runtime}/scripts/mirror-dashboard.sh" "${bindir}/mirror-dashboard"
 
   # Minimal mirror.conf for path defaults (no secrets)
   if [[ ! -f "${confdir}/mirror.conf" ]] || [[ "${UM_FORCE:-0}" == "1" ]]; then

@@ -967,8 +967,11 @@ def build_plan(discovery_root, seed_root, profile_name='offline-upgrade-selectiv
     if real_unsupported:
         errors.append('unsupported URLs: %d' % len(real_unsupported))
     if len(seen_up_sha) < 8:
-        # 4 tarball + 4 gpg expected
-        warnings.append('expected 8 upgrader artifacts (4 tar + 4 gpg), found %d unique' % len(seen_up_sha))
+        # 4 tarball + 4 gpg expected — missing identity is FAIL, not warning-only.
+        errors.append(
+            'expected 8 upgrader artifacts (4 tar + 4 gpg), found %d unique'
+            % len(seen_up_sha)
+        )
     if not meta_release_required:
         errors.append('meta-release required')
 

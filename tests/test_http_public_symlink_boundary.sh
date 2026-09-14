@@ -11,6 +11,8 @@ pass() { echo "PASS: $*"; }
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+export MM_MIRROR_ROOT="$TMP"
+export BASE_PATH="$TMP"
 
 # shellcheck source=/dev/null
 source "$COMMON"

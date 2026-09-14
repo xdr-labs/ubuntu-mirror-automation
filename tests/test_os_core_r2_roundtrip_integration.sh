@@ -21,6 +21,10 @@ COMMON="${ROOT}/scripts/lib/mirror_manager_common.sh"
 ENGINE="${ROOT}/scripts/lib/mirror_install_engine.sh"
 REBUILD_CLIENTS="${ROOT}/scripts/rebuild-publish-clients.sh"
 
+# Dual-hermetic: publish skip flags require both gates (D2).
+export MM_HERMETIC_TEST_MODE=1
+export MM_ALLOW_SELECTIVE_PUBLISH_TEST_BYPASS=1
+
 FAIL=0
 pass() { echo "  PASS: $*"; }
 fail() { echo "  FAIL: $*"; FAIL=1; }

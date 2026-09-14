@@ -56,15 +56,15 @@ EOF
     cat >"${root}/${wrapper}" <<EOF
 #!/bin/bash
 set -euo pipefail
-cd /home/aella
 L='${launcher}'
-D="\${L}.download"
 MIRROR='${mirror}'
 LAUNCHER_SHA256='${launcher_sha}'
+W=\$(mktemp -d)
+trap 'rm -rf "\$W"' EXIT
+D="\${W}/\${L}.download"
 curl -fsSLo "\$D" "\${MIRROR}/client/\${L}"
 printf '%s  %s\\n' "\$LAUNCHER_SHA256" "\$D" | sha256sum -c -
-mv -f "\$D" "\$L"
-exec bash "./\$L"
+bash "\$D"
 EOF
     chmod 0755 "${root}/${wrapper}"
     (cd "$root" && sha256sum "$wrapper" >"${wrapper}.sha256")
@@ -73,7 +73,6 @@ EOF
   cat >"${root}/upgrade-phase2.sh" <<EOF
 #!/bin/bash
 set -euo pipefail
-cd /home/aella
 MIRROR='${mirror}'
 VER='6.6.0'
 SCRIPT='stage-dp-phase2.sh'

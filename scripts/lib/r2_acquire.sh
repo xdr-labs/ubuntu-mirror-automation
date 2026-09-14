@@ -11,6 +11,10 @@ R2_ACQUIRE_LOADED=1
 R2_CURL_CONNECT_TIMEOUT="${R2_CURL_CONNECT_TIMEOUT:-30}"
 R2_CURL_RETRIES="${R2_CURL_RETRIES:-5}"
 R2_CURL_RETRY_DELAY="${R2_CURL_RETRY_DELAY:-5}"
+# Stall watchdog: fail if transfer stays below limit for speed-time seconds.
+# Defaults allow legitimately slow multi-GB progress; zero bytes for 2 minutes fails.
+R2_CURL_SPEED_LIMIT="${R2_CURL_SPEED_LIMIT:-1024}"
+R2_CURL_SPEED_TIME="${R2_CURL_SPEED_TIME:-120}"
 R2_PROGRESS_INTERVAL_SEC="${R2_PROGRESS_INTERVAL_SEC:-3}"
 
 r2_cache_dir() {
@@ -93,6 +97,8 @@ r2_http_download_to_part() {
     --retry "$R2_CURL_RETRIES"
     --retry-delay "$R2_CURL_RETRY_DELAY"
     --retry-all-errors
+    --speed-limit "$R2_CURL_SPEED_LIMIT"
+    --speed-time "$R2_CURL_SPEED_TIME"
     -H "Cache-Control: no-cache"
     -H "Pragma: no-cache"
     -D "$hdr"

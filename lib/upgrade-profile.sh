@@ -109,7 +109,7 @@ um_assert_supported_mirror_mode() {
   local mode="${1:-${MIRROR_MODE:-}}"
   um_load_upgrade_profile 2>/dev/null || true
   case "${mode}" in
-    selective|SELECTIVE|discovery_exact|"" )
+    selective|SELECTIVE|offline-upgrade-selective|discovery_exact|"" )
       MIRROR_MODE="selective"
       return 0
       ;;

@@ -27,13 +27,16 @@ um_bootstrap_install_runtime() {
   _um_bootstrap_install_runtime_core
   local bindir="${INSTALL_BIN_DIR:-/usr/local/bin}"
   local wrapper="${UM_PROJECT_ROOT}/scripts/ubuntu-offline-mirror-entrypoint.sh"
+  local tmp
   [[ -f "$wrapper" ]] || um_die "RUNTIME_SOURCE_FILE_MISSING=${wrapper}"
   if [[ "${UM_DRY_RUN:-0}" == "1" ]]; then
     um_dry "Would install Menu 7 normal-width entrypoint at ${bindir}/ubuntu-offline-mirror"
     return 0
   fi
-  rm -f "${bindir}/ubuntu-offline-mirror"
-  install -m 0755 "$wrapper" "${bindir}/ubuntu-offline-mirror"
+  mkdir -p "$bindir"
+  tmp="${bindir}/.ubuntu-offline-mirror.tmp.$$"
+  install -m 0755 "$wrapper" "$tmp"
+  mv -f "$tmp" "${bindir}/ubuntu-offline-mirror"
   um_ok "MENU7_NORMAL_WIDTH_ENTRYPOINT=PASS path=${bindir}/ubuntu-offline-mirror"
 }
 
@@ -103,10 +106,9 @@ parse_args() {
       --force) UM_FORCE=1; shift ;;
       # Hidden expert option — never advertised as Quick Start
       --format-device) UM_FORMAT_DEVICE=1; shift ;;
-      # Compatibility: ignore obsolete selective-install flags without starting old sync
+      # Obsolete selective-install flags: hard error (silent no-op is dangerous)
       --no-sync|--selective|--menu|--no-menu|--foreground|--background|--start-sync|--skip-packages)
-        um_warn "Ignoring obsolete option $1 (bootstrap uses Mirror Manager workflow only)"
-        shift
+        um_die "Obsolete option $1 rejected — bootstrap uses Mirror Manager workflow only (see --help)"
         ;;
       --full)
         um_die "UNSUPPORTED_FULL_MIRROR_SYNC: use Mirror Manager workflow (sudo ./install.sh)"

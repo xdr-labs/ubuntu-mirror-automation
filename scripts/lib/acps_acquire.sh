@@ -18,6 +18,8 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/acps_auth.sh"
 ACPS_CURL_CONNECT_TIMEOUT="${ACPS_CURL_CONNECT_TIMEOUT:-30}"
 ACPS_CURL_RETRIES="${ACPS_CURL_RETRIES:-5}"
 ACPS_CURL_RETRY_DELAY="${ACPS_CURL_RETRY_DELAY:-5}"
+ACPS_CURL_SPEED_LIMIT="${ACPS_CURL_SPEED_LIMIT:-1024}"
+ACPS_CURL_SPEED_TIME="${ACPS_CURL_SPEED_TIME:-120}"
 ACPS_PROGRESS_INTERVAL_SEC="${ACPS_PROGRESS_INTERVAL_SEC:-3}"
 
 acps_cache_dir() {
@@ -865,13 +867,15 @@ acps_download_one() {
   local final="${dest_dir}/${name}"
   local url="${ACPS_EFFECTIVE_BASE%/}/${name}"
   local start_ts now elapsed downloaded expected pct rate
+  local have=0 status cr_start hdr resp
   local curl_args=(
     -f -L
     --connect-timeout "$ACPS_CURL_CONNECT_TIMEOUT"
     --retry "$ACPS_CURL_RETRIES"
     --retry-delay "$ACPS_CURL_RETRY_DELAY"
     --retry-all-errors
-    --continue-at -
+    --speed-limit "$ACPS_CURL_SPEED_LIMIT"
+    --speed-time "$ACPS_CURL_SPEED_TIME"
     -o "$part"
   )
   curl_args+=(${ACPS_CURL_TLS_ARGS[@]+"${ACPS_CURL_TLS_ARGS[@]}"})
@@ -902,6 +906,24 @@ acps_download_one() {
     expected="$cl"
   fi
 
+  if [[ -f "$part" ]]; then
+    have="$(stat -c%s "$part" 2>/dev/null || echo 0)"
+  fi
+  if ! [[ "$have" =~ ^[0-9]+$ ]]; then
+    have=0
+  fi
+
+  # Resumable path: Range request + Content-Range start must equal local size
+  # (same contract as R2). Do not use blind --continue-at -.
+  hdr="$(mktemp)"
+  resp="$(mktemp)"
+  if [[ "$have" -gt 0 ]]; then
+    mm_info "ACPS_RESUME_ATTEMPT file=${name} local_bytes=${have}"
+    curl_args+=(-H "Range: bytes=${have}-" -D "$hdr" -o "$resp")
+  else
+    curl_args+=(-D "$hdr")
+  fi
+
   local err progress_pid=""
   err="$(mktemp)"
   (
@@ -910,7 +932,11 @@ acps_download_one() {
       now="$(date +%s)"
       elapsed=$((now - start_ts))
       downloaded=0
-      [[ -f "$part" ]] && downloaded="$(stat -c%s "$part" 2>/dev/null || echo 0)"
+      if [[ "$have" -gt 0 && -f "$resp" ]]; then
+        downloaded=$((have + $(stat -c%s "$resp" 2>/dev/null || echo 0)))
+      elif [[ -f "$part" ]]; then
+        downloaded="$(stat -c%s "$part" 2>/dev/null || echo 0)"
+      fi
       pct="UNKNOWN"
       rate="UNKNOWN"
       if [[ -n "$expected" && "$expected" -gt 0 ]]; then
@@ -939,11 +965,49 @@ acps_download_one() {
 
   if [[ "$rc" -ne 0 ]]; then
     mm_redact <"$err" >&2 || true
-    rm -f "$err"
+    rm -f "$err" "$hdr" "$resp"
     mm_error "ACPS_DOWNLOAD_FAILED file=${name} curl_rc=${rc}"
     return "$rc"
   fi
   rm -f "$err"
+
+  status="$(awk 'BEGIN{s=""} /^HTTP\//{s=$2} END{print s}' "$hdr")"
+  if [[ "$have" -gt 0 ]]; then
+    case "$status" in
+      206)
+        cr_start="$(awk '
+          BEGIN { IGNORECASE=1 }
+          tolower($1) == "content-range:" {
+            line = $0
+            sub(/^[^:]+:[[:space:]]*/, "", line)
+            sub(/^[Bb][Yy][Tt][Ee][Ss][[:space:]]+/, "", line)
+            split(line, a, /-/)
+            print a[1]
+          }
+        ' "$hdr")"
+        if [[ -z "$cr_start" || "$cr_start" != "$have" ]]; then
+          mm_error "ACPS_CONTENT_RANGE_MISMATCH file=${name} local=${have} remote_start=${cr_start:-MISSING}"
+          rm -f "$hdr" "$resp" "$part"
+          return 1
+        fi
+        cat "$resp" >>"$part"
+        rm -f "$resp"
+        mm_ok "ACPS_RESUME_APPEND=PASS file=${name} status=206"
+        ;;
+      200)
+        mm_info "ACPS_RESUME_RESTART file=${name} status=200"
+        mv -f "$resp" "$part"
+        ;;
+      *)
+        mm_error "ACPS_RESUME_HTTP_STATUS file=${name} status=${status:-MISSING}"
+        rm -f "$hdr" "$resp"
+        return 1
+        ;;
+    esac
+  else
+    rm -f "$resp"
+  fi
+  rm -f "$hdr"
 
   if ! dp2_reject_bad_payload "$part" "$name"; then
     rm -f "$part"

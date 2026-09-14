@@ -237,9 +237,9 @@ cmd_finalize() {
   if um_is_sync_running; then
     um_die "Selective materialize is still running — wait for completion"
   fi
-  local selective_ready="${BASE_PATH}/selective/state/READY"
-  if [[ ! -f "$selective_ready" ]]; then
-    um_die "Selective READY missing — run verify-selective + publish-selective first"
+  # ONE authoritative readiness decision — never forge READY from file alone.
+  if ! um_evaluate_selective_ready || [[ "${UM_SELECTIVE_READY:-0}" != "1" ]]; then
+    um_die "Selective READY gates failed — ${UM_SELECTIVE_READY_REASON:-run verify-selective + publish-selective first}"
   fi
 
   mkdir -p "$LOG_DIR"
@@ -249,7 +249,7 @@ cmd_finalize() {
     printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" | tee -a "$flog"
   }
 
-  um_mark_state "finalizing"
+  um_mark_state "finalizing" || um_die "Failed to persist finalizing state marker"
   log_step "[OK] Selective mirror verify/publish complete"
   log_step "[RUNNING] Ensuring apt-mirror.timer stays disabled (selective profile)"
   systemctl daemon-reload
@@ -257,8 +257,8 @@ cmd_finalize() {
   systemctl stop apt-mirror.timer >/dev/null 2>&1 || true
   log_step "[OK] Daily full-sync timer disabled"
 
-  um_mark_state "initial-sync-complete"
-  um_mark_state "ready"
+  um_mark_state "initial-sync-complete" || um_die "Failed to persist initial-sync-complete marker"
+  um_mark_state "ready" || um_die "Failed to persist ready marker"
   um_clear_marker "sync-failed"
   um_clear_marker "finalizing"
   log_step "[OK] Mirror state READY (selective)"
@@ -331,10 +331,14 @@ EOF
       need_root
       systemctl kill -s SIGCONT apt-mirror.service 2>/dev/null || true
       systemctl stop apt-mirror.service 2>/dev/null || true
-      # Stop selective materialize/verify helpers (never leave orphan downloads).
-      pkill -f 'ubuntu-offline-mirror\.sh[[:space:]]+(materialize-selective|verify-selective|publish-selective)' 2>/dev/null || true
-      pkill -f 'selective_mirror\.py[[:space:]]+materialize' 2>/dev/null || true
-      pkill -f '/usr/bin/perl /usr/bin/apt-mirror' 2>/dev/null || true
+      # Prefer systemd cgroup kill for the managed unit; fall back to verified
+      # materialize helper PIDs only (avoid broad process-name matching of operator tests).
+      systemctl kill -s SIGTERM apt-mirror.service 2>/dev/null || true
+      local pid
+      for pid in $(um_apt_mirror_pids 2>/dev/null); do
+        [[ -n "$pid" ]] || continue
+        kill -TERM "$pid" 2>/dev/null || true
+      done
       um_ok "Stop requested for selective materialize. Dashboard detach does not stop sync."
       ;;
     pause)

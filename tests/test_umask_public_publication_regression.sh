@@ -39,6 +39,8 @@ CLIENT="${SPOOL}/client"
 PHASE2="${SPOOL}/dp-phase2/6.6.0"
 PRIVATE_CACHE="${SPOOL}/.install-cache"
 SIGNING="${MM_CONFIG_DIR}/signing"
+export MM_MIRROR_ROOT="$SPOOL"
+export BASE_PATH="$SPOOL"
 mkdir -p "$CLIENT" "$PHASE2" "$PRIVATE_CACHE" "$SIGNING" \
   "${CLIENT}/xenial-to-bionic" "${WORKDIR}/logs" "${WORKDIR}/tmp"
 
