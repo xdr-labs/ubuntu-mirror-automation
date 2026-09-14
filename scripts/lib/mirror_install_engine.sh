@@ -90,16 +90,20 @@ engine_rebuild_publish_local_client_set() {
   set +e
   child_out="$(
     env \
+      PREPARATION_MODE="${PREPARATION_MODE:-FULL}" \
       MIRROR_HTTP_URL="$MIRROR_HTTP_URL" \
       RESOLVED_MIRROR_BASE_URL="${RESOLVED_MIRROR_BASE_URL:-$MIRROR_HTTP_URL}" \
       LOCAL_CLIENT_SIGNING_DIR="$LOCAL_CLIENT_SIGNING_DIR" \
       CLIENT_HTTP_ROOT="${MM_CLIENT_ROOT}" \
       SELECTIVE_ROOT="${MM_SELECTIVE_ROOT}" \
       BASE_PATH="${MM_MIRROR_ROOT}" \
+      MM_DP_PHASE2_ROOT="${MM_DP_PHASE2_ROOT:-}" \
       CACHE_ROOT="${MM_CACHE_ROOT:-${MM_MIRROR_ROOT}/.install-cache}" \
       ARTIFACT_DIR="$staging_root" \
       CLIENT_BUILD_GENERATION_ID="$generation_id" \
       CLIENT_FINALIZATION_EVIDENCE_LOG="$evidence_log" \
+      MM_CONFIG_DIR="${MM_CONFIG_DIR:-}" \
+      MM_WORKFLOW_FILE="${MM_WORKFLOW_FILE:-}" \
       CONTENT_SOURCE=local-fs \
       SKIP_HTTP_VERIFY="$skip_http" \
       bash "$rebuild" 2>&1
@@ -424,11 +428,53 @@ engine_finalize_local_client_set() {
       mm_info "DOWNLOAD_AND_PREPARE_RESULT=FAIL_CLIENT_SET_FINALIZATION"
       return 1
     fi
+    # Mode-switch coherence: a FULL selective-bound client set must not remain
+    # the live PHASE2_ONLY generation. Reuse only when classify says CURRENT for
+    # PHASE2_ONLY (empty selective contract); otherwise rebuild when selective
+    # READY is available so hop manifests can be regenerated under that contract.
+    engine_assess_client_set_for_finalize
+    mm_info "CLIENT_SET_STATE=${CLIENT_SET_STATE}"
+    mm_info "CLIENT_SET_ACTION=${CLIENT_SET_ACTION}"
+    if [[ "${CLIENT_SET_ACTION}" == "REUSE_CURRENT" || "${CLIENT_SET_ACTION}" == "REUSE_VERIFIED" ]]; then
+      if mm_check_client_files_ready && engine_bind_reused_client_set_workflow; then
+        mm_info "CLIENT_SET_ON_DISK_READY=PASS"
+        mm_info "CLIENT_HTTP_READY=DEFERRED"
+        mm_ok "CLIENT_SET_FINALIZATION=PASS"
+        return 0
+      fi
+      mm_warn "CLIENT_SET_REUSE_FAILED — falling through to PHASE2_ONLY rebuild"
+      CLIENT_SET_ACTION=REBUILD_SIGN_PUBLISH
+    fi
+    if [[ -f "${MM_SELECTIVE_ROOT}/state/READY" ]]; then
+      mm_info "PHASE2_ONLY_CLIENT_SET_ACTION=REBUILD_SIGN_PUBLISH"
+      if ! engine_rebuild_publish_local_client_set 1; then
+        mm_error "CLIENT_SET_FINALIZATION=FAIL"
+        mm_info "PREPARATION_ARTIFACTS_READY=YES"
+        mm_info "DOWNLOAD_AND_PREPARE_RESULT=FAIL_CLIENT_SET_FINALIZATION"
+        return 1
+      fi
+      # Rebuild publishes helpers+hops atomically; re-assert Phase 2 unit ready.
+      if ! engine_ensure_phase2_helpers; then
+        mm_error "CLIENT_SET_FINALIZATION=FAIL"
+        mm_info "PREPARATION_ARTIFACTS_READY=YES"
+        mm_info "DOWNLOAD_AND_PREPARE_RESULT=FAIL_CLIENT_SET_FINALIZATION"
+        return 1
+      fi
+    fi
     if ! mm_check_client_files_ready; then
       mm_error "CLIENT_SET_FINALIZATION=FAIL"
       mm_info "PREPARATION_ARTIFACTS_READY=YES"
       mm_info "DOWNLOAD_AND_PREPARE_RESULT=FAIL_CLIENT_SET_FINALIZATION"
       return 1
+    fi
+    # Bind workflow receipt when a coherent client-set.env exists.
+    if [[ -f "${MM_CLIENT_ROOT}/client-set.env" ]]; then
+      if ! engine_bind_reused_client_set_workflow; then
+        mm_error "CLIENT_SET_FINALIZATION=FAIL"
+        mm_info "PREPARATION_ARTIFACTS_READY=YES"
+        mm_info "DOWNLOAD_AND_PREPARE_RESULT=FAIL_CLIENT_SET_FINALIZATION"
+        return 1
+      fi
     fi
     mm_ok "CLIENT_SET_FINALIZATION=PASS"
     return 0
@@ -3411,6 +3457,22 @@ engine_enable_http_distribution() {
       mm_info "OS_HOP_CLIENT_FILES_REQUIRED=NO"
       mm_info "CLIENT_FILES_ON_DISK_READY=NO"
       engine_ensure_phase2_helpers || true
+    fi
+    # Align Enable HTTP with Download-and-Prepare: bind or rebuild a coherent
+    # PHASE2_ONLY generation when selective READY makes rebuild possible.
+    engine_assess_client_set_for_finalize
+    mm_info "CLIENT_SET_STATE=${CLIENT_SET_STATE}"
+    mm_info "CLIENT_SET_ACTION=${CLIENT_SET_ACTION}"
+    if [[ "$CLIENT_SET_ACTION" == "REUSE_CURRENT" || "$CLIENT_SET_ACTION" == "REUSE_VERIFIED" ]]; then
+      clients_on_disk=1
+      engine_bind_reused_client_set_workflow \
+        || mm_die "HTTP_DISTRIBUTION=FAIL client workflow binding"
+    elif [[ -f "${MM_SELECTIVE_ROOT}/state/READY" ]]; then
+      mm_info "CLIENT_FILES_ON_DISK_READY=STALE_OR_MISSING — rebuilding PHASE2_ONLY current source"
+      engine_rebuild_publish_local_client_set 1 \
+        || mm_die "HTTP_DISTRIBUTION=FAIL client rebuild"
+      engine_ensure_phase2_helpers || true
+      clients_on_disk=1
     fi
   else
     # Keep Enable HTTP aligned with Download-and-Prepare: verify-only fixtures

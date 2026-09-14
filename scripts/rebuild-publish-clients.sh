@@ -310,11 +310,27 @@ evidence_echo "LOCAL_KEY_FINGERPRINT=${LOCAL_KEY_FINGERPRINT}"
 # Bind the CURRENT verified selective generation into client build-input
 # provenance. FULL production must fail closed on missing/malformed generation;
 # never swallow load failures into an empty contract SHA.
+# PHASE2_ONLY uses the canonical empty/non-applicable selective tuple even when
+# a FULL selective READY tree is present on disk (mode-switch coherence).
 CLIENT_PLAN_CHECKSUM=""
 CLIENT_DISCOVERY_ARTIFACT_CHECKSUM=""
 CLIENT_AWS_SEMANTIC_CONTRACT_SHA256=""
+_prep_mode="${PREPARATION_MODE:-FULL}"
+case "${_prep_mode}" in
+  phase2_only|PHASE2|phase2) _prep_mode=PHASE2_ONLY ;;
+  full|FULL|"") _prep_mode=FULL ;;
+esac
+PREPARATION_MODE="${_prep_mode}"
+export PREPARATION_MODE
 _load_gen_env="$(mktemp)"
-if ! python3 - <<'PY' "$SELECTIVE_ROOT" "$ROOT" "$REQUIRE_SELECTIVE_READY" >"$_load_gen_env"
+if [[ "$PREPARATION_MODE" == "PHASE2_ONLY" ]]; then
+  {
+    printf 'CLIENT_PLAN_CHECKSUM=\n'
+    printf 'CLIENT_DISCOVERY_ARTIFACT_CHECKSUM=\n'
+    printf 'CLIENT_AWS_SEMANTIC_CONTRACT_SHA256=\n'
+    printf 'CLIENT_SELECTIVE_GENERATION_MODE=PHASE2_ONLY_EMPTY\n'
+  } >"$_load_gen_env"
+elif ! python3 - <<'PY' "$SELECTIVE_ROOT" "$ROOT" "$REQUIRE_SELECTIVE_READY" >"$_load_gen_env"
 import os, sys
 sel, root, require_ready = sys.argv[1], sys.argv[2], sys.argv[3]
 sys.path.insert(0, os.path.join(root, "scripts", "lib"))

@@ -784,11 +784,14 @@ def main(argv=None):
         )
     except ValueError as exc:
         raise BuildError("Selective generation binding failed: {}".format(exc))
-    plan_checksum = gen.get("plan_checksum") or ""
-    discovery_checksum = gen.get("discovery_artifact_checksum") or ""
+    # Operational hop content may still embed the live selective AWS contract
+    # body. CLIENT_BUILD_INPUT_SHA256 follows PREPARATION_MODE: PHASE2_ONLY uses
+    # the canonical empty selective tuple so FULL->PHASE2_ONLY republish coheres.
     aws_contract_body = gen["bash"]
-    aws_contract_sha = gen["aws_semantic_contract_sha256"]
-    print("AWS_SEMANTIC_CONTRACT_SHA256={}".format(aws_contract_sha))
+    plan_checksum, discovery_checksum, aws_contract_sha = (
+        cbp.client_build_selective_tuple(gen)
+    )
+    print("AWS_SEMANTIC_CONTRACT_SHA256={}".format(aws_contract_sha or "PHASE2_ONLY_EMPTY"))
 
     generated_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     repo_base = "{}/hops/{}/ubuntu".format(mirror_base, HOP)

@@ -358,6 +358,23 @@ def requires_selective_generation_binding(expected_mode=""):
     return mode != "PHASE2_ONLY"
 
 
+def client_build_selective_tuple(selective_generation, expected_mode=""):
+    """Return (plan, discovery, contract) for CLIENT_BUILD_INPUT_SHA256.
+
+    PHASE2_ONLY always uses the canonical empty/non-applicable selective tuple,
+    even when a FULL selective READY tree is present for hop package content.
+    FULL keeps the verified selective generation tuple.
+    """
+    if not requires_selective_generation_binding(expected_mode):
+        return ("", "", "")
+    gen = selective_generation or {}
+    return (
+        (gen.get("plan_checksum") or "").strip().lower(),
+        (gen.get("discovery_artifact_checksum") or "").strip().lower(),
+        (gen.get("aws_semantic_contract_sha256") or "").strip().lower(),
+    )
+
+
 def parse_env_file(path):
     """Parse KEY=VALUE metadata. Duplicate keys are always rejected."""
     result = {}
