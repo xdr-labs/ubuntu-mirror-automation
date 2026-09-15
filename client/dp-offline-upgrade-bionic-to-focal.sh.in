@@ -1547,7 +1547,7 @@ load_release_upgrade_started_flag_for_current_hop() {
 # Build-time inlined from client/lib/dp-offline-apt-preflight-sandbox.sh
 @@APT_PREFLIGHT_SANDBOX_HELPER@@
 
-# Shared BIOS/grub-pc install_devices preflight (stale EBS/by-id rebind).
+# Shared BIOS/grub-pc install_devices normalization (current whole root disk).
 # Build-time inlined from client/lib/dp-offline-grub-install-device-preflight.sh
 @@GRUB_INSTALL_DEVICE_PREFLIGHT_HELPER@@
 
@@ -4643,6 +4643,8 @@ install_runner_and_units() {
 set -eo pipefail
 @@HERMETIC_ESCAPES_HELPER@@
 @@DURABLE_WRITE_HELPER@@
+# Detached runner must embed GRUB normalization (no outer-client function inheritance).
+@@GRUB_INSTALL_DEVICE_PREFLIGHT_HELPER@@
 
 # Optional fake-root prefix for fixture tests only (never set by production unit).
 # Requires MM_HERMETIC_TEST_MODE=1; production ignores STELLAR_OFFLINE_TEST_ROOT.
@@ -6296,15 +6298,17 @@ main() {
   LAST_COMMAND="apt-get check"
   run_cmd apt-get check || fail_stage 1 "apt-get check failed on source repository"
 
-  # Fail closed before package transition: authoritative grub-pc/install_devices
-  # reconciliation (transactional) to the current root parent disk (BIOS/grub-pc).
+  # Fail closed before package transition: normalize grub-pc to the current
+  # whole root disk (BIOS/grub-pc). Old install_devices values are ignored.
   set_stage "GRUB_INSTALL_DEVICE_PREFLIGHT"
-  LAST_COMMAND="validate grub-pc install_devices"
-  if declare -F run_grub_install_device_reconcile >/dev/null 2>&1; then
-    if ! run_grub_install_device_reconcile; then
-      log ERROR "PACKAGE_TRANSITION_STARTED=NO"
-      fail_stage 1 "GRUB_INSTALL_DEVICE_PREFLIGHT=FAIL"
-    fi
+  LAST_COMMAND="normalize grub-pc install_devices"
+  if ! declare -F run_grub_install_device_normalize >/dev/null 2>&1; then
+    log ERROR "PACKAGE_TRANSITION_STARTED=NO"
+    fail_stage 1 "GRUB_INSTALL_DEVICE_NORMALIZER_MISSING"
+  fi
+  if ! run_grub_install_device_normalize; then
+    log ERROR "PACKAGE_TRANSITION_STARTED=NO"
+    fail_stage 1 "GRUB_INSTALL_DEVICE_NORMALIZATION=FAIL"
   fi
 
   LAST_COMMAND="do-release-upgrade --help"
