@@ -29,16 +29,11 @@ source "$GEN_LIB"
 copy_unit() {
   local dest="$1"
   mkdir -p "${dest}/lib"
-  cp -a "${ROOT}/client/stage-dp-phase2.sh" "${dest}/stage-dp-phase2.sh"
-  cp -a "${ROOT}/client/bringup_py3_dp_lifecycle.sh" "${dest}/bringup_py3_dp_lifecycle.sh"
-  cp -a "${ROOT}/client/lib/dp-offline-source-product-version.sh" \
-    "${dest}/lib/dp-offline-source-product-version.sh"
-  cp -a "${ROOT}/client/lib/dp-phase2-operation-progress.sh" \
-    "${dest}/lib/dp-phase2-operation-progress.sh"
-  cp -a "${ROOT}/client/lib/dp-phase2-bringup-lifecycle.sh" \
-    "${dest}/lib/dp-phase2-bringup-lifecycle.sh"
-  cp -a "${ROOT}/client/lib/dp-phase2-ubuntu-prerequisites.sh" \
-    "${dest}/lib/dp-phase2-ubuntu-prerequisites.sh"
+  while IFS= read -r rel; do
+    [[ -n "$rel" ]] || continue
+    mkdir -p "${dest}/$(dirname "$rel")"
+    cp -a "${ROOT}/client/${rel}" "${dest}/${rel}"
+  done < <(phase2_helper_generation_files)
   phase2_helper_generation_write "$dest" >/dev/null
   chmod +x "${dest}/stage-dp-phase2.sh" "${dest}/bringup_py3_dp_lifecycle.sh"
 }
@@ -159,11 +154,28 @@ pass "lifecycle wrapper and ubuntu-prerequisites covered by generation"
 # Inner generation-manifest SHA256 lives inside upgrade-phase2.sh.
 export MM_PROJECT_ROOT="$ROOT"
 export MM_CLIENT_ROOT="$UNIT"
+export MM_HERMETIC_TEST_MODE=1
 export SKIP_MIRROR_HOST_VALIDATE=1
 # shellcheck source=lib/phase2_bundle_trust_fixture.sh
 source "${ROOT}/tests/lib/phase2_bundle_trust_fixture.sh"
 phase2_trust_fixture_export_dp_phase2_root "$TMP" >/dev/null
 phase2_trust_fixture_write_bundle_sidecar "$MM_DP_PHASE2_ROOT" "6.5.0" >/dev/null
+# Prerequisite identity pin required by upgrade-phase2 wrapper trust chain.
+EXTRAS="${MM_DP_PHASE2_ROOT}/6.5.0/extras"
+mkdir -p "$EXTRAS"
+cat >"${EXTRAS}/phase2-ubuntu-prerequisites.state" <<'EOF'
+TARGET_DP_VERSION=6.5.0
+PHASE2_PREREQ_REQUIRED=NO
+PHASE2_PREREQ_PACKAGE_COUNT=0
+PHASE2_PREREQ_BUILD=PASS
+PHASE2_PREREQ_PUBLICATION=PASS
+PHASE2_PREREQ_ARTIFACT=phase2-ubuntu-prerequisites.tar.gz
+PHASE2_PREREQ_SHA256=
+EOF
+export PHASE2_PREREQ_PY="${ROOT}/scripts/lib/phase2_ubuntu_prerequisites.py"
+# shellcheck source=lib/phase2_prereq_identity_fixture.sh
+source "${ROOT}/tests/lib/phase2_prereq_identity_fixture.sh"
+phase2_prereq_write_identity_for_extras "$EXTRAS" >/dev/null
 phase2_upgrade_wrapper_write "$UNIT" "http://192.0.2.10" "6.5.0" >/dev/null
 LIB_INST="${TMP}/installer-lib.sh"
 awk -v sd="${ROOT}/scripts" '
