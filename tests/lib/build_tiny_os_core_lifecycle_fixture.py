@@ -401,15 +401,57 @@ def build_fixture(output_dir):
                 'local_path': '',
             })
 
-        # Upgrader stubs produced on disk for fixture completeness. They are
-        # intentionally NOT listed in discovery required-files so hermetic
-        # materialize (--no-download) does not depend on network fetch; the
-        # materializer still creates shared/offline/release-upgraders +
-        # meta-release-lts placeholders that pre-publish validate accepts.
-        make_upgrader(target, os.path.join(upgraders_root, target), gpg_homedir=gpg_sel)
+        # Release-upgrader tar+gpg: required by current planner (8 unique artifacts
+        # across 4 hops). Place under seed so --no-download materialize can reuse.
+        upg_tar, upg_sig = make_upgrader(
+            target, os.path.join(upgraders_root, target), gpg_homedir=gpg_sel,
+        )
+        upg_rel_dir = (
+            'dists/%s-updates/main/dist-upgrader-all/current' % target
+        )
+        seed_upg_dir = os.path.join(seed_ubuntu, upg_rel_dir)
+        os.makedirs(seed_upg_dir, exist_ok=True)
+        seed_tar = os.path.join(seed_upg_dir, '%s.tar.gz' % target)
+        seed_sig = seed_tar + '.gpg'
+        shutil.copy2(upg_tar, seed_tar)
+        shutil.copy2(upg_sig, seed_sig)
+        tar_sha = sha256_file(seed_tar)
+        sig_sha = sha256_file(seed_sig)
+        tar_url = (
+            'http://archive.ubuntu.com/ubuntu/%s/%s.tar.gz' % (upg_rel_dir, target)
+        )
+        sig_url = tar_url + '.gpg'
+        upg_files = [
+            {
+                'hop': hop,
+                'file_type': 'release_upgrader',
+                'filename': '%s.tar.gz' % target,
+                'original_url': tar_url,
+                'final_url': tar_url,
+                'local_path': '',
+                'size_bytes': str(os.path.getsize(seed_tar)),
+                'sha256': tar_sha,
+                'http_status': '200',
+                'request_count': '1',
+                'evidence_source': 'fixture',
+            },
+            {
+                'hop': hop,
+                'file_type': 'release_upgrader',
+                'filename': '%s.tar.gz.gpg' % target,
+                'original_url': sig_url,
+                'final_url': sig_url,
+                'local_path': '',
+                'size_bytes': str(os.path.getsize(seed_sig)),
+                'sha256': sig_sha,
+                'http_status': '200',
+                'request_count': '1',
+                'evidence_source': 'fixture',
+            },
+        ]
 
-        seed_min_hop(aws_root, hop, aws_rows, files=[], urls=urls)
-        seed_min_hop(generic_root, hop, [g_row], files=[], urls=list(urls))
+        seed_min_hop(aws_root, hop, aws_rows, files=list(upg_files), urls=urls)
+        seed_min_hop(generic_root, hop, [g_row], files=list(upg_files), urls=list(urls))
 
     # Manifest of built packages for the shell test.
     with open(os.path.join(output_dir, 'fixture-inventory.json'), 'w') as fh:
