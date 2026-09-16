@@ -5,6 +5,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 POSTBOOT_POLICY="${ROOT}/client/dp-postboot-readiness-policy.sh.inc"
 STAGE="${ROOT}/client/stage-dp-phase2.sh"
+TIME_LIB="${ROOT}/client/lib/dp-phase2-time-readiness.sh"
 TEMPLATE="${ROOT}/client/dp-offline-upgrade-jammy-to-noble.sh.in"
 BUILDER="${ROOT}/scripts/lib/build_client_jammy_to_noble.py"
 FAIL=0
@@ -12,7 +13,7 @@ FAIL=0
 pass() { printf 'PASS: %s\n' "$*"; }
 fail() { printf 'FAIL: %s\n' "$*" >&2; FAIL=1; }
 
-for f in "$POSTBOOT_POLICY" "$STAGE" "$TEMPLATE" "$BUILDER"; do
+for f in "$POSTBOOT_POLICY" "$STAGE" "$TIME_LIB" "$TEMPLATE" "$BUILDER"; do
   [[ -f "$f" ]] || { fail "missing ${f}"; continue; }
 done
 [[ "$FAIL" -eq 0 ]] || exit "$FAIL"
@@ -35,7 +36,7 @@ fi
 grep -q "printf 'DP_MAX_CLOCK_SKEW_SECONDS=%s" "$TEMPLATE" \
   && pass "clock skew override persisted" || fail "clock skew override not persisted"
 grep -q 'check_ntp_bringup_readiness || true' "$STAGE" && pass "artifact staging survives time-not-ready" || fail "stage hard-fails on time readiness"
-grep -q 'WARNING: no internal NTP source detected; continuing because local clock readiness passed' "$STAGE" \
+grep -q 'WARNING: no internal NTP source detected; continuing because local clock readiness passed' "$TIME_LIB" \
   && pass "internal NTP is warning-only" || fail "missing warning-only internal NTP policy"
 if grep -Eq 'INTERNAL_NTP_REQUIREMENT=NOT_SATISFIED.*BRINGUP_READY=NO|do not run bringup until internal NTP' "$STAGE"; then
   fail "legacy internal-NTP hard gate remains"
@@ -55,7 +56,8 @@ fi
 
 grep -q 'UPGRADE_MODE="OS_ONLY_PHASE1"' "$TEMPLATE" && pass "Phase 1 remains OS-only" || fail "Phase 1 OS-only policy"
 grep -q 'log INFO "BRINGUP_EXECUTED=NO"' "$TEMPLATE" && pass "Phase 1 never executes bringup" || fail "Phase 1 bringup execution contract"
-apt_line="$(grep -n 'apt-get check >/dev/null' "$TEMPLATE" | tail -1 | cut -d: -f1 || true)"
+# Postboot apt health check (not later hop-prep apt-get check sites).
+apt_line="$(grep -n 'apt-get check >/dev/null 2>&1 || { log ERROR "broken deps"' "$TEMPLATE" | head -1 | cut -d: -f1 || true)"
 route_line="$(grep -n 'DEFAULT_ROUTE_CHECK=PASS' "$TEMPLATE" | tail -1 | cut -d: -f1 || true)"
 dns_line="$(grep -n 'check_and_repair_dns_resolver' "$TEMPLATE" | tail -1 | cut -d: -f1 || true)"
 time_line="$(grep -n 'check_time_readiness' "$TEMPLATE" | tail -1 | cut -d: -f1 || true)"

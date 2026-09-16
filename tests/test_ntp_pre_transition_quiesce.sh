@@ -3,6 +3,7 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export MM_HERMETIC_TEST_MODE=1
 OUT="$(mktemp -d "${TMPDIR:-/tmp}/ntp-quiesce.XXXX")"
 trap 'rm -rf "$OUT"' EXIT
 
@@ -40,7 +41,15 @@ start_line="$(rg -n '^LEGACY_NTP_VERSION_LT=' "$J2N_IN" | head -1 | cut -d: -f1)
 end_line="$(rg -n '^classify_dro_failure\(\)' "$J2N_IN" | head -1 | cut -d: -f1)"
 [[ -n "$start_line" && -n "$end_line" && "$end_line" -gt "$start_line" ]] \
   || { echo "failed to locate NTP quiesce block"; exit 1; }
-sed -n "${start_line},$((end_line - 1))p" "$J2N_IN" >"$OUT/ntp_lib.sh"
+{
+  cat <<'HERMETIC_STUB'
+# Extracted quiesce block depends on hermetic gate helper defined earlier in the
+# full hop client; provide the same production semantics for the unit extract.
+dp_offline_hermetic_test_mode() { [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" ]]; }
+dp_offline_hermetic_fixtures_enabled() { dp_offline_hermetic_test_mode; }
+HERMETIC_STUB
+  sed -n "${start_line},$((end_line - 1))p" "$J2N_IN"
+} >"$OUT/ntp_lib.sh"
 bash -n "$OUT/ntp_lib.sh" || { echo "extracted ntp_lib.sh syntax error"; exit 1; }
 
 grep -q 'ensure_legacy_ntp_quiesced_before_package_transition()' "$OUT/ntp_lib.sh" \

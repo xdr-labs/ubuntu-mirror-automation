@@ -4,6 +4,7 @@ set -euo pipefail
 unset STELLAR_OFFLINE_TEST_ROOT || true
 unset DETACH_AFTER_HANDOFF || true
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export MM_HERMETIC_TEST_MODE=1
 PASS=0
 FAIL=0
 pass() { echo "PASS: $*"; PASS=$((PASS + 1)); }
@@ -125,6 +126,9 @@ log() { local level="$1"; shift; printf '%s [%s] %s\n' "$(date -u '+%Y-%m-%dT%H:
 die() { local c="$1"; shift; log ERROR "$* (exit=$c)"; exit "$c"; }
 utc_now() { date -u '+%Y-%m-%dT%H:%M:%SZ'; }
 read_os_field() { printf '%s\n' "$PIN_SOURCE_VERSION"; }
+# Production LXD inventory gates fixture controls behind this helper.
+dp_offline_hermetic_test_mode() { [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" ]]; }
+dp_offline_hermetic_fixtures_enabled() { dp_offline_hermetic_test_mode; }
 EOS
   cat "${ROOT}/client/lib/dp-offline-lxd-inventory.sh"
 } >"$LXD_HARNESS"
