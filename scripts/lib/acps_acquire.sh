@@ -876,7 +876,6 @@ acps_download_one() {
     --retry-all-errors
     --speed-limit "$ACPS_CURL_SPEED_LIMIT"
     --speed-time "$ACPS_CURL_SPEED_TIME"
-    -o "$part"
   )
   curl_args+=(${ACPS_CURL_TLS_ARGS[@]+"${ACPS_CURL_TLS_ARGS[@]}"})
   curl_args+=(${ACPS_CURL_AUTH_ARGS[@]+"${ACPS_CURL_AUTH_ARGS[@]}"})
@@ -915,13 +914,15 @@ acps_download_one() {
 
   # Resumable path: Range request + Content-Range start must equal local size
   # (same contract as R2). Do not use blind --continue-at -.
+  # Important: only one curl -o flag. A prior -o "$part" plus a later -o "$resp"
+  # can make Range bodies overwrite .part (losing the already-fetched prefix).
   hdr="$(mktemp)"
   resp="$(mktemp)"
   if [[ "$have" -gt 0 ]]; then
     mm_info "ACPS_RESUME_ATTEMPT file=${name} local_bytes=${have}"
     curl_args+=(-H "Range: bytes=${have}-" -D "$hdr" -o "$resp")
   else
-    curl_args+=(-D "$hdr")
+    curl_args+=(-D "$hdr" -o "$part")
   fi
 
   local err progress_pid=""

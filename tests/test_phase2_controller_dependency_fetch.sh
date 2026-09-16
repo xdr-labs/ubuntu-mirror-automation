@@ -47,6 +47,18 @@ cat >"${CLIENT_ROOT}/lib/dp-phase2-ubuntu-prerequisites.sh" <<'LIB'
 #!/usr/bin/env bash
 PREREQ_HELPER_LOADED=YES
 LIB
+cat >"${CLIENT_ROOT}/lib/dp-phase2-time-readiness.sh" <<'LIB'
+#!/usr/bin/env bash
+TIME_HELPER_LOADED=YES
+LIB
+cat >"${CLIENT_ROOT}/lib/dp-phase2-post-bringup-migration.sh" <<'LIB'
+#!/usr/bin/env bash
+MIGRATION_HELPER_LOADED=YES
+LIB
+cat >"${CLIENT_ROOT}/lib/dp-phase2-cluster-validation.sh" <<'LIB'
+#!/usr/bin/env bash
+CLUSTER_HELPER_LOADED=YES
+LIB
 # Dummy stage script so the generation manifest can list the complete unit.
 printf '#!/usr/bin/env bash\ntrue\n' >"${CLIENT_ROOT}/stage-dp-phase2.sh"
 chmod +x "${CLIENT_ROOT}/stage-dp-phase2.sh" "${CLIENT_ROOT}/bringup_py3_dp_lifecycle.sh"
@@ -87,6 +99,9 @@ grep -q '^PHASE2_CONTROLLER_DEPENDENCY=DOWNLOAD path=lib/dp-phase2-bringup-lifec
 grep -q '^PHASE2_CONTROLLER_DEPENDENCY=DOWNLOAD path=lib/dp-offline-source-product-version.sh$' "$OUT"
 grep -q '^PHASE2_CONTROLLER_DEPENDENCY=DOWNLOAD path=lib/dp-phase2-operation-progress.sh$' "$OUT"
 grep -q '^PHASE2_CONTROLLER_DEPENDENCY=DOWNLOAD path=lib/dp-phase2-ubuntu-prerequisites.sh$' "$OUT"
+grep -q '^PHASE2_CONTROLLER_DEPENDENCY=DOWNLOAD path=lib/dp-phase2-time-readiness.sh$' "$OUT"
+grep -q '^PHASE2_CONTROLLER_DEPENDENCY=DOWNLOAD path=lib/dp-phase2-post-bringup-migration.sh$' "$OUT"
+grep -q '^PHASE2_CONTROLLER_DEPENDENCY=DOWNLOAD path=lib/dp-phase2-cluster-validation.sh$' "$OUT"
 grep -q '^PHASE2_CONTROLLER_DEPENDENCIES=PASS$' "$OUT"
 grep -q '^OPERATION_END name=phase2_tar_extract rc=0 ' "$OUT"
 test -s "${WORK_ROOT}/bringup_py3_dp_lifecycle.sh"
@@ -94,6 +109,9 @@ test -s "${WORK_ROOT}/lib/dp-phase2-bringup-lifecycle.sh"
 test -s "${WORK_ROOT}/lib/dp-offline-source-product-version.sh"
 test -s "${WORK_ROOT}/lib/dp-phase2-operation-progress.sh"
 test -s "${WORK_ROOT}/lib/dp-phase2-ubuntu-prerequisites.sh"
+test -s "${WORK_ROOT}/lib/dp-phase2-time-readiness.sh"
+test -s "${WORK_ROOT}/lib/dp-phase2-post-bringup-migration.sh"
+test -s "${WORK_ROOT}/lib/dp-phase2-cluster-validation.sh"
 bash -n "${WORK_ROOT}/bringup_py3_dp_lifecycle.sh"
 bash -n "${WORK_ROOT}/lib/dp-phase2-bringup-lifecycle.sh"
 grep -q '^extracted$' "${TMP}/extract/payload.txt"
@@ -108,6 +126,9 @@ grep -q '^PHASE2_CONTROLLER_DEPENDENCY=REUSED path=lib/dp-phase2-bringup-lifecyc
 grep -q '^PHASE2_CONTROLLER_DEPENDENCY=REUSED path=lib/dp-offline-source-product-version.sh$' "$REUSE_OUT"
 grep -q '^PHASE2_CONTROLLER_DEPENDENCY=REUSED path=lib/dp-phase2-operation-progress.sh$' "$REUSE_OUT"
 grep -q '^PHASE2_CONTROLLER_DEPENDENCY=REUSED path=lib/dp-phase2-ubuntu-prerequisites.sh$' "$REUSE_OUT"
+grep -q '^PHASE2_CONTROLLER_DEPENDENCY=REUSED path=lib/dp-phase2-time-readiness.sh$' "$REUSE_OUT"
+grep -q '^PHASE2_CONTROLLER_DEPENDENCY=REUSED path=lib/dp-phase2-post-bringup-migration.sh$' "$REUSE_OUT"
+grep -q '^PHASE2_CONTROLLER_DEPENDENCY=REUSED path=lib/dp-phase2-cluster-validation.sh$' "$REUSE_OUT"
 grep -q '^reused$' "${TMP}/extract/reused.txt"
 
 # Invalid controller payload must fail before extraction begins.

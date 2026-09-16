@@ -142,10 +142,19 @@ client_fixture_build_selective() {
     client_fixture_populate_upgrader "$sel" "$target" "$CLIENT_FIXTURE_GPG_SEL"
   done
 
-  # Verified selective generation: plan.json + AWS contract + READY tuple.
-  # Client builders require load_verified_selective_generation() (contract-bound).
-  local repo_root
-  repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+  client_fixture_write_generation_binding "$sel"
+}
+
+# Write verified selective generation (plan.json + AWS contract + READY) into an
+# existing selective root. Used by client_fixture_build_selective and by tests
+# that already planted hop content.
+client_fixture_write_generation_binding() {
+  local sel="$1"
+  local repo_root="${2:-}"
+  if [[ -z "$repo_root" ]]; then
+    repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+  fi
+  mkdir -p "${sel}/state"
   python3 - "$sel" "$repo_root" <<'PY'
 import os, sys, json, hashlib
 from collections import OrderedDict
@@ -233,6 +242,67 @@ aws_c.write_ready_generation_marker(
 aws_c.load_verified_selective_generation(sel, project_root=root)
 print("CLIENT_FIXTURE_GENERATION=PASS")
 print("CLIENT_FIXTURE_CONTRACT_SHA=%s" % contract["contract_sha256"])
+PY
+}
+
+# Plant AWS contract .deb blobs under selective hops so OS Core semantic
+# completeness validation passes. Supports both published/hops and hops layouts.
+client_fixture_plant_aws_contract_debs() {
+  local sel="$1"
+  local repo_root="${2:-}"
+  if [[ -z "$repo_root" ]]; then
+    repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+  fi
+  python3 - "$sel" "$repo_root" <<'PY'
+import hashlib, os, sys
+sel, root = sys.argv[1], sys.argv[2]
+sys.path.insert(0, os.path.join(root, "scripts", "lib"))
+import aws_os_core_completeness as aws_c
+gen = aws_c.load_verified_selective_generation(sel, project_root=root)
+contract = gen.get("contract") or (gen.get("plan") or {}).get("aws_semantic_contract")
+if not contract:
+    raise SystemExit("contract missing from verified generation")
+release_by_hop = {
+    "xenial-to-bionic": ("5.4.0.1103.81", "5.4.0-1103-aws"),
+    "bionic-to-focal": ("5.15.0.1084.91~20.04.1", "5.15.0-1084-aws"),
+    "focal-to-jammy": ("6.8.0-1063.66~22.04.1", "6.8.0-1063-aws"),
+    "jammy-to-noble": ("7.0.0-1011.11~24.04.1", "7.0.0-1011-aws"),
+}
+hops_root = os.path.join(sel, "published", "hops")
+if not os.path.isdir(hops_root):
+    hops_root = os.path.join(sel, "hops")
+for hop, hop_c in (contract.get("hops") or {}).items():
+    ver, rel = release_by_hop[hop]
+    blobs = {
+        "linux-aws": ("CF|%s|linux-aws|%s" % (hop, ver)).encode(),
+        "linux-image-aws": ("CF|%s|linux-image-aws|%s" % (hop, ver)).encode(),
+        "linux-image-%s" % rel: ("CF|%s|linux-image-%s|%s" % (hop, rel, ver)).encode(),
+    }
+    if hop == "xenial-to-bionic":
+        blobs["snapd"] = b"CF|x2b|snapd"
+    idents = []
+    for key in ("linux_aws", "linux_image_aws", "snapd"):
+        if hop_c.get(key):
+            idents.append(hop_c[key])
+    idents.extend(hop_c.get("versioned_images") or [])
+    for ident in idents:
+        pkg = ident["package"]
+        version = ident["version"]
+        sha = ident["sha256"]
+        blob = blobs.get(pkg)
+        if blob is None:
+            raise SystemExit("missing blob for %s" % pkg)
+        if hashlib.sha256(blob).hexdigest() != sha:
+            raise SystemExit("blob sha mismatch for %s" % pkg)
+        letter = pkg[0]
+        base = "%s_%s_amd64.deb" % (pkg, version)
+        path = os.path.join(
+            hops_root, hop, "ubuntu", "pool", "main", letter, pkg, base,
+        )
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as fh:
+            fh.write(blob)
+print("AWS_CONTRACT_DEBS_PLANTED=PASS")
 PY
 }
 

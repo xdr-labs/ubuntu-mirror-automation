@@ -90,6 +90,8 @@ cleanup() {
 trap cleanup EXIT
 
 MM_PROJECT_ROOT="$ROOT"
+MM_HERMETIC_TEST_MODE=1
+export MM_HERMETIC_TEST_MODE
 MM_MIRROR_ROOT="${TMP}/mirror"
 MM_CACHE_ROOT="${MM_MIRROR_ROOT}/.install-cache"
 MM_STATE_ROOT="${TMP}/state"

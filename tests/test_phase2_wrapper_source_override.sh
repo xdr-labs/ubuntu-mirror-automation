@@ -16,15 +16,11 @@ source "$ROOT/scripts/lib/phase2_helper_generation.sh"
 CLIENT="$TMP/client"
 mkdir -p "$CLIENT/lib"
 # Minimal generation unit files for manifest/wrapper write.
-for f in stage-dp-phase2.sh bringup_py3_dp_lifecycle.sh \
-  lib/dp-offline-source-product-version.sh \
-  lib/dp-phase2-operation-progress.sh \
-  lib/dp-phase2-bringup-lifecycle.sh \
-  lib/dp-phase2-ubuntu-prerequisites.sh
-do
+while IFS= read -r f; do
+  [[ -n "$f" ]] || continue
   mkdir -p "$(dirname "$CLIENT/$f")"
   echo "# fixture $f" >"$CLIENT/$f"
-done
+done < <(phase2_helper_generation_files)
 
 phase2_helper_generation_write "$CLIENT" >/dev/null
 # shellcheck source=lib/phase2_bundle_trust_fixture.sh

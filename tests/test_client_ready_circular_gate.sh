@@ -169,10 +169,11 @@ engine_verify_os_core_package() { mm_status_set R2_OS_CORE_CHECKSUM PASS; return
 engine_materialize_os_mirror() {
   mkdir -p "${MM_SELECTIVE_ROOT}/state" "${MM_SELECTIVE_ROOT}/keys" \
     "${MM_SELECTIVE_ROOT}/shared/offline/release-upgraders/bionic"
-  printf 'selective_plan_checksum=%s\ndiscovery_artifact_checksum=%s\nplan_checksum=%s\n' \
+  printf 'selective_plan_checksum=%s\ndiscovery_artifact_checksum=%s\nplan_checksum=%s\naws_semantic_contract_sha256=%s\n' \
     "$(printf 'a%.0s' {1..64})" \
     "$(printf 'b%.0s' {1..64})" \
     "$(printf 'a%.0s' {1..64})" \
+    "$(printf 'c%.0s' {1..64})" \
     >"${MM_SELECTIVE_ROOT}/state/READY"
   printf 'KEY\n' >"${MM_SELECTIVE_ROOT}/keys/ubuntu-mirror-selective.gpg"
   mm_status_set OS_MIRROR_READY PASS
@@ -310,10 +311,11 @@ engine_rebuild_publish_local_client_set() {
   return 1
 }
 mkdir -p "${MM_SELECTIVE_ROOT}/state"
-printf 'selective_plan_checksum=%s\ndiscovery_artifact_checksum=%s\nplan_checksum=%s\n' \
+printf 'selective_plan_checksum=%s\ndiscovery_artifact_checksum=%s\nplan_checksum=%s\naws_semantic_contract_sha256=%s\n' \
   "$(printf 'a%.0s' {1..64})" \
   "$(printf 'b%.0s' {1..64})" \
   "$(printf 'a%.0s' {1..64})" \
+  "$(printf 'c%.0s' {1..64})" \
   >"${MM_SELECTIVE_ROOT}/state/READY"
 mm_status_set OS_MIRROR_READY PASS
 set +e
@@ -340,20 +342,15 @@ PREPARATION_MODE=PHASE2_ONLY
 export PREPARATION_MODE
 rm -f "${MM_CLIENT_ROOT}/dp-offline-upgrade-"*.sh
 mkdir -p "${MM_CLIENT_ROOT}/lib"
-cp -a "${ROOT}/client/stage-dp-phase2.sh" "${MM_CLIENT_ROOT}/stage-dp-phase2.sh"
-cp -a "${ROOT}/client/bringup_py3_dp_lifecycle.sh" "${MM_CLIENT_ROOT}/bringup_py3_dp_lifecycle.sh"
-cp -a "${ROOT}/client/lib/dp-offline-source-product-version.sh" \
-  "${MM_CLIENT_ROOT}/lib/dp-offline-source-product-version.sh"
-cp -a "${ROOT}/client/lib/dp-phase2-operation-progress.sh" \
-  "${MM_CLIENT_ROOT}/lib/dp-phase2-operation-progress.sh"
-cp -a "${ROOT}/client/lib/dp-phase2-bringup-lifecycle.sh" \
-  "${MM_CLIENT_ROOT}/lib/dp-phase2-bringup-lifecycle.sh"
-cp -a "${ROOT}/client/lib/dp-phase2-ubuntu-prerequisites.sh" \
-  "${MM_CLIENT_ROOT}/lib/dp-phase2-ubuntu-prerequisites.sh"
-chmod +x "${MM_CLIENT_ROOT}/stage-dp-phase2.sh" "${MM_CLIENT_ROOT}/bringup_py3_dp_lifecycle.sh"
-(cd "$MM_CLIENT_ROOT" && sha256sum stage-dp-phase2.sh >stage-dp-phase2.sh.sha256)
 # shellcheck source=/dev/null
 source "${ROOT}/scripts/lib/phase2_helper_generation.sh"
+while IFS= read -r rel; do
+  [[ -n "$rel" ]] || continue
+  mkdir -p "${MM_CLIENT_ROOT}/$(dirname "$rel")"
+  cp -a "${ROOT}/client/${rel}" "${MM_CLIENT_ROOT}/${rel}"
+done < <(phase2_helper_generation_files)
+chmod +x "${MM_CLIENT_ROOT}/stage-dp-phase2.sh" "${MM_CLIENT_ROOT}/bringup_py3_dp_lifecycle.sh"
+(cd "$MM_CLIENT_ROOT" && sha256sum stage-dp-phase2.sh >stage-dp-phase2.sh.sha256)
 phase2_helper_generation_write "$MM_CLIENT_ROOT" >/dev/null
 mkdir -p "${MM_DP_PHASE2_ROOT}/6.6.0"
 printf 'bundle\n' >"${MM_DP_PHASE2_ROOT}/6.6.0/dp_bundle_6.6.0-current.tar"

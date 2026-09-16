@@ -8,6 +8,8 @@ pass() { echo "PASS: $*"; }
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+export MM_HERMETIC_TEST_MODE=1
+export UM_TEST_APPROVED_ROOT="$TMP"
 
 BASE="${TMP}/var/spool/apt-mirror"
 mkdir -p \

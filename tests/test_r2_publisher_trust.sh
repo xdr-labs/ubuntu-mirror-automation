@@ -46,56 +46,7 @@ pass "client signing key is not an implicit R2 publisher trust root"
 # Build a CURRENT schema OS Core package via production builder + fixture tree.
 client_fixture_build_selective "$TMP"
 SEL="${TMP}/selective"
-# Plant AWS contract .debs into hop trees so OS Core semantic validation passes.
-python3 - "$SEL" "$ROOT" <<'PY'
-import hashlib, json, os, sys
-sel, root = sys.argv[1], sys.argv[2]
-sys.path.insert(0, os.path.join(root, "scripts", "lib"))
-import aws_os_core_completeness as aws_c
-gen = aws_c.load_verified_selective_generation(sel, project_root=root)
-contract = gen.get("contract") or (gen.get("plan") or {}).get("aws_semantic_contract")
-if not contract:
-    raise SystemExit("contract missing from verified generation")
-# Recreate blobs matching client_finalization_fixture ident() content.
-release_by_hop = {
-    "xenial-to-bionic": ("5.4.0.1103.81", "5.4.0-1103-aws"),
-    "bionic-to-focal": ("5.15.0.1084.91~20.04.1", "5.15.0-1084-aws"),
-    "focal-to-jammy": ("6.8.0-1063.66~22.04.1", "6.8.0-1063-aws"),
-    "jammy-to-noble": ("7.0.0-1011.11~24.04.1", "7.0.0-1011-aws"),
-}
-for hop, hop_c in (contract.get("hops") or {}).items():
-    ver, rel = release_by_hop[hop]
-    blobs = {
-        "linux-aws": ("CF|%s|linux-aws|%s" % (hop, ver)).encode(),
-        "linux-image-aws": ("CF|%s|linux-image-aws|%s" % (hop, ver)).encode(),
-        "linux-image-%s" % rel: ("CF|%s|linux-image-%s|%s" % (hop, rel, ver)).encode(),
-    }
-    if hop == "xenial-to-bionic":
-        blobs["snapd"] = b"CF|x2b|snapd"
-    idents = []
-    for key in ("linux_aws", "linux_image_aws", "snapd"):
-        if hop_c.get(key):
-            idents.append(hop_c[key])
-    idents.extend(hop_c.get("versioned_images") or [])
-    for ident in idents:
-        pkg = ident["package"]
-        version = ident["version"]
-        sha = ident["sha256"]
-        blob = blobs.get(pkg)
-        if blob is None:
-            raise SystemExit("missing blob for %s" % pkg)
-        if hashlib.sha256(blob).hexdigest() != sha:
-            raise SystemExit("blob sha mismatch for %s" % pkg)
-        letter = pkg[0]
-        base = "%s_%s_amd64.deb" % (pkg, version)
-        path = os.path.join(
-            sel, "hops", hop, "ubuntu", "pool", "main", letter, pkg, base,
-        )
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "wb") as fh:
-            fh.write(blob)
-print("AWS_CONTRACT_DEBS_PLANTED=PASS")
-PY
+client_fixture_plant_aws_contract_debs "$SEL" "$ROOT" >/dev/null
 OUT="${TMP}/os-core-out"
 mkdir -p "$OUT"
 python3 "${ROOT}/scripts/lib/os_core_package.py" build \

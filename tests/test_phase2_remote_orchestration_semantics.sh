@@ -650,6 +650,14 @@ p2b_dir() { printf '%s\n' "${WORKDIR}/life"; }
 export PHASE2_BRINGUP_DIR="${WORKDIR}/life"
 export PHASE2_BRINGUP_LOG_DEFAULT="${WORKDIR}/life.log"
 p2b_ensure_dir
+mkdir -p "$(p2b_dir)/lib"
+cat >"$(p2b_dir)/lib/dp-phase2-time-readiness.sh" <<'EOF'
+dp_phase2_load_time_ref_url() { return 0; }
+dp_phase2_bringup_time_gate() { return 0; }
+EOF
+cat >"$(p2b_dir)/lib/dp-phase2-ubuntu-prerequisites.sh" <<'EOF'
+dp2_install_phase2_ubuntu_prerequisites() { return 0; }
+EOF
 : >"$PHASE2_BRINGUP_LOG_DEFAULT"
 write_file() { printf '%s\n' "$2" >"$1"; }
 write_file "$(p2b_dir)/run-id" "run-extra"

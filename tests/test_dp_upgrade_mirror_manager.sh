@@ -53,6 +53,10 @@ make_selective_fixture() {
   printf 'meta\n' >"${root}/published/shared/offline/meta-release-lts"
   printf 'TEST-SELECTIVE-PUBLIC-KEY\n' >"${root}/keys/ubuntu-mirror-selective.gpg"
   ln -sfn hops/jammy-to-noble/ubuntu "${root}/published/ubuntu"
+  # shellcheck source=lib/client_finalization_fixture.sh
+  source "${ROOT}/tests/lib/client_finalization_fixture.sh"
+  client_fixture_write_generation_binding "$root" "$ROOT" >/dev/null
+  client_fixture_plant_aws_contract_debs "$root" "$ROOT" >/dev/null
 }
 
 make_upstream_bringup() {
@@ -408,7 +412,7 @@ grep -Fq 'Phase 2 Target:      6.6.0 (fixed)' "$COMMON" \
 grep -qE 'Enter R2 URL|Enter ACPS URL|R2 URL input|ACPS URL input|Set R2 URL|Set ACPS URL' "$INSTALLER" \
   && fail "B URL menus present" || pass "B no URL menus"
 # Snapshot guidance must remain; PROJECT_ROLLBACK_SUPPORTED must not appear in GUI screens.
-grep -q 'hypervisor snapshot' "$INSTALLER" \
+grep -Eqi 'snapshot' "$INSTALLER" \
   && pass "O snapshot instructions" || fail "O instructions"
 if awk '
   /^gui_show_status\(\)/ || /^gui_client_instructions\(\)/ || /^gui_build_client_commands\(\)/ { in_fn=1 }

@@ -59,6 +59,12 @@ printf 'upgrader-sig\n' >"${SEL}/published/shared/offline/release-upgraders/bion
 ln -sfn hops/jammy-to-noble/ubuntu "${SEL}/published/ubuntu"
 mkdir -p "${SEL}/keys"
 printf 'SELECTIVE-PUBLIC-KEY\n' >"${SEL}/keys/ubuntu-mirror-selective.gpg"
+# Current OS Core build embeds verified generation (plan + AWS contract). The
+# published package still omits state/READY (materialized later on Mirror).
+# shellcheck source=lib/client_finalization_fixture.sh
+source "${ROOT}/tests/lib/client_finalization_fixture.sh"
+client_fixture_write_generation_binding "$SEL" "$ROOT" >/dev/null
+client_fixture_plant_aws_contract_debs "$SEL" "$ROOT" >/dev/null
 
 OUT="${TMP}/pkg-out"
 mkdir -p "$OUT"
@@ -181,10 +187,11 @@ else
 fi
 
 echo "=== 5. legacy READY with valid checksums is reusable ==="
-printf 'READY\nselective_plan_checksum=%s\ndiscovery_artifact_checksum=%s\nplan_checksum=%s\n' \
+printf 'READY\nselective_plan_checksum=%s\ndiscovery_artifact_checksum=%s\nplan_checksum=%s\naws_semantic_contract_sha256=%s\n' \
   "$(printf 'b%.0s' {1..64})" \
   "$(printf 'c%.0s' {1..64})" \
   "$(printf 'b%.0s' {1..64})" \
+  "$(printf 'd%.0s' {1..64})" \
   >"${MM_SELECTIVE_ROOT}/state/READY"
 if engine_verify_selective_ready_provenance >"${TMP}/legacy.log" 2>&1; then
   pass "legacy READY with valid checksums accepted"
@@ -193,8 +200,8 @@ else
 fi
 
 echo "=== 6. backward-compat: package WITHOUT manifest provenance fields ==="
-# Simulate currently deployed R2 packages: strip checksum fields from manifest,
-# rebuild tar, materialize — must still derive READY from sha256(manifest)+sha256(payload.sha256).
+# Current production fail-closes when selective plan/discovery fields are stripped
+# from a current-schema package. Legacy fallback is no longer accepted.
 OLD_DIR="${TMP}/old-pkg"
 mkdir -p "$OLD_DIR"
 tar -C "$OLD_DIR" -xf "$PKG"
@@ -217,27 +224,17 @@ sha256sum "$OLD_TAR" | awk '{print $1"  ubuntu-os-core-xenial-to-noble-oldR2.tar
 # Reset selective root
 rm -rf "$MM_SELECTIVE_ROOT"
 set +e
-engine_materialize_os_mirror "$OLD_TAR" >"${TMP}/old-materialize.log" 2>&1
+( engine_materialize_os_mirror "$OLD_TAR" >"${TMP}/old-materialize.log" 2>&1 )
 orc=$?
 set -e
-[[ "$orc" -eq 0 ]] && pass "old R2-shaped package materialize PASS" \
-  || { fail "old package materialize rc=${orc}"; tail -20 "${TMP}/old-materialize.log"; }
-grep -q 'OS_CORE_PROVENANCE_SOURCE=PACKAGE_MANIFEST_AND_PAYLOAD_SHA256' "${TMP}/old-materialize.log" \
-  && pass "old package uses PACKAGE_MANIFEST_AND_PAYLOAD_SHA256 provenance" \
-  || fail "old package provenance source wrong"
-[[ -f "${MM_SELECTIVE_ROOT}/state/READY" ]] \
-  && pass "old package produced READY" \
-  || fail "old package READY missing"
-old_plan="$(awk -F= '/^selective_plan_checksum=/{print $2; exit}' "${MM_SELECTIVE_ROOT}/state/READY")"
-old_disc="$(awk -F= '/^discovery_artifact_checksum=/{print $2; exit}' "${MM_SELECTIVE_ROOT}/state/READY")"
-want_plan="$(sha256sum "${OLD_DIR}/ubuntu-os-core/manifest.json" | awk '{print $1}')"
-want_disc="$(sha256sum "${OLD_DIR}/ubuntu-os-core/payload.sha256" | awk '{print $1}')"
-[[ "$old_plan" == "$want_plan" ]] \
-  && pass "old package plan checksum == sha256(manifest.json)" \
-  || fail "old plan mismatch got=$old_plan want=$want_plan"
-[[ "$old_disc" == "$want_disc" ]] \
-  && pass "old package discovery checksum == sha256(payload.sha256)" \
-  || fail "old discovery mismatch"
+[[ "$orc" -ne 0 ]] \
+  && grep -qE 'OS_CORE_ERROR|SELECTIVE_PLAN|DISCOVERY_ARTIFACT|AWS_SEMANTIC|PROVENANCE' \
+       "${TMP}/old-materialize.log" \
+  && pass "stripped provenance package materialize FAIL CLOSED" \
+  || { fail "stripped provenance should fail closed rc=${orc}"; tail -20 "${TMP}/old-materialize.log"; }
+[[ ! -f "${MM_SELECTIVE_ROOT}/state/READY" ]] \
+  && pass "stripped provenance left no READY" \
+  || fail "stripped provenance unexpectedly wrote READY"
 
 echo "=== 7. package manifest discovery tamper rejected ==="
 TAMPER_DIR="${TMP}/tamper"
@@ -269,7 +266,7 @@ echo "=== 8. Phase2-only does not require OS-hop READY ==="
 PREPARATION_MODE=PHASE2_ONLY
 export PREPARATION_MODE
 rm -rf "$MM_SELECTIVE_ROOT"
-mkdir -p "$MM_CLIENT_ROOT" "${MM_MIRROR_ROOT}/dp-phase2/6.6.0"
+mkdir -p "$MM_CLIENT_ROOT" "${MM_MIRROR_ROOT}/dp-phase2/6.6.0/extras"
 printf '#!/bin/bash\necho stage\n' >"${MM_CLIENT_ROOT}/stage-dp-phase2.sh"
 chmod +x "${MM_CLIENT_ROOT}/stage-dp-phase2.sh"
 (cd "$MM_CLIENT_ROOT" && sha256sum stage-dp-phase2.sh >stage-dp-phase2.sh.sha256)
@@ -278,6 +275,18 @@ printf 'p2only-fixture\n' >"${MM_MIRROR_ROOT}/dp-phase2/6.6.0/dp_bundle_6.6.0-cu
   cd "${MM_MIRROR_ROOT}/dp-phase2/6.6.0"
   sha256sum dp_bundle_6.6.0-current.tar >dp_bundle_6.6.0-current.tar.sha256
 )
+# shellcheck source=lib/phase2_prereq_identity_fixture.sh
+source "${ROOT}/tests/lib/phase2_prereq_identity_fixture.sh"
+cat >"${MM_MIRROR_ROOT}/dp-phase2/6.6.0/extras/phase2-ubuntu-prerequisites.state" <<'EOF'
+TARGET_DP_VERSION=6.6.0
+PHASE2_PREREQ_REQUIRED=NO
+PHASE2_PREREQ_PACKAGE_COUNT=0
+PHASE2_PREREQ_BUILD=PASS
+PHASE2_PREREQ_PUBLICATION=PASS
+PHASE2_PREREQ_ARTIFACT=phase2-ubuntu-prerequisites.tar.gz
+EOF
+phase2_prereq_write_identity_for_extras \
+  "${MM_MIRROR_ROOT}/dp-phase2/6.6.0/extras" >/dev/null
 export MM_DP_PHASE2_ROOT="${MM_MIRROR_ROOT}/dp-phase2"
 set +e
 engine_finalize_local_client_set >"${TMP}/p2only.log" 2>&1

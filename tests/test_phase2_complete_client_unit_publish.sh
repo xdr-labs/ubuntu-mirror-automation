@@ -44,6 +44,20 @@ chmod 0644 "${CURRENT}/release.env"
   sha256sum "dp_bundle_${TARGET_DP_VERSION}-current.tar" \
     >"dp_bundle_${TARGET_DP_VERSION}-current.tar.sha256"
 )
+# Published identity pin required for upgrade-phase2.sh wrapper write.
+# shellcheck source=lib/phase2_prereq_identity_fixture.sh
+source "${ROOT}/tests/lib/phase2_prereq_identity_fixture.sh"
+mkdir -p "${DP_PHASE2_ROOT}/${TARGET_DP_VERSION}/extras"
+cat >"${DP_PHASE2_ROOT}/${TARGET_DP_VERSION}/extras/phase2-ubuntu-prerequisites.state" <<EOF
+TARGET_DP_VERSION=${TARGET_DP_VERSION}
+PHASE2_PREREQ_REQUIRED=NO
+PHASE2_PREREQ_PACKAGE_COUNT=0
+PHASE2_PREREQ_BUILD=PASS
+PHASE2_PREREQ_PUBLICATION=PASS
+PHASE2_PREREQ_ARTIFACT=phase2-ubuntu-prerequisites.tar.gz
+EOF
+phase2_prereq_write_identity_for_extras \
+  "${DP_PHASE2_ROOT}/${TARGET_DP_VERSION}/extras" >/dev/null
 export MM_DP_PHASE2_ROOT="$DP_PHASE2_ROOT"
 BUNDLE_STAT_BEFORE="$(stat -c '%i %s' "$(readlink -f "$BUNDLE")")"
 BUNDLE_HASH_BEFORE="$(sha256sum "$(readlink -f "$BUNDLE")" | awk '{print $1}')"
@@ -68,6 +82,7 @@ for _ in $(seq 1 50); do
 done
 
 export DEST_ROOT READY_PATH
+export MM_HERMETIC_TEST_MODE=1
 export DP_PHASE2_SKIP_ROOT_CHECK=1
 export SKIP_HTTP_VERIFY=1
 export MIRROR_BASE="http://127.0.0.1:${PORT}"
@@ -89,6 +104,9 @@ UNIT=(
   lib/dp-phase2-operation-progress.sh
   lib/dp-phase2-bringup-lifecycle.sh
   lib/dp-phase2-ubuntu-prerequisites.sh
+  lib/dp-phase2-time-readiness.sh
+  lib/dp-phase2-post-bringup-migration.sh
+  lib/dp-phase2-cluster-validation.sh
   phase2-helper-generation.manifest
   upgrade-phase2.sh
   upgrade-phase2.sh.sha256
@@ -115,6 +133,9 @@ for f in \
   lib/dp-phase2-operation-progress.sh \
   lib/dp-phase2-bringup-lifecycle.sh \
   lib/dp-phase2-ubuntu-prerequisites.sh \
+  lib/dp-phase2-time-readiness.sh \
+  lib/dp-phase2-post-bringup-migration.sh \
+  lib/dp-phase2-cluster-validation.sh \
   phase2-helper-generation.manifest \
   upgrade-phase2.sh
 do

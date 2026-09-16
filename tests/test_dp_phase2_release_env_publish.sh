@@ -48,7 +48,8 @@ run_publisher() {
   local root="$1"
   local ver="${2:-6.6.0}"
   shift 2 || true
-  DP_PHASE2_SKIP_ROOT_CHECK=1 \
+  MM_HERMETIC_TEST_MODE=1 \
+    DP_PHASE2_SKIP_ROOT_CHECK=1 \
     DP_PHASE2_ROOT="$root" \
     READY_PATH="${root}/ready-state/READY" \
     "$@" \

@@ -230,13 +230,11 @@ dp2_prepare_bringup_controller_dependencies() {
     return 1
   fi
 
-  for rel in \
-    bringup_py3_dp_lifecycle.sh \
-    lib/dp-phase2-bringup-lifecycle.sh \
-    lib/dp-offline-source-product-version.sh \
-    lib/dp-phase2-operation-progress.sh \
-    lib/dp-phase2-ubuntu-prerequisites.sh
-  do
+  # Authoritative unit = every path listed in the generation manifest except the
+  # stage entrypoint itself (already executing). Do not hardcode a stale subset.
+  while IFS= read -r rel; do
+    [[ -n "$rel" ]] || continue
+    [[ "$rel" == "stage-dp-phase2.sh" ]] && continue
     dest="${stage_dir}/${rel}"
     expected="$(awk -v p="$rel" '$2 == p {print $1; exit}' "$man")"
     if [[ ! "$expected" =~ ^[0-9a-fA-F]{64}$ ]]; then
@@ -274,7 +272,7 @@ dp2_prepare_bringup_controller_dependencies() {
     chmod 0755 "$tmp"
     mv -f "$tmp" "$dest"
     printf 'PHASE2_CONTROLLER_DEPENDENCY=%s path=%s\n' "$action" "$rel"
-  done
+  done < <(awk 'NF >= 2 {print $2}' "$man")
   printf 'PHASE2_CONTROLLER_DEPENDENCIES=PASS\n'
   return 0
 }

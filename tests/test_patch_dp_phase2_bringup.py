@@ -200,7 +200,7 @@ class ProductionF1a73PatchTests(unittest.TestCase):
         with open(FIXTURE, 'r', encoding='utf-8') as fh:
             prev = fh.read()
         out, applied = patcher.patch_bringup_text(prev, emit=False)
-        self.assertEqual(len(applied), 17)
+        self.assertEqual(len(applied), 18)
         for marker in patcher.RESULT_MARKERS:
             self.assertIn(marker, out, marker)
 

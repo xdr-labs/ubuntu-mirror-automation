@@ -88,9 +88,10 @@ else
   fail "ephemeral signing key missing/unreadable"
 fi
 
-# READY with required checksums
-printf 'selective_plan_checksum=deadbeefcafe\ndiscovery_artifact_checksum=cafebabedead\n' \
-  >"${SEL_ROOT}/state/READY"
+# Verified selective generation binding (plan.json + AWS contract + READY).
+# shellcheck source=lib/client_finalization_fixture.sh
+source "${ROOT}/tests/lib/client_finalization_fixture.sh"
+client_fixture_write_generation_binding "$SEL_ROOT" "$ROOT" >/dev/null
 READY_PATH="${SEL_ROOT}/state/READY"
 READY_BEFORE="$(sha256sum "$READY_PATH" | awk '{print $1}')"
 

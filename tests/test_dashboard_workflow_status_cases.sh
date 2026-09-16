@@ -116,6 +116,13 @@ unset MIRROR_WORKFLOW_STATE_LOADED
 # shellcheck source=/dev/null
 source "${ROOT}/scripts/lib/mirror_workflow_state.sh"
 
+# Unit fixture: readiness receipt binds a selective tuple without a live planner tree.
+mm_wf_load_live_selective_tuple() {
+  printf 'SELECTIVE_PLAN_CHECKSUM=%s\n' "$(printf 'a%.0s' {1..64})"
+  printf 'SELECTIVE_DISCOVERY_ARTIFACT_CHECKSUM=%s\n' "$(printf 'b%.0s' {1..64})"
+  printf 'SELECTIVE_AWS_SEMANTIC_CONTRACT_SHA256=%s\n' "$(printf 'c%.0s' {1..64})"
+}
+
 PREPARATION_MODE=FULL
 MIRROR_SERVER_IP=192.0.2.10
 MIRROR_HTTP_URL=http://192.0.2.10
