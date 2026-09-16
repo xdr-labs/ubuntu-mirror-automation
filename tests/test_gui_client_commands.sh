@@ -194,9 +194,12 @@ gui_build_client_commands "http://192.0.2.10" "single" "" >"$OUT"
 
 grep -q 'Supported Starting DP Versions: 6.2.0 / 6.3.0 / 6.4.0 / 6.5.0' "$OUT" \
   || fail "missing supported starting versions"
-grep -q 'Phase 2 Target: 6.6.0' "$OUT" || fail "missing phase2 target header"
-grep -q 'OS Upgrade: Ubuntu 16.04 → Ubuntu 24.04' "$OUT" || fail "missing OS upgrade header"
-grep -q 'Commands saved to:' "$OUT" || fail "missing Commands saved to"
+grep -q 'DP Target Version: 6.6.0' "$OUT" || fail "missing phase2 target header"
+grep -q 'Upgrade: Ubuntu 16.04 → 24.04' "$OUT" || fail "missing OS upgrade header"
+grep -q 'NAVIGATION' "$OUT" || fail "missing NAVIGATION help"
+grep -q 'Home       Go to the top' "$OUT" || fail "missing Home navigation help"
+grep -q 'End        Go to the bottom' "$OUT" || fail "missing End navigation help"
+grep -q 'Commands are also saved to:' "$OUT" || fail "missing Commands saved to"
 grep -q 'DP_OS_HOP_COMMAND_VERSION=WRAPPER_V1' "$OUT" || fail "missing WRAPPER_V1"
 grep -q 'Copy and paste the following entire line into the DP terminal:' "$OUT" || fail "missing one-line copy guidance"
 grep -q 'Do not copy only one or two lines' "$OUT" && fail "obsolete three-line Phase2 warning still present" || true
@@ -204,19 +207,19 @@ true  # OS-hop one-line guidance is now required
 grep -q 'Visual wrapping does not insert a newline' "$OUT" && fail "obsolete wrap guidance still present" || true
 grep -qE 'STEP 0 — SNAPSHOT|Step 0 —' "$OUT" || fail "missing step 0"
 grep -qE 'STEP 1 — PAUSE|Step 1 — Pause' "$OUT" || fail "missing pause"
-grep -qE 'STEP 2 — UBUNTU 16.04 TO 18.04|Step 2 — Ubuntu 16.04 to 18.04' "$OUT" \
+grep -qE 'STEP 2 — UBUNTU 16.04 → 18.04|STEP 2 — UBUNTU 16.04 TO 18.04|Step 2 — Ubuntu 16.04 to 18.04' "$OUT" \
   || fail "missing hop 16→18"
 grep -q 'The Xenial-to-Bionic client automatically sets the aella and root login' "$OUT" \
   || fail "missing automatic login shell guidance"
-grep -qE 'STEP 3 — UBUNTU 18.04 TO 20.04|Step 3 — Ubuntu 18.04 to 20.04' "$OUT" \
+grep -qE 'STEP 3 — UBUNTU 18.04 → 20.04|STEP 3 — UBUNTU 18.04 TO 20.04|Step 3 — Ubuntu 18.04 to 20.04' "$OUT" \
   || fail "missing hop 18→20"
-grep -qE 'STEP 4 — UBUNTU 20.04 TO 22.04|Step 4 — Ubuntu 20.04 to 22.04' "$OUT" \
+grep -qE 'STEP 4 — UBUNTU 20.04 → 22.04|STEP 4 — UBUNTU 20.04 TO 22.04|Step 4 — Ubuntu 20.04 to 22.04' "$OUT" \
   || fail "missing hop 20→22"
-grep -qE 'STEP 5 — UBUNTU 22.04 TO 24.04|Step 5 — Ubuntu 22.04 to 24.04' "$OUT" \
+grep -qE 'STEP 5 — UBUNTU 22.04 → 24.04|STEP 5 — UBUNTU 22.04 TO 24.04|Step 5 — Ubuntu 22.04 to 24.04' "$OUT" \
   || fail "missing hop 22→24"
-grep -qE 'STEP 6 — STAGE DP 6.6.0|Step 6 — Stage DP 6.6.0 files' "$OUT" \
+grep -qE 'STEP 6 — PHASE 2 STAGING|STEP 6 — STAGE DP 6.6.0|Step 6 — Stage DP 6.6.0 files' "$OUT" \
   || fail "missing stage"
-grep -qE 'STEP 7 — RUN DP 6.6.0 BRINGUP|Step 7 — Run DP 6.6.0 bringup' "$OUT" \
+grep -qE 'STEP 7 — DP 6.6.0 BRINGUP|STEP 7 — RUN DP 6.6.0 BRINGUP|Step 7 — Run DP 6.6.0 bringup' "$OUT" \
   || fail "missing bringup"
 grep -qE 'STEP 8 — RESUME|Step 8 — Resume' "$OUT" || fail "missing resume"
 grep -qE 'STEP 9 — VERIFY|Step 9 — Verify' "$OUT" || fail "missing health"
@@ -284,11 +287,11 @@ P2_OUT="$TMP/cmds-p2.txt"
 gui_build_client_commands "http://192.0.2.10" "single" "" >"$P2_OUT"
 grep -q 'DP Phase 2 Upgrade Commands' "$P2_OUT" || fail "phase2 title missing"
 grep -q 'Required OS: Ubuntu 24.04' "$P2_OUT" || fail "required OS missing"
-grep -q 'Ubuntu 16.04 to 18.04\|UBUNTU 16.04 TO 18.04' "$P2_OUT" && fail "PHASE2_ONLY still has OS hops" || true
+grep -q 'Ubuntu 16.04 to 18.04\|UBUNTU 16.04 TO 18.04\|UBUNTU 16.04 → 18.04' "$P2_OUT" && fail "PHASE2_ONLY still has OS hops" || true
 grep -q 'dp-offline-upgrade-xenial-to-bionic' "$P2_OUT" && fail "PHASE2_ONLY hop script present" || true
-grep -qE 'STEP 2 — STAGE DP 6.6.0|Step 2 — Stage DP 6.6.0 files' "$P2_OUT" \
+grep -qE 'STEP 2 — PHASE 2 STAGING|STEP 2 — STAGE DP 6.6.0|Step 2 — Stage DP 6.6.0 files' "$P2_OUT" \
   || fail "phase2 stage step missing"
-grep -qE 'STEP 3 — RUN DP 6.6.0 BRINGUP|Step 3 — Run DP 6.6.0 bringup' "$P2_OUT" \
+grep -qE 'STEP 3 — DP 6.6.0 BRINGUP|STEP 3 — RUN DP 6.6.0 BRINGUP|Step 3 — Run DP 6.6.0 bringup' "$P2_OUT" \
   || fail "phase2 bringup missing"
 grep -q 'upgrade-phase2.sh' "$P2_OUT" || fail "phase2 wrapper missing from PHASE2_ONLY commands"
 grep -Fq -- '--same-version-recovery' "$P2_OUT" && fail "same-version-recovery leaked into PHASE2_ONLY Menu 7" || true
@@ -393,7 +396,8 @@ grep -Fq 'customer-password' "$CLUSTER_OUT" && fail "DL plaintext password embed
 grep -q 'The command prompts for the worker SSH password at runtime' "$CLUSTER_OUT" \
   || fail "DL runtime password prompt guidance missing"
 grep -q 'Cluster IP addresses are recommended' "$CLUSTER_OUT" || fail "cluster IP recommendation missing"
-grep -q 'Management IP addresses or cluster IP addresses can be used' "$CLUSTER_OUT" || fail "mgmt/cluster IP support missing"
+grep -qE 'Management or cluster IPs may be used|Management IP addresses or cluster IP addresses can be used' "$CLUSTER_OUT" \
+  || fail "mgmt/cluster IP support missing"
 pass "DL cluster bringup command"
 
 assert_cluster_bringup_prompt() {
@@ -710,14 +714,14 @@ for n in 1 2 3 4 5 6; do
   step_count="$(grep -cE "^STEP ${n} —" "$REG_DUAL" || true)"
   [[ "$step_count" -eq 1 ]] || fail "STEP ${n} header count=${step_count} (expected 1 common step)"
 done
-grep -q 'CLUSTER EXECUTION RULE' "$REG_DUAL" || fail "CLUSTER EXECUTION RULE missing"
-grep -q 'Run the same steps on every DP node being upgraded' "$REG_DUAL" \
+grep -qE '^CLUSTER$|CLUSTER EXECUTION RULE' "$REG_DUAL" || fail "CLUSTER guidance missing"
+grep -qE 'Run on every DP node being upgraded|Run the same steps on every DP node being upgraded' "$REG_DUAL" \
   || fail "common all-nodes guidance missing"
 grep -q 'DL master, all DL workers, DA master, and all DA workers' "$REG_DUAL" \
   || fail "all-nodes target list missing"
 echo "MENU7_COMMON_STEPS_1_TO_6=PASS"
 
-[[ "$(grep -cE '^STEP 6 — STAGE DP' "$REG_DUAL")" -eq 1 ]] \
+[[ "$(grep -cE '^STEP 6 — (PHASE 2 STAGING|STAGE DP)' "$REG_DUAL")" -eq 1 ]] \
   || fail "STEP 6 heading not unique"
 [[ "$(grep -cE '^cd /home/aella && curl -fsSLo upgrade-phase2\.sh\.download ' "$REG_DUAL")" -eq 1 ]] \
   || fail "expected exactly one common stage command"
@@ -829,7 +833,7 @@ PREPARATION_MODE=PHASE2_ONLY
 REG_P2="$TMP/reg-dual-p2.txt"
 gui_build_client_commands "http://192.0.2.10" "cluster" \
   "$REG_DL_IPS" "$REG_DA_IPS" "$REG_PW" >"$REG_P2"
-grep -q 'CLUSTER EXECUTION RULE' "$REG_P2" || fail "PHASE2 cluster rule missing"
+grep -qE '^CLUSTER$|CLUSTER EXECUTION RULE' "$REG_P2" || fail "PHASE2 cluster rule missing"
 grep -q 'STEP 3A: DL master only' "$REG_P2" || fail "PHASE2 missing STEP 3A master-only"
 grep -q 'STEP 3B: DA master only' "$REG_P2" || fail "PHASE2 missing STEP 3B master-only"
 grep -q 'Use the SAME staging command on every node' "$REG_P2" \

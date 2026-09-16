@@ -92,55 +92,18 @@ def next_substantive_line(lines, start):
         return candidate
     return ""
 
-# FULL-mode safety emphasis. This is intentionally presentation-only: it makes
-# the existing mandatory pause instruction impossible to miss without changing
-# any generated command, checksum, workflow generation, or trust decision.
-pause_heading = "STEP 1 — PAUSE DP SERVICES"
-pause_underline = "--------------------------"
-pause_completion = "Wait until the pause operation completes."
-pause_warning = [
-    "",
-    "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!",
-    "CRITICAL — PAUSE IS MANDATORY. DO NOT SKIP STEP 1.",
-    "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!",
-    "",
-    "The DP MUST be paused before any Ubuntu OS upgrade command is run.",
-    "DO NOT start STEP 2 until `aella_cli` -> `pause` has completed successfully.",
-    "",
-    "Skipping this step can leave DP services running during the OS upgrade.",
-    "This may cause severe memory pressure/OOM, upgrade failure, or an unstable DP.",
-]
-pause_stop_warning = [
-    "",
-    "STOP: Confirm the pause is fully complete before continuing to STEP 2.",
-]
+# FULL-mode pause emphasis is now carried by the compact STEP 1 prose in the
+# canonical Menu 7 text. Do not inject giant warning banners here.
+pause_emphasized = 0
+pause_completion_emphasized = 0
 
 lines = src.read_text(encoding="utf-8").splitlines()
 out: list[str] = []
 hop_wrapped = 0
 phase2_wrapped = 0
-pause_emphasized = 0
-pause_completion_emphasized = 0
 i = 0
 while i < len(lines):
     line = lines[i]
-
-    if (
-        line == pause_heading
-        and i + 1 < len(lines)
-        and lines[i + 1] == pause_underline
-    ):
-        out.extend([line, lines[i + 1], *pause_warning])
-        pause_emphasized += 1
-        i += 2
-        continue
-
-    if line == pause_completion:
-        out.append(line)
-        out.extend(pause_stop_warning)
-        pause_completion_emphasized += 1
-        i += 1
-        continue
 
     if line == COPY_ONE_LINE:
         nxt = next_substantive_line(lines, i + 1)
