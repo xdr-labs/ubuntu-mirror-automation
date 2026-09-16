@@ -178,6 +178,7 @@ export MM_LOG_DIR="${WORKDIR}/logs"
 export MM_CONFIG_DIR="${WORKDIR}/config"
 export MM_CONFIG_FILE="${MM_CONFIG_DIR}/dp-upgrade-mirror.conf"
 export MM_STATUS_FILE="${MM_CONFIG_DIR}/status"
+export MM_HERMETIC_TEST_MODE=1
 export SKIP_MIRROR_HOST_VALIDATE=1
 export MIRROR_HTTP_URL="$MIRROR"
 export PREPARATION_MODE=FULL

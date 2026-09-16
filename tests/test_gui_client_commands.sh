@@ -19,6 +19,7 @@ trap 'rm -rf "$TMP"' EXIT
 export MM_PROJECT_ROOT="$ROOT"
 # Fixture mirror addresses are RFC 5737 documentation IPs that are not
 # configured on the test host; skip the interface-presence check only.
+export MM_HERMETIC_TEST_MODE=1
 export SKIP_MIRROR_HOST_VALIDATE=1
 export MM_LOG_DIR="$TMP/logs"
 export MM_CONFIG_DIR="$TMP/config"

@@ -19,6 +19,7 @@ export MM_STATUS_FILE="$MM_CONFIG_DIR/status"
 export MM_WORKFLOW_FILE="$MM_CONFIG_DIR/workflow.state"
 export MM_LOG_DIR="$TMP/logs"
 export MM_CLIENT_ROOT="$TMP/mirror/client"
+export MM_HERMETIC_TEST_MODE=1
 export SKIP_MIRROR_HOST_VALIDATE=1
 mkdir -p "$MM_CONFIG_DIR" "$MM_LOG_DIR" "$MM_CLIENT_ROOT/lib"
 : >"$MM_STATUS_FILE"

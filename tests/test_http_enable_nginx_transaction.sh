@@ -22,6 +22,7 @@ export MM_SKIP_ROOT_CHECK=1
 export MM_SKIP_HTTP_VALIDATE=1
 export MM_SKIP_BUNDLE_SHA256=1
 export MM_SKIP_NGINX_APPLY=0
+export MM_HERMETIC_TEST_MODE=1
 export SKIP_MIRROR_HOST_VALIDATE=1
 export TARGET_DP_VERSION=6.6.0
 mkdir -p "$MM_CONFIG_DIR" "$MM_LOG_DIR" "$MM_STATE_ROOT"
@@ -107,11 +108,18 @@ seed_complete_client_http_set "${HTTP_ROOT}/client" "http://192.0.2.10" "AAAAAAA
 printf 'TARGET_DP_VERSION=6.6.0\n' >"${HTTP_ROOT}/dp-phase2/6.6.0/release.env"
 mkdir -p "${HTTP_ROOT}/dp-phase2/6.6.0/extras"
 cat >"${HTTP_ROOT}/dp-phase2/6.6.0/extras/phase2-ubuntu-prerequisites.state" <<'EOF'
+TARGET_DP_VERSION=6.6.0
 PHASE2_PREREQ_REQUIRED=NO
 PHASE2_PREREQ_PACKAGE_COUNT=0
 PHASE2_PREREQ_BUILD=PASS
 PHASE2_PREREQ_PUBLICATION=PASS
+PHASE2_PREREQ_ARTIFACT=phase2-ubuntu-prerequisites.tar.gz
+PHASE2_PREREQ_SHA256=
 EOF
+export PHASE2_PREREQ_PY="${ROOT}/scripts/lib/phase2_ubuntu_prerequisites.py"
+# shellcheck source=lib/phase2_prereq_identity_fixture.sh
+source "${ROOT}/tests/lib/phase2_prereq_identity_fixture.sh"
+phase2_prereq_write_identity_for_extras "${HTTP_ROOT}/dp-phase2/6.6.0/extras" >/dev/null
 tar -cf "${HTTP_ROOT}/dp-phase2/6.6.0/dp_bundle_6.6.0-current.tar" \
   -C "${HTTP_ROOT}/dp-phase2/6.6.0" release.env
 (
@@ -159,7 +167,7 @@ run_enable_http() {
     MM_SKIP_HTTP_VALIDATE=1 \
     MM_SKIP_BUNDLE_SHA256=1 \
     MM_SKIP_NGINX_APPLY=0 \
-    SKIP_MIRROR_HOST_VALIDATE=1 \
+    MM_HERMETIC_TEST_MODE=1 SKIP_MIRROR_HOST_VALIDATE=1 \
     MM_NGINX_SITE_AVAIL="$MM_NGINX_SITE_AVAIL" \
     MM_NGINX_SITE_ENABLED="$MM_NGINX_SITE_ENABLED" \
     MM_NGINX_BIN="$MM_NGINX_BIN" \

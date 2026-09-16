@@ -62,6 +62,7 @@ export ACPS_USERNAME=testuser
 export ACPS_PASSWORD=testpass
 export OS_CORE_R2_URL='http://127.0.0.1:9/os-core.tar'
 export PREPARATION_MODE=PHASE2_ONLY
+export MM_HERMETIC_TEST_MODE=1
 export SKIP_MIRROR_HOST_VALIDATE=1
 
 mkdir -p "$MM_CLIENT_ROOT" "$MM_CACHE_ROOT" "$MM_DP_PHASE2_ROOT" "$MM_LOG_DIR" \
@@ -238,11 +239,20 @@ engine_prepare_phase2_ubuntu_prerequisites() {
   local extras="${MM_DP_PHASE2_ROOT}/${TARGET_DP_VERSION:-6.6.0}/extras"
   mkdir -p "$extras"
   cat >"${extras}/phase2-ubuntu-prerequisites.state" <<'EOF'
+TARGET_DP_VERSION=6.6.0
 PHASE2_PREREQ_REQUIRED=NO
 PHASE2_PREREQ_PACKAGE_COUNT=0
 PHASE2_PREREQ_BUILD=PASS
 PHASE2_PREREQ_PUBLICATION=PASS
+PHASE2_PREREQ_ARTIFACT=phase2-ubuntu-prerequisites.tar.gz
+PHASE2_PREREQ_SHA256=
 EOF
+  python3 - "$ROOT/scripts/lib/phase2_ubuntu_prerequisites.py" "$extras" <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("p", sys.argv[1])
+mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+mod.write_prerequisite_identity(sys.argv[2])
+PY
   mm_ok "PHASE2_PREREQ=PASS fixture_stub"
   return 0
 }

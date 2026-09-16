@@ -333,11 +333,18 @@ seed_complete_client_http_set "${HTTP_ROOT}/client" "http://192.0.2.10" "AAAAAAA
 printf 'TARGET_DP_VERSION=6.6.0\n' >"${HTTP_ROOT}/dp-phase2/6.6.0/release.env"
 mkdir -p "${HTTP_ROOT}/dp-phase2/6.6.0/extras"
 cat >"${HTTP_ROOT}/dp-phase2/6.6.0/extras/phase2-ubuntu-prerequisites.state" <<'EOF'
+TARGET_DP_VERSION=6.6.0
 PHASE2_PREREQ_REQUIRED=NO
 PHASE2_PREREQ_PACKAGE_COUNT=0
 PHASE2_PREREQ_BUILD=PASS
 PHASE2_PREREQ_PUBLICATION=PASS
+PHASE2_PREREQ_ARTIFACT=phase2-ubuntu-prerequisites.tar.gz
+PHASE2_PREREQ_SHA256=
 EOF
+export PHASE2_PREREQ_PY="${ROOT}/scripts/lib/phase2_ubuntu_prerequisites.py"
+# shellcheck source=lib/phase2_prereq_identity_fixture.sh
+source "${ROOT}/tests/lib/phase2_prereq_identity_fixture.sh"
+phase2_prereq_write_identity_for_extras "${HTTP_ROOT}/dp-phase2/6.6.0/extras" >/dev/null
 # Minimal valid-looking bundle + sha for layout check
 tar -cf "${HTTP_ROOT}/dp-phase2/6.6.0/dp_bundle_6.6.0-current.tar" -C "${HTTP_ROOT}/dp-phase2/6.6.0" release.env
 (
@@ -366,6 +373,7 @@ mkdir -p "$(dirname "$MM_NGINX_SITE_AVAIL")" "$(dirname "$MM_NGINX_SITE_ENABLED"
 ln -sfn /dev/null "${WORKDIR}/nginx/sites-enabled/default"
 printf 'TARGET_DP_VERSION=6.6.0\nACPS_USERNAME=u\nACPS_PASSWORD=p\nMIRROR_SERVER_IP=192.0.2.10\nMIRROR_HTTP_URL=http://192.0.2.10\n' >"$MM_CONFIG_FILE"
 chmod 600 "$MM_CONFIG_FILE"
+export MM_HERMETIC_TEST_MODE=1
 export SKIP_MIRROR_HOST_VALIDATE=1
 dp2_set_version 6.6.0
 
@@ -380,7 +388,7 @@ run_enable_http() {
     MM_SKIP_ROOT_CHECK=1 \
     MM_SKIP_HTTP_VALIDATE=1 \
     MM_SKIP_NGINX_APPLY=0 \
-    SKIP_MIRROR_HOST_VALIDATE=1 \
+    MM_HERMETIC_TEST_MODE=1 SKIP_MIRROR_HOST_VALIDATE=1 \
     MM_NGINX_SITE_AVAIL="$MM_NGINX_SITE_AVAIL" \
     MM_NGINX_SITE_ENABLED="$MM_NGINX_SITE_ENABLED" \
     MM_NGINX_BIN="$MM_NGINX_BIN" \

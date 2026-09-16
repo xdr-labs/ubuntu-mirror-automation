@@ -61,6 +61,7 @@ MIRROR_HTTP_URL=http://192.0.2.10
 EOF
   chmod 600 "$MM_CONFIG_FILE"
 }
+export MM_HERMETIC_TEST_MODE=1
 export SKIP_MIRROR_HOST_VALIDATE=1
 write_cfg PHASE2_ONLY
 
@@ -261,11 +262,20 @@ engine_prepare_phase2_ubuntu_prerequisites() {
   local extras="${MM_DP_PHASE2_ROOT}/${TARGET_DP_VERSION:-6.6.0}/extras"
   mkdir -p "$extras"
   cat >"${extras}/phase2-ubuntu-prerequisites.state" <<'EOF'
+TARGET_DP_VERSION=6.6.0
 PHASE2_PREREQ_REQUIRED=NO
 PHASE2_PREREQ_PACKAGE_COUNT=0
 PHASE2_PREREQ_BUILD=PASS
 PHASE2_PREREQ_PUBLICATION=PASS
+PHASE2_PREREQ_ARTIFACT=phase2-ubuntu-prerequisites.tar.gz
+PHASE2_PREREQ_SHA256=
 EOF
+  python3 - "$ROOT/scripts/lib/phase2_ubuntu_prerequisites.py" "$extras" <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("p", sys.argv[1])
+mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+mod.write_prerequisite_identity(sys.argv[2])
+PY
   mm_ok "PHASE2_PREREQ=PASS fixture_stub"
   return 0
 }
