@@ -3,6 +3,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=lib/client_finalization_fixture.sh
+source "${ROOT}/tests/lib/client_finalization_fixture.sh"
 fail() { echo "FAIL: $*" >&2; exit 1; }
 pass() { echo "PASS: $*"; }
 
@@ -41,56 +43,72 @@ if pub="$(engine_r2_publisher_public_key 2>/dev/null)"; then
 fi
 pass "client signing key is not an implicit R2 publisher trust root"
 
-# Build a tiny unsigned package (dirs + regular files only) for verify.
-PKG_SRC="${TMP}/pkg-src"
-python3 - "$PKG_SRC" <<'PY'
+# Build a CURRENT schema OS Core package via production builder + fixture tree.
+client_fixture_build_selective "$TMP"
+SEL="${TMP}/selective"
+# Plant AWS contract .debs into hop trees so OS Core semantic validation passes.
+python3 - "$SEL" "$ROOT" <<'PY'
 import hashlib, json, os, sys
-root = sys.argv[1]
-pkg = os.path.join(root, "ubuntu-os-core")
-payload = os.path.join(pkg, "payload")
-hops = ["xenial-to-bionic", "bionic-to-focal", "focal-to-jammy", "jammy-to-noble"]
-file_count = 0
-payload_bytes = 0
-lines = []
-for hop in hops:
-    d = os.path.join(payload, "hops", hop)
-    os.makedirs(d)
-    p = os.path.join(d, "hello.txt")
-    data = b"ok\n"
-    with open(p, "wb") as fh:
-        fh.write(data)
-    rel = "hops/%s/hello.txt" % hop
-    digest = hashlib.sha256(data).hexdigest()
-    lines.append("%s  %s" % (digest, rel))
-    file_count += 1
-    payload_bytes += len(data)
-os.makedirs(os.path.join(payload, "shared"), exist_ok=True)
-with open(os.path.join(pkg, "payload.sha256"), "w", encoding="utf-8") as fh:
-    fh.write("\n".join(lines) + "\n")
-manifest = {
-    "schema_version": 1,
-    "artifact_type": "ubuntu-os-core",
-    "release_id": "test-unsigned",
-    "payload_file_count": file_count,
-    "payload_bytes": payload_bytes,
-    "required_free_bytes": payload_bytes,
+sel, root = sys.argv[1], sys.argv[2]
+sys.path.insert(0, os.path.join(root, "scripts", "lib"))
+import aws_os_core_completeness as aws_c
+gen = aws_c.load_verified_selective_generation(sel, project_root=root)
+contract = gen.get("contract") or (gen.get("plan") or {}).get("aws_semantic_contract")
+if not contract:
+    raise SystemExit("contract missing from verified generation")
+# Recreate blobs matching client_finalization_fixture ident() content.
+release_by_hop = {
+    "xenial-to-bionic": ("5.4.0.1103.81", "5.4.0-1103-aws"),
+    "bionic-to-focal": ("5.15.0.1084.91~20.04.1", "5.15.0-1084-aws"),
+    "focal-to-jammy": ("6.8.0-1063.66~22.04.1", "6.8.0-1063-aws"),
+    "jammy-to-noble": ("7.0.0-1011.11~24.04.1", "7.0.0-1011-aws"),
 }
-with open(os.path.join(pkg, "manifest.json"), "w", encoding="utf-8") as fh:
-    json.dump(manifest, fh)
-    fh.write("\n")
+for hop, hop_c in (contract.get("hops") or {}).items():
+    ver, rel = release_by_hop[hop]
+    blobs = {
+        "linux-aws": ("CF|%s|linux-aws|%s" % (hop, ver)).encode(),
+        "linux-image-aws": ("CF|%s|linux-image-aws|%s" % (hop, ver)).encode(),
+        "linux-image-%s" % rel: ("CF|%s|linux-image-%s|%s" % (hop, rel, ver)).encode(),
+    }
+    if hop == "xenial-to-bionic":
+        blobs["snapd"] = b"CF|x2b|snapd"
+    idents = []
+    for key in ("linux_aws", "linux_image_aws", "snapd"):
+        if hop_c.get(key):
+            idents.append(hop_c[key])
+    idents.extend(hop_c.get("versioned_images") or [])
+    for ident in idents:
+        pkg = ident["package"]
+        version = ident["version"]
+        sha = ident["sha256"]
+        blob = blobs.get(pkg)
+        if blob is None:
+            raise SystemExit("missing blob for %s" % pkg)
+        if hashlib.sha256(blob).hexdigest() != sha:
+            raise SystemExit("blob sha mismatch for %s" % pkg)
+        letter = pkg[0]
+        base = "%s_%s_amd64.deb" % (pkg, version)
+        path = os.path.join(
+            sel, "hops", hop, "ubuntu", "pool", "main", letter, pkg, base,
+        )
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as fh:
+            fh.write(blob)
+print("AWS_CONTRACT_DEBS_PLANTED=PASS")
 PY
+OUT="${TMP}/os-core-out"
+mkdir -p "$OUT"
+python3 "${ROOT}/scripts/lib/os_core_package.py" build \
+  --selective-root "$SEL" \
+  --output-dir "$OUT" \
+  --project-root "$ROOT" \
+  --release-id r2trust001 \
+  >/dev/null
+PKG="$(find "$OUT" -maxdepth 1 -name 'ubuntu-os-core-*.tar' | head -1)"
+[[ -n "$PKG" && -f "$PKG" ]] || fail "os_core build did not produce package"
+sha256sum "$PKG" | awk '{print $1"  " FILENAME}' FILENAME="$(basename "$PKG")" >"${PKG}.sha256"
 
-# Use os_core_package.py verify against a handmade tar+sha256 (no .asc).
-PKG="${TMP}/os-core.tar"
-python3 - "$ROOT" "$PKG_SRC" "$PKG" <<'PY'
-import os, sys
-sys.path.insert(0, os.path.join(sys.argv[1], "scripts", "lib"))
-import os_core_package as oc
-oc.safe_tar_create(sys.argv[2], sys.argv[3])
-PY
-sha256sum "$PKG" | awk '{print $1"  os-core.tar"}' >"${PKG}.sha256"
-
-# 13. no-.asc + mandatory SHA256 remains valid.
+# 13. no-.asc + mandatory SHA256 remains valid for current schema.
 set +e
 out="$(python3 "${ROOT}/scripts/lib/os_core_package.py" verify --package "$PKG" 2>&1)"
 rc=$?
