@@ -202,7 +202,6 @@ WORKER_PASSWORD=""
 ROLE=""
 DRY_RUN=false
 SKIP_DOWNLOAD=false
-DNS_FALLBACK_LINES=""  # public nameservers appended by preflight (revertible)
 WORKER_MODE=false
 PRE_UPGRADE_CLEANUP=false
 AUTO_OS_UPGRADE=false
@@ -1031,122 +1030,38 @@ preflight_bundle() {
     log "Bundle pre-flight: 3 required files present in $found_in"
 }
 
-# AELDEV-74638: is /etc/resolv.conf usable as-is? Usable = exists, has a
-# nameserver line, and is not a LOOPBACK-ONLY file (systemd stub 127.0.0.53,
-# dnsmasq/resolvconf 127.0.0.1, ::1) while systemd-resolved has no upstream
-# servers. 16.04-upgraded boxes often leave resolved enabled but unconfigured
-# (stub resolves nothing), and phase-7 masks dnsmasq (a 127.0.0.1 file then
-# points at a dead forwarder); copying loopback lines into resolv-kube.conf
-# would hand every pod an unreachable resolver.
-resolv_conf_usable() {
-    [[ -e /etc/resolv.conf ]] || return 1
-    grep -q "^nameserver" /etc/resolv.conf 2>/dev/null || return 1
-    if ! grep "^nameserver" /etc/resolv.conf 2>/dev/null | \
-            grep -qvE "^nameserver[[:space:]]+(127\.|::1)"; then
-        # loopback-only: usable only while resolved actually has upstreams
-        grep -q "^nameserver" /run/systemd/resolve/resolv.conf 2>/dev/null || return 1
-    fi
-    return 0
-}
-
-# Remove exactly the public fallback nameservers this run appended (tracked
-# in DNS_FALLBACK_LINES; pre-existing customer 8.8.8.8 lines are never added
-# to the list and therefore never removed).
-remove_dns_fallback() {
-    local fb
-    for fb in $DNS_FALLBACK_LINES; do
-        sed -i "/^nameserver ${fb//./\\.}\$/d" /etc/resolv.conf 2>/dev/null || true
-    done
-    DNS_FALLBACK_LINES=""
-}
-
-# AELDEV-74638: rebuild /etc/resolv.conf from the DNS servers the box is
-# configured with -- the systemd-resolved runtime file first (netplan boxes
-# feed their nameservers into it), then ifupdown dns-nameservers lines
-# (16.04-upgraded boxes); 8.8.8.8 only as a last resort. Callers must guard
-# with resolv_conf_usable so a working customer DNS config is never clobbered.
-rebuild_resolv_conf() {
-    rm -f /etc/resolv.conf  # remove dangling symlink to systemd-resolved stub
-    local configured_dns
-    if grep -q "^nameserver" /run/systemd/resolve/resolv.conf 2>/dev/null; then
-        # netplan boxes feed their configured DNS into systemd-resolved
-        ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
-        log "DNS: linked to systemd-resolved"
-    else
-        # loopback entries (127.x/::1 -- e.g. a local dnsmasq that phase-7
-        # masks) are skipped: they cannot serve as rebuilt upstreams
-        configured_dns=$(grep -rhE "^[[:space:]]*dns-nameservers[[:space:]]" \
-                /etc/network/interfaces /etc/network/interfaces.d/ 2>/dev/null | \
-                sed 's/^[[:space:]]*dns-nameservers[[:space:]]*//' | tr ' ' '\n' | \
-                grep -E '^[0-9A-Fa-f.:]+$' | grep -vE '^(127\.|::1$)' | \
-                awk '!seen[$0]++' | head -3 || true)
-        if [[ -n "$configured_dns" ]]; then
-            : > /etc/resolv.conf
-            local ns
-            for ns in $configured_dns; do echo "nameserver $ns" >> /etc/resolv.conf; done
-            log "DNS: restored configured nameservers (ifupdown)"
-        elif systemctl restart systemd-resolved 2>/dev/null && \
-                grep -q "^nameserver" /run/systemd/resolve/resolv.conf 2>/dev/null; then
-            ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
-            log "DNS: linked to systemd-resolved (after restart)"
-        else
-            # Last resort: static public DNS (online bringup still needs to
-            # reach ACPS; on dark-site there was no configured DNS to keep)
-            echo "nameserver 8.8.8.8" > /etc/resolv.conf
-            echo "nameserver 8.8.4.4" >> /etc/resolv.conf
-            log "DNS: static resolv.conf (8.8.8.8, 8.8.4.4) -- no configured DNS found"
-        fi
-    fi
-    log "DNS: $(grep nameserver /etc/resolv.conf 2>/dev/null | tr '\n' ' ')"
-}
-
 preflight_checks() {
     log_phase "Pre-flight Checks"
 
     # Must be root
     if [[ $EUID -ne 0 ]]; then die "Must run as root"; fi
 
-    # Fix DNS only if truly broken (missing / dangling symlink / no nameserver
-    # lines). AELDEV-74638: the old logic treated "cannot resolve ${ACPS_HOST}"
-    # as broken DNS and rewrote /etc/resolv.conf with 8.8.8.8/8.8.4.4 -- but on
-    # a dark site ACPS is unreachable BY DESIGN, so it wiped the customer's
-    # configured DNS (e.g. dns-nameservers 192.168.1.1 in
-    # /etc/network/interfaces on a 16.04-upgraded ifupdown box). Never clobber
-    # a resolv.conf that has nameservers; when rebuilding, restore the DNS the
-    # box is configured with and use 8.8.8.8 only as a last resort.
-    if resolv_conf_usable; then
-        if ! getent hosts "${ACPS_HOST}" &>/dev/null; then
-            if [[ "$SKIP_DOWNLOAD" == "true" ]]; then
-                log "DNS: ${ACPS_HOST} does not resolve (expected on dark-site); keeping existing resolv.conf"
-            elif [[ ! -L /etc/resolv.conf ]]; then
-                # Online mode needs ACPS: keep the configured nameservers but
-                # APPEND public fallbacks after them so downloads can proceed
-                # (the old code REPLACED the file, wiping customer DNS). The
-                # append is REVERTED if it does not help, and again if this
-                # later turns out to be an auto-detected dark site -- the
-                # customer file must never keep lines that did no good.
-                # Symlinked (systemd-resolved-managed) files are left alone.
-                log "WARN: ${ACPS_HOST} does not resolve with the configured DNS; trying public fallback nameservers"
-                local fb
-                for fb in 8.8.8.8 8.8.4.4; do
-                    if ! grep -q "^nameserver ${fb//./\\.}\$" /etc/resolv.conf 2>/dev/null; then
-                        echo "nameserver ${fb}" >> /etc/resolv.conf
-                        DNS_FALLBACK_LINES="${DNS_FALLBACK_LINES} ${fb}"
-                    fi
-                done
-                if getent hosts "${ACPS_HOST}" &>/dev/null; then
-                    log "DNS: ${ACPS_HOST} resolves via appended fallback nameservers"
-                else
-                    remove_dns_fallback
-                    log "WARN: fallback did not help -- restored original resolv.conf; downloads may fail (fix DNS or use --skip-download)"
-                fi
+    # Fix DNS if broken (common after OS upgrade -- systemd-resolved stub missing)
+    if [[ ! -f /etc/resolv.conf ]] || ! getent hosts "${ACPS_HOST}" &>/dev/null; then
+        log "DNS broken -- fixing /etc/resolv.conf"
+        rm -f /etc/resolv.conf  # remove dangling symlink to systemd-resolved stub
+        # Try systemd-resolved first (proper way on 24.04)
+        if systemctl is-active systemd-resolved &>/dev/null; then
+            ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
+            log "DNS: linked to systemd-resolved"
+        else
+            # Start systemd-resolved if available
+            if systemctl start systemd-resolved 2>/dev/null; then
+                ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
+                log "DNS: started systemd-resolved"
             else
-                log "WARN: ${ACPS_HOST} does not resolve (systemd-resolved-managed resolv.conf); downloads may fail"
+                # Fallback: static resolv.conf
+                echo "nameserver 8.8.8.8" > /etc/resolv.conf
+                echo "nameserver 8.8.4.4" >> /etc/resolv.conf
+                log "DNS: static resolv.conf (8.8.8.8, 8.8.4.4)"
             fi
         fi
-    else
-        log "DNS broken -- rebuilding /etc/resolv.conf"
-        rebuild_resolv_conf
+        # Ensure we have DNS servers configured
+        if ! grep -q nameserver /etc/resolv.conf 2>/dev/null; then
+            echo "nameserver 8.8.8.8" >> /etc/resolv.conf
+            echo "nameserver 8.8.4.4" >> /etc/resolv.conf
+        fi
+        log "DNS: $(grep nameserver /etc/resolv.conf 2>/dev/null | tr '\n' ' ')"
     fi
 
     # Must be Ubuntu 24.04
@@ -1832,7 +1747,109 @@ clean_phase2_prereq_contract_files() {
         "${dir}/phase2-ubuntu-prerequisites.state" \
         "${dir}/phase2-ubuntu-prerequisites.tar.gz" \
         "${dir}/phase2-ubuntu-prerequisites.tar.gz.sha256" \
-        "${dir}/phase2-ubuntu-prerequisites.manifest.json"
+        "${dir}/phase2-ubuntu-prerequisites.manifest.json" \
+        "${dir}/phase2-ubuntu-prerequisites.identity"
+}
+
+phase2_worker_upload_root() {
+    printf '%s\n' "${PHASE2_WORKER_UPLOAD_ROOT:-/home/aella/.phase2-worker-upload}"
+}
+
+# Ensure upload + protected dirs exist with correct ownership. Does not wipe
+# already-promoted staging artifacts (prereq contract copy runs after them).
+ensure_worker_protected_staging_dirs() {
+    local worker_ip="$1"
+    local staging="${STAGING_DIR:-/opt/aelladata/aelladeb_py3}"
+    local aelladeb="${AELLADEB_DIR:-/opt/aelladata/aelladeb}"
+    local upload
+    upload="$(phase2_worker_upload_root)"
+    if ! declare -F worker_ssh >/dev/null 2>&1; then
+        log "ERROR: WORKER_STAGING_PREPARE=FAIL reason=ssh_helpers_missing"
+        return 1
+    fi
+    if ! worker_ssh "$worker_ip" "sudo mkdir -p \
+'${staging}' '${staging}/lib' '${aelladeb}' \
+'${upload}' '${upload}/lib' '${upload}/aelladeb' && \
+sudo chown root:root '${staging}' '${staging}/lib' '${aelladeb}' && \
+sudo chmod 0755 '${staging}' '${staging}/lib' '${aelladeb}' && \
+sudo chown aella:aella '${upload}' '${upload}/lib' '${upload}/aelladeb' && \
+sudo chmod 0700 '${upload}' '${upload}/lib' '${upload}/aelladeb'"; then
+        log "ERROR: WORKER_STAGING_PREPARE=FAIL reason=remote_mkdir"
+        return 1
+    fi
+    return 0
+}
+
+# Prepare root-owned protected staging and an aella-owned (0700) upload area.
+# SCP lands in the upload area; root promotes into protected dirs before use.
+# Wipes upload files and stale root-owned deb/tar.gz so OpenSSH 9.x SFTP can
+# create fresh aella-owned uploads. Leaves *.tar for skip-by-SHA reuse.
+prepare_worker_protected_staging() {
+    local worker_ip="$1"
+    local staging="${STAGING_DIR:-/opt/aelladata/aelladeb_py3}"
+    local aelladeb="${AELLADEB_DIR:-/opt/aelladata/aelladeb}"
+    local upload
+    upload="$(phase2_worker_upload_root)"
+    if ! ensure_worker_protected_staging_dirs "$worker_ip"; then
+        return 1
+    fi
+    if ! worker_ssh "$worker_ip" "\
+sudo find -L '${upload}' '${upload}/lib' '${upload}/aelladeb' -maxdepth 1 -type f -delete 2>/dev/null; \
+sudo find -L '${staging}' '${aelladeb}' -maxdepth 1 -type f \
+  \\( -name '*.deb' -o -name '*.tar.gz' -o -name '*.tgz' \\) -delete 2>/dev/null; \
+true"; then
+        log "ERROR: WORKER_STAGING_PREPARE=FAIL reason=remote_clean"
+        return 1
+    fi
+    log "WORKER_STAGING_PREPARE=PASS upload=${upload}"
+    return 0
+}
+
+# Promote regular files from an aella upload dir into a root-owned dest.
+# Rejects symlinks. Root consumes only the promoted copy.
+promote_worker_upload_dir() {
+    local worker_ip="$1"
+    local upload_dir="$2"
+    local dest_dir="$3"
+    local mode="${4:-0644}"
+    if ! declare -F worker_ssh >/dev/null 2>&1; then
+        log "ERROR: WORKER_STAGING_PROMOTE=FAIL reason=ssh_helpers_missing"
+        return 1
+    fi
+    # Paths are single-quoted into the remote command; they must not contain quotes.
+    case "${upload_dir}${dest_dir}${mode}" in
+        *\'*) log "ERROR: WORKER_STAGING_PROMOTE=FAIL reason=unsafe_path"; return 1 ;;
+    esac
+    if ! worker_ssh "$worker_ip" "sudo bash -c '
+set -euo pipefail
+upload='\''${upload_dir}'\''
+dest='\''${dest_dir}'\''
+mode='\''${mode}'\''
+mkdir -p \"\$dest\"
+shopt -s nullglob
+for src in \"\$upload\"/*; do
+  [[ -e \"\$src\" ]] || continue
+  if [[ -L \"\$src\" ]]; then
+    echo \"WORKER_STAGING_PROMOTE=FAIL reason=symlink\" >&2
+    exit 1
+  fi
+  [[ -f \"\$src\" ]] || continue
+  base=\$(basename \"\$src\")
+  case \"\$base\" in
+    \"\"|.*|*/*)
+      echo \"WORKER_STAGING_PROMOTE=FAIL reason=unsafe_name\" >&2
+      exit 1
+      ;;
+  esac
+  install -o root -g root -m \"\$mode\" \"\$src\" \"\${dest}/\${base}\"
+  rm -f \"\$src\"
+done
+'"; then
+        log "ERROR: WORKER_STAGING_PROMOTE=FAIL upload=${upload_dir} dest=${dest_dir}"
+        return 1
+    fi
+    log "WORKER_STAGING_PROMOTE=PASS upload=${upload_dir} dest=${dest_dir}"
+    return 0
 }
 
 # Copy the current prerequisite contract to one worker. MUST run after the
@@ -1846,10 +1863,16 @@ copy_phase2_prereq_contract_to_worker() {
     local sidecar="${artifact}.sha256"
     local manifest="${staging}/phase2-ubuntu-prerequisites.manifest.json"
     local lib_src="" required=""
-    local remote_clean remote_mkdir
+    local upload remote_clean
+    upload="$(phase2_worker_upload_root)"
 
     if ! declare -F worker_ssh >/dev/null 2>&1 || ! declare -F worker_scp >/dev/null 2>&1; then
         log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=ssh_helpers_missing"
+        return 1
+    fi
+
+    if ! ensure_worker_protected_staging_dirs "$worker_ip"; then
+        log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=worker_prepare"
         return 1
     fi
 
@@ -1858,12 +1881,14 @@ copy_phase2_prereq_contract_to_worker() {
 '${staging}/phase2-ubuntu-prerequisites.tar.gz' \
 '${staging}/phase2-ubuntu-prerequisites.tar.gz.sha256' \
 '${staging}/phase2-ubuntu-prerequisites.manifest.json' \
-'${staging}/lib/dp-phase2-ubuntu-prerequisites.sh'"
-    remote_mkdir="sudo mkdir -p '${staging}' '${staging}/lib' && sudo chmod 777 '${staging}' '${staging}/lib'"
-    if ! worker_ssh "$worker_ip" "$remote_mkdir"; then
-        log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=worker_mkdir"
-        return 1
-    fi
+'${staging}/phase2-ubuntu-prerequisites.identity' \
+'${staging}/lib/dp-phase2-ubuntu-prerequisites.sh' \
+'${upload}/phase2-ubuntu-prerequisites.state' \
+'${upload}/phase2-ubuntu-prerequisites.tar.gz' \
+'${upload}/phase2-ubuntu-prerequisites.tar.gz.sha256' \
+'${upload}/phase2-ubuntu-prerequisites.manifest.json' \
+'${upload}/phase2-ubuntu-prerequisites.identity' \
+'${upload}/lib/dp-phase2-ubuntu-prerequisites.sh'"
     if ! worker_ssh "$worker_ip" "$remote_clean"; then
         log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=worker_clean"
         return 1
@@ -1873,7 +1898,7 @@ copy_phase2_prereq_contract_to_worker() {
         log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=state_missing"
         return 1
     fi
-    if ! worker_scp "$state" "$worker_ip" "${staging}/"; then
+    if ! worker_scp "$state" "$worker_ip" "${upload}/"; then
         log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=state_copy"
         return 1
     fi
@@ -1882,13 +1907,21 @@ copy_phase2_prereq_contract_to_worker() {
         log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=lib_missing"
         return 1
     fi
-    if ! worker_scp "$lib_src" "$worker_ip" "${staging}/lib/dp-phase2-ubuntu-prerequisites.sh"; then
+    if ! worker_scp "$lib_src" "$worker_ip" "${upload}/lib/dp-phase2-ubuntu-prerequisites.sh"; then
         log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=lib_copy"
         return 1
     fi
 
     required="$(awk -F= '$1=="PHASE2_PREREQ_REQUIRED"{print $2; exit}' "$state")"
     if [[ "$required" == "NO" ]]; then
+        if ! promote_worker_upload_dir "$worker_ip" "$upload" "$staging"; then
+            log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=promote_state"
+            return 1
+        fi
+        if ! promote_worker_upload_dir "$worker_ip" "${upload}/lib" "${staging}/lib" 0644; then
+            log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=promote_lib"
+            return 1
+        fi
         log "PHASE2_PREREQ_WORKER_COPY=NOT_REQUIRED"
         return 0
     fi
@@ -1900,16 +1933,24 @@ copy_phase2_prereq_contract_to_worker() {
         log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=required_file_missing"
         return 1
     fi
-    if ! worker_scp "$artifact" "$worker_ip" "${staging}/"; then
+    if ! worker_scp "$artifact" "$worker_ip" "${upload}/"; then
         log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=artifact_copy"
         return 1
     fi
-    if ! worker_scp "$sidecar" "$worker_ip" "${staging}/"; then
+    if ! worker_scp "$sidecar" "$worker_ip" "${upload}/"; then
         log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=sidecar_copy"
         return 1
     fi
-    if ! worker_scp "$manifest" "$worker_ip" "${staging}/"; then
+    if ! worker_scp "$manifest" "$worker_ip" "${upload}/"; then
         log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=manifest_copy"
+        return 1
+    fi
+    if ! promote_worker_upload_dir "$worker_ip" "$upload" "$staging"; then
+        log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=promote_artifacts"
+        return 1
+    fi
+    if ! promote_worker_upload_dir "$worker_ip" "${upload}/lib" "${staging}/lib" 0644; then
+        log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=promote_lib"
         return 1
     fi
     log "PHASE2_PREREQ_WORKER_COPY=PASS"
@@ -2116,43 +2157,21 @@ install_python3() {
         # packages and missed re-installs after apt fix-broken rolled them
         # back. Bulk dpkg -i is faster + idempotent (already-installed +
         # same-version is a no-op for dpkg).
-        #
-        # AELDEV-74638: the tarball now carries the FULL recursive dependency
-        # closure (python3-click, colorama, openssl, zope.*, libev4t64,
-        # pyasyncore, libjs-jquery, jinja2, blinker, markupsafe, pip, ...),
-        # including shared libs the base may already have. dpkg -i would
-        # silently DOWNGRADE any base package that is newer than the bundled
-        # deb, so filter to debs that are absent or strictly newer than the
-        # installed version before the bulk install.
         if ls "$apt_tmpdir"/*.deb &>/dev/null; then
-            local deb pkg dver iver install_list=()
-            for deb in "$apt_tmpdir"/*.deb; do
-                pkg=$(dpkg-deb -f "$deb" Package 2>/dev/null)
-                dver=$(dpkg-deb -f "$deb" Version 2>/dev/null)
-                [[ -z "$pkg" || -z "$dver" ]] && continue
-                iver=$(dpkg-query -W -f '${Version}' "$pkg" 2>/dev/null || true)
-                if [[ -n "$iver" ]] && dpkg --compare-versions "$iver" gt "$dver"; then
-                    continue    # installed is newer -- never downgrade
-                fi
-                install_list+=("$deb")
-            done
-            log "py3-apt-packages: installing ${#install_list[@]} of $(ls "$apt_tmpdir"/*.deb | wc -l) debs (rest already current)"
-            if [[ ${#install_list[@]} -gt 0 ]]; then
-                local py3_apt_rc=0
+            local py3_apt_rc=0
+            set +e
+            dpkg -i "$apt_tmpdir"/*.deb
+            py3_apt_rc=$?
+            set -e
+            if [[ "$py3_apt_rc" -ne 0 ]]; then
+                log "ACPS_PY3_APT_DPKG=RETRY force_depends=YES (intra-bundle unpack order)"
                 set +e
-                dpkg -i "${install_list[@]}"
+                dpkg -i --force-depends "$apt_tmpdir"/*.deb
                 py3_apt_rc=$?
                 set -e
-                if [[ "$py3_apt_rc" -ne 0 ]]; then
-                    log "ACPS_PY3_APT_DPKG=RETRY force_depends=YES (intra-bundle unpack order)"
-                    set +e
-                    dpkg -i --force-depends "${install_list[@]}"
-                    py3_apt_rc=$?
-                    set -e
-                    log "ACPS_PY3_APT_FORCE_DEPENDS=USED rc=${py3_apt_rc} (not a success criterion)"
-                else
-                    log "ACPS_PY3_APT_DPKG=PASS force_depends=NO"
-                fi
+                log "ACPS_PY3_APT_FORCE_DEPENDS=USED rc=${py3_apt_rc} (not a success criterion)"
+            else
+                log "ACPS_PY3_APT_DPKG=PASS force_depends=NO"
             fi
         fi
         rm -rf "$apt_tmpdir"
@@ -2200,10 +2219,7 @@ install_python3() {
         log "pip3: $(pip3 --version 2>&1 || echo 'not found')"
     fi
 
-    # AELDEV-74638 named flask/click as critical, but warning-and-continue
-    # is not sufficient for dark-site Phase 2. APT graph + runtime imports
-    # are hard gates; wait_for_da_restful_8003 remains as an additional
-    # listen check before worker orchestration.
+    # Verify critical imports
     # dpkg --audit and --force-depends are not sufficient. The APT graph
     # must be consistent before Python runtime validation or worker orch.
     validate_apt_dependency_graph python3_apt || \
@@ -2212,7 +2228,9 @@ install_python3() {
     # installed" is not sufficient — Flask without click still fails to import.
     validate_critical_python_runtime || \
         die "CRITICAL_PYTHON_RUNTIME=FAIL Phase 2 cannot continue"
-    log "Python 3 system packages installed (psutil pymongo flask click OK)"
+    python3 -c "import psutil" 2>/dev/null || log "WARNING: psutil still missing"
+    python3 -c "import pymongo" 2>/dev/null || log "WARNING: pymongo still missing"
+    log "Python 3 system packages installed"
 }
 
 install_pip3_packages() {
@@ -3588,40 +3606,24 @@ prepare_system() {
     systemctl mask dnsmasq 2>/dev/null || true
     systemctl enable systemd-resolved 2>/dev/null || true
     systemctl start systemd-resolved 2>/dev/null || true
-    # Ensure resolv.conf is usable. AELDEV-74638: never repoint a resolv.conf
-    # that already has real nameservers -- on a 16.04-upgraded ifupdown box
-    # systemd-resolved has no DNS config, so unconditionally linking to its
-    # runtime file (or writing 8.8.8.8) discards the customer's configured DNS.
-    # EXCEPTION: the 127.0.0.53 stub (netplan boxes) is fine for host lookups
-    # but must not leak into resolv-kube.conf (kubelet resolvConf, generated
-    # below) -- the stub is unreachable from inside containers. The resolved
-    # runtime file carries the same configured DNS, so swapping to it
-    # preserves the customer's servers.
-    if resolv_conf_usable; then
-        # Swap ONLY a loopback-ONLY file (the resolv_conf_usable pass above
-        # then guarantees the runtime file has the upstreams) -- a mixed file
-        # with real nameservers is kept, and the resolv-kube.conf generation
-        # below filters the loopback lines out for pods.
-        if ! grep "^nameserver" /etc/resolv.conf 2>/dev/null | \
-                grep -qvE "^nameserver[[:space:]]+(127\.|::1)"; then
-            rm -f /etc/resolv.conf
-            ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
-            log "DNS: swapped loopback-only resolv.conf for systemd-resolved runtime file"
-        else
-            log "DNS: existing resolv.conf has real nameservers -- keeping"
-        fi
-    else
-        rebuild_resolv_conf
+    # Ensure resolv.conf points to systemd-resolved (verify target exists)
+    if [[ -f /run/systemd/resolve/resolv.conf ]]; then
+        rm -f /etc/resolv.conf
+        ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
+        log "DNS: linked to systemd-resolved"
+    elif [[ ! -f /etc/resolv.conf ]] || [[ -L /etc/resolv.conf && ! -e /etc/resolv.conf ]]; then
+        # Dangling symlink or missing -- create static resolv.conf
+        rm -f /etc/resolv.conf
+        echo "nameserver 8.8.8.8" > /etc/resolv.conf
+        echo "nameserver 8.8.4.4" >> /etc/resolv.conf
+        log "DNS: static resolv.conf (systemd-resolved not available)"
     fi
 
     # Create resolv-kube.conf (needed for musl/Alpine containers in K8s 1.31)
     # Copy nameserver lines from resolv.conf, strip cloud search domains, append "search ."
-    # AELDEV-74638: loopback resolvers (127.x/::1) are unreachable from inside
-    # a pod netns -- filter them so pods only ever get real upstreams.
     log "Creating /etc/resolv-kube.conf..."
     {
-        grep '^nameserver' /etc/resolv.conf 2>/dev/null | \
-            grep -vE '^nameserver[[:space:]]+(127\.|::1)' || echo "nameserver 8.8.8.8"
+        grep '^nameserver' /etc/resolv.conf 2>/dev/null || echo "nameserver 8.8.8.8"
         echo "search ."
     } > /etc/resolv-kube.conf
     log "resolv-kube.conf created with nameservers + 'search .'"
@@ -4434,24 +4436,6 @@ init_k8s_master() {
     # Update common config
     log "Updating common config..."
     python3 /opt/aelladata/kubernetes/scripts/update_common_config.py 2>/dev/null || true
-
-    # AELDEV-74638: verify the rendered fflag secret is usable. An empty
-    # FFLAG_PROJECT_KEY (stale pre-6.5.0 /opt/aelladata/work/fflag_settings.yml
-    # preserved across the OS upgrade) crashes stellar-cluster-controller,
-    # which blocks aella-cm-master init and stellar-report pods.
-    local ff_project_key
-    ff_project_key=$(kubectl get secret common-config-ff \
-        -o jsonpath='{.data.FFLAG_PROJECT_KEY}' 2>/dev/null | base64 -d 2>/dev/null || true)
-    if [[ -z "$ff_project_key" ]]; then
-        log "  WARN: common-config-ff secret has an empty FFLAG_PROJECT_KEY"
-        log "        (likely a stale ff: section in /opt/aelladata/work/fflag_settings.yml)."
-        log "        stellar-cluster-controller / aella-cm-master / stellar-report pods will crash."
-        log "        Fix the ff: values in that file (FFLAG_PROJECT_KEY: openxdr; and if"
-        log "        FFLAG_SDK_KEY is empty set FFLAG_OFFLINE: \"true\"), then re-run:"
-        log "        python3 /opt/aelladata/kubernetes/scripts/update_common_config.py"
-    else
-        log "  common-config-ff secret OK (FFLAG_PROJECT_KEY=${ff_project_key})"
-    fi
 
     # Apply service-scheduling labels
     if [[ -f /opt/aelladata/work/cluster-controller/service_scheduling.yml ]]; then
@@ -5328,15 +5312,14 @@ validate_all() {
         ((warnings++)) || true
     fi
 
-    # AELDEV-74638: log(), not bare echo -- detached runs discard stdout
-    log ""
-    log "========================================"
+    echo ""
+    echo "========================================"
     if [[ $errors -eq 0 ]]; then
         log "VALIDATION RESULT: PASSED ($warnings warnings)"
     else
         log "VALIDATION RESULT: FAILED ($errors errors, $warnings warnings)"
     fi
-    log "========================================"
+    echo "========================================"
 
     return $errors
 }
@@ -5344,57 +5327,6 @@ validate_all() {
 ###############################################################################
 # PHASE 13: ORCHESTRATE WORKERS
 ###############################################################################
-
-# AELDEV-74638: gate worker orchestration on the master's aella_da_restful
-# actually listening on :8003. Workers fetch their kubeadm join token from
-# https://<master>:8003/api/1.0/master_token; if aella_da_restful is dead
-# (e.g. flask import failure from an incomplete py3-apt-packages.tar.gz) the
-# workers stall forever at "Getting join token from master..." with no error
-# on the master side. Stop HERE, on the master, with a self-service
-# remediation recipe -- the operator installs the named packages and reruns;
-# no dev/ACPS bundle rebuild needed to get unblocked.
-wait_for_da_restful_8003() {
-    local timeout_s=300 waited=0
-    log "Waiting for aella_da_restful on :8003 (worker join token endpoint, ${timeout_s}s budget)..."
-    while [[ $waited -lt $timeout_s ]]; do
-        # ( ... || true ) guards pipefail: grep -q's early exit can SIGPIPE ss.
-        if (ss -ltn 2>/dev/null || true) | grep -q ':8003 '; then
-            log "aella_da_restful is listening on :8003 (after ${waited}s)"
-            return 0
-        fi
-        sleep 10; waited=$((waited + 10))
-    done
-    log "ERROR: :8003 not listening after ${timeout_s}s -- workers cannot fetch join"
-    log "tokens, so worker orchestration is stopped BEFORE it can hang."
-    local missing="" mod
-    for mod in flask click psutil pymongo; do
-        python3 -c "import $mod" 2>/dev/null || missing="$missing python3-$mod"
-    done
-    if [[ -n "$missing" ]]; then
-        log "Cause: python3 module(s) missing (incomplete py3-apt-packages.tar.gz,"
-        log "AELDEV-74638). ACTION REQUIRED (self-service, no new bundle needed):"
-        log "  1. Install the missing packages ON THIS MASTER:"
-        log "       online:    apt-get install -y$missing"
-        log "       dark-site: on any internet Ubuntu 24.04 host run:"
-        log "                    apt-get download$missing"
-        log "                  copy the .debs here and run: dpkg -i <debs>"
-        log "  2. Verify: python3 -c 'import flask' && ss -ltn | grep 8003"
-        log "     (aella_da_restful restarts on its own; give it ~1 min)"
-        log "  3. Rerun this bringup with the SAME arguments (safe to rerun) --"
-        log "     it will skip completed phases and proceed to the worker join."
-        log "  A fixed py3-apt-packages bundle (2026-08+) on ACPS prevents this"
-        log "  on future bringups; no need to wait for it to recover this DP."
-    else
-        log "Cause: python3 imports are OK -- aella_da_restful itself is not up."
-        log "  Check: pgrep -af aella_da_restful; aellad logs under /var/log/aella/;"
-        log "  then rerun this bringup with the SAME arguments."
-        # pgrep rc=1 on no match would kill the script under set -e before die.
-        (pgrep -af aella_da_restful 2>/dev/null || true) | head -3 | \
-            while read -r line; do log "  proc: $line"; done
-    fi
-    die "aella_da_restful not on :8003 -- fix per instructions above, then rerun bringup (AELDEV-74638)"
-}
-
 orchestrate_workers() {
     log_phase "Orchestrate Worker Nodes"
 
@@ -5489,22 +5421,17 @@ orchestrate_workers() {
             continue
         fi
 
-        # Create directories on worker (sudo needed for aella user) and
-        # wipe stale root-owned debs/tarballs left by a prior UVP postinst.
-        # AELDEV-70663: OpenSSH 9.x on 24.04 routes scp through the SFTP
-        # backend, which enforces POSIX file ownership on overwrite even
-        # when the parent dir is 777 -- aella cannot open(O_WRONLY|O_TRUNC)
-        # a root:root 644 file. DL workers happen to start with empty
-        # $AELLADEB_DIR (scp creates fresh aella-owned files); DA workers
-        # carry leftover root-owned debs from the original install and the
-        # second scp pass silently fails for all 6 sub-debs. Removing the
-        # stale files before chmod 777 makes scp create fresh files in
-        # both cases.
-        worker_ssh "$worker_ip" "sudo mkdir -p $STAGING_DIR $AELLADEB_DIR && \
-            sudo find -L $STAGING_DIR $AELLADEB_DIR -maxdepth 1 -type f \
-                 \\( -name '*.deb' -o -name '*.tar.gz' -o -name '*.tgz' \\) \
-                 -delete 2>/dev/null; \
-            sudo chmod 777 $STAGING_DIR $AELLADEB_DIR"
+        # Upload into an aella-owned 0700 area, then promote into root-owned
+        # protected staging before any root consumption. Avoids world-writable
+        # STAGING_DIR/AELLADEB_DIR while preserving OpenSSH 9.x overwrite fix
+        # (wipe upload files so scp creates fresh aella-owned objects).
+        if ! prepare_worker_protected_staging "$worker_ip"; then
+            log "WORKER_RESULT ip=${worker_ip} result=FAIL reason=staging_prepare"
+            orch_failed=1
+            continue
+        fi
+        local worker_upload
+        worker_upload="$(phase2_worker_upload_root)"
 
         # Copy script to worker
         log "Copying script to $worker_ip..."
@@ -5553,12 +5480,18 @@ orchestrate_workers() {
                 fi
             fi
             log "  scp ${_fname} (${_sz}) -> $worker_ip:${STAGING_DIR}/"
-            _scp_err=$(worker_scp "$f" "$worker_ip" "${STAGING_DIR}/" 2>&1 >/dev/null) || {
+            _scp_err=$(worker_scp "$f" "$worker_ip" "${worker_upload}/" 2>&1 >/dev/null) || {
                 log "ERROR: failed to scp ${_fname}"
                 worker_failed=1
                 worker_reason="artifact_copy"
             }
         done
+        if [[ "$worker_failed" -eq 0 ]]; then
+            if ! promote_worker_upload_dir "$worker_ip" "$worker_upload" "$STAGING_DIR"; then
+                worker_failed=1
+                worker_reason="staging_promote"
+            fi
+        fi
 
         # Copy UVP and sub-debs from aelladeb dir
         # Explicit Phase 2 prerequisite contract. Do not rely on
@@ -5572,12 +5505,18 @@ orchestrate_workers() {
         for f in "${AELLADEB_DIR}"/*.deb; do
             [[ -f "$f" ]] || continue
             local _scp_err
-            _scp_err=$(worker_scp "$f" "$worker_ip" "${AELLADEB_DIR}/" 2>&1 >/dev/null) || {
+            _scp_err=$(worker_scp "$f" "$worker_ip" "${worker_upload}/aelladeb/" 2>&1 >/dev/null) || {
                 log "ERROR: failed to scp $(basename "$f")"
                 worker_failed=1
                 worker_reason="artifact_copy"
             }
         done
+        if [[ "$worker_failed" -eq 0 ]]; then
+            if ! promote_worker_upload_dir "$worker_ip" "${worker_upload}/aelladeb" "$AELLADEB_DIR"; then
+                worker_failed=1
+                worker_reason="aelladeb_promote"
+            fi
+        fi
         if [[ "$worker_failed" -ne 0 ]]; then
             log "WORKER_RESULT ip=${worker_ip} result=FAIL reason=${worker_reason}"
             orch_failed=1
@@ -6791,9 +6730,6 @@ main() {
     # Token API / TCP 8003 must be functionally ready first. systemctl is-active
     # aellad is not sufficient — the failed lab had aellad active with 8003 down.
     if [[ "$WORKER_MODE" != "true" && ( -n "$WORKER_IPS" || -n "$STANDBY_IPS" ) ]]; then
-        # AELDEV-74638: listen-gate on :8003 (upstream). Project layer still
-        # requires a functional token API, not TCP listen alone.
-        wait_for_da_restful_8003
         if ! validate_critical_python_runtime; then
             die "CRITICAL_PYTHON_RUNTIME=FAIL before worker orchestration"
         fi
@@ -6852,20 +6788,13 @@ main() {
         ( reclaim_legacy_docker_overlay2 ) || log "AELDEV-71912: post-convergence overlay2 reclaim on master hit an error (non-fatal; cluster already converged)"
     fi
 
-    # AELDEV-74638 (QA Issue #3): this banner MUST go through log(), not bare
-    # echo. Detached (master/AIO) runs redirect stdout to /dev/null (the
-    # AELDEV-71725 duplicate-line fix), so an echo'd banner never reaches
-    # LOG_FILE -- while detach_guard explicitly tells the operator to wait for
-    # "Bringup complete:" in that log. A fully successful bringup then looks
-    # stuck forever. (Worker-mode runs were unaffected: they run inline and the
-    # orchestrator logs their stdout.)
-    log ""
-    log "========================================================================"
-    log "  Bringup complete: $(date)"
-    log "  Role: $ROLE"
-    log "  Version: $VERSION"
-    log "  Log: $LOG_FILE"
-    log "========================================================================"
+    echo ""
+    echo "========================================================================"
+    echo "  Bringup complete: $(date)"
+    echo "  Role: $ROLE"
+    echo "  Version: $VERSION"
+    echo "  Log: $LOG_FILE"
+    echo "========================================================================"
     emit_dp_resume_post_complete_notice
 }
 

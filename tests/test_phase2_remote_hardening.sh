@@ -49,7 +49,7 @@ done
 # The invocation (not the helper definition) must precede the first remote mutation.
 for gen in "$PREV_GEN" "$F1_GEN"; do
   gate="$(grep -n 'if ! validate_remote_role_identity "\$worker_ip"' "$gen" | head -1 | cut -d: -f1 || true)"
-  mutate="$(grep -n 'sudo mkdir -p \$STAGING_DIR \$AELLADEB_DIR' "$gen" | head -1 | cut -d: -f1 || true)"
+  mutate="$(grep -n 'prepare_worker_protected_staging "\$worker_ip"' "$gen" | head -1 | cut -d: -f1 || true)"
   if [[ -n "$gate" && -n "$mutate" && "$gate" -lt "$mutate" ]]; then
     pass "role identity precedes mutation: $(basename "$gen")"
   else

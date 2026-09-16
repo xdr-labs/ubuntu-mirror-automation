@@ -119,7 +119,8 @@ echo "$OUT" | grep -q 'PHASE2_PREREQ_STAGE=NOT_REQUIRED' \
 # Worker copy A3: stale tar on master is not copied when state is REQUIRED=NO
 MASTER="${WORKDIR}/master-staging"
 WORKER="${WORKDIR}/worker-staging"
-mkdir -p "${MASTER}/lib" "$WORKER"
+UPLOAD="${WORKDIR}/worker-upload"
+mkdir -p "${MASTER}/lib" "$WORKER" "$UPLOAD"
 printf 'stale-tar\n' >"${MASTER}/phase2-ubuntu-prerequisites.tar.gz"
 printf 'deadbeef  phase2-ubuntu-prerequisites.tar.gz\n' \
   >"${MASTER}/phase2-ubuntu-prerequisites.tar.gz.sha256"
@@ -136,9 +137,35 @@ log() { printf '%s\n' "$*"; }
 worker_ssh() {
   shift
   local cmd="$*"
-  if [[ "$cmd" == *"mkdir"* ]]; then
+  if [[ "$cmd" == *"install -o root"* ]] \
+    || [[ "$cmd" == *"bash -c"* && "$cmd" == *"upload="* ]]; then
+    # Simulate promote: move upload files into protected worker staging.
+    local src dest
     mkdir -p "$WORKER" "${WORKER}/lib"
-    chmod 777 "$WORKER" "${WORKER}/lib" 2>/dev/null || true
+    shopt -s nullglob
+    for src in "${UPLOAD}"/*; do
+      [[ -f "$src" ]] || continue
+      [[ ! -L "$src" ]] || return 1
+      dest="${WORKER}/$(basename "$src")"
+      cp -a "$src" "$dest"
+      chmod 0644 "$dest"
+      rm -f "$src"
+    done
+    for src in "${UPLOAD}/lib"/*; do
+      [[ -f "$src" ]] || continue
+      [[ ! -L "$src" ]] || return 1
+      dest="${WORKER}/lib/$(basename "$src")"
+      cp -a "$src" "$dest"
+      chmod 0644 "$dest"
+      rm -f "$src"
+    done
+    shopt -u nullglob
+    return 0
+  fi
+  if [[ "$cmd" == *"mkdir -p"* && "$cmd" != *"bash -c"* ]]; then
+    mkdir -p "$WORKER" "${WORKER}/lib" "$UPLOAD" "${UPLOAD}/lib" "${UPLOAD}/aelladeb"
+    chmod 0755 "$WORKER" "${WORKER}/lib"
+    chmod 0700 "$UPLOAD" "${UPLOAD}/lib" "${UPLOAD}/aelladeb"
     return 0
   fi
   if [[ "$cmd" == *"rm -f"* ]]; then
@@ -147,7 +174,14 @@ worker_ssh() {
       "${WORKER}/phase2-ubuntu-prerequisites.tar.gz" \
       "${WORKER}/phase2-ubuntu-prerequisites.tar.gz.sha256" \
       "${WORKER}/phase2-ubuntu-prerequisites.manifest.json" \
-      "${WORKER}/lib/dp-phase2-ubuntu-prerequisites.sh"
+      "${WORKER}/phase2-ubuntu-prerequisites.identity" \
+      "${WORKER}/lib/dp-phase2-ubuntu-prerequisites.sh" \
+      "${UPLOAD}/phase2-ubuntu-prerequisites.state" \
+      "${UPLOAD}/phase2-ubuntu-prerequisites.tar.gz" \
+      "${UPLOAD}/phase2-ubuntu-prerequisites.tar.gz.sha256" \
+      "${UPLOAD}/phase2-ubuntu-prerequisites.manifest.json" \
+      "${UPLOAD}/phase2-ubuntu-prerequisites.identity" \
+      "${UPLOAD}/lib/dp-phase2-ubuntu-prerequisites.sh"
     return 0
   fi
   return 0
@@ -155,17 +189,20 @@ worker_ssh() {
 worker_scp() {
   local src="$1" dest="$3"
   printf '%s\n' "$(basename "$src")" >>"$SCP_LOG"
-  if [[ "$dest" == */lib/dp-phase2-ubuntu-prerequisites.sh ]]; then
-    mkdir -p "${WORKER}/lib"
-    cp -a "$src" "${WORKER}/lib/dp-phase2-ubuntu-prerequisites.sh"
+  if [[ "$dest" == */lib/dp-phase2-ubuntu-prerequisites.sh ]] \
+    || [[ "$dest" == */lib/* ]]; then
+    mkdir -p "${UPLOAD}/lib"
+    cp -a "$src" "${UPLOAD}/lib/$(basename "$src")"
     return 0
   fi
-  mkdir -p "$WORKER"
-  cp -a "$src" "${WORKER}/$(basename "$src")"
+  mkdir -p "$UPLOAD"
+  cp -a "$src" "${UPLOAD}/$(basename "$src")"
 }
 # shellcheck source=/dev/null
 source "$FRAGMENT"
 STAGING_DIR="$MASTER"
+PHASE2_WORKER_UPLOAD_ROOT="$UPLOAD"
+export PHASE2_WORKER_UPLOAD_ROOT
 set +e
 COPY_OUT="$(copy_phase2_prereq_contract_to_worker 192.0.2.10; echo RC=$?)"
 set -e
@@ -176,6 +213,8 @@ echo "$COPY_OUT" | grep -q 'PHASE2_PREREQ_WORKER_COPY=NOT_REQUIRED' \
   && [[ ! -f "${WORKER}/phase2-ubuntu-prerequisites.manifest.json" ]] \
   && ! grep -qx 'phase2-ubuntu-prerequisites.tar.gz' "$SCP_LOG" \
   && grep -qx 'phase2-ubuntu-prerequisites.state' "$SCP_LOG" \
+  && [[ "$(stat -c '%a' "$WORKER")" != "777" ]] \
+  && [[ "$(stat -c '%a' "$UPLOAD")" == "700" ]] \
   && pass "A3 worker copy does not propagate stale tar" \
   || fail "A3 copy: ${COPY_OUT} scp=$(cat "$SCP_LOG") worker=$(ls -1 "$WORKER")"
 
@@ -238,13 +277,17 @@ echo "$OUT" | grep -q 'PHASE2_PREREQ_INSTALL=PASS' \
 # A4 worker copy of YES contract
 MASTER_YES="${WORKDIR}/master-yes"
 WORKER_YES="${WORKDIR}/worker-yes"
-mkdir -p "${MASTER_YES}/lib" "$WORKER_YES"
+UPLOAD_YES="${WORKDIR}/upload-yes"
+mkdir -p "${MASTER_YES}/lib" "$WORKER_YES" "$UPLOAD_YES"
 cp -a "${A4}/phase2-ubuntu-prerequisites."* "$MASTER_YES/"
 cp -a "${A4_TAR}.sha256" "$MASTER_YES/"
 printf '# prereq lib fixture\n' >"${MASTER_YES}/lib/dp-phase2-ubuntu-prerequisites.sh"
 : >"$SCP_LOG"
 STAGING_DIR="$MASTER_YES"
 WORKER="$WORKER_YES"
+UPLOAD="$UPLOAD_YES"
+PHASE2_WORKER_UPLOAD_ROOT="$UPLOAD_YES"
+export PHASE2_WORKER_UPLOAD_ROOT
 set +e
 COPY_OUT="$(copy_phase2_prereq_contract_to_worker 192.0.2.11; echo RC=$?)"
 set -e
@@ -255,8 +298,18 @@ echo "$COPY_OUT" | grep -q 'PHASE2_PREREQ_WORKER_COPY=PASS' \
   && [[ -f "${WORKER_YES}/phase2-ubuntu-prerequisites.tar.gz.sha256" ]] \
   && [[ -f "${WORKER_YES}/phase2-ubuntu-prerequisites.manifest.json" ]] \
   && [[ -f "${WORKER_YES}/lib/dp-phase2-ubuntu-prerequisites.sh" ]] \
+  && [[ "$(stat -c '%a' "$WORKER_YES")" != "777" ]] \
   && pass "A4 worker receives state+artifact+sidecar+manifest+lib" \
   || fail "A4 copy: ${COPY_OUT} files=$(ls -1 "$WORKER_YES" 2>/dev/null || true)"
+
+# A4b. Symlink in upload area fails closed at promote
+ln -sf /etc/passwd "${UPLOAD_YES}/evil-link"
+set +e
+PROMOTE_OUT="$(promote_worker_upload_dir 192.0.2.11 "$UPLOAD_YES" "$WORKER_YES"; echo RC=$?)"
+set -e
+echo "$PROMOTE_OUT" | grep -q 'RC=1' \
+  && pass "A4b symlink upload promote FAIL CLOSED" \
+  || fail "A4b symlink: ${PROMOTE_OUT}"
 
 # A5. REQUIRED=YES artifact exists but state missing => FAIL
 set +e
@@ -325,6 +378,9 @@ GEN="${WORKDIR}/generated.sh"
 if python3 "$PATCHER" --upstream "$FIXTURE" --output "$GEN" >/dev/null; then
   grep -q 'copy_phase2_prereq_contract_to_worker' "$GEN" \
     && grep -q 'phase2-ubuntu-prerequisites.state' "$GEN" \
+    && grep -q 'prepare_worker_protected_staging' "$GEN" \
+    && grep -q 'promote_worker_upload_dir' "$GEN" \
+    && ! grep -qE 'chmod 777|chmod 0777' "$GEN" \
     && pass "generated bringup copies explicit prereq contract" \
     || fail "generated bringup missing explicit prereq contract copy"
   bash -n "$GEN" && pass "bash -n generated bringup" || fail "bash -n generated bringup"

@@ -329,7 +329,109 @@ clean_phase2_prereq_contract_files() {
         "${dir}/phase2-ubuntu-prerequisites.state" \
         "${dir}/phase2-ubuntu-prerequisites.tar.gz" \
         "${dir}/phase2-ubuntu-prerequisites.tar.gz.sha256" \
-        "${dir}/phase2-ubuntu-prerequisites.manifest.json"
+        "${dir}/phase2-ubuntu-prerequisites.manifest.json" \
+        "${dir}/phase2-ubuntu-prerequisites.identity"
+}
+
+phase2_worker_upload_root() {
+    printf '%s\n' "${PHASE2_WORKER_UPLOAD_ROOT:-/home/aella/.phase2-worker-upload}"
+}
+
+# Ensure upload + protected dirs exist with correct ownership. Does not wipe
+# already-promoted staging artifacts (prereq contract copy runs after them).
+ensure_worker_protected_staging_dirs() {
+    local worker_ip="$1"
+    local staging="${STAGING_DIR:-/opt/aelladata/aelladeb_py3}"
+    local aelladeb="${AELLADEB_DIR:-/opt/aelladata/aelladeb}"
+    local upload
+    upload="$(phase2_worker_upload_root)"
+    if ! declare -F worker_ssh >/dev/null 2>&1; then
+        log "ERROR: WORKER_STAGING_PREPARE=FAIL reason=ssh_helpers_missing"
+        return 1
+    fi
+    if ! worker_ssh "$worker_ip" "sudo mkdir -p \
+'${staging}' '${staging}/lib' '${aelladeb}' \
+'${upload}' '${upload}/lib' '${upload}/aelladeb' && \
+sudo chown root:root '${staging}' '${staging}/lib' '${aelladeb}' && \
+sudo chmod 0755 '${staging}' '${staging}/lib' '${aelladeb}' && \
+sudo chown aella:aella '${upload}' '${upload}/lib' '${upload}/aelladeb' && \
+sudo chmod 0700 '${upload}' '${upload}/lib' '${upload}/aelladeb'"; then
+        log "ERROR: WORKER_STAGING_PREPARE=FAIL reason=remote_mkdir"
+        return 1
+    fi
+    return 0
+}
+
+# Prepare root-owned protected staging and an aella-owned (0700) upload area.
+# SCP lands in the upload area; root promotes into protected dirs before use.
+# Wipes upload files and stale root-owned deb/tar.gz so OpenSSH 9.x SFTP can
+# create fresh aella-owned uploads. Leaves *.tar for skip-by-SHA reuse.
+prepare_worker_protected_staging() {
+    local worker_ip="$1"
+    local staging="${STAGING_DIR:-/opt/aelladata/aelladeb_py3}"
+    local aelladeb="${AELLADEB_DIR:-/opt/aelladata/aelladeb}"
+    local upload
+    upload="$(phase2_worker_upload_root)"
+    if ! ensure_worker_protected_staging_dirs "$worker_ip"; then
+        return 1
+    fi
+    if ! worker_ssh "$worker_ip" "\
+sudo find -L '${upload}' '${upload}/lib' '${upload}/aelladeb' -maxdepth 1 -type f -delete 2>/dev/null; \
+sudo find -L '${staging}' '${aelladeb}' -maxdepth 1 -type f \
+  \\( -name '*.deb' -o -name '*.tar.gz' -o -name '*.tgz' \\) -delete 2>/dev/null; \
+true"; then
+        log "ERROR: WORKER_STAGING_PREPARE=FAIL reason=remote_clean"
+        return 1
+    fi
+    log "WORKER_STAGING_PREPARE=PASS upload=${upload}"
+    return 0
+}
+
+# Promote regular files from an aella upload dir into a root-owned dest.
+# Rejects symlinks. Root consumes only the promoted copy.
+promote_worker_upload_dir() {
+    local worker_ip="$1"
+    local upload_dir="$2"
+    local dest_dir="$3"
+    local mode="${4:-0644}"
+    if ! declare -F worker_ssh >/dev/null 2>&1; then
+        log "ERROR: WORKER_STAGING_PROMOTE=FAIL reason=ssh_helpers_missing"
+        return 1
+    fi
+    # Paths are single-quoted into the remote command; they must not contain quotes.
+    case "${upload_dir}${dest_dir}${mode}" in
+        *\'*) log "ERROR: WORKER_STAGING_PROMOTE=FAIL reason=unsafe_path"; return 1 ;;
+    esac
+    if ! worker_ssh "$worker_ip" "sudo bash -c '
+set -euo pipefail
+upload='\''${upload_dir}'\''
+dest='\''${dest_dir}'\''
+mode='\''${mode}'\''
+mkdir -p \"\$dest\"
+shopt -s nullglob
+for src in \"\$upload\"/*; do
+  [[ -e \"\$src\" ]] || continue
+  if [[ -L \"\$src\" ]]; then
+    echo \"WORKER_STAGING_PROMOTE=FAIL reason=symlink\" >&2
+    exit 1
+  fi
+  [[ -f \"\$src\" ]] || continue
+  base=\$(basename \"\$src\")
+  case \"\$base\" in
+    \"\"|.*|*/*)
+      echo \"WORKER_STAGING_PROMOTE=FAIL reason=unsafe_name\" >&2
+      exit 1
+      ;;
+  esac
+  install -o root -g root -m \"\$mode\" \"\$src\" \"\${dest}/\${base}\"
+  rm -f \"\$src\"
+done
+'"; then
+        log "ERROR: WORKER_STAGING_PROMOTE=FAIL upload=${upload_dir} dest=${dest_dir}"
+        return 1
+    fi
+    log "WORKER_STAGING_PROMOTE=PASS upload=${upload_dir} dest=${dest_dir}"
+    return 0
 }
 
 # Copy the current prerequisite contract to one worker. MUST run after the
@@ -343,10 +445,16 @@ copy_phase2_prereq_contract_to_worker() {
     local sidecar="${artifact}.sha256"
     local manifest="${staging}/phase2-ubuntu-prerequisites.manifest.json"
     local lib_src="" required=""
-    local remote_clean remote_mkdir
+    local upload remote_clean
+    upload="$(phase2_worker_upload_root)"
 
     if ! declare -F worker_ssh >/dev/null 2>&1 || ! declare -F worker_scp >/dev/null 2>&1; then
         log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=ssh_helpers_missing"
+        return 1
+    fi
+
+    if ! ensure_worker_protected_staging_dirs "$worker_ip"; then
+        log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=worker_prepare"
         return 1
     fi
 
@@ -355,12 +463,14 @@ copy_phase2_prereq_contract_to_worker() {
 '${staging}/phase2-ubuntu-prerequisites.tar.gz' \
 '${staging}/phase2-ubuntu-prerequisites.tar.gz.sha256' \
 '${staging}/phase2-ubuntu-prerequisites.manifest.json' \
-'${staging}/lib/dp-phase2-ubuntu-prerequisites.sh'"
-    remote_mkdir="sudo mkdir -p '${staging}' '${staging}/lib' && sudo chmod 777 '${staging}' '${staging}/lib'"
-    if ! worker_ssh "$worker_ip" "$remote_mkdir"; then
-        log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=worker_mkdir"
-        return 1
-    fi
+'${staging}/phase2-ubuntu-prerequisites.identity' \
+'${staging}/lib/dp-phase2-ubuntu-prerequisites.sh' \
+'${upload}/phase2-ubuntu-prerequisites.state' \
+'${upload}/phase2-ubuntu-prerequisites.tar.gz' \
+'${upload}/phase2-ubuntu-prerequisites.tar.gz.sha256' \
+'${upload}/phase2-ubuntu-prerequisites.manifest.json' \
+'${upload}/phase2-ubuntu-prerequisites.identity' \
+'${upload}/lib/dp-phase2-ubuntu-prerequisites.sh'"
     if ! worker_ssh "$worker_ip" "$remote_clean"; then
         log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=worker_clean"
         return 1
@@ -370,7 +480,7 @@ copy_phase2_prereq_contract_to_worker() {
         log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=state_missing"
         return 1
     fi
-    if ! worker_scp "$state" "$worker_ip" "${staging}/"; then
+    if ! worker_scp "$state" "$worker_ip" "${upload}/"; then
         log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=state_copy"
         return 1
     fi
@@ -379,13 +489,21 @@ copy_phase2_prereq_contract_to_worker() {
         log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=lib_missing"
         return 1
     fi
-    if ! worker_scp "$lib_src" "$worker_ip" "${staging}/lib/dp-phase2-ubuntu-prerequisites.sh"; then
+    if ! worker_scp "$lib_src" "$worker_ip" "${upload}/lib/dp-phase2-ubuntu-prerequisites.sh"; then
         log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=lib_copy"
         return 1
     fi
 
     required="$(awk -F= '$1=="PHASE2_PREREQ_REQUIRED"{print $2; exit}' "$state")"
     if [[ "$required" == "NO" ]]; then
+        if ! promote_worker_upload_dir "$worker_ip" "$upload" "$staging"; then
+            log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=promote_state"
+            return 1
+        fi
+        if ! promote_worker_upload_dir "$worker_ip" "${upload}/lib" "${staging}/lib" 0644; then
+            log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=promote_lib"
+            return 1
+        fi
         log "PHASE2_PREREQ_WORKER_COPY=NOT_REQUIRED"
         return 0
     fi
@@ -397,16 +515,24 @@ copy_phase2_prereq_contract_to_worker() {
         log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=required_file_missing"
         return 1
     fi
-    if ! worker_scp "$artifact" "$worker_ip" "${staging}/"; then
+    if ! worker_scp "$artifact" "$worker_ip" "${upload}/"; then
         log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=artifact_copy"
         return 1
     fi
-    if ! worker_scp "$sidecar" "$worker_ip" "${staging}/"; then
+    if ! worker_scp "$sidecar" "$worker_ip" "${upload}/"; then
         log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=sidecar_copy"
         return 1
     fi
-    if ! worker_scp "$manifest" "$worker_ip" "${staging}/"; then
+    if ! worker_scp "$manifest" "$worker_ip" "${upload}/"; then
         log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=manifest_copy"
+        return 1
+    fi
+    if ! promote_worker_upload_dir "$worker_ip" "$upload" "$staging"; then
+        log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=promote_artifacts"
+        return 1
+    fi
+    if ! promote_worker_upload_dir "$worker_ip" "${upload}/lib" "${staging}/lib" 0644; then
+        log "ERROR: PHASE2_PREREQ_WORKER_COPY=FAIL reason=promote_lib"
         return 1
     fi
     log "PHASE2_PREREQ_WORKER_COPY=PASS"

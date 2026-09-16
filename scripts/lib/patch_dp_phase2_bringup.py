@@ -59,6 +59,8 @@ RESULT_MARKERS = (
     'WORKER_RESULT',
     'WORKER_ORCHESTRATION',
     'copy_phase2_prereq_contract_to_worker',
+    'prepare_worker_protected_staging',
+    'promote_worker_upload_dir',
     'normalize_remote_orchestration_nodes',
     'has_remote_orchestration_nodes',
     '--worker-ips/--standby requires --worker-password-file',
@@ -1177,6 +1179,101 @@ def apply_orchestrate_workers(text):
     return text
 
 
+def apply_worker_protected_staging(text):
+    """Replace world-writable worker staging with upload + root promote."""
+    old_mkdir_production = (
+        '        # Create directories on worker (sudo needed for aella user) and\n'
+        '        # wipe stale root-owned debs/tarballs left by a prior UVP postinst.\n'
+        '        # AELDEV-70663: OpenSSH 9.x on 24.04 routes scp through the SFTP\n'
+        '        # backend, which enforces POSIX file ownership on overwrite even\n'
+        '        # when the parent dir is 777 -- aella cannot open(O_WRONLY|O_TRUNC)\n'
+        '        # a root:root 644 file. DL workers happen to start with empty\n'
+        '        # $AELLADEB_DIR (scp creates fresh aella-owned files); DA workers\n'
+        '        # carry leftover root-owned debs from the original install and the\n'
+        '        # second scp pass silently fails for all 6 sub-debs. Removing the\n'
+        '        # stale files before chmod 777 makes scp create fresh files in\n'
+        '        # both cases.\n'
+        '        worker_ssh "$worker_ip" "sudo mkdir -p $STAGING_DIR $AELLADEB_DIR && \\\n'
+        '            sudo find -L $STAGING_DIR $AELLADEB_DIR -maxdepth 1 -type f \\\n'
+        "                 \\\\( -name '*.deb' -o -name '*.tar.gz' -o -name '*.tgz' \\\\) \\\n"
+        '                 -delete 2>/dev/null; \\\n'
+        '            sudo chmod 777 $STAGING_DIR $AELLADEB_DIR"\n'
+    )
+    old_mkdir_synthetic = (
+        '        # Create directories on worker (sudo needed for aella user) and\n'
+        '        # prepare staging paths before artifact copy.\n'
+        '        worker_ssh "$worker_ip" "sudo mkdir -p $STAGING_DIR $AELLADEB_DIR"\n'
+    )
+    new_mkdir = (
+        '        # Upload into an aella-owned 0700 area, then promote into root-owned\n'
+        '        # protected staging before any root consumption. Avoids world-writable\n'
+        '        # STAGING_DIR/AELLADEB_DIR while preserving OpenSSH 9.x overwrite fix\n'
+        '        # (wipe upload files so scp creates fresh aella-owned objects).\n'
+        '        if ! prepare_worker_protected_staging "$worker_ip"; then\n'
+        '            log "WORKER_RESULT ip=${worker_ip} result=FAIL reason=staging_prepare"\n'
+        '            orch_failed=1\n'
+        '            continue\n'
+        '        fi\n'
+        '        local worker_upload\n'
+        '        worker_upload="$(phase2_worker_upload_root)"\n'
+    )
+    text = replace_exactly_one_mapping(
+        text,
+        (
+            (old_mkdir_production, new_mkdir),
+            (old_mkdir_synthetic, new_mkdir),
+        ),
+        'orchestrate_workers_protected_staging_prepare',
+    )
+    text = replace_exactly_once(
+        text,
+        '            _scp_err=$(worker_scp "$f" "$worker_ip" "${STAGING_DIR}/" 2>&1 >/dev/null) || {\n'
+        '                log "ERROR: failed to scp ${_fname}"\n'
+        '                worker_failed=1\n'
+        '                worker_reason="artifact_copy"\n'
+        '            }\n'
+        '        done\n',
+        '            _scp_err=$(worker_scp "$f" "$worker_ip" "${worker_upload}/" 2>&1 >/dev/null) || {\n'
+        '                log "ERROR: failed to scp ${_fname}"\n'
+        '                worker_failed=1\n'
+        '                worker_reason="artifact_copy"\n'
+        '            }\n'
+        '        done\n'
+        '        if [[ "$worker_failed" -eq 0 ]]; then\n'
+        '            if ! promote_worker_upload_dir "$worker_ip" "$worker_upload" "$STAGING_DIR"; then\n'
+        '                worker_failed=1\n'
+        '                worker_reason="staging_promote"\n'
+        '            fi\n'
+        '        fi\n',
+        'orchestrate_workers_staging_upload_promote',
+    )
+    text = replace_exactly_once(
+        text,
+        '            _scp_err=$(worker_scp "$f" "$worker_ip" "${AELLADEB_DIR}/" 2>&1 >/dev/null) || {\n'
+        '                log "ERROR: failed to scp $(basename "$f")"\n'
+        '                worker_failed=1\n'
+        '                worker_reason="artifact_copy"\n'
+        '            }\n'
+        '        done\n'
+        '        if [[ "$worker_failed" -ne 0 ]]; then\n',
+        '            _scp_err=$(worker_scp "$f" "$worker_ip" "${worker_upload}/aelladeb/" 2>&1 >/dev/null) || {\n'
+        '                log "ERROR: failed to scp $(basename "$f")"\n'
+        '                worker_failed=1\n'
+        '                worker_reason="artifact_copy"\n'
+        '            }\n'
+        '        done\n'
+        '        if [[ "$worker_failed" -eq 0 ]]; then\n'
+        '            if ! promote_worker_upload_dir "$worker_ip" "${worker_upload}/aelladeb" "$AELLADEB_DIR"; then\n'
+        '                worker_failed=1\n'
+        '                worker_reason="aelladeb_promote"\n'
+        '            fi\n'
+        '        fi\n'
+        '        if [[ "$worker_failed" -ne 0 ]]; then\n',
+        'orchestrate_workers_aelladeb_upload_promote',
+    )
+    return text
+
+
 def apply_join_k8s_cluster(text):
     curl_prev = (
         '        local token_response\n'
@@ -1530,6 +1627,7 @@ TRANSFORMS = (
     ('install_python3', apply_install_python3_gates),
     ('overlay2_password', apply_overlay2_worker_password),
     ('orchestrate_workers', apply_orchestrate_workers),
+    ('worker_protected_staging', apply_worker_protected_staging),
     ('esdata_probe_ssh', apply_esdata_probe_ssh),
     ('join_k8s_cluster', apply_join_k8s_cluster),
     ('main_gates', apply_main_orchestration_gates),
