@@ -353,7 +353,9 @@ dp_offline_category_c_fixture_vars() {
 # Resolve TEST_ROOT only under hermetic fixtures.
 dp_offline_resolve_test_root() {
   if dp_offline_hermetic_fixtures_enabled; then
-    printf '%s' "${DP_OFFLINE_TEST_ROOT:-}"
+    # Hop fixtures historically export STELLAR_OFFLINE_TEST_ROOT; accept that
+    # alias alongside DP_OFFLINE_TEST_ROOT so GRUB/LXD paths see TEST_ROOT.
+    printf '%s' "${STELLAR_OFFLINE_TEST_ROOT:-${DP_OFFLINE_TEST_ROOT:-${TEST_ROOT:-}}}"
   else
     printf '%s' ""
   fi
@@ -7918,7 +7920,9 @@ dp_offline_category_c_fixture_vars() {
 # Resolve TEST_ROOT only under hermetic fixtures.
 dp_offline_resolve_test_root() {
   if dp_offline_hermetic_fixtures_enabled; then
-    printf '%s' "${DP_OFFLINE_TEST_ROOT:-}"
+    # Hop fixtures historically export STELLAR_OFFLINE_TEST_ROOT; accept that
+    # alias alongside DP_OFFLINE_TEST_ROOT so GRUB/LXD paths see TEST_ROOT.
+    printf '%s' "${STELLAR_OFFLINE_TEST_ROOT:-${DP_OFFLINE_TEST_ROOT:-${TEST_ROOT:-}}}"
   else
     printf '%s' ""
   fi
