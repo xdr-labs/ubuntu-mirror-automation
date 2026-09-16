@@ -858,12 +858,32 @@ def build_plan(discovery_root, seed_root, profile_name='offline-upgrade-selectiv
             if utype in ('release_upgrader_tarball', 'release_upgrader_gpg') or (
                 frow.get('file_type') == 'release_upgrader'
             ):
+                sha_l = (frow.get('sha256') or '').lower()
+                seed_path = ''
+                reusable = False
+                path = urlparse(url).path if url else ''
+                idx = path.find('/dists/')
+                if idx >= 0 and seed_root:
+                    rel = path[idx + 1:]  # dists/<suite>/...
+                    seed_path = seed_path_for_rel(seed_root, rel)
+                    reusable = verify_seed_file(
+                        seed_path, sha_l, size_bytes,
+                        verify_checksum=verify_seed_checksums,
+                    )
+                if reusable:
+                    acquisition = 'existing_full_mirror'
+                elif url:
+                    acquisition = 'downloaded'
+                else:
+                    acquisition = 'unresolved'
                 upgrader_files.append(OrderedDict([
                     ('hop', hop),
                     ('filename', frow.get('filename') or ''),
                     ('url', url),
-                    ('sha256', (frow.get('sha256') or '').lower()),
+                    ('sha256', sha_l),
                     ('size_bytes', size_bytes),
+                    ('acquisition_source', acquisition),
+                    ('seed_local_path', seed_path if reusable else ''),
                 ]))
 
         for urow in hop_data['urls']:

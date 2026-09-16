@@ -2035,59 +2035,81 @@ def materialize(plan_path, selective_root, allow_download=True, sign=True,
         dest_dir = os.path.join(shared, 'release-upgraders', dist)
         ensure_dir(dest_dir)
         dst = os.path.join(dest_dir, name)
-        if allow_download and url:
-            up_sha = (up.get('sha256') or '').lower() or None
-            up_size = up.get('size_bytes')
-            try:
-                up_size = int(up_size) if up_size not in (None, '') else None
-            except (TypeError, ValueError):
-                up_size = None
-            # Executable upgrade artifacts require deterministic identity.
-            if not up_sha:
-                raise RuntimeError(
-                    'release upgrader missing sha256: %s' % name
-                )
-            if up_sha or up_size is not None:
-                if destination_matches(dst, up_sha, up_size):
-                    stats['exists'] = stats.get('exists', 0) + 1
-                    continue
-            elif os.path.isfile(dst):
+        up_sha = (up.get('sha256') or '').lower() or None
+        up_size = up.get('size_bytes')
+        try:
+            up_size = int(up_size) if up_size not in (None, '') else None
+        except (TypeError, ValueError):
+            up_size = None
+        # Executable upgrade artifacts require deterministic identity.
+        if not up_sha:
+            raise RuntimeError(
+                'release upgrader missing sha256: %s' % name
+            )
+        if up_sha or up_size is not None:
+            if destination_matches(dst, up_sha, up_size):
                 stats['exists'] = stats.get('exists', 0) + 1
                 continue
-            entry_ctx = OrderedDict([
-                ('plan_entry_index', None),
-                ('hop', up_hop),
-                ('package', name),
-                ('version', ''),
-                ('architecture', ''),
-                ('expected_sha256', up_sha or ''),
-                ('expected_size_bytes', up_size if up_size is not None else ''),
-                ('original_url', url),
-                ('normalized_url', normalize_url(url)),
-                ('destination_path', dst),
-            ])
-            try:
-                method = acquire_file(
-                    '', dst, allow_download_url=url,
-                    expected_sha256=up_sha, expected_size=up_size,
-                    entry_context=entry_ctx,
+        elif os.path.isfile(dst):
+            stats['exists'] = stats.get('exists', 0) + 1
+            continue
+
+        # Prefer plan seed path, then reuse-root lookup (offline / --no-download).
+        src = up.get('seed_local_path') or ''
+        if not src or not os.path.isfile(src):
+            rel = ''
+            path = urlparse_path(url)
+            idx = path.find('/dists/')
+            if idx >= 0:
+                rel = path[idx + 1:]
+            src = ''
+            if rel:
+                src = resolve_verified_reuse_source(
+                    selective_root, '', rel,
+                    expected_sha256=up_sha,
+                    expected_size=up_size,
+                    extra_reuse_roots=extra_reuse_roots,
                 )
-            except SelectiveDownloadError as err:
-                merged = OrderedDict(entry_ctx)
-                merged.update(err.context or {})
-                err.context = merged
-                retries = int(merged.get('transient_retry_count') or 0)
-                stats['transient_retry_count'] = (
-                    int(stats.get('transient_retry_count') or 0) + retries
-                )
-                in_progress['stats'] = stats
-                write_json(receipt_path, in_progress)
-                write_failed_downloads(
-                    selective_root, err, succeeded,
-                    max(total_entries - succeeded, 0),
-                )
-                raise
-            stats[method] = stats.get(method, 0) + 1
+        download_url = url if allow_download else None
+        if not src and not download_url:
+            raise RuntimeError(
+                'release upgrader missing local seed and download disabled: %s'
+                % name
+            )
+        entry_ctx = OrderedDict([
+            ('plan_entry_index', None),
+            ('hop', up_hop),
+            ('package', name),
+            ('version', ''),
+            ('architecture', ''),
+            ('expected_sha256', up_sha or ''),
+            ('expected_size_bytes', up_size if up_size is not None else ''),
+            ('original_url', url),
+            ('normalized_url', normalize_url(url)),
+            ('destination_path', dst),
+        ])
+        try:
+            method = acquire_file(
+                src, dst, allow_download_url=download_url,
+                expected_sha256=up_sha, expected_size=up_size,
+                entry_context=entry_ctx,
+            )
+        except SelectiveDownloadError as err:
+            merged = OrderedDict(entry_ctx)
+            merged.update(err.context or {})
+            err.context = merged
+            retries = int(merged.get('transient_retry_count') or 0)
+            stats['transient_retry_count'] = (
+                int(stats.get('transient_retry_count') or 0) + retries
+            )
+            in_progress['stats'] = stats
+            write_json(receipt_path, in_progress)
+            write_failed_downloads(
+                selective_root, err, succeeded,
+                max(total_entries - succeeded, 0),
+            )
+            raise
+        stats[method] = stats.get(method, 0) + 1
 
     merge_info = OrderedDict()
     if requested_hop:

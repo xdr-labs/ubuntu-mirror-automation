@@ -28,6 +28,19 @@ mkdir -p "$MM_CLIENT_ROOT" "$MM_STATE_DIR" "$MM_LOG_DIR" "$MM_CONFIG_DIR" \
 # Fixture published bundle identity so wrapper write can succeed during republish.
 printf '%064d  dp_bundle_6.6.0-current.tar\n' 42 \
   >"${MM_DP_PHASE2_ROOT}/6.6.0/dp_bundle_6.6.0-current.tar.sha256"
+# shellcheck source=lib/phase2_prereq_identity_fixture.sh
+source "${ROOT}/tests/lib/phase2_prereq_identity_fixture.sh"
+mkdir -p "${MM_DP_PHASE2_ROOT}/6.6.0/extras"
+cat >"${MM_DP_PHASE2_ROOT}/6.6.0/extras/phase2-ubuntu-prerequisites.state" <<'EOF'
+TARGET_DP_VERSION=6.6.0
+PHASE2_PREREQ_REQUIRED=NO
+PHASE2_PREREQ_PACKAGE_COUNT=0
+PHASE2_PREREQ_BUILD=PASS
+PHASE2_PREREQ_PUBLICATION=PASS
+PHASE2_PREREQ_ARTIFACT=phase2-ubuntu-prerequisites.tar.gz
+PHASE2_PREREQ_SHA256=
+EOF
+phase2_prereq_write_identity_for_extras "${MM_DP_PHASE2_ROOT}/6.6.0/extras" >/dev/null
 
 # shellcheck source=/dev/null
 source "${ROOT}/scripts/lib/mirror_manager_common.sh"
