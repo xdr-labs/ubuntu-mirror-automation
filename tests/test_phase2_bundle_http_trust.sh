@@ -25,6 +25,26 @@ TARGET_DP_VERSION="6.6.0"
 PHASE2_ARTIFACT_VERSION="6.6.0"
 set_target_bundle_files "$TARGET_DP_VERSION"
 
+# Publish REQUIRED=NO prerequisite identity under a dp-phase2 version tree.
+plant_prereq_identity() {
+  local ver_dir="${1:?version dir required}"
+  local ver="${2:-6.6.0}"
+  local extras="${ver_dir}/extras"
+  mkdir -p "$extras"
+  cat >"${extras}/phase2-ubuntu-prerequisites.state" <<EOF
+TARGET_DP_VERSION=${ver}
+PHASE2_PREREQ_REQUIRED=NO
+PHASE2_PREREQ_PACKAGE_COUNT=0
+PHASE2_PREREQ_BUILD=PASS
+PHASE2_PREREQ_PUBLICATION=PASS
+PHASE2_PREREQ_ARTIFACT=phase2-ubuntu-prerequisites.tar.gz
+PHASE2_PREREQ_SHA256=
+EOF
+  # shellcheck source=lib/phase2_prereq_identity_fixture.sh
+  source "${ROOT}/tests/lib/phase2_prereq_identity_fixture.sh"
+  phase2_prereq_write_identity_for_extras "$extras" >/dev/null
+}
+
 make_http_bundle() {
   local payload="${1:-good-bundle-payload}"
   local rel="${WORKDIR}/http/dp-phase2/6.6.0"
@@ -129,6 +149,7 @@ cp "${WORKDIR}/http/dp-phase2/6.6.0/dp_bundle_6.6.0-current.tar" \
   "${MM_DP_PHASE2_ROOT}/6.6.0/"
 cp "${WORKDIR}/http/dp-phase2/6.6.0/dp_bundle_6.6.0-current.tar.sha256" \
   "${MM_DP_PHASE2_ROOT}/6.6.0/"
+plant_prereq_identity "${MM_DP_PHASE2_ROOT}/6.6.0" "6.6.0"
 phase2_upgrade_wrapper_write "$CLIENT" "$MIRROR_URL" "6.6.0" >/dev/null
 STALE_B="$(awk -F"'" '/^B=/ {print $2; exit}' "$CLIENT/upgrade-phase2.sh")"
 [[ "$STALE_B" == "$OLD_HASH" ]] && pass "wrapper bound to old hash" || fail "wrapper stale setup"
@@ -148,6 +169,7 @@ cp "${WORKDIR}/http/dp-phase2/6.6.0/dp_bundle_6.6.0-current.tar" \
   "${MM_DP_PHASE2_ROOT}/6.6.0/"
 cp "${WORKDIR}/http/dp-phase2/6.6.0/dp_bundle_6.6.0-current.tar.sha256" \
   "${MM_DP_PHASE2_ROOT}/6.6.0/"
+plant_prereq_identity "${MM_DP_PHASE2_ROOT}/6.6.0" "6.6.0"
 phase2_upgrade_wrapper_write "$CLIENT" "$MIRROR_URL" "6.6.0" >/dev/null
 FRESH_B="$(awk -F"'" '/^B=/ {print $2; exit}' "$CLIENT/upgrade-phase2.sh")"
 [[ "$FRESH_B" == "$NEW_HASH" ]] && pass "regenerated wrapper hash" || fail "regenerated wrapper hash"
