@@ -3703,6 +3703,8 @@ POSTBOOT_UNIT_NAME="stellar-offline-os-upgrade-postboot.service"
 STATE_FILE="${STATE_ROOT}/state"
 hostpath() { local p="$1"; if [[ -n "$TEST_ROOT" ]]; then printf '%s%s' "$TEST_ROOT" "$p"; else printf '%s' "$p"; fi; }
 log() { :; }
+# install_runner_and_units may call postboot runtime install; stub for unit wiring check.
+install_authoritative_postboot_runtime() { return 0; }
 EOS
   # Policy helpers are build-time inlined; expand placeholder for fixture harness.
   awk '/^# BEGIN_DP_POSTBOOT_DNS_TIME_POLICY$/,/^# END_DP_POSTBOOT_DNS_TIME_POLICY$/' "$SCRIPT_IN" \
