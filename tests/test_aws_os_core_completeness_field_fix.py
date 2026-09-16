@@ -86,40 +86,100 @@ def _plant_complete_aws_tree(root):
             open(os.path.join(snap_pool, 'snapd_2.58+18.04.1_amd64.deb'), 'wb').write(b'x')
 
 
+
+def _generic_discovery_with_upgraders(dest):
+    """Copy generic discovery and graft release_upgrader rows from aws profile.
+
+    Hermetic generic-only planner escapes still require the structural 8
+    upgrader artifacts (4 tar + 4 gpg). Real generic capture may omit them.
+    """
+    if os.path.isdir(dest):
+        shutil.rmtree(dest)
+    shutil.copytree(GENERIC, dest)
+    hops = (
+        ('xenial-to-bionic', 'bionic'),
+        ('bionic-to-focal', 'focal'),
+        ('focal-to-jammy', 'jammy'),
+        ('jammy-to-noble', 'noble'),
+    )
+    for hop, codename in hops:
+        files_tsv = os.path.join(dest, hop, 'required-files.tsv')
+        if not os.path.isfile(files_tsv):
+            continue
+        # Prefer grafting real aws discovery upgrader rows when available.
+        aws_tsv = os.path.join(AWS, hop, 'required-files.tsv')
+        grafted = []
+        if os.path.isfile(aws_tsv):
+            with open(aws_tsv) as fh:
+                header = fh.readline()
+                for line in fh:
+                    if '\trelease_upgrader\t' in line or line.split('\t')[1:2] == ['release_upgrader']:
+                        # Rewrite hop profile path but keep identity fields.
+                        parts = line.rstrip('\n').split('\t')
+                        if parts:
+                            parts[0] = hop
+                        grafted.append('\t'.join(parts) + '\n')
+        if not grafted:
+            for suffix, ftype_note in (('.tar.gz', 'tarball'), ('.tar.gz.gpg', 'gpg')):
+                name = codename + suffix
+                url = (
+                    'http://archive.ubuntu.com/ubuntu/dists/%s-updates/main/'
+                    'dist-upgrader-all/current/%s' % (codename, name)
+                )
+                # Unique deterministic sha per artifact.
+                import hashlib
+                sha = hashlib.sha256(('fixture-upgrader|%s|%s' % (hop, name)).encode()).hexdigest()
+                grafted.append(
+                    '\t'.join([
+                        hop, 'release_upgrader', name, url, url, '',
+                        '128', sha, '200', '1', 'hermetic_fixture',
+                    ]) + '\n'
+                )
+        with open(files_tsv, 'a') as fh:
+            for row in grafted:
+                fh.write(row)
+    return dest
+
+
 class FieldDefectReproductionTests(unittest.TestCase):
     @unittest.skipUnless(
         os.path.isdir(os.path.join(GENERIC, 'xenial-to-bionic')),
         'generic discovery missing',
     )
     def test_generic_only_plan_lacks_aws_but_structurally_passed_before(self):
-        restore = _env_swap({
-            'MM_HERMETIC_TEST_MODE': '1',
-            'UM_ALLOW_GENERIC_ONLY_DISCOVERY': '1',
-        })
+        tmp = tempfile.mkdtemp(prefix='um-generic-upg-')
         try:
-            plan, packages, _f, _u = bsp.build_plan(
-                GENERIC, seed_root='', resolve_missing_pool_paths=False,
-                discovery_roots={'generic': GENERIC},
-            )
-        finally:
-            restore()
+            generic = _generic_discovery_with_upgraders(os.path.join(tmp, 'generic'))
+            restore = _env_swap({
+                'MM_HERMETIC_TEST_MODE': '1',
+                'UM_ALLOW_GENERIC_ONLY_DISCOVERY': '1',
+            })
+            try:
+                plan, packages, _f, _u = bsp.build_plan(
+                    generic, seed_root='', resolve_missing_pool_paths=False,
+                    discovery_roots={'generic': generic},
+                )
+            finally:
+                restore()
 
-        self.assertEqual(plan['validation_result'], 'PASS', plan.get('errors'))
-        self.assertEqual(plan['discovery_profiles'], ['generic'])
-        self.assertEqual(plan['counts'].get('aws_kernel_package_rows', 0), 0)
+            self.assertEqual(plan['validation_result'], 'PASS', plan.get('errors'))
+            self.assertEqual(plan['discovery_profiles'], ['generic'])
+            self.assertEqual(plan['counts'].get('aws_kernel_package_rows', 0), 0)
 
-        restore2 = _env_swap({
-            'MM_HERMETIC_TEST_MODE': None,
-            'UM_ALLOW_GENERIC_ONLY_DISCOVERY': None,
-        })
-        try:
-            ok, errors, detail = aws_c.validate_plan_aws_completeness(
-                plan, package_rows=packages, require_aws_profile=True,
-            )
+            restore2 = _env_swap({
+                'MM_HERMETIC_TEST_MODE': None,
+                'UM_ALLOW_GENERIC_ONLY_DISCOVERY': None,
+            })
+            try:
+                ok, errors, detail = aws_c.validate_plan_aws_completeness(
+                    plan, package_rows=packages, require_aws_profile=True,
+                )
+            finally:
+                restore2()
+            self.assertFalse(ok, detail)
+            self.assertTrue(any('aws' in e for e in errors), errors)
         finally:
-            restore2()
-        self.assertFalse(ok, detail)
-        self.assertTrue(any('aws' in e for e in errors), errors)
+            shutil.rmtree(tmp, ignore_errors=True)
 
     @unittest.skipUnless(
         os.path.isdir(os.path.join(GENERIC, 'xenial-to-bionic'))
@@ -1373,10 +1433,12 @@ class StandalonePlannerCliFailClosedTests(unittest.TestCase):
     @unittest.skipUnless(os.path.isdir(GENERIC), 'generic discovery missing')
     def test_cli_hermetic_dual_escape_allows_generic_only(self):
         out_dir = tempfile.mkdtemp(prefix='um-plan-cli-herm-')
+        tmp = tempfile.mkdtemp(prefix='um-generic-upg-cli-')
         try:
+            generic = _generic_discovery_with_upgraders(os.path.join(tmp, 'generic'))
             proc = self._run(
                 [
-                    '--discovery-root', 'generic=%s' % GENERIC,
+                    '--discovery-root', 'generic=%s' % generic,
                     '--output-dir', out_dir,
                     '--no-resolve-missing-pool-paths',
                 ],
@@ -1391,6 +1453,7 @@ class StandalonePlannerCliFailClosedTests(unittest.TestCase):
             self.assertIn('discovery_profiles=generic', stdout)
         finally:
             shutil.rmtree(out_dir, ignore_errors=True)
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 def _synth_identity(package, version, content):

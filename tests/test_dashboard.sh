@@ -123,10 +123,14 @@ pass "mirrorctl watch documented"
 
 # ---------------------------------------------------------------------------
 echo "[test_foreground_option_compat]"
-# Obsolete --foreground is ignored; bootstrap still completes dry-run
-OUT="$(bash "${ROOT}/install.sh" --dry-run --foreground --no-gui 2>&1 || true)"
-echo "$OUT" | grep -q '\[DRY-RUN\]' || fail "foreground compat dry-run"
-pass "obsolete --foreground ignored safely"
+# Obsolete --foreground is hard-rejected (silent ignore would be dangerous).
+set +e
+OUT="$(bash "${ROOT}/install.sh" --dry-run --foreground --no-gui 2>&1)"
+RC=$?
+set -e
+[[ "$RC" -ne 0 ]] || fail "obsolete --foreground should be rejected"
+echo "$OUT" | grep -q 'Obsolete option --foreground rejected'   || fail "foreground rejection message missing: ${OUT}"
+pass "obsolete --foreground rejected safely"
 
 # ---------------------------------------------------------------------------
 echo "[test_ctrl_c_detaches_not_stops_service]"
