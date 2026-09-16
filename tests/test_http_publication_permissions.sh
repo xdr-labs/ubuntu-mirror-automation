@@ -247,6 +247,37 @@ else
 fi
 unset MM_MIRROR_ROOT
 
+# Non-root callers must never invoke interactive su/runuser (PTY password hang).
+if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
+  PROBE="${WORKDIR}/nonroot-probe"
+  mkdir -p "$PROBE"
+  chmod 0755 "$PROBE"
+  printf 'ok\n' >"${PROBE}/file"
+  chmod 0644 "${PROBE}/file"
+  set +e
+  # Bound the whole probe: a password prompt would hang past this timeout.
+  out="$(timeout 5 bash -c "
+    source $(printf '%q' "$LIB")
+    mm_http_detect_nginx_user() { printf 'nginx\n'; }
+    mm_verify_http_access_as_nginx_user $(printf '%q' "${PROBE}/file")
+  " 2>&1)"
+  rc=$?
+  set -e
+  if [[ "$rc" -eq 0 ]]; then
+    pass "non-root nginx access probe completes without su hang"
+  elif [[ "$rc" -eq 124 ]]; then
+    fail "non-root nginx access probe timed out (likely su password hang)"
+  else
+    # Fallback permission path may fail for unrelated reasons; timeout is the hang signal.
+    pass "non-root nginx access probe returned without hang rc=${rc}"
+  fi
+  if grep -qE '^\s*(runuser|su)\s' <<<"$out"; then
+    fail "non-root probe unexpectedly invoked su/runuser"
+  else
+    pass "non-root probe did not surface su/runuser invocation"
+  fi
+fi
+
 if [[ "$FAIL" -eq 0 ]]; then
   echo "=== test_http_publication_permissions PASS ==="
 else

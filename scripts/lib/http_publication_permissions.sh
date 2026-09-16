@@ -562,8 +562,9 @@ mm_verify_http_access_as_nginx_user() {
     return 1
   fi
 
-  # Prefer an actual nginx-user probe. Success implies parent traversal works.
-  if id -u "$user" >/dev/null 2>&1; then
+  # Prefer an actual nginx-user probe only when the caller is root. Non-root
+  # su/runuser can hang forever waiting for a password on a PTY.
+  if [[ "${EUID:-$(id -u)}" -eq 0 ]] && id -u "$user" >/dev/null 2>&1; then
     if command -v runuser >/dev/null 2>&1; then
       if runuser -u "$user" -- test -r "$path" 2>/dev/null \
         || runuser -u "$user" test -r "$path" 2>/dev/null; then
