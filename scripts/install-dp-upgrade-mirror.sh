@@ -1238,32 +1238,27 @@ gui_phase2_stage_command_block() {
   gui_phase2_stage_command_line "$@"
 }
 
-# Highly visible cluster execution banner for Menu 7 (FULL and PHASE2_ONLY).
+# Compact cluster execution guidance for Menu 7 (FULL and PHASE2_ONLY).
 gui_cluster_execution_rule() {
   local common_label="$1"
   local bringup_label="$2"
   local a_label="$3"
   local b_label="$4"
   cat <<EOF
-CLUSTER EXECUTION RULE
-======================
-
+CLUSTER
+-------
 ${common_label}:
-Run the same steps on every DP node being upgraded:
-DL master, all DL workers, DA master, and all DA workers.
-
-OS-HOP SERIALIZATION (CRITICAL):
-DO NOT RUN OS-HOP UPGRADES ON MULTIPLE DP NODES IN PARALLEL.
-Only one DP node should be in an OS-hop mutation/reboot cycle at a time.
+Run on every DP node being upgraded
+(DL master, all DL workers, DA master, and all DA workers).
 
 ${bringup_label}:
-Run only on the cluster masters.
-
-- ${a_label}: DL master only
-- ${b_label}: DA master only
+Run on masters only:
+• ${a_label}: DL master only
+• ${b_label}: DA master only
 
 Do not run ${bringup_label} manually on workers.
-Each master uses --worker-ips to start bringup on its own workers.
+Each master starts Phase 2 on its own workers.
+
 EOF
 }
 
@@ -1272,11 +1267,8 @@ gui_cluster_stage_guidance() {
   local next="$2"
   cat <<EOF
 CLUSTER:
-Run ${step} on the DL master, every DL worker,
-the DA master, and every DA worker.
-
-Complete ${step} on ALL cluster nodes before starting ${next}.
-
+Run ${step} on every DP node being upgraded.
+Complete ${step} on ALL nodes before ${next}.
 Use the SAME staging command on every node.
 EOF
 }
@@ -1284,8 +1276,8 @@ EOF
 gui_aio_stage_guidance() {
   local step="$1"
   cat <<EOF
-AIO/single node:
-Run ${step} on that DP only.
+AIO:
+Run ${step} on this DP only.
 EOF
 }
 
@@ -1311,9 +1303,8 @@ gui_emit_cluster_master_bringup() {
   local worker_ips="$3"
   local bringup_cmd="$4"
   cat <<EOF
-------------------------------------------------------------------------
 ${step_id} — ${role} CLUSTER MASTER
-------------------------------------------------------------------------
+--------------------------------
 
 EOF
   if [[ -n "$bringup_cmd" ]]; then
@@ -1359,12 +1350,12 @@ gui_build_client_commands() {
   mm_force_phase2_target
   local ver="${PHASE2_TARGET_VERSION}"
   local snap_line stage_cmd bringup_cmd dl_bringup_cmd="" da_bringup_cmd="" prereq_cmd hop2 hop3 hop4 hop5
-  local copy_block_guide hop_copy_guide
+  local hop_copy_guide
   local cluster_rule="" step6_where step2_where
   if [[ "$topology" == "cluster" ]]; then
-    snap_line="Create a full hypervisor snapshot of every DP VM."
+    snap_line="Create a full snapshot of every DP node."
   else
-    snap_line="Create a full hypervisor snapshot of the DP VM."
+    snap_line="Create a full snapshot of the DP."
   fi
   stage_cmd="$(gui_phase2_stage_command_line "$mirror" "$ver")" || return 1
   hop2="$(gui_client_hop_command_line "$mirror" "dp-offline-upgrade-xenial-to-bionic.sh")" || return 1
@@ -1410,8 +1401,6 @@ gui_build_client_commands() {
 
   hop_copy_guide='Copy and paste the following entire line into the DP terminal:'
 
-  copy_block_guide='Copy and paste the following entire line into the DP terminal:'
-
   if [[ "$topology" == "cluster" ]]; then
     if mm_is_phase2_only; then
       cluster_rule="$(gui_cluster_execution_rule "STEPS 1–2" "STEP 3" "STEP 3A" "STEP 3B")"
@@ -1423,6 +1412,7 @@ gui_build_client_commands() {
   else
     step6_where="$(gui_aio_stage_guidance "STEP 6")"
     step2_where="$(gui_aio_stage_guidance "STEP 2")"
+    cluster_rule=""
   fi
 
   if mm_is_phase2_only; then
@@ -1430,74 +1420,83 @@ gui_build_client_commands() {
 DP Phase 2 Upgrade Commands
 ===========================
 
-DP_COMMAND_BLOCK_VERSION=SUBSHELL_V2
-
-Supported Starting DP Versions: 6.2.0 / 6.3.0 / 6.4.0 / 6.5.0
-Phase 2 Target: ${ver}
+DP Target Version: ${ver}
 Required OS: Ubuntu 24.04
 Mirror Server: ${mirror}
 
-This procedure is only for a DP that is already running Ubuntu 24.04.
+NAVIGATION
+----------
+↑ / ↓      Move up and down
+Home       Go to the top
+End        Go to the bottom
 
-Starting DP Version is detected automatically on the DP.
-Do not edit the stage command to add a source version.
+Run all commands on the DP, not on the Mirror Server.
+Follow the steps in order.
 
-If DP ${ver} is already healthy on Ubuntu 24.04, do not run these commands.
-
-Commands saved to:
-$(mm_client_commands_file)
+IMPORTANT
+---------
+• Create a snapshot before starting.
+• This procedure requires Ubuntu 24.04 already.
+• Do not edit the generated commands.
+• If DP ${ver} is already healthy on Ubuntu 24.04, stop.
 
 ${cluster_rule}
+Commands are also saved to:
+  $(mm_client_commands_file)
+
+DETAILS
+-------
+Supported Starting DP Versions: 6.2.0 / 6.3.0 / 6.4.0 / 6.5.0
+Starting DP Version is detected automatically on the DP.
+Do not edit the stage command to add a source version.
+DP_COMMAND_BLOCK_VERSION=SUBSHELL_V2
 
 STEP 0 — SNAPSHOT
 -----------------
-
 ${snap_line}
 
 STEP 1 — VERIFY UBUNTU 24.04 AND PREREQUISITES
 ----------------------------------------------
+Confirm before staging (~30+ GiB):
+• Ubuntu 24.04 Noble
+• aella/root login shell is /bin/bash
+• free space: root ≥20GiB, /opt/aelladata ≥70GiB
 
-Required before downloading/staging the Phase 2 bundle (~30+ GiB):
-- Ubuntu 24.04 Noble
-- aella account login shell must be /bin/bash (Phase2-only hosts are not auto-fixed)
-- free space floors (root ≥20GiB, /opt/aelladata ≥70GiB)
-
-Copy and paste the following entire line into the DP terminal:
+${hop_copy_guide}
 
 ${prereq_cmd}
 
-------------------------------------------------------------------------
-STEP 2 — STAGE DP ${ver} FILES
-------------------------------------------------------------------------
+STEP 2 — PHASE 2 STAGING
+------------------------
+Stage and verify the DP ${ver} Phase 2 files.
 
 ${step2_where}
 
-Copy and paste the following entire line into the DP terminal:
+${hop_copy_guide}
 
 ${stage_cmd}
 
 EOF
     if [[ "$topology" == "cluster" ]]; then
       cat <<EOF
-------------------------------------------------------------------------
-STEP 3 — RUN DP ${ver} BRINGUP ON CLUSTER MASTERS
-------------------------------------------------------------------------
+STEP 3 — DP ${ver} BRINGUP
+--------------------------
+After STEP 2 on ALL nodes, run masters only.
 
-After STEP 2 has completed on ALL cluster nodes, run only the master commands below.
-
-Management IP addresses or cluster IP addresses can be used for \`--worker-ips\`.
-Cluster IP addresses are recommended when reachable from each master.
+Management or cluster IPs may be used for --worker-ips.
+Cluster IP addresses are recommended when reachable.
 
 EOF
       gui_emit_cluster_master_bringup "STEP 3A" "DL" "$dl_worker_ips" "$dl_bringup_cmd"
       gui_emit_cluster_master_bringup "STEP 3B" "DA" "$da_worker_ips" "$da_bringup_cmd"
     else
       cat <<EOF
-------------------------------------------------------------------------
-STEP 3 — RUN DP ${ver} BRINGUP
-------------------------------------------------------------------------
+STEP 3 — DP ${ver} BRINGUP
+--------------------------
+AIO:
+Run Phase 2 bringup on this DP.
 
-Copy and paste the following entire line into the DP terminal:
+${hop_copy_guide}
 
 ${bringup_cmd}
 
@@ -1506,50 +1505,40 @@ EOF
     cat <<EOF
 STEP 4 — RESUME DP SERVICES WHEN REQUIRED
 -----------------------------------------
-
-BRINGUP_RESULT=PASS means the bringup process succeeded.
+BRINGUP_RESULT=PASS means bringup succeeded.
 It does NOT mean DP_UPGRADE_COMPLETE=YES.
-The DP may initially be paused.
+The DP may still be paused.
 
-Recommended sequence after bringup:
-
-1) Collect status (bounded, non-interactive):
+1) Collect status:
      sudo bash /home/aella/bringup_py3_dp_after_os_upgrade.sh --validate-cluster
 
-2) If status reports the system is paused, resume manually:
+2) If paused, resume inside aella_cli only:
      sudo /usr/bin/aella_cli
-   Then inside aella_cli:
-     resume
-     show status
-   Do not run \`resume\` in the Linux bash shell.
-   This wrapper never auto-runs resume.
+       resume
+       show status
+   Do not run resume in the Linux bash shell.
 
-3) After services start, re-run:
+3) Re-check:
      sudo bash /home/aella/bringup_py3_dp_after_os_upgrade.sh --validate-cluster
 
 STEP 5 — VERIFY DP HEALTH / RECORD COMPLETION
 ---------------------------------------------
-
-Confirm authoritative readiness signals such as:
-- All cluster nodes are ready
-- All host services are ready
-- License is valid
-- Indices / models / provision ready when shown
-- Absence of explicit critical failure
+Confirm readiness signals such as:
+• All cluster nodes are ready
+• All host services are ready
+• License is valid
+• Indices / models / provision ready when shown
+• No explicit critical failure
 
 Pod count phrases like "at least N expected" are informational.
-A healthy role may still show fewer pods or Missing pods for
-role-dependent services; do not treat the literal expected count
-as the sole PASS/FAIL gate.
 
-If SOURCE DP was 6.2 / 6.3 / 6.4, a post-bringup schema migration is REQUIRED
+If SOURCE DP was 6.2 / 6.3 / 6.4, run schema migration
 (operator-run; never auto-executed):
   sudo bash /opt/aelladata/da-upgrade/scripts/upgrade_script.sh ${ver}
 Then:
   sudo bash /home/aella/bringup_py3_dp_after_os_upgrade.sh --record-post-bringup-migration PASS
 
-Only when the DP is not paused, readiness looks healthy, and any required
-migration is recorded PASS:
+When not paused, healthy, and migration recorded PASS:
   sudo bash /home/aella/bringup_py3_dp_after_os_upgrade.sh --record-cluster-validation PASS
 
 DP_UPGRADE_COMPLETE=YES only after bringup PASS + migration OK + CLUSTER_VALIDATION=PASS.
@@ -1560,50 +1549,58 @@ EOF
 DP Client Upgrade Commands
 ==========================
 
+Upgrade: Ubuntu 16.04 → 24.04
+DP Target Version: ${ver}
+Mirror Server: ${mirror}
+
+NAVIGATION
+----------
+↑ / ↓      Move up and down
+Home       Go to the top
+End        Go to the bottom
+
+Run all commands on the DP, not on the Mirror Server.
+Follow the steps in order.
+
+IMPORTANT
+---------
+• Create a snapshot before starting.
+• Pause DP services before the first OS upgrade.
+• Do not resume DP services between OS upgrade hops.
+• Upgrade only ONE DP node at a time.
+• Do not edit the generated commands.
+
+${cluster_rule}
+Commands are also saved to:
+  $(mm_client_commands_file)
+
+DETAILS
+-------
+Supported Starting DP Versions: 6.2.0 / 6.3.0 / 6.4.0 / 6.5.0
+Starting DP Version is detected automatically on the DP.
+Do not edit the stage command to add a source version.
 DP_COMMAND_BLOCK_VERSION=SUBSHELL_V2
 DP_OS_HOP_COMMAND_VERSION=WRAPPER_V1
 
-Supported Starting DP Versions: 6.2.0 / 6.3.0 / 6.4.0 / 6.5.0
-Phase 2 Target: ${ver}
-OS Upgrade: Ubuntu 16.04 → Ubuntu 24.04
-Mirror Server: ${mirror}
-
-Run these steps on the DP, not on the Mirror Server.
-
-Starting DP Version is detected automatically on the DP.
-Do not edit the stage command to add a source version.
-
-Commands saved to:
-$(mm_client_commands_file)
-
-OS-hop steps use one hash-pinned wrapper command per hop (DP_OS_HOP_COMMAND_VERSION=WRAPPER_V1).
-The Phase 2 staging step uses one hash-pinned wrapper command (upgrade-phase2.sh).
-
-${cluster_rule}
-
 STEP 0 — SNAPSHOT
 -----------------
-
 ${snap_line}
 
-STEP 1 — PAUSE DP SERVICES
---------------------------
+STEP 1 — PAUSE DP
+-----------------
+Run aella_cli and pause the DP.
 
-Run \`aella_cli\` on the Ubuntu 16.04 DP.
+Confirm:
+  System paused.
 
-Select or enter:
+Do not continue until the DP is paused.
+Do not run pause in the Linux bash shell.
+Do not resume DP services between OS upgrade hops.
 
-pause
-
-Wait until the pause operation completes.
-
-Do not run \`pause\` directly in the Linux bash shell.
-Do not resume the DP during the intermediate OS upgrades.
-
-------------------------------------------------------------------------
-STEP 2 — UBUNTU 16.04 TO 18.04
-------------------------------------------------------------------------
-
+STEP 2 — UBUNTU 16.04 → 18.04
+------------------------------
+Run the generated command below.
+The DP reboots automatically.
 The Xenial-to-Bionic client automatically sets the aella and root login
 shells to /bin/bash after upgrade confirmation.
 
@@ -1611,66 +1608,64 @@ ${hop_copy_guide}
 
 ${hop2}
 
-------------------------------------------------------------------------
-STEP 3 — UBUNTU 18.04 TO 20.04
-------------------------------------------------------------------------
+STEP 3 — UBUNTU 18.04 → 20.04
+------------------------------
+Run the generated command below.
 
 ${hop_copy_guide}
 
 ${hop3}
 
-------------------------------------------------------------------------
-STEP 4 — UBUNTU 20.04 TO 22.04
-------------------------------------------------------------------------
+STEP 4 — UBUNTU 20.04 → 22.04
+------------------------------
+Run the generated command below.
 
 ${hop_copy_guide}
 
 ${hop4}
 
-------------------------------------------------------------------------
-STEP 5 — UBUNTU 22.04 TO 24.04
-------------------------------------------------------------------------
+STEP 5 — UBUNTU 22.04 → 24.04
+------------------------------
+Run the generated command below.
 
 ${hop_copy_guide}
 
 ${hop5}
 
-Do not resume the DP during the intermediate OS upgrades.
-
-------------------------------------------------------------------------
-STEP 6 — STAGE DP ${ver} FILES
-------------------------------------------------------------------------
+STEP 6 — PHASE 2 STAGING
+------------------------
+Stage and verify the DP ${ver} Phase 2 files.
 
 ${step6_where}
 
-${copy_block_guide}
-
-Copy and paste the following entire line into the DP terminal:
+${hop_copy_guide}
 
 ${stage_cmd}
 
 EOF
     if [[ "$topology" == "cluster" ]]; then
       cat <<EOF
-------------------------------------------------------------------------
-STEP 7 — RUN DP ${ver} BRINGUP ON CLUSTER MASTERS
-------------------------------------------------------------------------
+STEP 7 — DP ${ver} BRINGUP
+--------------------------
+Cluster:
+After STEP 6 on ALL nodes, run masters only.
 
-After STEP 6 has completed on ALL cluster nodes, run only the master commands below.
+Management or cluster IPs may be used for --worker-ips.
+Cluster IP addresses are recommended when reachable.
 
-Management IP addresses or cluster IP addresses can be used for \`--worker-ips\`.
-Cluster IP addresses are recommended when reachable from each master.
+Do not run STEP 7 manually on workers.
 
 EOF
       gui_emit_cluster_master_bringup "STEP 7A" "DL" "$dl_worker_ips" "$dl_bringup_cmd"
       gui_emit_cluster_master_bringup "STEP 7B" "DA" "$da_worker_ips" "$da_bringup_cmd"
     else
       cat <<EOF
-------------------------------------------------------------------------
-STEP 7 — RUN DP ${ver} BRINGUP
-------------------------------------------------------------------------
+STEP 7 — DP ${ver} BRINGUP
+--------------------------
+AIO:
+Run Phase 2 bringup on this DP.
 
-Copy and paste the following entire line into the DP terminal:
+${hop_copy_guide}
 
 ${bringup_cmd}
 
@@ -1679,71 +1674,59 @@ EOF
     cat <<EOF
 STEP 8 — RESUME DP SERVICES WHEN REQUIRED
 -----------------------------------------
-
-BRINGUP_RESULT=PASS means the bringup process succeeded.
+BRINGUP_RESULT=PASS means bringup succeeded.
 It does NOT mean DP_UPGRADE_COMPLETE=YES.
-The DP may initially be paused.
+The DP may still be paused.
 
-Recommended sequence after bringup:
-
-1) Collect status (bounded, non-interactive):
+1) Collect status:
      sudo bash /home/aella/bringup_py3_dp_after_os_upgrade.sh --validate-cluster
 
-2) If status reports the system is paused, resume manually:
+2) If paused, resume inside aella_cli only:
      sudo /usr/bin/aella_cli
-   Then inside aella_cli:
-     resume
-     show status
-   Do not run \`resume\` in the Linux bash shell.
-   This wrapper never auto-runs resume.
+       resume
+       show status
+   Do not run resume in the Linux bash shell.
 
-3) After services start, re-run:
+3) Re-check:
      sudo bash /home/aella/bringup_py3_dp_after_os_upgrade.sh --validate-cluster
 
 STEP 9 — VERIFY DP HEALTH / RECORD COMPLETION
 ---------------------------------------------
-
-Confirm authoritative readiness signals such as:
-- All cluster nodes are ready
-- All host services are ready
-- License is valid
-- Indices / models / provision ready when shown
-- Absence of explicit critical failure
+Confirm readiness signals such as:
+• All cluster nodes are ready
+• All host services are ready
+• License is valid
+• Indices / models / provision ready when shown
+• No explicit critical failure
 
 Pod count phrases like "at least N expected" are informational.
-A healthy role may still show fewer pods or Missing pods for
-role-dependent services; do not treat the literal expected count
-as the sole PASS/FAIL gate.
 
-If SOURCE DP was 6.2 / 6.3 / 6.4, a post-bringup schema migration is REQUIRED
+If SOURCE DP was 6.2 / 6.3 / 6.4, run schema migration
 (operator-run; never auto-executed):
   sudo bash /opt/aelladata/da-upgrade/scripts/upgrade_script.sh ${ver}
 Then:
   sudo bash /home/aella/bringup_py3_dp_after_os_upgrade.sh --record-post-bringup-migration PASS
 
-Only when the DP is not paused, readiness looks healthy, and any required
-migration is recorded PASS:
+When not paused, healthy, and migration recorded PASS:
   sudo bash /home/aella/bringup_py3_dp_after_os_upgrade.sh --record-cluster-validation PASS
 
 DP_UPGRADE_COMPLETE=YES only after bringup PASS + migration OK + CLUSTER_VALIDATION=PASS.
 
-The status may take several minutes to become ready after resume.
-Do not treat the DP as healthy immediately after running resume.
+Status may take several minutes after resume.
+Do not treat the DP as healthy immediately after resume.
 
 EOF
   fi
   if [[ "$topology" == "cluster" ]]; then
     cat <<EOF
+CLUSTER STATUS
+--------------
 Run the status check on the cluster master.
-Confirm that all worker nodes are ready.
-Confirm the DL cluster first, then confirm the DA cluster.
+Confirm all workers are ready.
+Confirm DL first, then DA.
 
 EOF
   fi
-  cat <<EOF
-A copy of these commands was saved to:
-$(mm_client_commands_file)
-EOF
 }
 
 gui_client_instructions() {
