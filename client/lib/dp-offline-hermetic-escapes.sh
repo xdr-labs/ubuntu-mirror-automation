@@ -79,9 +79,10 @@ dp_offline_category_c_fixture_vars() {
 # Resolve TEST_ROOT only under hermetic fixtures.
 dp_offline_resolve_test_root() {
   if dp_offline_hermetic_fixtures_enabled; then
-    # Hop fixtures historically export STELLAR_OFFLINE_TEST_ROOT; accept that
-    # alias alongside DP_OFFLINE_TEST_ROOT so GRUB/LXD paths see TEST_ROOT.
-    printf '%s' "${STELLAR_OFFLINE_TEST_ROOT:-${DP_OFFLINE_TEST_ROOT:-${TEST_ROOT:-}}}"
+    # Prefer DP_OFFLINE_TEST_ROOT / TEST_ROOT (client harness) over STELLAR_* so a
+    # leftover STELLAR path from a prior case cannot poison a DP_OFFLINE-only run.
+    # STELLAR remains the fallback for detached-runner fixtures that only set it.
+    printf '%s' "${DP_OFFLINE_TEST_ROOT:-${TEST_ROOT:-${STELLAR_OFFLINE_TEST_ROOT:-}}}"
   else
     printf '%s' ""
   fi

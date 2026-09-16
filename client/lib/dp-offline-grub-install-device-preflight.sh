@@ -40,14 +40,29 @@ grub_pf_log() {
 
 grub_pf_hp() {
   local p="$1"
+  local root
   if declare -F hostpath >/dev/null 2>&1; then
     hostpath "$p"
   elif declare -F _hp >/dev/null 2>&1; then
     _hp "$p"
-  elif [[ -n "${TEST_ROOT:-}" ]]; then
-    printf '%s%s' "${TEST_ROOT%/}" "$p"
   else
-    printf '%s' "$p"
+    root="$(grub_pf_fixture_root)"
+    if [[ -n "$root" ]]; then
+      printf '%s%s' "${root%/}" "$p"
+    else
+      printf '%s' "$p"
+    fi
+  fi
+}
+
+# Hermetic fixture root for skip/hostpath. Detached runners historically set
+# STELLAR_OFFLINE_TEST_ROOT / _TEST_PREFIX without also exporting TEST_ROOT.
+grub_pf_fixture_root() {
+  if declare -F dp_offline_hermetic_fixtures_enabled >/dev/null 2>&1 \
+    && dp_offline_hermetic_fixtures_enabled; then
+    printf '%s' "${TEST_ROOT:-${STELLAR_OFFLINE_TEST_ROOT:-${DP_OFFLINE_TEST_ROOT:-}}}"
+  else
+    printf '%s' "${TEST_ROOT:-}"
   fi
 }
 
@@ -430,9 +445,12 @@ grub_pf_reset_evidence() {
 # for control flow. Sets evidence globals. Returns 0 when ready to continue
 # (including EFI/non-grub-pc skip), 1 on hard fail.
 grub_pf_detect_current_target() {
-  # Fixture harnesses use TEST_ROOT; do not probe the real host disk/debconf
-  # unless the test explicitly injects GRUB_PF_OVERRIDE_* knobs.
-  if [[ -n "${TEST_ROOT:-}" && -z "${GRUB_PF_OVERRIDE_BOOT_MODE:-}" \
+  # Fixture harnesses use TEST_ROOT / STELLAR_OFFLINE_TEST_ROOT; do not probe the
+  # real host disk/debconf unless the test explicitly injects GRUB_PF_OVERRIDE_*
+  # knobs or GRUB_PF_FORCE_LIVE.
+  local fixture_root
+  fixture_root="$(grub_pf_fixture_root)"
+  if [[ -n "$fixture_root" && -z "${GRUB_PF_OVERRIDE_BOOT_MODE:-}" \
       && -z "${GRUB_PF_OVERRIDE_ROOT_SOURCE:-}" \
       && -z "${GRUB_PF_FORCE_LIVE:-}" ]]; then
     GRUB_INSTALL_TARGET_DERIVATION="PASS"
