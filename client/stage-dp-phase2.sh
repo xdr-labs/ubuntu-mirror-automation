@@ -126,6 +126,7 @@ MIN_ROOT_GIB=20
 TARGET_DP_VERSION=""
 PHASE2_ARTIFACT_VERSION=""
 EXPECTED_BUNDLE_SHA256=""
+EXPECTED_PREREQ_IDENTITY_SHA256=""
 SOURCE_DP_VERSION=""
 SOURCE_DP_VERSION_RAW=""
 SOURCE_DP_VERSION_ORIGIN=""
@@ -189,6 +190,8 @@ Required:
   --target-version VER     Phase 2 artifact / bundle target version
   --mirror-url URL         Internal mirror base (e.g. http://192.0.2.10)
   --expected-bundle-sha256 HEX  Pre-trusted dp_bundle SHA256 from bootstrap chain
+  --expected-prereq-identity-sha256 HEX
+                               Pre-trusted Phase 2 prerequisite identity SHA256
 
 Options:
   --source-dp-version VER  Explicit source DP product version (operator override)
@@ -329,6 +332,11 @@ parse_args() {
       --expected-bundle-sha256)
         EXPECTED_BUNDLE_SHA256="${2:-}"
         [[ -n "$EXPECTED_BUNDLE_SHA256" ]] || die "--expected-bundle-sha256 requires a value"
+        shift 2
+        ;;
+      --expected-prereq-identity-sha256)
+        EXPECTED_PREREQ_IDENTITY_SHA256="${2:-}"
+        [[ -n "$EXPECTED_PREREQ_IDENTITY_SHA256" ]] || die "--expected-prereq-identity-sha256 requires a value"
         shift 2
         ;;
       --same-version-recovery)
@@ -1113,12 +1121,87 @@ EOF
 stage_phase2_ubuntu_prerequisites() {
   local extras_base="${MIRROR_URL}/dp-phase2/${TARGET_DP_VERSION}/extras"
   local state_name="phase2-ubuntu-prerequisites.state"
+  local identity_name="phase2-ubuntu-prerequisites.identity"
   local name="phase2-ubuntu-prerequisites.tar.gz"
   local state_url="${extras_base}/${state_name}"
+  local identity_url="${extras_base}/${identity_name}"
   local url="${extras_base}/${name}"
   local dest="${ARTIFACT_DIR}/${name}"
   local state_dest="${ARTIFACT_DIR}/${state_name}"
+  local identity_dest="${ARTIFACT_DIR}/${identity_name}"
   local tmp sha_url sha_dest required count build publication artifact_name sha
+  local expected_id actual_id id_required id_count id_state_sha id_art_sha id_man_sha id_side_sha
+  local state_actual man_actual
+
+  [[ -n "${EXPECTED_PREREQ_IDENTITY_SHA256:-}" ]] || {
+    log "PHASE2_PREREQ_STAGE=FAIL reason=trusted_identity_missing"
+    return 1
+  }
+  [[ "${EXPECTED_PREREQ_IDENTITY_SHA256}" =~ ^[0-9a-fA-F]{64}$ ]] || {
+    log "PHASE2_PREREQ_STAGE=FAIL reason=trusted_identity_invalid"
+    return 1
+  }
+  expected_id="${EXPECTED_PREREQ_IDENTITY_SHA256,,}"
+
+  retract_staged_phase2_prereq_artifacts() {
+    # Remove only the currently consumable prerequisite artifact set.
+    rm -f "$dest" "${dest}.sha256" \
+      "${ARTIFACT_DIR}/phase2-ubuntu-prerequisites.manifest.json"
+  }
+
+  # Authenticated identity is the root of trust. Fetch and pin-check it before
+  # any attacker-controlled state/manifest/archive field is consumed.
+  tmp="$(mktemp "${ARTIFACT_DIR}/.${identity_name}.XXXXXX")"
+  if ! curl -fsSL --connect-timeout 15 --max-time 30 --retry 2 -o "$tmp" "$identity_url"; then
+    rm -f "$tmp"
+    log "PHASE2_PREREQ_STAGE=FAIL reason=identity_not_published"
+    return 1
+  fi
+  if [[ ! -s "$tmp" ]]; then
+    rm -f "$tmp"
+    log "PHASE2_PREREQ_STAGE=FAIL reason=identity_empty"
+    return 1
+  fi
+  actual_id="$(sha256sum "$tmp" | awk '{print $1}')"
+  if [[ "${actual_id,,}" != "$expected_id" ]]; then
+    rm -f "$tmp"
+    log "PHASE2_PREREQ_STAGE=FAIL reason=identity_pin_mismatch"
+    return 1
+  fi
+  mv -f "$tmp" "$identity_dest"
+  chown "${AELLA_UID}:${AELLA_PRIMARY_GID}" "$identity_dest" 2>/dev/null || true
+  log "PHASE2_PREREQ_IDENTITY=PASS sha256=${actual_id}"
+
+  id_required="$(awk -F= '$1=="PHASE2_PREREQ_REQUIRED"{print $2; exit}' "$identity_dest")"
+  id_count="$(awk -F= '$1=="PHASE2_PREREQ_PACKAGE_COUNT"{print $2; exit}' "$identity_dest")"
+  id_state_sha="$(awk -F= '$1=="PHASE2_PREREQ_STATE_SHA256"{print $2; exit}' "$identity_dest")"
+  id_art_sha="$(awk -F= '$1=="PHASE2_PREREQ_ARTIFACT_SHA256"{print $2; exit}' "$identity_dest")"
+  id_man_sha="$(awk -F= '$1=="PHASE2_PREREQ_MANIFEST_SHA256"{print $2; exit}' "$identity_dest")"
+  id_side_sha="$(awk -F= '$1=="PHASE2_PREREQ_SIDECAR_SHA256"{print $2; exit}' "$identity_dest")"
+  build="$(awk -F= '$1=="PHASE2_PREREQ_BUILD"{print $2; exit}' "$identity_dest")"
+  publication="$(awk -F= '$1=="PHASE2_PREREQ_PUBLICATION"{print $2; exit}' "$identity_dest")"
+
+  if [[ "$build" != "PASS" ]]; then
+    retract_staged_phase2_prereq_artifacts
+    rm -f "$identity_dest"
+    log "PHASE2_PREREQ_STAGE=FAIL reason=build_not_pass"
+    return 1
+  fi
+  if [[ "$publication" != "PASS" ]]; then
+    retract_staged_phase2_prereq_artifacts
+    rm -f "$identity_dest"
+    log "PHASE2_PREREQ_STAGE=FAIL reason=publication_not_pass"
+    return 1
+  fi
+  if [[ -z "$id_count" || ! "$id_count" =~ ^[0-9]+$ ]]; then
+    log "PHASE2_PREREQ_STAGE=FAIL reason=identity_count_invalid"
+    return 1
+  fi
+  if [[ ! "$id_state_sha" =~ ^[0-9a-fA-F]{64}$ ]]; then
+    log "PHASE2_PREREQ_STAGE=FAIL reason=identity_state_sha_invalid"
+    return 1
+  fi
+
   tmp="$(mktemp "${ARTIFACT_DIR}/.${state_name}.XXXXXX")"
   if ! curl -fsSL --connect-timeout 15 --max-time 30 --retry 2 -o "$tmp" "$state_url"; then
     rm -f "$tmp"
@@ -1130,37 +1213,25 @@ stage_phase2_ubuntu_prerequisites() {
     log "PHASE2_PREREQ_STAGE=FAIL reason=state_empty"
     return 1
   fi
+  state_actual="$(sha256sum "$tmp" | awk '{print $1}')"
+  if [[ "${state_actual,,}" != "${id_state_sha,,}" ]]; then
+    rm -f "$tmp"
+    log "PHASE2_PREREQ_STAGE=FAIL reason=state_identity_mismatch"
+    return 1
+  fi
   mv -f "$tmp" "$state_dest"
   chown "${AELLA_UID}:${AELLA_PRIMARY_GID}" "$state_dest" 2>/dev/null || true
+
   required="$(awk -F= '$1=="PHASE2_PREREQ_REQUIRED"{print $2; exit}' "$state_dest")"
   count="$(awk -F= '$1=="PHASE2_PREREQ_PACKAGE_COUNT"{print $2; exit}' "$state_dest")"
-  build="$(awk -F= '$1=="PHASE2_PREREQ_BUILD"{print $2; exit}' "$state_dest")"
-  publication="$(awk -F= '$1=="PHASE2_PREREQ_PUBLICATION"{print $2; exit}' "$state_dest")"
   artifact_name="$(awk -F= '$1=="PHASE2_PREREQ_ARTIFACT"{print $2; exit}' "$state_dest")"
   sha="$(awk -F= '$1=="PHASE2_PREREQ_SHA256"{print $2; exit}' "$state_dest")"
+  if [[ "$required" != "$id_required" || "$count" != "$id_count" ]]; then
+    log "PHASE2_PREREQ_STAGE=FAIL reason=state_identity_field_mismatch"
+    return 1
+  fi
   log "PHASE2_PREREQ_REQUIRED=${required:-unknown} PHASE2_PREREQ_PACKAGE_COUNT=${count:-unknown} PHASE2_PREREQ_BUILD=${build:-unknown} PHASE2_PREREQ_PUBLICATION=${publication:-unknown}"
-  retract_staged_phase2_prereq_artifacts() {
-    # Remove only the currently consumable prerequisite artifact set.
-    rm -f "$dest" "${dest}.sha256" "${ARTIFACT_DIR}/phase2-ubuntu-prerequisites.manifest.json"
-  }
-  if [[ "$build" != "PASS" ]]; then
-    retract_staged_phase2_prereq_artifacts
-    log "PHASE2_PREREQ_STAGE=FAIL reason=build_not_pass"
-    return 1
-  fi
-  if [[ "$publication" != "PASS" ]]; then
-    retract_staged_phase2_prereq_artifacts
-    log "PHASE2_PREREQ_STAGE=FAIL reason=publication_not_pass"
-    return 1
-  fi
-  if [[ -z "$count" ]]; then
-    log "PHASE2_PREREQ_STAGE=FAIL reason=count_missing"
-    return 1
-  fi
-  if [[ ! "$count" =~ ^[0-9]+$ ]]; then
-    log "PHASE2_PREREQ_STAGE=FAIL reason=count_nonnumeric"
-    return 1
-  fi
+
   if [[ "$required" == "NO" ]]; then
     retract_staged_phase2_prereq_artifacts
     if [[ "$count" != "0" ]]; then
@@ -1182,10 +1253,44 @@ stage_phase2_ubuntu_prerequisites() {
     log "PHASE2_PREREQ_STAGE=FAIL reason=artifact_name_invalid"
     return 1
   fi
-  if [[ ! "$sha" =~ ^[0-9a-fA-F]{64}$ ]]; then
-    log "PHASE2_PREREQ_STAGE=FAIL reason=sha256_missing"
+  if [[ ! "$id_art_sha" =~ ^[0-9a-fA-F]{64}$ ]]; then
+    log "PHASE2_PREREQ_STAGE=FAIL reason=identity_artifact_sha_missing"
     return 1
   fi
+  if [[ ! "$sha" =~ ^[0-9a-fA-F]{64}$ || "${sha,,}" != "${id_art_sha,,}" ]]; then
+    log "PHASE2_PREREQ_STAGE=FAIL reason=state_artifact_sha_mismatch"
+    return 1
+  fi
+  if [[ ! "$id_man_sha" =~ ^[0-9a-fA-F]{64}$ ]]; then
+    log "PHASE2_PREREQ_STAGE=FAIL reason=identity_manifest_sha_missing"
+    return 1
+  fi
+  if [[ -n "$id_side_sha" && "${id_side_sha,,}" != "${id_art_sha,,}" ]]; then
+    log "PHASE2_PREREQ_STAGE=FAIL reason=identity_sidecar_mismatch"
+    return 1
+  fi
+
+  # Reuse an already-staged authentic archive when digests still match.
+  if [[ -f "$dest" && -f "${dest}.sha256" \
+    && -f "${ARTIFACT_DIR}/phase2-ubuntu-prerequisites.manifest.json" ]]; then
+    local reuse_ok=1 reuse_actual
+    reuse_actual="$(sha256sum "$dest" | awk '{print $1}')"
+    [[ "${reuse_actual,,}" == "${id_art_sha,,}" ]] || reuse_ok=0
+    if [[ "$reuse_ok" -eq 1 ]]; then
+      man_actual="$(sha256sum "${ARTIFACT_DIR}/phase2-ubuntu-prerequisites.manifest.json" | awk '{print $1}')"
+      [[ "${man_actual,,}" == "${id_man_sha,,}" ]] || reuse_ok=0
+    fi
+    if [[ "$reuse_ok" -eq 1 ]]; then
+      local side_actual
+      side_actual="$(awk 'NF {print $1; exit}' "${dest}.sha256")"
+      [[ "${side_actual,,}" == "${id_art_sha,,}" ]] || reuse_ok=0
+    fi
+    if [[ "$reuse_ok" -eq 1 ]]; then
+      log "PHASE2_PREREQ_STAGE=PASS path=${dest} mode=reused"
+      return 0
+    fi
+  fi
+
   tmp="$(mktemp "${ARTIFACT_DIR}/.${name}.XXXXXX")"
   if ! curl -fsSL --connect-timeout 15 --max-time 120 --retry 2 -o "$tmp" "$url"; then
     rm -f "$tmp"
@@ -1198,6 +1303,13 @@ stage_phase2_ubuntu_prerequisites() {
     log "PHASE2_PREREQ_STAGE=FAIL reason=invalid_payload"
     return 1
   fi
+  local actual
+  actual="$(sha256sum "$tmp" | awk '{print $1}')"
+  if [[ "${actual,,}" != "${id_art_sha,,}" ]]; then
+    rm -f "$tmp"
+    log "PHASE2_PREREQ_STAGE=FAIL reason=artifact_identity_mismatch"
+    return 1
+  fi
   sha_url="${url}.sha256"
   sha_dest="${dest}.sha256"
   if ! curl -fsSL --connect-timeout 15 --max-time 30 -o "${sha_dest}.tmp" "$sha_url"; then
@@ -1205,21 +1317,26 @@ stage_phase2_ubuntu_prerequisites() {
     log "PHASE2_PREREQ_STAGE=FAIL reason=sha256_missing"
     return 1
   fi
-  mv -f "${sha_dest}.tmp" "$sha_dest"
-  local expected actual
-  expected="$(awk 'NF {print $1; exit}' "$sha_dest")"
-  actual="$(sha256sum "$tmp" | awk '{print $1}')"
-  if [[ -z "$expected" || "${expected,,}" != "${actual,,}" || "${sha,,}" != "${actual,,}" ]]; then
-    rm -f "$tmp" "$sha_dest"
-    log "PHASE2_PREREQ_STAGE=FAIL reason=sha256"
+  local expected
+  expected="$(awk 'NF {print $1; exit}' "${sha_dest}.tmp")"
+  if [[ -z "$expected" || "${expected,,}" != "${id_art_sha,,}" ]]; then
+    rm -f "$tmp" "${sha_dest}.tmp"
+    log "PHASE2_PREREQ_STAGE=FAIL reason=sidecar_identity_mismatch"
     return 1
   fi
+  mv -f "${sha_dest}.tmp" "$sha_dest"
   local manifest_dest="${ARTIFACT_DIR}/phase2-ubuntu-prerequisites.manifest.json"
   if ! curl -fsSL --connect-timeout 15 --max-time 30 \
     -o "${manifest_dest}.tmp" \
     "${extras_base}/phase2-ubuntu-prerequisites.manifest.json"; then
     rm -f "$tmp" "$sha_dest" "${manifest_dest}.tmp"
     log "PHASE2_PREREQ_STAGE=FAIL reason=manifest_http"
+    return 1
+  fi
+  man_actual="$(sha256sum "${manifest_dest}.tmp" | awk '{print $1}')"
+  if [[ "${man_actual,,}" != "${id_man_sha,,}" ]]; then
+    rm -f "$tmp" "$sha_dest" "${manifest_dest}.tmp"
+    log "PHASE2_PREREQ_STAGE=FAIL reason=manifest_identity_mismatch"
     return 1
   fi
   mv -f "${manifest_dest}.tmp" "$manifest_dest"

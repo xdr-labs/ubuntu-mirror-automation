@@ -2619,21 +2619,27 @@ engine_record_phase2_prereq_release_identity() {
   local ver="${TARGET_DP_VERSION:-}"
   local envf="${MM_DP_PHASE2_ROOT}/${ver}/release.env"
   local state="${MM_DP_PHASE2_ROOT}/${ver}/extras/phase2-ubuntu-prerequisites.state"
-  local tmp required count sha build publication
+  local identity="${MM_DP_PHASE2_ROOT}/${ver}/extras/phase2-ubuntu-prerequisites.identity"
+  local tmp required count sha build publication id_sha
   [[ -n "$ver" && -f "$envf" && -f "$state" ]] || return 0
   required="$(awk -F= '$1=="PHASE2_PREREQ_REQUIRED"{print $2; exit}' "$state")"
   count="$(awk -F= '$1=="PHASE2_PREREQ_PACKAGE_COUNT"{print $2; exit}' "$state")"
   sha="$(awk -F= '$1=="PHASE2_PREREQ_SHA256"{print $2; exit}' "$state")"
   build="$(awk -F= '$1=="PHASE2_PREREQ_BUILD"{print $2; exit}' "$state")"
   publication="$(awk -F= '$1=="PHASE2_PREREQ_PUBLICATION"{print $2; exit}' "$state")"
+  id_sha=""
+  if [[ -f "$identity" ]]; then
+    id_sha="$(sha256sum "$identity" | awk '{print $1}')"
+  fi
   tmp="$(mktemp "${envf}.prereq.XXXXXX")"
-  grep -vE '^PHASE2_PREREQ_(REQUIRED|PACKAGE_COUNT|SHA256|BUILD|PUBLICATION)=' "$envf" >"$tmp" || true
+  grep -vE '^PHASE2_PREREQ_(REQUIRED|PACKAGE_COUNT|SHA256|BUILD|PUBLICATION|IDENTITY_SHA256)=' "$envf" >"$tmp" || true
   {
     printf 'PHASE2_PREREQ_REQUIRED=%s\n' "$required"
     printf 'PHASE2_PREREQ_PACKAGE_COUNT=%s\n' "$count"
     printf 'PHASE2_PREREQ_SHA256=%s\n' "$sha"
     printf 'PHASE2_PREREQ_BUILD=%s\n' "$build"
     printf 'PHASE2_PREREQ_PUBLICATION=%s\n' "$publication"
+    printf 'PHASE2_PREREQ_IDENTITY_SHA256=%s\n' "$id_sha"
   } >>"$tmp"
   if python3 "${MM_PROJECT_ROOT}/scripts/lib/phase2_ubuntu_prerequisites.py" \
     validate-state --dest "${MM_DP_PHASE2_ROOT}/${ver}/extras" >/dev/null
@@ -2773,8 +2779,12 @@ engine_http_smoke_urls() {
     )
   fi
   local extras_state="${MM_DP_PHASE2_ROOT}/${ver}/extras/phase2-ubuntu-prerequisites.state"
+  local extras_identity="${MM_DP_PHASE2_ROOT}/${ver}/extras/phase2-ubuntu-prerequisites.identity"
   if [[ -f "$extras_state" ]]; then
     urls+=("${base}/dp-phase2/${ver}/extras/phase2-ubuntu-prerequisites.state")
+    if [[ -f "$extras_identity" ]]; then
+      urls+=("${base}/dp-phase2/${ver}/extras/phase2-ubuntu-prerequisites.identity")
+    fi
     local required
     required="$(awk -F= '$1=="PHASE2_PREREQ_REQUIRED"{print $2; exit}' "$extras_state")"
     if [[ "$required" == "YES" ]]; then

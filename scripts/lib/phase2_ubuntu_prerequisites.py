@@ -62,6 +62,7 @@ VIRTUAL_OR_BASE_SKIP = frozenset((
 ARTIFACT_NAME = 'phase2-ubuntu-prerequisites.tar.gz'
 MANIFEST_NAME = 'phase2-ubuntu-prerequisites.manifest.json'
 STATE_NAME = 'phase2-ubuntu-prerequisites.state'
+IDENTITY_NAME = 'phase2-ubuntu-prerequisites.identity'
 INSTALL_ORDER_NAME = 'install-order.txt'
 DEFAULT_ARCHIVE_BASE = 'http://archive.ubuntu.com/ubuntu'
 DEFAULT_SECURITY_BASE = 'http://security.ubuntu.com/ubuntu'
@@ -1622,6 +1623,7 @@ def retract_published_prerequisite_files(dest_dir):
         ARTIFACT_NAME + '.sha256',
         MANIFEST_NAME,
         INSTALL_ORDER_NAME,
+        IDENTITY_NAME,
     ):
         path = os.path.join(dest_dir, name)
         try:
@@ -1698,6 +1700,112 @@ def validate_prereq_state_contract(fields, dest_dir=None, require_files=None):
         actual = sha256_file(art)
         if actual.lower() != sha.lower():
             return 'sha256_file_mismatch'
+    return ''
+
+
+def build_prerequisite_identity_fields(dest_dir, state_fields=None):
+    """Build the canonical identity binding for published prerequisite artifacts.
+
+    The identity is the root of trust for Mirror→DP HTTP prerequisite objects.
+    Its SHA256 is pinned into the already-trusted upgrade-phase2 wrapper.
+    """
+    if not dest_dir:
+        raise ValueError('dest_missing')
+    state_path = os.path.join(dest_dir, STATE_NAME)
+    if not os.path.isfile(state_path):
+        raise ValueError('state_file_missing')
+    if state_fields is None:
+        with open(state_path, 'r') as fh:
+            state_fields = parse_prereq_state_text(fh.read())
+    reason = validate_prereq_state_contract(
+        state_fields, dest_dir=dest_dir, require_files=False,
+    )
+    if reason:
+        raise ValueError(reason)
+    required = (state_fields.get('PHASE2_PREREQ_REQUIRED') or '').strip()
+    count = str(state_fields.get('PHASE2_PREREQ_PACKAGE_COUNT') or '').strip()
+    target = (state_fields.get('TARGET_DP_VERSION') or '').strip()
+    build = (state_fields.get('PHASE2_PREREQ_BUILD') or '').strip()
+    publication = (state_fields.get('PHASE2_PREREQ_PUBLICATION') or '').strip()
+    state_sha = sha256_file(state_path)
+    artifact_sha = ''
+    manifest_sha = ''
+    sidecar_sha = ''
+    art_path = os.path.join(dest_dir, ARTIFACT_NAME)
+    man_path = os.path.join(dest_dir, MANIFEST_NAME)
+    side_path = art_path + '.sha256'
+    if required == 'YES':
+        if not os.path.isfile(art_path):
+            raise ValueError('artifact_missing')
+        if not os.path.isfile(side_path):
+            raise ValueError('sha_sidecar_missing')
+        if not os.path.isfile(man_path):
+            raise ValueError('manifest_missing')
+        artifact_sha = sha256_file(art_path)
+        manifest_sha = sha256_file(man_path)
+        with open(side_path, 'r') as fh:
+            sidecar_sha = (fh.read().split() or [''])[0].strip()
+        state_art_sha = (state_fields.get('PHASE2_PREREQ_SHA256') or '').strip()
+        if not is_valid_sha256(artifact_sha):
+            raise ValueError('artifact_sha_invalid')
+        if artifact_sha.lower() != state_art_sha.lower():
+            raise ValueError('state_artifact_mismatch')
+        if sidecar_sha.lower() != artifact_sha.lower():
+            raise ValueError('sidecar_artifact_mismatch')
+        if not is_valid_sha256(manifest_sha):
+            raise ValueError('manifest_sha_invalid')
+    else:
+        # REQUIRED=NO: authenticate absence. Any leftover YES artifacts must
+        # not be bound into the identity.
+        if os.path.isfile(art_path) or os.path.isfile(side_path) or os.path.isfile(man_path):
+            # Empty/zero-package archives may still be published for tooling;
+            # bind their digests when present so tampering is detectable.
+            if os.path.isfile(art_path):
+                artifact_sha = sha256_file(art_path)
+            if os.path.isfile(man_path):
+                manifest_sha = sha256_file(man_path)
+            if os.path.isfile(side_path):
+                with open(side_path, 'r') as fh:
+                    sidecar_sha = (fh.read().split() or [''])[0].strip()
+    return OrderedDict([
+        ('TARGET_DP_VERSION', target),
+        ('PHASE2_PREREQ_REQUIRED', required),
+        ('PHASE2_PREREQ_PACKAGE_COUNT', count),
+        ('PHASE2_PREREQ_BUILD', build),
+        ('PHASE2_PREREQ_PUBLICATION', publication),
+        ('PHASE2_PREREQ_STATE_SHA256', state_sha),
+        ('PHASE2_PREREQ_ARTIFACT_SHA256', artifact_sha),
+        ('PHASE2_PREREQ_MANIFEST_SHA256', manifest_sha),
+        ('PHASE2_PREREQ_SIDECAR_SHA256', sidecar_sha),
+    ])
+
+
+def write_prerequisite_identity(dest_dir, state_fields=None):
+    """Write the canonical prerequisite identity contract beside extras."""
+    fields = build_prerequisite_identity_fields(dest_dir, state_fields=state_fields)
+    path = os.path.join(dest_dir, IDENTITY_NAME)
+    write_prerequisite_state(path, fields)
+    return fields, sha256_file(path)
+
+
+def validate_prerequisite_identity_binding(dest_dir, identity_fields=None):
+    """Return a reason string when identity does not bind on-disk artifacts."""
+    if not dest_dir:
+        return 'dest_missing'
+    id_path = os.path.join(dest_dir, IDENTITY_NAME)
+    if identity_fields is None:
+        if not os.path.isfile(id_path):
+            return 'identity_missing'
+        with open(id_path, 'r') as fh:
+            identity_fields = parse_prereq_state_text(fh.read())
+    try:
+        expected = build_prerequisite_identity_fields(dest_dir)
+    except ValueError as exc:
+        return str(exc) or 'identity_rebuild_failed'
+    for key, want in expected.items():
+        got = (identity_fields.get(key) or '').strip()
+        if got != want:
+            return 'identity_field_mismatch:%s' % key
     return ''
 
 
@@ -2176,6 +2284,17 @@ def _emit_prereq_state(dest_dir, required, count, build, publication,
     path = os.path.join(dest_dir, STATE_NAME) if dest_dir else None
     if path:
         write_prerequisite_state(path, fields)
+        if build == 'PASS' and publication == 'PASS':
+            try:
+                id_fields, id_sha = write_prerequisite_identity(dest_dir, state_fields=fields)
+                print('PHASE2_PREREQ_IDENTITY=%s' % os.path.join(dest_dir, IDENTITY_NAME))
+                print('PHASE2_PREREQ_IDENTITY_SHA256=%s' % id_sha)
+                for key, value in id_fields.items():
+                    if key.startswith('PHASE2_PREREQ_') and key.endswith('_SHA256'):
+                        print('%s=%s' % (key, value))
+            except ValueError as exc:
+                eprint('PHASE2_PREREQ_IDENTITY=FAIL reason=%s' % exc)
+                raise
     for key, value in fields.items():
         print('%s=%s' % (key, value))
     return fields
@@ -2511,6 +2630,16 @@ def run_validate_state(args):
         fields.get('PHASE2_PREREQ_REQUIRED'),
         fields.get('PHASE2_PREREQ_PACKAGE_COUNT'),
     ))
+    if dest and (fields.get('PHASE2_PREREQ_BUILD') or '').strip() == 'PASS' \
+            and (fields.get('PHASE2_PREREQ_PUBLICATION') or '').strip() == 'PASS':
+        id_reason = validate_prerequisite_identity_binding(dest)
+        if id_reason:
+            eprint('PHASE2_PREREQ_IDENTITY=FAIL reason=%s' % id_reason)
+            return 1
+        id_path = os.path.join(dest, IDENTITY_NAME)
+        print('PHASE2_PREREQ_IDENTITY=PASS path=%s sha256=%s' % (
+            id_path, sha256_file(id_path),
+        ))
     return 0
 
 
