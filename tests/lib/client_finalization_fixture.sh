@@ -280,7 +280,10 @@ client_fixture_populate_dp_phase2() {
   local dp_root="${mirror_root}/dp-phase2"
   local dir="${dp_root}/${ver}"
   local tar="${dir}/dp_bundle_${ver}-current.tar"
-  mkdir -p "$dir"
+  local extras="${dir}/extras"
+  local repo_root
+  repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+  mkdir -p "$dir" "$extras"
   printf 'client-fixture-phase2-bundle\n' >"$tar"
   (
     cd "$dir"
@@ -294,4 +297,17 @@ STABLE_BUNDLE_NAME=dp_bundle_${ver}-current.tar
 VERIFICATION_RESULT=PASS
 EOF
   chmod 0644 "${dir}/release.env"
+  # Trusted prerequisite identity is required for upgrade-phase2.sh wrapper pin P.
+  cat >"${extras}/phase2-ubuntu-prerequisites.state" <<EOF
+TARGET_DP_VERSION=${ver}
+PHASE2_PREREQ_REQUIRED=NO
+PHASE2_PREREQ_PACKAGE_COUNT=0
+PHASE2_PREREQ_BUILD=PASS
+PHASE2_PREREQ_PUBLICATION=PASS
+PHASE2_PREREQ_ARTIFACT=phase2-ubuntu-prerequisites.tar.gz
+PHASE2_PREREQ_SHA256=
+EOF
+  # shellcheck source=phase2_prereq_identity_fixture.sh
+  source "${repo_root}/tests/lib/phase2_prereq_identity_fixture.sh"
+  phase2_prereq_write_identity_for_extras "$extras" >/dev/null
 }
