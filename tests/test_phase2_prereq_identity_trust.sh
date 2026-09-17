@@ -211,5 +211,23 @@ echo "$OUT" | grep -q 'PHASE2_PREREQ_STAGE=FAIL reason=trusted_identity_missing'
   && pass "I missing trusted identity FAIL CLOSED" \
   || fail "I missing pin: ${OUT}"
 
+# K) trusted identity for 6.5.0 served under 6.6.0 URL → reject (target binding)
+CROSS="${WORKDIR}/cross-650"
+write_yes_set "$CROSS" cross-target-650
+# Rewrite identity+state target to 6.5.0 while publishing under 6.6.0 extras URL.
+awk '{if($0 ~ /^TARGET_DP_VERSION=/) print "TARGET_DP_VERSION=6.5.0"; else print}' \
+  "${CROSS}/phase2-ubuntu-prerequisites.state" >"${CROSS}/phase2-ubuntu-prerequisites.state.tmp"
+mv -f "${CROSS}/phase2-ubuntu-prerequisites.state.tmp" \
+  "${CROSS}/phase2-ubuntu-prerequisites.state"
+phase2_prereq_write_identity_for_extras "$CROSS" >/dev/null
+PIN_CROSS="$(phase2_prereq_identity_sha_of "${CROSS}/phase2-ubuntu-prerequisites.identity")"
+publish_from "$CROSS"
+OUT="$(run_stage "$PIN_CROSS")"
+echo "$OUT" | grep -q 'PHASE2_PREREQ_STAGE=FAIL reason=target_version_mismatch' \
+  && echo "$OUT" | grep -q 'RC=1' \
+  && ! echo "$OUT" | grep -q 'PHASE2_PREREQ_STAGE=PASS' \
+  && pass "K cross-target trusted identity REJECT" \
+  || fail "K cross-target: ${OUT}"
+
 echo "======== summary pass=${PASS} fail=${FAIL} ========"
 [[ "$FAIL" -eq 0 ]]

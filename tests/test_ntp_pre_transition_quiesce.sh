@@ -37,8 +37,8 @@ else
 fi
 
 # Extract quiesce helpers (+ warning classifier) from runner template.
-start_line="$(rg -n '^LEGACY_NTP_VERSION_LT=' "$J2N_IN" | head -1 | cut -d: -f1)"
-end_line="$(rg -n '^classify_dro_failure\(\)' "$J2N_IN" | head -1 | cut -d: -f1)"
+start_line="$(grep -n '^LEGACY_NTP_VERSION_LT=' "$J2N_IN" | head -1 | cut -d: -f1)"
+end_line="$(grep -n '^classify_dro_failure()' "$J2N_IN" | head -1 | cut -d: -f1)"
 [[ -n "$start_line" && -n "$end_line" && "$end_line" -gt "$start_line" ]] \
   || { echo "failed to locate NTP quiesce block"; exit 1; }
 {
@@ -61,7 +61,7 @@ grep -q 'ensure_legacy_ntp_quiesced_before_package_transition()' "$OUT/ntp_lib.s
 # Other hops must remain unchanged (no pre-transition NTP quiesce).
 other_ok=1
 for hop_in in "$X2B_IN" "$B2F_IN" "$F2J_IN"; do
-  if rg -q 'ensure_legacy_ntp_quiesced_before_package_transition|LEGACY_NTP_PACKAGE_DETECTED|NTP_USERDEL_PREVENTION' "$hop_in"; then
+  if grep -Eq 'ensure_legacy_ntp_quiesced_before_package_transition|LEGACY_NTP_PACKAGE_DETECTED|NTP_USERDEL_PREVENTION' "$hop_in"; then
     fail "hop-isolation: unexpected NTP quiesce in $(basename "$hop_in")"
     other_ok=0
   fi
@@ -259,7 +259,7 @@ else
 fi
 
 # Forbidden primitives must not appear as executable logic (comments OK).
-if rg -n '^\s*(kill\s+-9|pkill\b|killall\b)' "$J2N_IN" >/dev/null; then
+if grep -nE '^\s*(kill\s+-9|pkill\b|killall\b)' "$J2N_IN" >/dev/null; then
   fail "forbidden kill primitives present in J2N"
 else
   pass "no forbidden kill/pkill/killall in J2N"

@@ -26,7 +26,7 @@ bash -n "$POSTBOOT_POLICY" || { echo "postboot policy syntax error"; exit 1; }
 # Hop isolation: other hops must not gain this postboot DNS repair policy.
 other_ok=1
 for hop_in in "$X2B_IN" "$B2F_IN" "$F2J_IN"; do
-  if rg -q 'BEGIN_DP_POSTBOOT_DNS_TIME_POLICY|check_and_repair_dns_resolver|TIME_READINESS=PASS_WITH_WARNING|@@POSTBOOT_POLICY_LIB@@' "$hop_in"; then
+  if grep -Eq 'BEGIN_DP_POSTBOOT_DNS_TIME_POLICY|check_and_repair_dns_resolver|TIME_READINESS=PASS_WITH_WARNING|@@POSTBOOT_POLICY_LIB@@' "$hop_in"; then
     fail "hop-isolation: unexpected DNS/time policy in $(basename "$hop_in")"
     other_ok=0
   fi
@@ -74,7 +74,7 @@ else
 fi
 
 # DNS repair must not restart NICs / reboot / bringup (ignore comments).
-if rg -n '^\s*(ifdown|ifup|reboot|shutdown)\b|systemctl restart networking|ip link set|bringup_py3' "$POSTBOOT_POLICY"; then
+if grep -nE '^\s*(ifdown|ifup|reboot|shutdown)\b|systemctl restart networking|ip link set|bringup_py3' "$POSTBOOT_POLICY"; then
   fail "DNS lib must not restart network/reboot/bringup"
 else
   pass "DNS repair avoids NIC restart/reboot/bringup"

@@ -133,39 +133,56 @@ printf 'old-worker-state\n' >"${WORKER}/phase2-ubuntu-prerequisites.state"
 
 SCP_LOG="${WORKDIR}/scp.log"
 : >"$SCP_LOG"
+AELLADEB="${WORKDIR}/worker-aelladeb"
+mkdir -p "$AELLADEB"
 log() { printf '%s\n' "$*"; }
 worker_ssh() {
   shift
   local cmd="$*"
-  if [[ "$cmd" == *"install -o root"* ]] \
-    || [[ "$cmd" == *"bash -c"* && "$cmd" == *"upload="* ]]; then
-    # Simulate promote: move upload files into protected worker staging.
+  # Prepare/ensure: resolve numeric aella identity + safe dirs.
+  if [[ "$cmd" == *"id -u aella"* ]]; then
+    if [[ -L "$WORKER" || -L "$UPLOAD" || -L "${WORKER}/lib" || -L "${UPLOAD}/lib" || -L "${UPLOAD}/aelladeb" || -L "$AELLADEB" ]]; then
+      echo "WORKER_STAGING_PREPARE=FAIL reason=symlink_path" >&2
+      return 1
+    fi
+    mkdir -p "$WORKER" "${WORKER}/lib" "$UPLOAD" "${UPLOAD}/lib" "${UPLOAD}/aelladeb" "$AELLADEB"
+    chmod 0755 "$WORKER" "${WORKER}/lib" "$AELLADEB"
+    chmod 0700 "$UPLOAD" "${UPLOAD}/lib" "${UPLOAD}/aelladeb"
+    return 0
+  fi
+  # Prepare clean: wipe upload files + stale deb/tar.gz (no find -L).
+  if [[ "$cmd" == *"-delete"* ]]; then
+    if [[ -L "$WORKER" || -L "$UPLOAD" ]]; then
+      echo "WORKER_STAGING_PREPARE=FAIL reason=symlink_path" >&2
+      return 1
+    fi
+    find "$UPLOAD" "${UPLOAD}/lib" "${UPLOAD}/aelladeb" -maxdepth 1 -type f -delete 2>/dev/null || true
+    find "$WORKER" "$AELLADEB" -maxdepth 1 -type f \
+      \( -name '*.deb' -o -name '*.tar.gz' -o -name '*.tgz' \) -delete 2>/dev/null || true
+    return 0
+  fi
+  # Promote: same-FS rename semantics (mv), reject upload symlinks.
+  if [[ "$cmd" == *"mv -f"* ]]; then
     local src dest
     mkdir -p "$WORKER" "${WORKER}/lib"
     shopt -s nullglob
     for src in "${UPLOAD}"/*; do
-      [[ -f "$src" ]] || continue
+      [[ -e "$src" ]] || continue
       [[ ! -L "$src" ]] || return 1
+      [[ -f "$src" ]] || continue
       dest="${WORKER}/$(basename "$src")"
-      cp -a "$src" "$dest"
+      mv -f "$src" "$dest"
       chmod 0644 "$dest"
-      rm -f "$src"
     done
     for src in "${UPLOAD}/lib"/*; do
-      [[ -f "$src" ]] || continue
+      [[ -e "$src" ]] || continue
       [[ ! -L "$src" ]] || return 1
+      [[ -f "$src" ]] || continue
       dest="${WORKER}/lib/$(basename "$src")"
-      cp -a "$src" "$dest"
+      mv -f "$src" "$dest"
       chmod 0644 "$dest"
-      rm -f "$src"
     done
     shopt -u nullglob
-    return 0
-  fi
-  if [[ "$cmd" == *"mkdir -p"* && "$cmd" != *"bash -c"* ]]; then
-    mkdir -p "$WORKER" "${WORKER}/lib" "$UPLOAD" "${UPLOAD}/lib" "${UPLOAD}/aelladeb"
-    chmod 0755 "$WORKER" "${WORKER}/lib"
-    chmod 0700 "$UPLOAD" "${UPLOAD}/lib" "${UPLOAD}/aelladeb"
     return 0
   fi
   if [[ "$cmd" == *"rm -f"* ]]; then
@@ -310,6 +327,35 @@ set -e
 echo "$PROMOTE_OUT" | grep -q 'RC=1' \
   && pass "A4b symlink upload promote FAIL CLOSED" \
   || fail "A4b symlink: ${PROMOTE_OUT}"
+rm -f "${UPLOAD_YES}/evil-link"
+
+# A4c. Directory symlink at upload root fails closed; target not mutated
+VICTIM="${WORKDIR}/victim-dir"
+mkdir -p "$VICTIM"
+printf 'untouched\n' >"${VICTIM}/marker"
+chmod 0755 "$VICTIM"
+VICTIM_MODE_BEFORE="$(stat -c '%a' "$VICTIM")"
+rm -rf "$UPLOAD_YES"
+ln -s "$VICTIM" "$UPLOAD_YES"
+set +e
+PREPARE_OUT="$(prepare_worker_protected_staging 192.0.2.11; echo RC=$?)"
+set -e
+echo "$PREPARE_OUT" | grep -q 'WORKER_STAGING_PREPARE=FAIL' \
+  && echo "$PREPARE_OUT" | grep -q 'RC=1' \
+  && [[ "$(stat -c '%a' "$VICTIM")" == "$VICTIM_MODE_BEFORE" ]] \
+  && [[ "$(cat "${VICTIM}/marker")" == "untouched" ]] \
+  && pass "A4c directory symlink upload prepare FAIL CLOSED (victim untouched)" \
+  || fail "A4c dir symlink: ${PREPARE_OUT} mode=$(stat -c '%a' "$VICTIM") marker=$(cat "${VICTIM}/marker" 2>/dev/null || true)"
+rm -f "$UPLOAD_YES"
+mkdir -p "$UPLOAD_YES" "${UPLOAD_YES}/lib" "${UPLOAD_YES}/aelladeb"
+chmod 0700 "$UPLOAD_YES" "${UPLOAD_YES}/lib" "${UPLOAD_YES}/aelladeb"
+
+# Static: default upload root is under /opt/aelladata; no aella:aella
+grep -q '/opt/aelladata/.phase2-worker-upload' "$FRAGMENT" \
+  && ! grep -q '/home/aella/.phase2-worker-upload' "$FRAGMENT" \
+  && ! grep -Eq 'chown[[:space:]]+aella:aella' "$FRAGMENT" \
+  && pass "fragment upload root on data fs + numeric ownership" \
+  || fail "fragment still uses home upload or aella:aella"
 
 # A5. REQUIRED=YES artifact exists but state missing => FAIL
 set +e

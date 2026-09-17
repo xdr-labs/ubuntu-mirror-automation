@@ -2400,6 +2400,161 @@ class StagingProvenanceResumeTests(unittest.TestCase):
         self.assertEqual(sm.STAGING_SCHEMA_VERSION, sm.VALIDATOR_SCHEMA)
         self.assertEqual(sm.STAGING_SCHEMA_VERSION, sm.PUBLISHER_SCHEMA)
 
+    def test_seed_size_match_sha_mismatch_rejected(self):
+        """Size-equal corrupt seed must not be accepted as integrity."""
+        tmp = tempfile.mkdtemp(prefix='sel-seed-bad-')
+        try:
+            good = b'GOOD-SEED-BYTES-XXXX'
+            bad = b'BAD!-SEED-BYTES-XXXX'
+            self.assertEqual(len(good), len(bad))
+            good_sha = hashlib.sha256(good).hexdigest()
+            bad_sha = hashlib.sha256(bad).hexdigest()
+            self.assertNotEqual(good_sha, bad_sha)
+            seed = os.path.join(tmp, 'seed.bin')
+            write_bytes(seed, bad)
+            dst = os.path.join(tmp, 'dst.bin')
+            with self.assertRaises(sm.SelectiveDownloadError) as ctx:
+                sm.acquire_file(
+                    seed, dst,
+                    allow_download_url=None,
+                    expected_sha256=good_sha,
+                    expected_size=len(good),
+                )
+            self.assertIn('checksum', ctx.exception.message.lower())
+            self.assertFalse(os.path.isfile(dst))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_release_upgrader_seed_sha_mismatch_materialize_fail(self):
+        tmp = tempfile.mkdtemp(prefix='sel-up-seed-bad-')
+        try:
+            selective = os.path.join(tmp, 'selective')
+            hop = 'xenial-to-bionic'
+            good = b'upgrader-good-payload!!'
+            bad = b'upgrader-BAD!-payload!!'
+            self.assertEqual(len(good), len(bad))
+            good_sha = hashlib.sha256(good).hexdigest()
+            seed = os.path.join(tmp, 'bionic.tar.gz')
+            write_bytes(seed, bad)
+            plan = {
+                'validation_result': 'PASS',
+                'profile_name': 'offline-upgrade-selective',
+                'plan_checksum': 'up-seed-bad-plan',
+                'discovery_artifact_checksum': 'disc',
+                'discovery_root': '/tmp/discovery',
+                'hops': [hop],
+                'hop_summaries': {
+                    hop: {
+                        'from_series': 'xenial', 'to_series': 'bionic',
+                        'suites': ['bionic'],
+                    },
+                },
+                'debs': [],
+                'upgraders': [{
+                    'hop': hop,
+                    'filename': 'bionic.tar.gz',
+                    'url': (
+                        'http://archive.ubuntu.com/ubuntu/dists/'
+                        'bionic-updates/main/dist-upgrader-all/current/bionic.tar.gz'
+                    ),
+                    'sha256': good_sha,
+                    'size_bytes': len(good),
+                    'seed_local_path': seed,
+                }],
+            }
+            plan_path = os.path.join(tmp, 'plan.json')
+            write(plan_path, json.dumps(plan))
+            orig_gen = sm.generate_packages_for_hop
+            sm.generate_packages_for_hop = lambda *a, **k: []
+            try:
+                with self.assertRaises(sm.SelectiveDownloadError) as ctx:
+                    sm.materialize(
+                        plan_path, selective, allow_download=False, sign=False,
+                        hop=hop,
+                    )
+            finally:
+                sm.generate_packages_for_hop = orig_gen
+            self.assertIn('checksum', ctx.exception.message.lower())
+            receipt = os.path.join(selective, 'state', 'materialize.json')
+            self.assertTrue(os.path.isfile(receipt))
+            data = json.loads(open(receipt).read())
+            self.assertNotEqual(data.get('validation_result'), 'PASS')
+            stats = data.get('stats') or {}
+            self.assertGreaterEqual(int(stats.get('checksum_mismatch') or 0), 1)
+            promoted = os.path.join(
+                selective, 'staging', 'shared', 'offline', 'release-upgraders',
+                'bionic', 'bionic.tar.gz',
+            )
+            self.assertFalse(os.path.isfile(promoted))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_release_upgrader_correct_seed_reused_without_download(self):
+        tmp = tempfile.mkdtemp(prefix='sel-up-seed-ok-')
+        try:
+            selective = os.path.join(tmp, 'selective')
+            hop = 'xenial-to-bionic'
+            payload = b'upgrader-correct-payload'
+            digest = hashlib.sha256(payload).hexdigest()
+            seed = os.path.join(tmp, 'bionic.tar.gz')
+            write_bytes(seed, payload)
+            plan = {
+                'validation_result': 'PASS',
+                'profile_name': 'offline-upgrade-selective',
+                'plan_checksum': 'up-seed-ok-plan',
+                'discovery_artifact_checksum': 'disc',
+                'discovery_root': '/tmp/discovery',
+                'hops': [hop],
+                'hop_summaries': {
+                    hop: {
+                        'from_series': 'xenial', 'to_series': 'bionic',
+                        'suites': ['bionic'],
+                    },
+                },
+                'debs': [],
+                'upgraders': [{
+                    'hop': hop,
+                    'filename': 'bionic.tar.gz',
+                    'url': (
+                        'http://127.0.0.1:1/ubuntu/dists/'
+                        'bionic-updates/main/dist-upgrader-all/current/bionic.tar.gz'
+                    ),
+                    'sha256': digest,
+                    'size_bytes': len(payload),
+                    'seed_local_path': seed,
+                }],
+            }
+            plan_path = os.path.join(tmp, 'plan.json')
+            write(plan_path, json.dumps(plan))
+            orig_gen = sm.generate_packages_for_hop
+            sm.generate_packages_for_hop = lambda *a, **k: []
+            try:
+                result = sm.materialize(
+                    plan_path, selective, allow_download=False, sign=False,
+                    hop=hop,
+                )
+            finally:
+                sm.generate_packages_for_hop = orig_gen
+            self.assertEqual(result['validation_result'], 'PASS')
+            stats = result.get('stats') or {}
+            self.assertEqual(int(stats.get('checksum_mismatch') or 0), 0)
+            self.assertEqual(int(stats.get('downloaded') or 0), 0)
+            reused = (
+                int(stats.get('hardlink') or 0)
+                + int(stats.get('reflink') or 0)
+                + int(stats.get('copy') or 0)
+                + int(stats.get('exists') or 0)
+            )
+            self.assertGreaterEqual(reused, 1)
+            dst = os.path.join(
+                selective, 'staging', 'shared', 'offline', 'release-upgraders',
+                'bionic', 'bionic.tar.gz',
+            )
+            self.assertTrue(os.path.isfile(dst))
+            self.assertEqual(sm.file_sha256(dst), digest)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
     def test_transient_retry_helper(self):
         class RemoteDisconnected(Exception):
             pass

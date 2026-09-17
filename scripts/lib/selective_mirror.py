@@ -614,8 +614,9 @@ def acquire_file(
     """Place dst using hardlink → reflink → copy → download.
 
     If dst already exists with matching size+SHA256, skip download ('exists').
-    Partial *.download temps are removed on failure; matching destinations
-    are never deleted.
+    Local seeds are verified against expected checksum/size before reuse;
+    size equality alone is never treated as integrity. Partial *.download
+    temps are removed on failure; matching destinations are never deleted.
     """
     ensure_dir(os.path.dirname(dst))
     tmp = dst + '.download'
@@ -628,11 +629,41 @@ def acquire_file(
         else:
             return 'exists'
 
-    if src and os.path.isfile(src):
+    seed_usable = bool(src and os.path.isfile(src))
+    if seed_usable and (expected_sha256 or expected_size is not None):
+        if not destination_matches(src, expected_sha256, expected_size):
+            # Do not publish/copy a size-matched but corrupt seed.
+            if not allow_download_url:
+                ctx = OrderedDict(entry_context or {})
+                ctx.setdefault('destination_path', dst)
+                ctx['seed_local_path'] = src
+                ctx['exception_type'] = 'ChecksumError'
+                ctx['exception_message'] = 'seed checksum/size mismatch'
+                if expected_sha256:
+                    try:
+                        ctx['actual_sha256'] = file_sha256(src)
+                    except OSError:
+                        ctx['actual_sha256'] = ''
+                raise SelectiveDownloadError(
+                    ERROR_DOWNLOAD,
+                    'seed checksum/size mismatch for %s' % dst,
+                    ctx,
+                )
+            seed_usable = False
+
+    if seed_usable:
         # Prefer direct link/copy when destination is absent.
         if not os.path.isfile(dst):
             try:
                 os.link(src, dst)
+                if expected_sha256 or expected_size is not None:
+                    if not destination_matches(dst, expected_sha256, expected_size):
+                        safe_unlink(dst)
+                        raise SelectiveDownloadError(
+                            ERROR_DOWNLOAD,
+                            'seed checksum/size mismatch after link: %s' % dst,
+                            OrderedDict(entry_context or {}),
+                        )
                 return 'hardlink'
             except OSError:
                 pass
@@ -641,10 +672,26 @@ def acquire_file(
                     ['cp', '--reflink=auto', src, dst],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 )
+                if expected_sha256 or expected_size is not None:
+                    if not destination_matches(dst, expected_sha256, expected_size):
+                        safe_unlink(dst)
+                        raise SelectiveDownloadError(
+                            ERROR_DOWNLOAD,
+                            'seed checksum/size mismatch after reflink: %s' % dst,
+                            OrderedDict(entry_context or {}),
+                        )
                 return 'reflink'
             except (OSError, subprocess.CalledProcessError):
                 pass
             shutil.copy2(src, dst)
+            if expected_sha256 or expected_size is not None:
+                if not destination_matches(dst, expected_sha256, expected_size):
+                    safe_unlink(dst)
+                    raise SelectiveDownloadError(
+                        ERROR_DOWNLOAD,
+                        'seed checksum/size mismatch after copy: %s' % dst,
+                        OrderedDict(entry_context or {}),
+                    )
             return 'copy'
         # Destination exists but failed checksum match: stage via temp.
         safe_unlink(tmp)
@@ -665,9 +712,16 @@ def acquire_file(
             if expected_sha256 or expected_size is not None:
                 if not destination_matches(tmp, expected_sha256, expected_size):
                     safe_unlink(tmp)
-                    raise IOError('seed content mismatch for %s' % dst)
+                    raise SelectiveDownloadError(
+                        ERROR_DOWNLOAD,
+                        'seed checksum/size mismatch for %s' % dst,
+                        OrderedDict(entry_context or {}),
+                    )
             os.replace(tmp, dst)
             return method
+        except SelectiveDownloadError:
+            safe_unlink(tmp)
+            raise
         except Exception:
             safe_unlink(tmp)
             raise
@@ -2102,6 +2156,12 @@ def materialize(plan_path, selective_root, allow_download=True, sign=True,
             stats['transient_retry_count'] = (
                 int(stats.get('transient_retry_count') or 0) + retries
             )
+            if 'checksum' in (err.message or '').lower() or (
+                (err.context or {}).get('exception_type') == 'ChecksumError'
+            ):
+                stats['checksum_mismatch'] = int(
+                    stats.get('checksum_mismatch') or 0
+                ) + 1
             in_progress['stats'] = stats
             write_json(receipt_path, in_progress)
             write_failed_downloads(
@@ -2110,6 +2170,23 @@ def materialize(plan_path, selective_root, allow_download=True, sign=True,
             )
             raise
         stats[method] = stats.get(method, 0) + 1
+        if not destination_matches(dst, up_sha, up_size):
+            safe_unlink(dst + '.download')
+            stats['checksum_mismatch'] = int(stats.get('checksum_mismatch') or 0) + 1
+            err = SelectiveDownloadError(
+                ERROR_DOWNLOAD,
+                'release upgrader checksum mismatch after acquire: %s' % name,
+                entry_ctx,
+            )
+            err.context['exception_type'] = 'ChecksumError'
+            err.context['exception_message'] = 'checksum mismatch after acquire'
+            in_progress['stats'] = stats
+            write_json(receipt_path, in_progress)
+            write_failed_downloads(
+                selective_root, err, succeeded,
+                max(total_entries - succeeded, 0),
+            )
+            raise err
 
     merge_info = OrderedDict()
     if requested_hop:

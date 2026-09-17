@@ -5,6 +5,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HELPER="${ROOT}/client/stage-dp-phase2.sh"
 WRAP="${ROOT}/client/stage-dp-phase2-6.5.0.sh"
+FRAGMENT="${ROOT}/scripts/lib/phase2_bringup_patch/fragment_compat.sh"
+PATCHER="${ROOT}/scripts/lib/patch_dp_phase2_bringup.py"
+VENDOR_BRINGUP="${ROOT}/vendor/dp-phase2/bringup_py3_dp_after_os_upgrade.sh"
 FAIL=0
 pass() { echo "  PASS: $*"; }
 fail() { echo "  FAIL: $*"; FAIL=1; }
@@ -12,13 +15,33 @@ fail() { echo "  FAIL: $*"; FAIL=1; }
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
 
+OWNERSHIP_SCAN_PATHS=(
+  "$HELPER"
+  "$WRAP"
+  "$FRAGMENT"
+  "$PATCHER"
+  "$VENDOR_BRINGUP"
+)
+# Also scan every fragment under phase2_bringup_patch/
+while IFS= read -r -d '' f; do
+  OWNERSHIP_SCAN_PATHS+=("$f")
+done < <(find "${ROOT}/scripts/lib/phase2_bringup_patch" -type f -print0 2>/dev/null)
+
 echo "[test] static: no literal aella group ownership"
 # Match ownership mutations only (not `id -g aella` lookups).
-if grep -En -- 'chown[[:space:]]+aella:aella|install[[:space:]]+-o[[:space:]]+aella|[[:space:]]-g[[:space:]]+aella[[:space:]]+-m' "$HELPER" "$WRAP"; then
+if grep -En -- 'chown[[:space:]]+aella:aella|install[[:space:]]+-o[[:space:]]+aella|[[:space:]]-g[[:space:]]+aella[[:space:]]+-m' \
+  "${OWNERSHIP_SCAN_PATHS[@]}"; then
   fail "literal aella group present"
 else
-  pass "no -g aella / aella:aella"
+  pass "no -g aella / aella:aella across stage+patch+vendor"
 fi
+
+echo "[test] fragment resolves numeric id -u/-g aella (not aella:aella)"
+grep -Eq 'id -u aella' "$FRAGMENT" \
+  && grep -Eq 'id -g aella' "$FRAGMENT" \
+  && ! grep -Eq 'chown[[:space:]]+aella:aella' "$FRAGMENT" \
+  && pass "fragment uses id -u/-g aella" \
+  || fail "fragment missing numeric aella identity resolution"
 
 echo "[test] runtime numeric ownership install"
 export DP_PHASE2_STAGE_LIB_ONLY=1

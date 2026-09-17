@@ -383,6 +383,29 @@ class Production3af369PatchTests(unittest.TestCase):
         )
         self.assertEqual(ctx.exception.reason, 'anchor_count=0 expected=1')
 
+    def test_vendor_golden_matches_canonical_3af369_patch(self):
+        """Checked-in vendor golden must equal patcher(production-3af369).
+
+        Production authority remains fresh ACPS upstream + patcher. The vendor
+        file is only a regenerable reference for the reviewed 3af369 fixture
+        generation (preserves AELDEV-74638 markers).
+        """
+        out, applied = patcher.patch_bringup_text(self.upstream, emit=False)
+        self.assertTrue(applied)
+        with open(VENDOR, 'r', encoding='utf-8') as fh:
+            vendor = fh.read()
+        self.assertEqual(
+            out, vendor,
+            'vendor golden drifted from canonical patch of production-3af369',
+        )
+        for marker in N3_VENDOR_MARKERS:
+            self.assertIn(marker, vendor, marker)
+        self.assertIn('/opt/aelladata/.phase2-worker-upload', vendor)
+        self.assertNotIn('/home/aella/.phase2-worker-upload', vendor)
+        self.assertNotRegex(vendor, r'(?m)chown\s+aella:aella')
+        self.assertIn('id -u aella', vendor)
+        self.assertIn('id -g aella', vendor)
+
 
 class AcpsCredentialRemovalTests(unittest.TestCase):
     """Structural ACPS_PASS scrub — never anchors on a historical secret value."""

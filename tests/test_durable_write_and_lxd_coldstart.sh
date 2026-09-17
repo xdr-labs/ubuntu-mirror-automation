@@ -92,7 +92,7 @@ temps="$(find "$OUT_DIR" -name '.atomic-dest.*.tmp' 2>/dev/null | wc -l | tr -d 
 [[ "$(cat "$dest6")" == "FULL" ]] && pass "dest complete after write" || fail "dest incomplete"
 
 # 6) Repository static: no unbounded bare sync in SOURCE templates / libs
-disallowed="$(rg -n '^\s*sync\b|sync 2>/dev/null \|\| true|\|\| sync 2>/dev/null' \
+disallowed="$(grep -nE '^\s*sync\b|sync 2>/dev/null \|\| true|\|\| sync 2>/dev/null' \
   "${ROOT}/client/dp-offline-upgrade-"*.sh.in \
   "${ROOT}/client/lib/dp-offline-durable-write.sh" \
   "${ROOT}/client/lib/dp-offline-lxd-inventory.sh" \

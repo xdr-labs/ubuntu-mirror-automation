@@ -1131,6 +1131,7 @@ stage_phase2_ubuntu_prerequisites() {
   local identity_dest="${ARTIFACT_DIR}/${identity_name}"
   local tmp sha_url sha_dest required count build publication artifact_name sha
   local expected_id actual_id id_required id_count id_state_sha id_art_sha id_man_sha id_side_sha
+  local id_target id_target_norm state_target state_target_norm
   local state_actual man_actual
 
   [[ -n "${EXPECTED_PREREQ_IDENTITY_SHA256:-}" ]] || {
@@ -1178,8 +1179,22 @@ stage_phase2_ubuntu_prerequisites() {
   id_art_sha="$(awk -F= '$1=="PHASE2_PREREQ_ARTIFACT_SHA256"{print $2; exit}' "$identity_dest")"
   id_man_sha="$(awk -F= '$1=="PHASE2_PREREQ_MANIFEST_SHA256"{print $2; exit}' "$identity_dest")"
   id_side_sha="$(awk -F= '$1=="PHASE2_PREREQ_SIDECAR_SHA256"{print $2; exit}' "$identity_dest")"
+  id_target="$(awk -F= '$1=="TARGET_DP_VERSION"{print $2; exit}' "$identity_dest")"
   build="$(awk -F= '$1=="PHASE2_PREREQ_BUILD"{print $2; exit}' "$identity_dest")"
   publication="$(awk -F= '$1=="PHASE2_PREREQ_PUBLICATION"{print $2; exit}' "$identity_dest")"
+
+  # Bind trusted identity to the requested target before consuming HTTP metadata.
+  if [[ -z "$id_target" ]]; then
+    rm -f "$identity_dest"
+    log "PHASE2_PREREQ_STAGE=FAIL reason=identity_target_missing"
+    return 1
+  fi
+  id_target_norm="$(normalize_dp_version "$id_target" 2>/dev/null || true)"
+  if [[ -z "$id_target_norm" || "$id_target_norm" != "$TARGET_DP_VERSION" ]]; then
+    rm -f "$identity_dest"
+    log "PHASE2_PREREQ_STAGE=FAIL reason=target_version_mismatch identity=${id_target} requested=${TARGET_DP_VERSION}"
+    return 1
+  fi
 
   if [[ "$build" != "PASS" ]]; then
     retract_staged_phase2_prereq_artifacts
@@ -1226,6 +1241,14 @@ stage_phase2_ubuntu_prerequisites() {
   count="$(awk -F= '$1=="PHASE2_PREREQ_PACKAGE_COUNT"{print $2; exit}' "$state_dest")"
   artifact_name="$(awk -F= '$1=="PHASE2_PREREQ_ARTIFACT"{print $2; exit}' "$state_dest")"
   sha="$(awk -F= '$1=="PHASE2_PREREQ_SHA256"{print $2; exit}' "$state_dest")"
+  state_target="$(awk -F= '$1=="TARGET_DP_VERSION"{print $2; exit}' "$state_dest")"
+  if [[ -n "$state_target" ]]; then
+    state_target_norm="$(normalize_dp_version "$state_target" 2>/dev/null || true)"
+    if [[ -z "$state_target_norm" || "$state_target_norm" != "$TARGET_DP_VERSION" ]]; then
+      log "PHASE2_PREREQ_STAGE=FAIL reason=target_version_mismatch state=${state_target} requested=${TARGET_DP_VERSION}"
+      return 1
+    fi
+  fi
   if [[ "$required" != "$id_required" || "$count" != "$id_count" ]]; then
     log "PHASE2_PREREQ_STAGE=FAIL reason=state_identity_field_mismatch"
     return 1

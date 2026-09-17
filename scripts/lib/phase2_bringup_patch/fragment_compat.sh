@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 ###############################################################################
 # PHASE 2 COMPATIBILITY: Ubuntu prerequisites + cluster readiness gates
 ###############################################################################
@@ -333,12 +334,16 @@ clean_phase2_prereq_contract_files() {
         "${dir}/phase2-ubuntu-prerequisites.identity"
 }
 
+# Large Phase 2 artifacts (images-*.tar) must land on the data filesystem.
+# Default upload root stays under /opt/aelladata — never /home or /tmp.
 phase2_worker_upload_root() {
-    printf '%s\n' "${PHASE2_WORKER_UPLOAD_ROOT:-/home/aella/.phase2-worker-upload}"
+    printf '%s\n' "${PHASE2_WORKER_UPLOAD_ROOT:-/opt/aelladata/.phase2-worker-upload}"
 }
 
 # Ensure upload + protected dirs exist with correct ownership. Does not wipe
 # already-promoted staging artifacts (prereq contract copy runs after them).
+# Rejects directory symlinks at the trust boundary; resolves aella via numeric
+# UID/primary GID (never aella:aella). Upload and staging must share a device.
 ensure_worker_protected_staging_dirs() {
     local worker_ip="$1"
     local staging="${STAGING_DIR:-/opt/aelladata/aelladeb_py3}"
@@ -349,13 +354,117 @@ ensure_worker_protected_staging_dirs() {
         log "ERROR: WORKER_STAGING_PREPARE=FAIL reason=ssh_helpers_missing"
         return 1
     fi
-    if ! worker_ssh "$worker_ip" "sudo mkdir -p \
-'${staging}' '${staging}/lib' '${aelladeb}' \
-'${upload}' '${upload}/lib' '${upload}/aelladeb' && \
-sudo chown root:root '${staging}' '${staging}/lib' '${aelladeb}' && \
-sudo chmod 0755 '${staging}' '${staging}/lib' '${aelladeb}' && \
-sudo chown aella:aella '${upload}' '${upload}/lib' '${upload}/aelladeb' && \
-sudo chmod 0700 '${upload}' '${upload}/lib' '${upload}/aelladeb'"; then
+    case "${staging}${aelladeb}${upload}" in
+        *\'*)
+            log "ERROR: WORKER_STAGING_PREPARE=FAIL reason=unsafe_path"
+            return 1
+            ;;
+    esac
+    if ! worker_ssh "$worker_ip" "sudo bash -c '
+set -euo pipefail
+staging='\''${staging}'\''
+aelladeb='\''${aelladeb}'\''
+upload='\''${upload}'\''
+# Production paths stay under /opt/aelladata. Hermetic tests may override
+# STAGING_DIR/PHASE2_WORKER_UPLOAD_ROOT to a shared temp tree.
+if [[ \"\$staging\" == /opt/aelladata/* && \"\$upload\" == /opt/aelladata/* && \"\$aelladeb\" == /opt/aelladata/* ]]; then
+  data_root=/opt/aelladata
+else
+  data_root=\$(dirname \"\$staging\")
+fi
+
+phase2_reject_symlink_components() {
+  local path=\"\$1\"
+  local cur=\"\" part
+  local IFS=/
+  local -a parts
+  # Absolute paths only.
+  [[ \"\$path\" == /* ]] || {
+    echo \"WORKER_STAGING_PREPARE=FAIL reason=path_not_absolute path=\${path}\" >&2
+    return 1
+  }
+  read -r -a parts <<< \"\${path#/}\"
+  for part in \"\${parts[@]}\"; do
+    [[ -n \"\$part\" ]] || continue
+    cur=\"\${cur}/\${part}\"
+    if [[ -L \"\$cur\" ]]; then
+      echo \"WORKER_STAGING_PREPARE=FAIL reason=symlink_path path=\${cur}\" >&2
+      return 1
+    fi
+  done
+  if [[ -e \"\$path\" && ! -d \"\$path\" ]]; then
+    echo \"WORKER_STAGING_PREPARE=FAIL reason=not_directory path=\${path}\" >&2
+    return 1
+  fi
+  return 0
+}
+
+phase2_ensure_safe_dir() {
+  local path=\"\$1\"
+  local mode=\"\$2\"
+  local owner=\"\$3\"
+  local parent=\"\$4\"
+  local real pref
+  phase2_reject_symlink_components \"\$path\" || return 1
+  mkdir -p \"\$path\"
+  phase2_reject_symlink_components \"\$path\" || return 1
+  [[ -d \"\$path\" && ! -L \"\$path\" ]] || {
+    echo \"WORKER_STAGING_PREPARE=FAIL reason=not_directory path=\${path}\" >&2
+    return 1
+  }
+  real=\$(readlink -f \"\$path\")
+  pref=\$(readlink -f \"\$parent\")
+  case \"\$real\" in
+    \"\$pref\"|\"\$pref\"/*) ;;
+    *)
+      echo \"WORKER_STAGING_PREPARE=FAIL reason=escape_parent path=\${path} real=\${real} parent=\${pref}\" >&2
+      return 1
+      ;;
+  esac
+  chown \"\$owner\" \"\$path\"
+  chmod \"\$mode\" \"\$path\"
+  return 0
+}
+
+uid=\$(id -u aella) || {
+  echo \"WORKER_STAGING_PREPARE=FAIL reason=aella_uid_unresolved\" >&2
+  exit 1
+}
+gid=\$(id -g aella) || {
+  echo \"WORKER_STAGING_PREPARE=FAIL reason=aella_gid_unresolved\" >&2
+  exit 1
+}
+[[ \"\$uid\" =~ ^[0-9]+\$ && \"\$gid\" =~ ^[0-9]+\$ ]] || {
+  echo \"WORKER_STAGING_PREPARE=FAIL reason=aella_identity_invalid uid=\${uid} gid=\${gid}\" >&2
+  exit 1
+}
+
+# Upload must live on the data filesystem (same device as staging), not a
+# silent /home or /tmp fallback when production defaults are in use.
+if [[ \"\$data_root\" == /opt/aelladata ]]; then
+  case \"\$upload\" in
+    /home/*|/tmp/*|/var/tmp/*)
+      echo \"WORKER_STAGING_PREPARE=FAIL reason=upload_on_root_fs path=\${upload}\" >&2
+      exit 1
+      ;;
+  esac
+fi
+phase2_ensure_safe_dir \"\$data_root\" 0755 root:root / || exit 1
+phase2_ensure_safe_dir \"\$staging\" 0755 root:root \"\$data_root\" || exit 1
+phase2_ensure_safe_dir \"\${staging}/lib\" 0755 root:root \"\$staging\" || exit 1
+phase2_ensure_safe_dir \"\$aelladeb\" 0755 root:root \"\$data_root\" || exit 1
+phase2_ensure_safe_dir \"\$upload\" 0700 \"\${uid}:\${gid}\" \"\$data_root\" || exit 1
+phase2_ensure_safe_dir \"\${upload}/lib\" 0700 \"\${uid}:\${gid}\" \"\$upload\" || exit 1
+phase2_ensure_safe_dir \"\${upload}/aelladeb\" 0700 \"\${uid}:\${gid}\" \"\$upload\" || exit 1
+
+staging_dev=\$(stat -c \"%d\" \"\$staging\")
+upload_dev=\$(stat -c \"%d\" \"\$upload\")
+aelladeb_dev=\$(stat -c \"%d\" \"\$aelladeb\")
+if [[ \"\$staging_dev\" != \"\$upload_dev\" || \"\$staging_dev\" != \"\$aelladeb_dev\" ]]; then
+  echo \"WORKER_STAGING_PREPARE=FAIL reason=cross_filesystem staging_dev=\${staging_dev} upload_dev=\${upload_dev} aelladeb_dev=\${aelladeb_dev}\" >&2
+  exit 1
+fi
+'"; then
         log "ERROR: WORKER_STAGING_PREPARE=FAIL reason=remote_mkdir"
         return 1
     fi
@@ -366,6 +475,7 @@ sudo chmod 0700 '${upload}' '${upload}/lib' '${upload}/aelladeb'"; then
 # SCP lands in the upload area; root promotes into protected dirs before use.
 # Wipes upload files and stale root-owned deb/tar.gz so OpenSSH 9.x SFTP can
 # create fresh aella-owned uploads. Leaves *.tar for skip-by-SHA reuse.
+# Does not use find -L across the trust boundary.
 prepare_worker_protected_staging() {
     local worker_ip="$1"
     local staging="${STAGING_DIR:-/opt/aelladata/aelladeb_py3}"
@@ -375,11 +485,33 @@ prepare_worker_protected_staging() {
     if ! ensure_worker_protected_staging_dirs "$worker_ip"; then
         return 1
     fi
-    if ! worker_ssh "$worker_ip" "\
-sudo find -L '${upload}' '${upload}/lib' '${upload}/aelladeb' -maxdepth 1 -type f -delete 2>/dev/null; \
-sudo find -L '${staging}' '${aelladeb}' -maxdepth 1 -type f \
-  \\( -name '*.deb' -o -name '*.tar.gz' -o -name '*.tgz' \\) -delete 2>/dev/null; \
-true"; then
+    case "${staging}${aelladeb}${upload}" in
+        *\'*)
+            log "ERROR: WORKER_STAGING_PREPARE=FAIL reason=unsafe_path"
+            return 1
+            ;;
+    esac
+    if ! worker_ssh "$worker_ip" "sudo bash -c '
+set -euo pipefail
+staging='\''${staging}'\''
+aelladeb='\''${aelladeb}'\''
+upload='\''${upload}'\''
+for d in \"\$upload\" \"\${upload}/lib\" \"\${upload}/aelladeb\" \"\$staging\" \"\$aelladeb\"; do
+  if [[ -L \"\$d\" ]]; then
+    echo \"WORKER_STAGING_PREPARE=FAIL reason=symlink_path path=\${d}\" >&2
+    exit 1
+  fi
+  if [[ ! -d \"\$d\" ]]; then
+    echo \"WORKER_STAGING_PREPARE=FAIL reason=not_directory path=\${d}\" >&2
+    exit 1
+  fi
+done
+# Regular files only; never follow directory symlinks (-L omitted by design).
+find \"\$upload\" \"\${upload}/lib\" \"\${upload}/aelladeb\" -maxdepth 1 -type f -delete 2>/dev/null || true
+find \"\$staging\" \"\$aelladeb\" -maxdepth 1 -type f \
+  \\( -name \"*.deb\" -o -name \"*.tar.gz\" -o -name \"*.tgz\" \\) -delete 2>/dev/null || true
+true
+'"; then
         log "ERROR: WORKER_STAGING_PREPARE=FAIL reason=remote_clean"
         return 1
     fi
@@ -388,7 +520,8 @@ true"; then
 }
 
 # Promote regular files from an aella upload dir into a root-owned dest.
-# Rejects symlinks. Root consumes only the promoted copy.
+# Same-filesystem atomic rename (mv) avoids a second full-size copy of large
+# images-*.tar. Rejects symlinks. Root consumes only the promoted object.
 promote_worker_upload_dir() {
     local worker_ip="$1"
     local upload_dir="$2"
@@ -407,7 +540,29 @@ set -euo pipefail
 upload='\''${upload_dir}'\''
 dest='\''${dest_dir}'\''
 mode='\''${mode}'\''
+if [[ -L \"\$upload\" || -L \"\$dest\" ]]; then
+  echo \"WORKER_STAGING_PROMOTE=FAIL reason=symlink_path\" >&2
+  exit 1
+fi
+if [[ ! -d \"\$upload\" ]]; then
+  echo \"WORKER_STAGING_PROMOTE=FAIL reason=upload_not_directory\" >&2
+  exit 1
+fi
+if [[ -e \"\$dest\" && ! -d \"\$dest\" ]]; then
+  echo \"WORKER_STAGING_PROMOTE=FAIL reason=dest_not_directory\" >&2
+  exit 1
+fi
 mkdir -p \"\$dest\"
+if [[ -L \"\$dest\" || ! -d \"\$dest\" ]]; then
+  echo \"WORKER_STAGING_PROMOTE=FAIL reason=dest_symlink_or_missing\" >&2
+  exit 1
+fi
+upload_dev=\$(stat -c \"%d\" \"\$upload\")
+dest_dev=\$(stat -c \"%d\" \"\$dest\")
+if [[ \"\$upload_dev\" != \"\$dest_dev\" ]]; then
+  echo \"WORKER_STAGING_PROMOTE=FAIL reason=cross_filesystem\" >&2
+  exit 1
+fi
 shopt -s nullglob
 for src in \"\$upload\"/*; do
   [[ -e \"\$src\" ]] || continue
@@ -423,8 +578,11 @@ for src in \"\$upload\"/*; do
       exit 1
       ;;
   esac
-  install -o root -g root -m \"\$mode\" \"\$src\" \"\${dest}/\${base}\"
-  rm -f \"\$src\"
+  # Same-FS atomic promote: chown/chmod in place, then rename into dest.
+  # Avoids install(1) full-size copy of multi-GiB images-*.tar.
+  chown root:root \"\$src\"
+  chmod \"\$mode\" \"\$src\"
+  mv -f \"\$src\" \"\${dest}/\${base}\"
 done
 '"; then
         log "ERROR: WORKER_STAGING_PROMOTE=FAIL upload=${upload_dir} dest=${dest_dir}"
