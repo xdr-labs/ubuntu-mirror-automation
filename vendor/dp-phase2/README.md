@@ -34,9 +34,12 @@ by hand. If required anchors are missing, Download and Prepare fails closed
   `70de02dd62409110dadb7553991d1ffb0a79f396`
   (recorded in `bringup_py3_dp_after_os_upgrade.sh.upstream.sha1`).
   Observability / change detection only after SHA256 allowlist PASS.
-- **Vendor file role:** developer-readable expected patched result for a
-  known upstream generation. Production authority is always
-  `fresh upstream + patch layer`.
+- **Vendor file role:** developer-readable expected patched result regenerated
+  from a **SANITIZED COMPATIBILITY FIXTURE**
+  (`SANITIZED_GOLDEN_CANONICAL_REGEN`). That is **not**
+  `ACTUAL_REVIEWED_RAW_GOLDEN_BYTE_MATCH`. Production authority remains
+  `fresh upstream + patch layer`, with blocking digests in
+  `approved-upstream-bringup.sha256` (`ACTUAL_REVIEWED_UPSTREAM_PROVENANCE`).
 - **Project-owned modifications currently applied by the patcher:**
   - `--worker-password` / `--worker-password-file` and sshpass `-f` handling
   - Persistent project-owned SSH `known_hosts` (`accept-new`; no `/tmp` downgrade)

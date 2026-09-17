@@ -342,8 +342,9 @@ phase2_worker_upload_root() {
 
 # Ensure upload + protected dirs exist with correct ownership. Does not wipe
 # already-promoted staging artifacts (prereq contract copy runs after them).
-# Rejects directory symlinks at the trust boundary; resolves aella via numeric
-# UID/primary GID (never aella:aella). Upload and staging must share a device.
+# Shared data root is validated only (no mkdir/chown/chmod). Rejects directory
+# symlinks at the trust boundary; resolves aella via numeric UID/primary GID
+# (never aella:aella). Upload and staging must share a device.
 ensure_worker_protected_staging_dirs() {
     local worker_ip="$1"
     local staging="${STAGING_DIR:-/opt/aelladata/aelladeb_py3}"
@@ -414,15 +415,57 @@ phase2_ensure_safe_dir() {
   }
   real=\$(readlink -f \"\$path\")
   pref=\$(readlink -f \"\$parent\")
-  case \"\$real\" in
-    \"\$pref\"|\"\$pref\"/*) ;;
-    *)
+  if [[ \"\$pref\" == / ]]; then
+    [[ \"\$real\" == /* ]] || {
       echo \"WORKER_STAGING_PREPARE=FAIL reason=escape_parent path=\${path} real=\${real} parent=\${pref}\" >&2
       return 1
-      ;;
-  esac
+    }
+  else
+    case \"\$real\" in
+      \"\$pref\"|\"\$pref\"/*) ;;
+      *)
+        echo \"WORKER_STAGING_PREPARE=FAIL reason=escape_parent path=\${path} real=\${real} parent=\${pref}\" >&2
+        return 1
+        ;;
+    esac
+  fi
   chown \"\$owner\" \"\$path\"
   chmod \"\$mode\" \"\$path\"
+  return 0
+}
+
+# Shared data root (/opt/aelladata or hermetic override) is pre-existing site
+# state. Validate symlink/dir/escape only — never mkdir/chown/chmod it.
+phase2_assert_existing_data_root() {
+  local path=\"\$1\"
+  local parent=\"\$2\"
+  local real pref
+  phase2_reject_symlink_components \"\$path\" || return 1
+  if [[ ! -e \"\$path\" ]]; then
+    echo \"WORKER_STAGING_PREPARE=FAIL reason=data_root_missing path=\${path}\" >&2
+    return 1
+  fi
+  [[ -d \"\$path\" && ! -L \"\$path\" ]] || {
+    echo \"WORKER_STAGING_PREPARE=FAIL reason=not_directory path=\${path}\" >&2
+    return 1
+  }
+  phase2_reject_symlink_components \"\$path\" || return 1
+  real=\$(readlink -f \"\$path\")
+  pref=\$(readlink -f \"\$parent\")
+  if [[ \"\$pref\" == / ]]; then
+    [[ \"\$real\" == /* ]] || {
+      echo \"WORKER_STAGING_PREPARE=FAIL reason=escape_parent path=\${path} real=\${real} parent=\${pref}\" >&2
+      return 1
+    }
+  else
+    case \"\$real\" in
+      \"\$pref\"|\"\$pref\"/*) ;;
+      *)
+        echo \"WORKER_STAGING_PREPARE=FAIL reason=escape_parent path=\${path} real=\${real} parent=\${pref}\" >&2
+        return 1
+        ;;
+    esac
+  fi
   return 0
 }
 
@@ -449,7 +492,7 @@ if [[ \"\$data_root\" == /opt/aelladata ]]; then
       ;;
   esac
 fi
-phase2_ensure_safe_dir \"\$data_root\" 0755 root:root / || exit 1
+phase2_assert_existing_data_root \"\$data_root\" / || exit 1
 phase2_ensure_safe_dir \"\$staging\" 0755 root:root \"\$data_root\" || exit 1
 phase2_ensure_safe_dir \"\${staging}/lib\" 0755 root:root \"\$staging\" || exit 1
 phase2_ensure_safe_dir \"\$aelladeb\" 0755 root:root \"\$data_root\" || exit 1

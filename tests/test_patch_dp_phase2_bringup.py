@@ -299,7 +299,7 @@ PRODUCTION_3AF369 = os.path.join(
     ROOT, 'tests', 'fixtures', 'dp-phase2', 'production-3af369',
     'bringup_py3_dp_after_os_upgrade.sh',
 )
-# SANITIZED COMPATIBILITY FIXTURE identity (not a production provenance pin).
+# SANITIZED COMPATIBILITY FIXTURE identity (not ACTUAL_REVIEWED_UPSTREAM_PROVENANCE).
 PRODUCTION_3AF369_SHA1 = '0695bd17c6a3e9fca910526779e7b595f79b188c'
 N3_VENDOR_MARKERS = (
     'STANDBY_IPS=""',
@@ -383,12 +383,17 @@ class Production3af369PatchTests(unittest.TestCase):
         )
         self.assertEqual(ctx.exception.reason, 'anchor_count=0 expected=1')
 
-    def test_vendor_golden_matches_canonical_3af369_patch(self):
-        """Checked-in vendor golden must equal patcher(production-3af369).
+    def test_vendor_golden_matches_sanitized_3af369_compat_regen(self):
+        """SANITIZED_GOLDEN_CANONICAL_REGEN: vendor == patcher(sanitized fixture).
 
-        Production authority remains fresh ACPS upstream + patcher. The vendor
-        file is only a regenerable reference for the reviewed 3af369 fixture
-        generation (preserves AELDEV-74638 markers).
+        The checked-in production-3af369 tree is a SANITIZED COMPATIBILITY
+        FIXTURE (not byte-identical to reviewed ACPS upstream). This test
+        only proves the vendor golden regenerates from that scrubbed fixture.
+
+        ACTUAL_REVIEWED_UPSTREAM_PROVENANCE remains independently governed by
+        vendor/dp-phase2/approved-upstream-bringup.sha256 and by fresh-upstream
+        + patcher production behavior. Do not claim
+        ACTUAL_REVIEWED_RAW_GOLDEN_BYTE_MATCH from this test.
         """
         out, applied = patcher.patch_bringup_text(self.upstream, emit=False)
         self.assertTrue(applied)
@@ -396,7 +401,7 @@ class Production3af369PatchTests(unittest.TestCase):
             vendor = fh.read()
         self.assertEqual(
             out, vendor,
-            'vendor golden drifted from canonical patch of production-3af369',
+            'vendor golden drifted from patcher(sanitized 3af369 compatibility fixture)',
         )
         for marker in N3_VENDOR_MARKERS:
             self.assertIn(marker, vendor, marker)
@@ -405,6 +410,11 @@ class Production3af369PatchTests(unittest.TestCase):
         self.assertNotRegex(vendor, r'(?m)chown\s+aella:aella')
         self.assertIn('id -u aella', vendor)
         self.assertIn('id -g aella', vendor)
+        self.assertIn('phase2_assert_existing_data_root', vendor)
+        self.assertNotRegex(
+            vendor,
+            r'phase2_ensure_safe_dir\s+"\$data_root"',
+        )
 
 
 class AcpsCredentialRemovalTests(unittest.TestCase):
