@@ -29,28 +29,31 @@ set -e
 [[ "$rc" -eq 0 ]] && pass "acps hint under set -u without ACPS_EFFECTIVE_BASE" \
   || fail "unbound ACPS_EFFECTIVE_BASE under set -u (rc=$rc out=$out)"
 
-# 2) After auth setup, base must be initialized (fixed URL contract).
-unset ACPS_EFFECTIVE_BASE || true
+# 2) After auth setup, base must be initialized (fixed R2 URL in hermetic default).
+unset ACPS_EFFECTIVE_BASE ACPS_BASE_URL ACPS_BASE_URL_FIXED ACPS_HOST ACPS_PATH DP_PHASE2_SOURCE_BASE || true
 ACPS_USERNAME=demo
 ACPS_PASSWORD=demo
 acps_setup_curl_auth
 [[ -n "${ACPS_EFFECTIVE_BASE:-}" ]] \
   && pass "ACPS_EFFECTIVE_BASE set by acps_setup_curl_auth" \
   || fail "ACPS_EFFECTIVE_BASE empty after acps_setup_curl_auth"
+[[ "${ACPS_EFFECTIVE_BASE}" == "${PHASE2_R2_BASE_URL_CONSTANT}" ]] \
+  && pass "hermetic default source is R2" \
+  || fail "hermetic default source unexpected: ${ACPS_EFFECTIVE_BASE}"
 
-# 3) Missing credentials must fail closed with a clear error (not unbound).
-# Clear both naming conventions (USERNAME/PASSWORD and USER/PASS).
+# 3) Fixture ACPS URL still requires credentials (not unbound).
 unset ACPS_EFFECTIVE_BASE ACPS_USERNAME ACPS_PASSWORD ACPS_USER ACPS_PASS DP_PHASE2_SOURCE_BASE || true
 set +e
 err="$(
   set -euo pipefail
   unset ACPS_EFFECTIVE_BASE ACPS_USERNAME ACPS_PASSWORD ACPS_USER ACPS_PASS DP_PHASE2_SOURCE_BASE || true
+  ACPS_BASE_URL='https://acps.example.test/provision/aelladeb_py3'
   acps_setup_curl_auth 2>&1
 )"
 rc=$?
 set -e
 [[ "$rc" -ne 0 ]] && echo "$err" | grep -q 'ACPS_USERNAME=FAIL\|ACPS_PASSWORD=FAIL' \
-  && pass "missing ACPS credentials fail-closed" \
+  && pass "missing ACPS credentials fail-closed for fixture ACPS URL" \
   || fail "missing credentials did not fail closed (rc=$rc err=$err)"
 
 echo "SUMMARY fail=${FAIL}"

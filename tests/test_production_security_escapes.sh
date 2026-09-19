@@ -71,7 +71,7 @@ assert_acps_prod_reject "ACPS_BASE_URL_FIXED=evil" ACPS_BASE_URL_FIXED='https://
 assert_acps_prod_reject "ACPS_HOST=evil" ACPS_HOST='evil.example'
 assert_acps_prod_reject "ACPS_PATH=override" ACPS_PATH='/evil/path'
 
-# Production effective base + netrc machine always acps.stellarcyber.ai
+# Production effective base is the immutable R2 prefix; no ACPS netrc.
 PROD_AUTH="$(mktemp -d)"
 set +e
 out="$(
@@ -79,15 +79,10 @@ out="$(
     MM_HERMETIC_TEST_MODE=0 ACPS_USERNAME=u ACPS_PASSWORD=p \
     bash -c "
       source '${ROOT}/scripts/lib/acps_auth.sh'
-      # Force default run dir under temp by making /run unusable for this process
       unset ACPS_AUTH_RUN_DIR
       TMPDIR='${PROD_AUTH}' acps_setup_curl_auth
       printf 'BASE=%s\n' \"\$ACPS_EFFECTIVE_BASE\"
-      if [[ -n \"\${ACPS_CURL_NETRC_FILE:-}\" && -f \"\${ACPS_CURL_NETRC_FILE}\" ]]; then
-        awk '/^machine /{print; exit}' \"\$ACPS_CURL_NETRC_FILE\"
-        mode=\$(stat -c '%a' \"\$ACPS_CURL_NETRC_FILE\")
-        printf 'NETRC_MODE=%s\n' \"\$mode\"
-      fi
+      printf 'AUTH_ARGS=%s\n' \"\${ACPS_CURL_AUTH_ARGS[*]:-}\"
       acps_cleanup_curl_auth
     " 2>&1
 )"
@@ -95,11 +90,11 @@ rc=$?
 set -e
 rm -rf "$PROD_AUTH"
 [[ "$rc" -eq 0 ]] \
-  && printf '%s' "$out" | grep -q 'BASE=https://acps.stellarcyber.ai/provision/aelladeb_py3' \
-  && printf '%s' "$out" | grep -q 'machine acps.stellarcyber.ai' \
-  && printf '%s' "$out" | grep -q 'NETRC_MODE=600' \
-  && pass "production netrc machine=acps.stellarcyber.ai mode=600" \
-  || fail "production fixed endpoint/netrc host failed (rc=${rc} out=${out})"
+  && printf '%s' "$out" | grep -q 'BASE=https://xdrsolutions.uk/dp-os-upgrade/phase2/6.6.0/validated-20260919' \
+  && ! printf '%s' "$out" | grep -q 'acps.stellarcyber.ai' \
+  && ! printf '%s' "$out" | grep -q -- '--netrc-file' \
+  && pass "production Phase 2 source is immutable R2; no ACPS netrc" \
+  || fail "production R2 source/netrc-free failed (rc=${rc} out=${out})"
 
 # --- ACPS_AUTH_RUN_DIR production rejection (Finding 5) ---
 EVIL_RUN="$(mktemp -d)"
@@ -278,7 +273,7 @@ matrix_case UM_BOOTSTRAP_ALLOW_UNSUPPORTED_OS \
   "MM_HERMETIC_TEST_MODE=1 UM_BOOTSTRAP_ALLOW_UNSUPPORTED_OS=1" \
   "source '${ROOT}/lib/bootstrap.sh'; um_bootstrap_os_gate"
 
-# --- ACPS_PRODUCTION_BASE_URL must be immutable (not env trust authority) ---
+# --- Production Phase 2 source is immutable R2 (ACPS_PRODUCTION_BASE_URL env ignored) ---
 set +e
 out="$(
   env -u DP_PHASE2_SOURCE_BASE -u ACPS_BASE_URL -u ACPS_BASE_URL_FIXED -u ACPS_HOST -u ACPS_PATH \
@@ -289,9 +284,7 @@ out="$(
       TMPDIR='$(mktemp -d)' acps_setup_curl_auth
       printf 'CONST=%s\n' \"\$ACPS_PRODUCTION_BASE_URL\"
       printf 'BASE=%s\n' \"\$ACPS_EFFECTIVE_BASE\"
-      if [[ -n \"\${ACPS_CURL_NETRC_FILE:-}\" && -f \"\${ACPS_CURL_NETRC_FILE}\" ]]; then
-        awk '/^machine /{print; exit}' \"\$ACPS_CURL_NETRC_FILE\"
-      fi
+      printf 'AUTH_ARGS=%s\n' \"\${ACPS_CURL_AUTH_ARGS[*]:-}\"
       acps_cleanup_curl_auth
     " 2>&1
 )"
@@ -299,9 +292,9 @@ rc=$?
 set -e
 [[ "$rc" -eq 0 ]] \
   && printf '%s' "$out" | grep -q 'CONST=https://acps.stellarcyber.ai/provision/aelladeb_py3' \
-  && printf '%s' "$out" | grep -q 'BASE=https://acps.stellarcyber.ai/provision/aelladeb_py3' \
-  && printf '%s' "$out" | grep -q 'machine acps.stellarcyber.ai' \
-  && pass "production ACPS_PRODUCTION_BASE_URL=evil ignored; canonical endpoint retained" \
+  && printf '%s' "$out" | grep -q 'BASE=https://xdrsolutions.uk/dp-os-upgrade/phase2/6.6.0/validated-20260919' \
+  && ! printf '%s' "$out" | grep -q 'evil.example' \
+  && pass "production ACPS_PRODUCTION_BASE_URL=evil ignored; R2 endpoint retained" \
   || fail "ACPS_PRODUCTION_BASE_URL env override not ignored (rc=${rc} out=${out})"
 
 # Evil production constant + matching ACPS_BASE_URL must NOT become self-consistent.
@@ -309,33 +302,31 @@ assert_acps_prod_reject "ACPS_PRODUCTION_BASE_URL=evil + ACPS_BASE_URL=evil" \
   ACPS_PRODUCTION_BASE_URL='https://evil.example/acps' \
   ACPS_BASE_URL='https://evil.example/acps'
 
-# Standalone download-dp-phase2.sh must keep the same immutable authority.
+# Standalone download-dp-phase2.sh must keep the immutable R2 production source.
 set +e
 out="$(
   env MM_HERMETIC_TEST_MODE=0 ACPS_PRODUCTION_BASE_URL='https://evil.example/acps' \
+    PHASE2_R2_BASE_URL_CONSTANT='https://evil.example/r2' \
     bash -c "
-      # Source only through the standalone preamble path up to the constant.
-      SCRIPT_DIR='${ROOT}/scripts'
-      # shellcheck disable=SC1091
       source '${ROOT}/scripts/lib/dp-phase2-common.sh'
       source '${ROOT}/scripts/lib/acps_auth.sh'
-      ACPS_PRODUCTION_BASE_URL='https://acps.stellarcyber.ai/provision/aelladeb_py3'
-      # Mirror download-dp-phase2.sh re-assert after env inheritance.
-      ACPS_PRODUCTION_BASE_URL=\"https://acps.stellarcyber.ai/provision/aelladeb_py3\"
-      printf 'STANDALONE_CONST=%s\n' \"\$ACPS_PRODUCTION_BASE_URL\"
-      grep -n 'ACPS_PRODUCTION_BASE_URL=' '${ROOT}/scripts/download-dp-phase2.sh' | head -5
+      printf 'R2_CONST=%s\n' \"\$PHASE2_R2_BASE_URL_CONSTANT\"
+      TMPDIR='$(mktemp -d)' acps_setup_curl_auth
+      printf 'BASE=%s\n' \"\$ACPS_EFFECTIVE_BASE\"
+      acps_cleanup_curl_auth
     " 2>&1
 )"
 rc=$?
 set -e
 [[ "$rc" -eq 0 ]] \
-  && printf '%s' "$out" | grep -q 'STANDALONE_CONST=https://acps.stellarcyber.ai/provision/aelladeb_py3' \
-  && ! grep -qE 'ACPS_PRODUCTION_BASE_URL="\$\{ACPS_PRODUCTION_BASE_URL' \
-    "${ROOT}/scripts/download-dp-phase2.sh" \
-  && ! grep -qE 'ACPS_PRODUCTION_BASE_URL="\$\{ACPS_PRODUCTION_BASE_URL' \
+  && printf '%s' "$out" | grep -q 'R2_CONST=https://xdrsolutions.uk/dp-os-upgrade/phase2/6.6.0/validated-20260919' \
+  && printf '%s' "$out" | grep -q 'BASE=https://xdrsolutions.uk/dp-os-upgrade/phase2/6.6.0/validated-20260919' \
+  && ! grep -qE 'PHASE2_R2_BASE_URL_CONSTANT="\$\{PHASE2_R2_BASE_URL_CONSTANT' \
+    "${ROOT}/scripts/lib/dp-phase2-common.sh" \
+  && ! grep -qE 'PHASE2_R2_BASE_URL_CONSTANT="\$\{PHASE2_R2_BASE_URL_CONSTANT' \
     "${ROOT}/scripts/lib/acps_auth.sh" \
-  && pass "standalone download-dp-phase2 immutable ACPS_PRODUCTION_BASE_URL" \
-  || fail "standalone ACPS production constant still env-overridable (rc=${rc} out=${out})"
+  && pass "standalone download-dp-phase2 immutable R2 production source" \
+  || fail "standalone Phase 2 R2 constant still env-overridable (rc=${rc} out=${out})"
 
 # --- DP OS-hop client fixture escapes (Finding residual blocker 2) ---
 CLIENT_TMP="$(mktemp -d)"

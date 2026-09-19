@@ -683,26 +683,18 @@ gui_download_and_prepare() {
   mm_load_gui_config
   mm_normalize_preparation_mode
   mm_force_phase2_target
+  # Phase 2 production source is public R2. ACPS credentials are not required
+  # for Download and Prepare.
   if ! mm_config_base_ready; then
     mm_whiptail_msg "Configuration required" \
       "Set Preparation Mode and Mirror Server IP first (target is fixed at ${PHASE2_TARGET_VERSION})."
     return 0
   fi
-  # Verified local ACPS cache (or prior ACPS_DOWNLOAD_REQUIRED=NO) may satisfy
-  # acquisition without credentials/network.
   if declare -F mm_acps_verified_cache_reuse_available >/dev/null 2>&1 \
     && mm_acps_verified_cache_reuse_available; then
-    mm_info "ACPS_CONNECTION=NOT_REQUIRED reason=verified_cache_reuse_gui"
+    mm_info "PHASE2_CONNECTION=NOT_REQUIRED reason=verified_cache_reuse_gui"
     mm_info "ACPS_DOWNLOAD_REQUIRED=NO reason=verified_cache_reuse"
     ACPS_DOWNLOAD_REQUIRED=NO
-  fi
-  if ! mm_acquisition_auth_or_verified_cache_ready; then
-    mm_whiptail_msg "ACPS credentials required" \
-      "Set ACPS Username and ACPS Password before Download and Prepare.
-Already-prepared artifacts remain valid if credentials are later cleared;
-new ACPS downloads require credentials.
-A cryptographically verified local ACPS cache may be reused without credentials."
-    return 0
   fi
   if ! mm_require_configured_mirror_server_ip; then
     mm_whiptail_msg "Mirror Server IP required" \
@@ -753,8 +745,8 @@ EOF
     cat <<EOF
 
 Phases (names appear as each step starts):
-  1. Downloading ACPS Artifacts
-  2. Verifying ACPS Checksums
+  1. Downloading Phase 2 Artifacts
+  2. Verifying Phase 2 Checksums
   3. Preparing Patched Bringup Script
   4. Creating Phase 2 Bundle
   5. Calculating Bundle SHA256
@@ -772,8 +764,8 @@ EOF
 Phases (names appear as each step starts):
   1. Downloading OS Core Artifacts
   2. Verifying OS Core Artifacts
-  3. Downloading ACPS Artifacts
-  4. Verifying ACPS Checksums
+  3. Downloading Phase 2 Artifacts
+  4. Verifying Phase 2 Checksums
   5. Preparing Patched Bringup Script
   6. Creating Phase 2 Bundle
   7. Calculating Bundle SHA256

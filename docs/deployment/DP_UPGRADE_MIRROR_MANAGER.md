@@ -5,11 +5,11 @@
 Build a DP Ubuntu upgrade HTTP mirror server in one fixed workflow:
 
 1. Bootstrap a clean Ubuntu 24.04 host with `sudo ./install.sh`
-2. Configure Preparation Mode + ACPS credentials in the GUI
+2. Configure Preparation Mode and Mirror Server IP in the GUI
 3. Download Ubuntu OS Core from Cloudflare R2 (FULL mode) or skip R2 (PHASE2_ONLY)
 4. Verify OS Core checksums (FULL mode)
-5. Download DP Phase 2 artifacts from ACPS (always 6.6.0)
-6. Verify ACPS checksums (bringup SHA1 vs the current ACPS `.sha1` sidecar)
+5. Download DP Phase 2 artifacts from the immutable Cloudflare R2 prefix (always 6.6.0)
+6. Verify Phase 2 checksums (vendor SHA1/SHA256 sidecars plus frozen R2 SHA256 identity)
 7. Apply the local patched bringup
 8. Materialize one Phase 1 OS mirror set (FULL) and one Phase 2 6.6.0 bundle
 9. Enable HTTP distribution (real nginx enable + smoke tests)
@@ -20,7 +20,7 @@ Contracts:
 ```
 INSTALLATION_MODE_COUNT=1
 OS_CORE_SOURCE=R2
-DP_PHASE2_SOURCE=ACPS
+DP_PHASE2_SOURCE=R2
 CLIENT_R2_ACCESS=NO
 CLIENT_ACPS_ACCESS=NO
 CLIENT_DOWNLOAD_SOURCE=MIRROR_SERVER_ONLY
@@ -132,7 +132,7 @@ list with a safely shell-quoted password (never logged).
 
 Read-only:
 
-- ACPS Server: fixed (`https://acps.stellarcyber.ai/provision/aelladeb_py3`)
+- Phase 2 artifacts: immutable Cloudflare R2 prefix (`https://xdrsolutions.uk/dp-os-upgrade/phase2/6.6.0/validated-20260919`)
 - OS Core Source: Cloudflare R2 — configured by installer (FULL mode)
 
 Credentials are stored root-owned mode `600` at
@@ -155,9 +155,9 @@ persisted Phase 1 records.
 
 ## Download and Prepare
 
-Automatic sequence: config check → client artifact check → R2 download
-(`.part`, safe resume, retry) → OS Core verify/extract → ACPS download →
-checksum → ACPS bringup sidecar check → non-blocking reference-SHA notice → patched bringup → Phase 2 bundle
+Automatic sequence: config check → client artifact check → R2 OS Core download
+(`.part`, safe resume, retry) → OS Core verify/extract → Phase 2 R2 download →
+checksum + frozen identity → patched bringup → Phase 2 bundle
 (9 entries) → place final HTTP files → delete download cache/staging.
 
 ### Expected duration (disk-dependent)
@@ -167,8 +167,8 @@ the manager emits a heartbeat at least every 30 seconds during long steps.
 
 | Step | Algorithm / action | Typical duration |
 | --- | --- | --- |
-| ACPS `images-*.tar` verification | **SHA256** (not SHA1) | approximately 5–10 minutes |
-| Small ACPS sidecars / bringup | **SHA1** | seconds |
+| Phase 2 `images-*.tar` verification | **SHA256** (not SHA1) | approximately 5–10 minutes |
+| Small Phase 2 sidecars / bringup | **SHA1** | seconds |
 | Phase 2 bundle creation (`tar -cf`) | archive write | several minutes |
 | Bundle SHA256 sidecar generation | **SHA256** full read | approximately 5–10 minutes |
 | Final published bundle verification | **SHA256** after atomic publish | approximately 5–10 minutes |
@@ -178,7 +178,7 @@ printing. Logs show the current `DP_PHASE=` name and `elapsed=` seconds.
 
 Integrity policy (same-filesystem hardlink pipeline):
 
-- Source `images-*.tar` is SHA256-verified once after ACPS download.
+- Source `images-*.tar` is SHA256-verified once after R2 download.
 - Hard-linked work-tree copies of that inode are not re-hashed.
 - Bundle SHA256 is computed when the `.new` archive is created, then verified
   once more on the published final path (at most two full bundle reads).

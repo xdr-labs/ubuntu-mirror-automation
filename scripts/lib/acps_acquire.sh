@@ -639,7 +639,7 @@ mm_calc_disk_requirements() {
   elif [[ "${PHASE2_REBUILD_SOURCE:-}" == "EXISTING_FINAL" ]]; then
     acps_bytes=0
     ACPS_REMAINING_DOWNLOAD_BYTES=0
-  elif [[ "${ACPS_DOWNLOAD_REQUIRED:-}" == "NO" && "${PHASE2_REBUILD_SOURCE:-}" == "ACPS" ]]; then
+  elif [[ "${ACPS_DOWNLOAD_REQUIRED:-}" == "NO" && "${PHASE2_REBUILD_SOURCE:-}" == "R2" ]]; then
     # Field path: verified_cache_reuse already decided download/network are not
     # required. Prefer the authoritative snapshot recorded at that decision;
     # if missing, re-derive only from a still-verified local cache (never from
@@ -866,6 +866,11 @@ acps_download_one() {
   local part="${dest_dir}/${name}.part"
   local final="${dest_dir}/${name}"
   local url="${ACPS_EFFECTIVE_BASE%/}/${name}"
+  case "$url" in
+    *acps.stellarcyber.ai*)
+      mm_die "PHASE2_SOURCE=FAIL reason=acps_runtime_forbidden file=${name}"
+      ;;
+  esac
   local start_ts now elapsed downloaded expected pct rate
   local have=0 status cr_start hdr resp
   local curl_args=(
@@ -1043,7 +1048,7 @@ acps_acquire_all() {
   cache="$(acps_cache_dir "$ver")"
   acps_ensure_private_cache_dir "$cache" || mm_die "ACPS_CACHE_PERMS=FAIL path=${cache}"
 
-  mm_set_phase "Downloading ACPS Artifacts"
+  mm_set_phase "Downloading Phase 2 Artifacts"
   # Verified unchanged cache must reuse without contacting ACPS or requiring
   # credentials. Auth is only needed when a download is about to start.
   if acps_is_verified_cache "$cache"; then
@@ -1057,6 +1062,12 @@ acps_acquire_all() {
   fi
 
   acps_setup_curl_auth
+  case "${ACPS_EFFECTIVE_BASE:-}" in
+    *acps.stellarcyber.ai*)
+      acps_cleanup_curl_auth
+      mm_die "PHASE2_SOURCE=FAIL reason=acps_runtime_forbidden"
+      ;;
+  esac
 
   rm -f "${cache}/.VERIFIED"
 
@@ -1079,6 +1090,19 @@ acps_acquire_all() {
     rm -f "${cache}/.VERIFIED"
     acps_cleanup_curl_auth
     mm_die "ACPS_CHECKSUM=FAIL"
+  fi
+  if phase2_r2_identity_enforced; then
+    local parent r2_manifest
+    parent="$(dirname "$cache")"
+    r2_manifest="${parent}/phase2-r2-${ver}-manifest.sha256"
+    if ! acps_download_one "${PHASE2_R2_MANIFEST_NAME}" "$parent"; then
+      mm_state_set ACPS_PHASE2_DOWNLOADED FAIL
+      acps_cleanup_curl_auth
+      mm_die "PHASE2_R2_MANIFEST_DOWNLOAD=FAIL"
+    fi
+    mv -f "${parent}/${PHASE2_R2_MANIFEST_NAME}" "$r2_manifest"
+    phase2_verify_r2_manifest "$cache" "$r2_manifest"
+    phase2_verify_r2_frozen_identity "$cache"
   fi
   mm_state_set ACPS_CHECKSUM PASS
   # Permissions before the metadata-bound marker so ctime is stable afterward.

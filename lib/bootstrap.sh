@@ -950,7 +950,7 @@ Logs:
 
 Next steps (Mirror Manager GUI):
   1. Configuration — Preparation Mode, ACPS username/password
-  2. Download and Prepare Upgrade Files — R2 OS Core (FULL) + ACPS Phase 2
+  2. Download and Prepare Upgrade Files — R2 OS Core (FULL) + R2 Phase 2
   3. Enable HTTP Distribution
   4. Verify Upgrade Readiness
   7. Show DP Client Upgrade Commands

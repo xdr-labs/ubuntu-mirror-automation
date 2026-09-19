@@ -45,6 +45,9 @@ jobs:
       - name: Production security escape contracts
         run: bash tests/test_production_security_escapes.sh
 
+      - name: Phase 2 R2-only runtime source
+        run: bash tests/test_phase2_r2_runtime_source.sh
+
       - name: Selective quarantine / publish dual-hermetic
         run: |
           python3 -m unittest \

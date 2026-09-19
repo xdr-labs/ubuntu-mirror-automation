@@ -47,9 +47,9 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/http_publication_permissio
 # shellcheck source=mirror_workflow_state.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/mirror_workflow_state.sh"
 
-# Immutable production ACPS endpoint (not env-overridable outside hermetic tests).
-# Credentials come from GUI config only. ACPS_BASE_URL_FIXED is a compatibility
-# alias kept equal to the constant for existing callers/tests.
+# Historical ACPS endpoint retained for hermetic fixtures and for rejecting
+# production env attempts to restore ACPS as the Phase 2 download source.
+# Production Phase 2 runtime downloads from PHASE2_R2_BASE_URL_CONSTANT only.
 ACPS_PRODUCTION_BASE_URL="https://acps.stellarcyber.ai/provision/aelladeb_py3"
 ACPS_BASE_URL_FIXED="${ACPS_PRODUCTION_BASE_URL}"
 
@@ -796,7 +796,7 @@ mm_acps_verify_payload_checksums() {
   local ver="${DP_PHASE2_VERSION}"
   local img bytes img_h
   local failed=0
-  mm_set_phase "Verifying ACPS Checksums"
+  mm_set_phase "Verifying Phase 2 Checksums"
 
   if ! mm_verify_sha1_pair_logged \
     "${files_dir}/aelladeb_py3_common.tar.gz" \
@@ -2142,7 +2142,7 @@ mm_state_init() {
   {
     printf 'INSTALLATION_MODE_COUNT=1\n'
     printf 'OS_CORE_SOURCE=R2\n'
-    printf 'DP_PHASE2_SOURCE=ACPS\n'
+    printf 'DP_PHASE2_SOURCE=R2\n'
     printf 'CLIENT_DOWNLOAD_SOURCE=MIRROR_SERVER_ONLY\n'
     printf 'PROJECT_ROLLBACK_SUPPORTED=NO\n'
     printf 'RUN_ID=%s\n' "$MM_RUN_ID"

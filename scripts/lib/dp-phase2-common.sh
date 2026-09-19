@@ -6,6 +6,19 @@ DP_PHASE2_VERSION_DEFAULT="6.6.0"
 DP_PHASE2_FILE_COUNT=9
 DP_PHASE2_REQUIRED_FILES=()
 
+# Immutable production Phase 2 download source (Cloudflare R2 public HTTPS).
+# Never use a mutable "latest" prefix. Not env-overridable in production.
+# Hermetic tests redirect via DP_PHASE2_SOURCE_BASE, never by replacing these.
+PHASE2_R2_PUBLIC_BASE_URL_CONSTANT="https://xdrsolutions.uk"
+PHASE2_R2_VALIDATED_RELEASE_ID="validated-20260919"
+PHASE2_R2_OBJECT_PREFIX_CONSTANT="dp-os-upgrade/phase2/6.6.0/validated-20260919"
+PHASE2_R2_BASE_URL_CONSTANT="https://xdrsolutions.uk/dp-os-upgrade/phase2/6.6.0/validated-20260919"
+# Production object identity (additional to vendor .sha1/.sha256 sidecars).
+PHASE2_R2_BRINGUP_SHA256="6a69ff8671a1bd396efb4d103314cd5d347003fbda957e49a20c99fb5957e622"
+PHASE2_R2_IMAGES_SHA256="91cf6a2c4de178b616d539e0c22817bf86952ae6020a14f248d32efe9f453fe0"
+PHASE2_R2_IMAGES_BYTES=29579332096
+PHASE2_R2_MANIFEST_NAME="manifest.sha256"
+
 dp2_set_version() {
   local ver="${1:-}"
   [[ -n "$ver" ]] || dp2_die "dp2_set_version requires a version"
@@ -285,6 +298,58 @@ dp2_verify_payload_checksums() {
   dp2_verify_sha256_pair \
     "${files_dir}/images-${ver}.tar" \
     "${files_dir}/images-${ver}.tar.sha256"
+}
+
+# Production identity pin for the frozen R2 release. Hermetic fixtures skip.
+phase2_r2_identity_enforced() {
+  [[ "${MM_HERMETIC_TEST_MODE:-0}" != "1" ]]
+}
+
+phase2_production_source_base() {
+  printf '%s\n' "${PHASE2_R2_BASE_URL_CONSTANT}"
+}
+
+phase2_verify_r2_frozen_identity() {
+  local files_dir="$1"
+  local ver="${DP_PHASE2_VERSION}"
+  local bringup_sha images_sha images_bytes
+  phase2_r2_identity_enforced || {
+    dp2_ok "PHASE2_R2_IDENTITY=SKIP reason=hermetic"
+    return 0
+  }
+  bringup_sha="$(sha256sum "${files_dir}/bringup_py3_dp_after_os_upgrade.sh" | awk '{print $1}')"
+  if [[ "${bringup_sha,,}" != "${PHASE2_R2_BRINGUP_SHA256,,}" ]]; then
+    dp2_die "PHASE2_R2_BRINGUP_IDENTITY=FAIL expected=${PHASE2_R2_BRINGUP_SHA256} actual=${bringup_sha}"
+  fi
+  images_bytes="$(stat -c%s "${files_dir}/images-${ver}.tar" 2>/dev/null || echo 0)"
+  if [[ "$images_bytes" != "$PHASE2_R2_IMAGES_BYTES" ]]; then
+    dp2_die "PHASE2_R2_IMAGES_SIZE=FAIL expected=${PHASE2_R2_IMAGES_BYTES} actual=${images_bytes}"
+  fi
+  # Vendor SHA256 sidecar already matched the tarball; pin against that digest
+  # so we do not re-read ~28GiB.
+  images_sha="$(dp2_read_hash_field "${files_dir}/images-${ver}.tar.sha256")"
+  if [[ "${images_sha,,}" != "${PHASE2_R2_IMAGES_SHA256,,}" ]]; then
+    dp2_die "PHASE2_R2_IMAGES_IDENTITY=FAIL expected=${PHASE2_R2_IMAGES_SHA256} actual=${images_sha}"
+  fi
+  dp2_ok "PHASE2_R2_IDENTITY=PASS release=${PHASE2_R2_VALIDATED_RELEASE_ID}"
+}
+
+# Verify the 9 required files against a frozen R2 manifest.sha256 (bare filenames).
+phase2_verify_r2_manifest() {
+  local files_dir="$1"
+  local manifest="$2"
+  local f expected actual
+  [[ -f "$manifest" ]] || dp2_die "PHASE2_R2_MANIFEST=FAIL missing path=${manifest}"
+  for f in "${DP_PHASE2_REQUIRED_FILES[@]}"; do
+    expected="$(awk -v n="$f" '$2==n {print $1; exit}' "$manifest")"
+    dp2_validate_sha256_hex "$expected" \
+      || dp2_die "PHASE2_R2_MANIFEST=FAIL file=${f} reason=missing_or_bad_hash"
+    actual="$(sha256sum "${files_dir}/${f}" | awk '{print $1}')"
+    if [[ "${expected,,}" != "${actual,,}" ]]; then
+      dp2_die "PHASE2_R2_MANIFEST=FAIL file=${f} expected=${expected} actual=${actual}"
+    fi
+  done
+  dp2_ok "PHASE2_R2_MANIFEST=PASS"
 }
 
 dp2_check_image_list() {

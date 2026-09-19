@@ -112,7 +112,7 @@ acps_is_verified_cache "$CACHE" && fail "timestamp-only marker trusted" \
 
 # Engine decision path: without verified marker, acquisition auth required.
 PHASE2_BUNDLE_ACTION=CREATE
-PHASE2_REBUILD_SOURCE=ACPS
+PHASE2_REBUILD_SOURCE=R2
 ACPS_DOWNLOAD_REQUIRED=YES
 if mm_acquisition_auth_ready; then
   fail "empty credentials unexpectedly ready"

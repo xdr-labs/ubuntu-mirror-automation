@@ -3083,7 +3083,7 @@ engine_download_and_prepare() {
   mm_state_init
   mm_state_set PREPARATION_MODE "${PREPARATION_MODE}"
   mm_state_set PHASE2_TARGET_VERSION "${PHASE2_TARGET_VERSION}"
-  mm_state_set DP_PHASE2_SOURCE ACPS
+  mm_state_set DP_PHASE2_SOURCE R2
   if mm_is_phase2_only; then
     mm_state_set OS_CORE_SOURCE NOT_REQUIRED
   else
@@ -3181,7 +3181,7 @@ engine_download_and_prepare() {
         mm_info "ACPS_REDOWNLOAD_AVOIDED=YES"
         mm_info "MAX_LARGE_ARTIFACT_COPIES=2"
       else
-        PHASE2_REBUILD_SOURCE=ACPS
+        PHASE2_REBUILD_SOURCE=R2
         ACPS_REDOWNLOAD_AVOIDED=NO
         if declare -F acps_is_verified_cache >/dev/null 2>&1 \
           && acps_is_verified_cache "$(acps_cache_dir "$TARGET_DP_VERSION")" 2>/dev/null; then
@@ -3191,7 +3191,7 @@ engine_download_and_prepare() {
           ACPS_DOWNLOAD_REQUIRED=YES
           mm_info "ACPS_DOWNLOAD_REQUIRED=YES"
         fi
-        mm_info "PHASE2_REBUILD_SOURCE=ACPS"
+        mm_info "PHASE2_REBUILD_SOURCE=R2"
         engine_remove_invalid_phase2_final "$TARGET_DP_VERSION"
         mm_info "MAX_LARGE_ARTIFACT_COPIES=2"
       fi
@@ -3199,7 +3199,7 @@ engine_download_and_prepare() {
     *)
       PHASE2_BUNDLE_ACTION=CREATE
       PHASE2_REBUILD_REQUIRED=YES
-      PHASE2_REBUILD_SOURCE=ACPS
+      PHASE2_REBUILD_SOURCE=R2
       ACPS_REDOWNLOAD_AVOIDED=NO
       PHASE2_EXISTING_BUNDLE=ABSENT
       if declare -F acps_is_verified_cache >/dev/null 2>&1 \
@@ -3212,7 +3212,7 @@ engine_download_and_prepare() {
       fi
       mm_info "PHASE2_EXISTING_BUNDLE=ABSENT"
       mm_info "PHASE2_BUNDLE_ACTION=CREATE"
-      mm_info "PHASE2_REBUILD_SOURCE=ACPS"
+      mm_info "PHASE2_REBUILD_SOURCE=R2"
       mm_info "MAX_LARGE_ARTIFACT_COPIES=2"
       ;;
   esac
@@ -3275,21 +3275,20 @@ engine_download_and_prepare() {
     [[ "${ACPS_EXPECTED_BYTES:-}" =~ ^[1-9][0-9]*$ ]] \
       || mm_die "ACPS_VERIFIED_CACHE=FAIL reason=local_size"
   else
-    if ! mm_acquisition_auth_ready; then
-      mm_state_set ACPS_AUTH_READY FAIL
-      mm_die "ACQUISITION_AUTH_READY=FAIL reason=missing_acps_credentials"
-    fi
-    mm_state_set ACPS_AUTH_READY PASS
-    if [[ -z "${DP_PHASE2_SOURCE_BASE:-}" ]]; then
-      ACPS_BASE_URL="$ACPS_BASE_URL_FIXED"
-    fi
+    mm_state_set ACPS_AUTH_READY NOT_REQUIRED
     acps_setup_curl_auth
+    case "${ACPS_EFFECTIVE_BASE:-}" in
+      *acps.stellarcyber.ai*)
+        acps_cleanup_curl_auth
+        mm_die "PHASE2_SOURCE=FAIL reason=acps_runtime_forbidden"
+        ;;
+    esac
     if acps_test_connection; then
       mm_state_set ACPS_CONNECTION PASS
     else
       mm_state_set ACPS_CONNECTION FAIL
       acps_cleanup_curl_auth
-      mm_die "ACPS_CONNECTION=FAIL"
+      mm_die "PHASE2_R2_CONNECTION=FAIL"
     fi
     if ! ACPS_EXPECTED_BYTES="$(acps_expected_bytes_hint "${ACPS_EFFECTIVE_BASE:-}")"; then
       acps_cleanup_curl_auth

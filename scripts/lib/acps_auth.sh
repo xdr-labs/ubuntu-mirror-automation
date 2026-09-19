@@ -14,12 +14,18 @@ ACPS_CURL_TLS_ARGS=()
 ACPS_CURL_NETRC_FILE="${ACPS_CURL_NETRC_FILE:-}"
 ACPS_INSECURE_TLS="${ACPS_INSECURE_TLS:-0}"
 
-# Immutable production ACPS endpoint — code-owned literal only.
-# Never honor ACPS_PRODUCTION_BASE_URL / ACPS_BASE_URL / ACPS_BASE_URL_FIXED /
-# ACPS_HOST / ACPS_PATH from the environment as the production trust authority.
-# Hermetic fixtures redirect via DP_PHASE2_SOURCE_BASE or ACPS_BASE_URL under
-# MM_HERMETIC_TEST_MODE=1, never by replacing this constant.
+# Historical ACPS endpoint — retained for hermetic fixtures and for rejecting
+# production env attempts to restore ACPS as the download source.
+# Production Phase 2 runtime downloads from PHASE2_R2_BASE_URL_CONSTANT only.
 ACPS_PRODUCTION_BASE_URL="https://acps.stellarcyber.ai/provision/aelladeb_py3"
+
+# Immutable production Phase 2 download source (Cloudflare R2 public HTTPS).
+# Re-asserted unconditionally so env cannot redirect production downloads.
+# Must match scripts/lib/dp-phase2-common.sh.
+PHASE2_R2_PUBLIC_BASE_URL_CONSTANT="https://xdrsolutions.uk"
+PHASE2_R2_VALIDATED_RELEASE_ID="validated-20260919"
+PHASE2_R2_OBJECT_PREFIX_CONSTANT="dp-os-upgrade/phase2/6.6.0/validated-20260919"
+PHASE2_R2_BASE_URL_CONSTANT="https://xdrsolutions.uk/dp-os-upgrade/phase2/6.6.0/validated-20260919"
 
 # Explicit hermetic-test boundary. Never document in GUI/help.
 # Production must not honor ACPS_INSECURE_TLS, DP_PHASE2_SOURCE_BASE,
@@ -178,14 +184,40 @@ acps_setup_curl_auth() {
     elif [[ -n "${ACPS_HOST:-}" || -n "${ACPS_PATH:-}" ]]; then
       ACPS_EFFECTIVE_BASE="https://${ACPS_HOST:-acps.stellarcyber.ai}${ACPS_PATH:-/provision/aelladeb_py3}"
     else
-      ACPS_EFFECTIVE_BASE="${ACPS_PRODUCTION_BASE_URL}"
+      ACPS_EFFECTIVE_BASE="${PHASE2_R2_BASE_URL_CONSTANT}"
+    fi
+    # Public R2 needs no credentials even in hermetic mode.
+    if [[ "${ACPS_EFFECTIVE_BASE}" == "${PHASE2_R2_BASE_URL_CONSTANT}" ]]; then
+      if [[ "${ACPS_INSECURE_TLS:-0}" == "1" ]]; then
+        ACPS_CURL_TLS_ARGS+=(-k)
+        _acps_auth_warn "ACPS_TLS_VERIFY=DISABLED ACPS_INSECURE_TLS_WARNING=YES"
+      else
+        _acps_auth_info "PHASE2_TLS_VERIFY=ENABLED"
+      fi
+      ACPS_CURL_AUTH_ARGS=()
+      _acps_auth_info "PHASE2_SOURCE=R2 base=${ACPS_EFFECTIVE_BASE}"
+      return 0
     fi
   else
     _acps_reject_production_url_override
-    ACPS_EFFECTIVE_BASE="${ACPS_PRODUCTION_BASE_URL}"
+    if [[ -n "${ACPS_AUTH_RUN_DIR:-}" ]]; then
+      _acps_auth_die "ACPS_AUTH_RUN_DIR=FAIL reason=production_forbidden"
+    fi
+    # Production runtime: immutable R2 prefix only. No ACPS, no credentials,
+    # no R2→ACPS fallback.
+    ACPS_EFFECTIVE_BASE="${PHASE2_R2_BASE_URL_CONSTANT}"
+    PHASE2_EFFECTIVE_BASE="${ACPS_EFFECTIVE_BASE}"
+    if [[ "${ACPS_INSECURE_TLS:-0}" == "1" ]]; then
+      _acps_auth_die "ACPS_INSECURE_TLS=FAIL reason=production_forbidden"
+    fi
+    _acps_auth_info "PHASE2_TLS_VERIFY=ENABLED"
+    _acps_auth_info "PHASE2_SOURCE=R2 base=${ACPS_EFFECTIVE_BASE}"
+    ACPS_CURL_AUTH_ARGS=()
+    return 0
   fi
   [[ -n "${ACPS_EFFECTIVE_BASE}" ]] || _acps_auth_die "ACPS_BASE_URL=FAIL missing"
 
+  # Hermetic only below: fixture HTTP may still use netrc against a fake ACPS.
   # Accept either naming convention (GUI: USERNAME/PASSWORD; standalone:
   # USER/PASS). Resolve into ACPS_USERNAME/ACPS_PASSWORD only — do not write
   # back into ACPS_USER/ACPS_PASS, or an earlier successful setup would leave
@@ -198,9 +230,6 @@ acps_setup_curl_auth() {
 
   # Prefer secure TLS verification. Explicit hermetic test mode required for -k.
   if [[ "${ACPS_INSECURE_TLS:-0}" == "1" ]]; then
-    if ! _acps_hermetic_test_mode; then
-      _acps_auth_die "ACPS_INSECURE_TLS=FAIL reason=production_forbidden"
-    fi
     ACPS_CURL_TLS_ARGS+=(-k)
     _acps_auth_warn "ACPS_TLS_VERIFY=DISABLED ACPS_INSECURE_TLS_WARNING=YES"
   else

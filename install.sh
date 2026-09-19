@@ -69,7 +69,7 @@ What this installer does:
 
 What this installer does NOT do:
   - Download the R2 OS Core package
-  - Download ACPS Phase 2 artifacts
+  - Download Phase 2 artifacts from R2
   - Start background mirror synchronization
   - Create generation trees (current / previous / releases)
 

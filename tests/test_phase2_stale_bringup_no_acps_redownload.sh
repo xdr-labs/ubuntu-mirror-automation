@@ -369,7 +369,7 @@ install_recovery_acps
 OUT="${TMP}/prepare_corrupt.log"
 run_prepare_to "$OUT" || { cat "$OUT"; fail "corrupt-final ACPS recovery prepare failed"; }
 grep -q 'PHASE2_EXISTING_INVALID_REASON=sha256' "$OUT" || fail "sha256 reason missing in prepare log"
-grep -q 'PHASE2_REBUILD_SOURCE=ACPS' "$OUT" || fail "PHASE2_REBUILD_SOURCE=ACPS missing"
+grep -q 'PHASE2_REBUILD_SOURCE=R2' "$OUT" || fail "PHASE2_REBUILD_SOURCE=R2 missing"
 grep -q 'ACPS_DOWNLOAD_REQUIRED=YES' "$OUT" || fail "ACPS_DOWNLOAD_REQUIRED=YES missing"
 grep -q 'INVALID_EXISTING_BUNDLE_ACTION=DELETE_BEFORE_REBUILD' "$OUT" \
   || fail "corrupt final was not deleted before ACPS rebuild"
@@ -445,7 +445,7 @@ grep -q 'SHA1_VERIFY=PASS file=aelladeb_py3_common.tar.gz' "$OUT" \
   || fail "common SHA1 pair was not verified before rejecting reuse"
 grep -q 'SHA1_VERIFY=PASS file=aella-uvp-2404_6.6.0ubuntu1_amd64.deb' "$OUT" \
   || fail "uvp SHA1 pair was not verified before rejecting reuse"
-grep -q 'PHASE2_REBUILD_SOURCE=ACPS' "$OUT" || fail "PHASE2_REBUILD_SOURCE=ACPS missing"
+grep -q 'PHASE2_REBUILD_SOURCE=R2' "$OUT" || fail "PHASE2_REBUILD_SOURCE=R2 missing"
 grep -q 'ACPS_DOWNLOAD_REQUIRED=YES' "$OUT" || fail "ACPS_DOWNLOAD_REQUIRED=YES missing"
 grep -q 'INVALID_EXISTING_BUNDLE_ACTION=DELETE_BEFORE_REBUILD' "$OUT" \
   || fail "inner-corrupt final was not deleted before ACPS rebuild"

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Download, verify, bundle, and atomically publish DP Phase 2 artifacts from ACPS.
-# Does NOT run bringup. Does NOT touch selective/current or READY.
+# Download, verify, bundle, and atomically publish DP Phase 2 artifacts from
+# the immutable Cloudflare R2 prefix. Does NOT run bringup. Does NOT touch
+# selective/current or READY.
 #
 # Usage:
 #   sudo bash scripts/download-dp-phase2.sh [--version X.Y.Z] <sync|verify|status>
@@ -18,27 +19,21 @@ source "${SCRIPT_DIR}/lib/dp-phase2-common.sh"
 source "${SCRIPT_DIR}/lib/acps_auth.sh"
 
 # ---------------------------------------------------------------------------
-# ACPS credentials — loaded from Mirror Manager GUI config or environment.
-# Never hardcode username/password in this repository.
-# Never enable set -x; never print ACPS_PASS / ACPS_PASSWORD.
-# Auth uses mode-0600 netrc (never curl -u). TLS verify ON unless
-# ACPS_INSECURE_TLS=1 explicitly opts into -k (hermetic only).
-# Production destination is the code-owned literal in acps_auth.sh; env
-# ACPS_PRODUCTION_BASE_URL / ACPS_HOST / ACPS_PATH / ACPS_BASE_URL /
-# ACPS_BASE_URL_FIXED cannot redirect production auth or netrc machine.
+# Phase 2 artifact source — production is the immutable R2 prefix in
+# dp-phase2-common.sh / acps_auth.sh. Never hardcode ACPS as the runtime
+# download destination. Never enable set -x.
+# Fixture HTTP uses DP_PHASE2_SOURCE_BASE under MM_HERMETIC_TEST_MODE=1.
 # ---------------------------------------------------------------------------
 ACPS_USER="${ACPS_USER:-${ACPS_USERNAME:-}}"
 ACPS_PASS="${ACPS_PASS:-${ACPS_PASSWORD:-}}"
 ACPS_USERNAME="${ACPS_USERNAME:-${ACPS_USER:-}}"
 ACPS_PASSWORD="${ACPS_PASSWORD:-${ACPS_PASS:-}}"
 ACPS_INSECURE_TLS="${ACPS_INSECURE_TLS:-0}"
-# Compatibility aliases for status/logging only — not authoritative for auth.
-ACPS_HOST="${ACPS_HOST:-acps.stellarcyber.ai}"
-ACPS_PATH="${ACPS_PATH:-/provision/aelladeb_py3}"
+# Compatibility aliases for status/logging only — not download authority.
+ACPS_HOST="${ACPS_HOST:-}"
+ACPS_PATH="${ACPS_PATH:-}"
 ACPS_BASE_URL="${ACPS_BASE_URL:-}"
 ACPS_BASE_URL_FIXED="${ACPS_BASE_URL_FIXED:-}"
-# Re-assert immutable production authority (ignore any inherited env value).
-ACPS_PRODUCTION_BASE_URL="https://acps.stellarcyber.ai/provision/aelladeb_py3"
 
 _load_acps_credentials_from_gui_config() {
   local cfg="${DP_UPGRADE_MIRROR_CONFIG:-/etc/ubuntu-mirror/dp-upgrade-mirror.conf}"
@@ -154,6 +149,11 @@ download_one() {
     # Internal/fixture HTTP — no -k, no ACPS auth
   else
     url="${ACPS_EFFECTIVE_BASE%/}/${name}"
+    case "$url" in
+      *acps.stellarcyber.ai*)
+        dp2_die "PHASE2_SOURCE=FAIL reason=acps_runtime_forbidden file=${name}"
+        ;;
+    esac
     curl_args+=(${ACPS_CURL_TLS_ARGS[@]+"${ACPS_CURL_TLS_ARGS[@]}"})
     curl_args+=(${ACPS_CURL_AUTH_ARGS[@]+"${ACPS_CURL_AUTH_ARGS[@]}"})
   fi
@@ -207,8 +207,10 @@ FILE_COUNT=${DP_PHASE2_FILE_COUNT}
 BUNDLE_NAME=${bundle_name}
 STABLE_BUNDLE_NAME=$(dp2_stable_bundle_name)
 IMAGE_LIST_COUNT=${list_count}
-SOURCE_HOST=$(printf '%s' "${ACPS_EFFECTIVE_BASE:-${ACPS_PRODUCTION_BASE_URL}}" | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##' | cut -d/ -f1)
-SOURCE_PATH=/$(printf '%s' "${ACPS_EFFECTIVE_BASE:-${ACPS_PRODUCTION_BASE_URL}}" | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##' | cut -d/ -f2-)
+SOURCE_HOST=$(printf '%s' "${ACPS_EFFECTIVE_BASE:-${PHASE2_R2_BASE_URL_CONSTANT}}" | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##' | cut -d/ -f1)
+SOURCE_PATH=/$(printf '%s' "${ACPS_EFFECTIVE_BASE:-${PHASE2_R2_BASE_URL_CONSTANT}}" | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##' | cut -d/ -f2-)
+PHASE2_SOURCE=R2
+PHASE2_R2_VALIDATED_RELEASE_ID=${PHASE2_R2_VALIDATED_RELEASE_ID}
 VERIFICATION_RESULT=PASS
 EOF
   if dp2_release_has_secret "${release_dir}/release.env"; then
@@ -346,11 +348,16 @@ cmd_sync() {
   mkdir -p "${STAGING_DIR}/files"
   dp2_info "STAGING_DIR=${STAGING_DIR}"
 
-  # ACPS path: TLS verify + netrc (same policy as Mirror Manager).
+  # Production: immutable R2 public HTTPS (no ACPS, no credentials).
   # Fixture path (DP_PHASE2_SOURCE_BASE): hermetic test mode only.
   if [[ -z "${DP_PHASE2_SOURCE_BASE:-}" ]]; then
     acps_setup_curl_auth
     ACPS_AUTH_ACTIVE=1
+    case "${ACPS_EFFECTIVE_BASE:-}" in
+      *acps.stellarcyber.ai*)
+        dp2_die "PHASE2_SOURCE=FAIL reason=acps_runtime_forbidden"
+        ;;
+    esac
   else
     if [[ "${MM_HERMETIC_TEST_MODE:-0}" != "1" ]]; then
       dp2_die "DP_PHASE2_SOURCE_BASE=FAIL reason=production_forbidden"
@@ -365,6 +372,10 @@ cmd_sync() {
     dp2_require_free_gib "$DP_PHASE2_ROOT" "$DP_PHASE2_MIN_FREE_GIB"
   done
 
+  if [[ -z "${DP_PHASE2_SOURCE_BASE:-}" ]]; then
+    download_one "${PHASE2_R2_MANIFEST_NAME}" "$STAGING_DIR"
+  fi
+
   if [[ "$ACPS_AUTH_ACTIVE" -eq 1 ]]; then
     acps_cleanup_curl_auth
     ACPS_AUTH_ACTIVE=0
@@ -372,6 +383,10 @@ cmd_sync() {
 
   dp2_assert_exact_files_dir "${STAGING_DIR}/files"
   dp2_verify_payload_checksums "${STAGING_DIR}/files"
+  if [[ -z "${DP_PHASE2_SOURCE_BASE:-}" ]]; then
+    phase2_verify_r2_manifest "${STAGING_DIR}/files" "${STAGING_DIR}/${PHASE2_R2_MANIFEST_NAME}"
+    phase2_verify_r2_frozen_identity "${STAGING_DIR}/files"
+  fi
   local list_count
   list_count="$(dp2_check_image_list "${STAGING_DIR}/files/images-${DP_PHASE2_VERSION}.list" | tail -n1)"
 
@@ -500,7 +515,7 @@ usage() {
 Usage: $0 [--version X.Y.Z] <sync|verify|status>
 
   --version VER   Target Phase 2 artifact version (default: ${DP_PHASE2_VERSION_DEFAULT})
-  sync            Download 9 ACPS files, verify, bundle, atomic publish
+  sync            Download 9 Phase 2 files from immutable R2, verify, bundle, atomic publish
   verify          Offline verify of current release
   status          Print current/previous/bundle/disk status
 EOF

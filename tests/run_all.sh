@@ -177,6 +177,7 @@ TEST_LIST=(
   test_phase2_complete_client_unit_publish.sh
   test_dashboard_workflow_status_cases.sh
   test_acps_effective_base_setu.sh
+  test_phase2_r2_runtime_source.sh
 )
 
 # Integration tests required for FULL_SUITE=PASS (real builders, not mocked finalizer).
