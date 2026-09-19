@@ -57,7 +57,7 @@ ACPS_BASE_URL_FIXED="${ACPS_PRODUCTION_BASE_URL}"
 # Checksum sidecar is derived as "${OS_CORE_R2_URL}.sha256" (no separate constant).
 # Tests may override via environment: OS_CORE_R2_URL=http://127.0.0.1:<port>/pkg.tar
 # shellcheck disable=SC2034
-OS_CORE_R2_URL_CONSTANT="https://xdrsolutions.uk/ubuntu-os-core/ubuntu-os-core-xenial-to-noble.tar"
+OS_CORE_R2_URL_CONSTANT="https://downloads.xdr.ooo/ubuntu-os-core/ubuntu-os-core-xenial-to-noble.tar"
 : "${OS_CORE_R2_URL:=${OS_CORE_R2_URL_CONSTANT}}"
 
 MM_LOCK_FD=""

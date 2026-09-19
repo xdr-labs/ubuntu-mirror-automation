@@ -428,7 +428,7 @@ fi
 echo "======== C. R2 constant / checksum derivation ========"
 common_env
 write_gui_config "$MM_CONFIG_FILE"
-PROD_URL='https://xdrsolutions.uk/ubuntu-os-core/ubuntu-os-core-xenial-to-noble.tar'
+PROD_URL='https://downloads.xdr.ooo/ubuntu-os-core/ubuntu-os-core-xenial-to-noble.tar'
 grep -F "OS_CORE_R2_URL_CONSTANT=\"${PROD_URL}\"" "${ROOT}/scripts/lib/mirror_manager_common.sh" \
   && pass "C R2 production constant set" || fail "C constant"
 # Derived checksum URL contract (package URL + .sha256)

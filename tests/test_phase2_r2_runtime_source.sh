@@ -8,8 +8,8 @@ FAIL=0
 pass() { echo "PASS: $*"; }
 fail() { echo "FAIL: $*"; FAIL=1; }
 
-R2_BASE='https://xdrsolutions.uk/dp-os-upgrade/phase2/6.6.0/validated-20260919'
-OS_CORE='https://xdrsolutions.uk/ubuntu-os-core/ubuntu-os-core-xenial-to-noble.tar'
+R2_BASE='https://downloads.xdr.ooo/dp-os-upgrade/phase2/6.6.0/validated-20260919'
+OS_CORE='https://downloads.xdr.ooo/ubuntu-os-core/ubuntu-os-core-xenial-to-noble.tar'
 RUNTIME_SCRIPTS=(
   "${ROOT}/scripts/download-dp-phase2.sh"
   "${ROOT}/scripts/lib/acps_auth.sh"
@@ -17,7 +17,9 @@ RUNTIME_SCRIPTS=(
   "${ROOT}/scripts/lib/dp-phase2-common.sh"
   "${ROOT}/scripts/lib/mirror_install_engine.sh"
   "${ROOT}/scripts/lib/mirror_manager_common.sh"
+  "${ROOT}/scripts/lib/r2_acquire.sh"
   "${ROOT}/scripts/install-dp-upgrade-mirror.sh"
+  "${ROOT}/lib/bootstrap.sh"
 )
 
 TMP="$(mktemp -d)"
@@ -310,12 +312,38 @@ set -e
   || fail "verified cache reuse downloaded (rc=${arc} out=${aout} curl=$(cat "$CURL_LOG"))"
 
 # ---------------------------------------------------------------------------
-# 7. Phase 1 Ubuntu OS Core behavior is unchanged
+# 7. Phase 1 Ubuntu OS Core behavior is unchanged (hostname-only R2 domain)
 # ---------------------------------------------------------------------------
 grep -q "OS_CORE_R2_URL_CONSTANT=\"${OS_CORE}\"" \
   "${ROOT}/scripts/lib/mirror_manager_common.sh" \
-  && pass "Phase 1 OS Core R2 URL unchanged" \
+  && pass "Phase 1 OS Core R2 URL is downloads.xdr.ooo" \
   || fail "Phase 1 OS Core R2 URL changed"
+
+# Retired R2 hostname must not remain in production runtime or as a fallback.
+old_domain_hits=0
+for f in "${RUNTIME_SCRIPTS[@]}"; do
+  hits="$(grep -n 'xdrsolutions\.uk' "$f" || true)"
+  if [[ -n "$hits" ]]; then
+    old_domain_hits=$((old_domain_hits + 1))
+    fail "production runtime still references xdrsolutions.uk in ${f}: ${hits}"
+  fi
+done
+[[ "$old_domain_hits" -eq 0 ]] \
+  && pass "production runtime has no xdrsolutions.uk reference" \
+  || true
+grep -q 'https://downloads.xdr.ooo/' "${ROOT}/lib/bootstrap.sh" \
+  && grep -q 'OUTBOUND_HTTPS=PASS downloads.xdr.ooo' "${ROOT}/lib/bootstrap.sh" \
+  && ! grep -q 'xdrsolutions.uk' "${ROOT}/lib/bootstrap.sh" \
+  && pass "bootstrap outbound HTTPS checks downloads.xdr.ooo only" \
+  || fail "bootstrap still depends on xdrsolutions.uk"
+! grep -nE 'xdrsolutions\.uk|xdrsolutions\.uk/' \
+  "${ROOT}/scripts/lib/acps_auth.sh" \
+  "${ROOT}/scripts/lib/dp-phase2-common.sh" \
+  "${ROOT}/scripts/lib/mirror_manager_common.sh" \
+  "${ROOT}/scripts/lib/acps_acquire.sh" \
+  "${ROOT}/scripts/lib/r2_acquire.sh" \
+  && pass "no old-domain fallback in production download source" \
+  || fail "old-domain fallback present"
 ! grep -q 'dp-os-upgrade/phase2' "${ROOT}/scripts/lib/r2_acquire.sh" \
   && pass "OS Core downloader does not use Phase 2 prefix" \
   || fail "OS Core downloader mixed with Phase 2 prefix"

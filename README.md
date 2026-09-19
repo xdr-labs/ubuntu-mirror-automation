@@ -170,7 +170,7 @@ The project does **not** create a full Ubuntu archive mirror and does **not** us
 The Mirror Server needs outbound HTTPS access to:
 
 - `github.com` / GitHub endpoints needed for the initial clone or later source update
-- `https://xdrsolutions.uk` for the R2 OS Core package in Full mode
+- `https://downloads.xdr.ooo` for the R2 OS Core package in Full mode
 - the fixed ACPS endpoint for Phase 2 artifacts
 - Ubuntu package repositories used by the Mirror Server bootstrap
 

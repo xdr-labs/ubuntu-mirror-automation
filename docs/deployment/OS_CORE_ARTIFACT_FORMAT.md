@@ -92,17 +92,17 @@ package path or R2 URL in the GUI. See
 Production constant (custom domain):
 
 ```
-https://xdrsolutions.uk/ubuntu-os-core/ubuntu-os-core-xenial-to-noble.tar
+https://downloads.xdr.ooo/ubuntu-os-core/ubuntu-os-core-xenial-to-noble.tar
 ```
 
 Checksum sidecar:
 
 ```
-https://xdrsolutions.uk/ubuntu-os-core/ubuntu-os-core-xenial-to-noble.tar.sha256
+https://downloads.xdr.ooo/ubuntu-os-core/ubuntu-os-core-xenial-to-noble.tar.sha256
 ```
 
 Optional signature sidecar (currently not published / not a trust root):
 
 ```
-https://xdrsolutions.uk/ubuntu-os-core/ubuntu-os-core-xenial-to-noble.tar.sha256.asc
+https://downloads.xdr.ooo/ubuntu-os-core/ubuntu-os-core-xenial-to-noble.tar.sha256.asc
 ```

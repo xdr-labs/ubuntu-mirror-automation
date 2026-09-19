@@ -131,13 +131,13 @@ um_bootstrap_host_preflight() {
   um_ok "PREFLIGHT=PASS apt-get systemd"
 
   # DNS / HTTPS (best-effort; do not fail dry-run)
-  if curl -sS --max-time 8 -I https://xdrsolutions.uk/ >/dev/null 2>&1; then
-    um_ok "OUTBOUND_HTTPS=PASS xdrsolutions.uk"
+  if curl -sS --max-time 8 -I https://downloads.xdr.ooo/ >/dev/null 2>&1; then
+    um_ok "OUTBOUND_HTTPS=PASS downloads.xdr.ooo"
   else
     if [[ "${UM_DRY_RUN:-0}" == "1" ]]; then
       um_dry "SKIPPED: outbound HTTPS check (runtime)"
     else
-      um_warn "OUTBOUND_HTTPS=WARN cannot reach https://xdrsolutions.uk (R2 download will need this)"
+      um_warn "OUTBOUND_HTTPS=WARN cannot reach https://downloads.xdr.ooo (R2 download will need this)"
     fi
   fi
 

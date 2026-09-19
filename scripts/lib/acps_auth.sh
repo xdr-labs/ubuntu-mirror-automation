@@ -22,10 +22,10 @@ ACPS_PRODUCTION_BASE_URL="https://acps.stellarcyber.ai/provision/aelladeb_py3"
 # Immutable production Phase 2 download source (Cloudflare R2 public HTTPS).
 # Re-asserted unconditionally so env cannot redirect production downloads.
 # Must match scripts/lib/dp-phase2-common.sh.
-PHASE2_R2_PUBLIC_BASE_URL_CONSTANT="https://xdrsolutions.uk"
+PHASE2_R2_PUBLIC_BASE_URL_CONSTANT="https://downloads.xdr.ooo"
 PHASE2_R2_VALIDATED_RELEASE_ID="validated-20260919"
 PHASE2_R2_OBJECT_PREFIX_CONSTANT="dp-os-upgrade/phase2/6.6.0/validated-20260919"
-PHASE2_R2_BASE_URL_CONSTANT="https://xdrsolutions.uk/dp-os-upgrade/phase2/6.6.0/validated-20260919"
+PHASE2_R2_BASE_URL_CONSTANT="https://downloads.xdr.ooo/dp-os-upgrade/phase2/6.6.0/validated-20260919"
 
 # Explicit hermetic-test boundary. Never document in GUI/help.
 # Production must not honor ACPS_INSECURE_TLS, DP_PHASE2_SOURCE_BASE,

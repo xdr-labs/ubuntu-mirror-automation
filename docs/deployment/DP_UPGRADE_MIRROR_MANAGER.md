@@ -132,7 +132,7 @@ list with a safely shell-quoted password (never logged).
 
 Read-only:
 
-- Phase 2 artifacts: immutable Cloudflare R2 prefix (`https://xdrsolutions.uk/dp-os-upgrade/phase2/6.6.0/validated-20260919`)
+- Phase 2 artifacts: current pinned Phase 2 R2 release (`https://downloads.xdr.ooo/dp-os-upgrade/phase2/6.6.0/validated-20260919`)
 - OS Core Source: Cloudflare R2 — configured by installer (FULL mode)
 
 Credentials are stored root-owned mode `600` at

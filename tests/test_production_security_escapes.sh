@@ -90,7 +90,7 @@ rc=$?
 set -e
 rm -rf "$PROD_AUTH"
 [[ "$rc" -eq 0 ]] \
-  && printf '%s' "$out" | grep -q 'BASE=https://xdrsolutions.uk/dp-os-upgrade/phase2/6.6.0/validated-20260919' \
+  && printf '%s' "$out" | grep -q 'BASE=https://downloads.xdr.ooo/dp-os-upgrade/phase2/6.6.0/validated-20260919' \
   && ! printf '%s' "$out" | grep -q 'acps.stellarcyber.ai' \
   && ! printf '%s' "$out" | grep -q -- '--netrc-file' \
   && pass "production Phase 2 source is immutable R2; no ACPS netrc" \
@@ -292,7 +292,7 @@ rc=$?
 set -e
 [[ "$rc" -eq 0 ]] \
   && printf '%s' "$out" | grep -q 'CONST=https://acps.stellarcyber.ai/provision/aelladeb_py3' \
-  && printf '%s' "$out" | grep -q 'BASE=https://xdrsolutions.uk/dp-os-upgrade/phase2/6.6.0/validated-20260919' \
+  && printf '%s' "$out" | grep -q 'BASE=https://downloads.xdr.ooo/dp-os-upgrade/phase2/6.6.0/validated-20260919' \
   && ! printf '%s' "$out" | grep -q 'evil.example' \
   && pass "production ACPS_PRODUCTION_BASE_URL=evil ignored; R2 endpoint retained" \
   || fail "ACPS_PRODUCTION_BASE_URL env override not ignored (rc=${rc} out=${out})"
@@ -319,8 +319,8 @@ out="$(
 rc=$?
 set -e
 [[ "$rc" -eq 0 ]] \
-  && printf '%s' "$out" | grep -q 'R2_CONST=https://xdrsolutions.uk/dp-os-upgrade/phase2/6.6.0/validated-20260919' \
-  && printf '%s' "$out" | grep -q 'BASE=https://xdrsolutions.uk/dp-os-upgrade/phase2/6.6.0/validated-20260919' \
+  && printf '%s' "$out" | grep -q 'R2_CONST=https://downloads.xdr.ooo/dp-os-upgrade/phase2/6.6.0/validated-20260919' \
+  && printf '%s' "$out" | grep -q 'BASE=https://downloads.xdr.ooo/dp-os-upgrade/phase2/6.6.0/validated-20260919' \
   && ! grep -qE 'PHASE2_R2_BASE_URL_CONSTANT="\$\{PHASE2_R2_BASE_URL_CONSTANT' \
     "${ROOT}/scripts/lib/dp-phase2-common.sh" \
   && ! grep -qE 'PHASE2_R2_BASE_URL_CONSTANT="\$\{PHASE2_R2_BASE_URL_CONSTANT' \

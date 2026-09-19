@@ -9,10 +9,10 @@ DP_PHASE2_REQUIRED_FILES=()
 # Immutable production Phase 2 download source (Cloudflare R2 public HTTPS).
 # Never use a mutable "latest" prefix. Not env-overridable in production.
 # Hermetic tests redirect via DP_PHASE2_SOURCE_BASE, never by replacing these.
-PHASE2_R2_PUBLIC_BASE_URL_CONSTANT="https://xdrsolutions.uk"
+PHASE2_R2_PUBLIC_BASE_URL_CONSTANT="https://downloads.xdr.ooo"
 PHASE2_R2_VALIDATED_RELEASE_ID="validated-20260919"
 PHASE2_R2_OBJECT_PREFIX_CONSTANT="dp-os-upgrade/phase2/6.6.0/validated-20260919"
-PHASE2_R2_BASE_URL_CONSTANT="https://xdrsolutions.uk/dp-os-upgrade/phase2/6.6.0/validated-20260919"
+PHASE2_R2_BASE_URL_CONSTANT="https://downloads.xdr.ooo/dp-os-upgrade/phase2/6.6.0/validated-20260919"
 # Production object identity (additional to vendor .sha1/.sha256 sidecars).
 PHASE2_R2_BRINGUP_SHA256="6a69ff8671a1bd396efb4d103314cd5d347003fbda957e49a20c99fb5957e622"
 PHASE2_R2_IMAGES_SHA256="91cf6a2c4de178b616d539e0c22817bf86952ae6020a14f248d32efe9f453fe0"
