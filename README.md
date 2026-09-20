@@ -54,7 +54,7 @@ DP 6.6.0 Phase 2
 | **Dark-site delivery** | DP nodes download from the local Mirror Server over TCP/80 |
 | **Guided operations** | Menu-driven Configuration → Download → HTTP → Readiness → DP command workflow |
 | **Cluster support** | Generates DL/DA master and worker procedures from saved cluster configuration |
-| **Safety gates** | Requires DP precheck, service pause, powered-off snapshot/checkpoint, and readiness PASS |
+| **Operator safety steps** | Requires the operator to perform DP precheck, service pause, and powered-off snapshot/checkpoint; Menu 4 readiness PASS is the enforced application gate |
 | **Retry/reuse** | Reuses valid downloads, partial R2 data, prepared OS Core, and Phase 2 bundles |
 
 ## Architecture
@@ -81,6 +81,8 @@ The DP side consumes generated commands from the Mirror Manager. Do not construc
 ```
 
 **Do not start a DP upgrade until Menu 4 reports `PASS`.**
+
+Menu 4 readiness is the tool-enforced gate. The DP precheck, service pause, and powered-off snapshot/checkpoint are **mandatory operator procedures shown by the runbook/Menu 7**, but the software does not independently prove that the operator completed them before a generated upgrade command is run.
 
 For the complete runbook, upgrade path selection, snapshot gate, cluster sequencing, retry behavior, and troubleshooting, use **https://dpos.xdr.ooo/**.
 
