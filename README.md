@@ -1,12 +1,88 @@
-# DP Ubuntu Upgrade Mirror Manager
+<h1 align="center">DP Ubuntu Upgrade Mirror Manager</h1>
 
-Prepare one HTTP mirror server for Stellar Cyber DP upgrades:
+<p align="center">
+  <strong>Offline upgrade orchestration for Stellar Cyber Data Processors.</strong>
+</p>
 
-**Ubuntu 16.04 → 18.04 → 20.04 → 22.04 → 24.04**, followed by DP **6.6.0 Phase 2 bringup**.
+<p align="center">
+  Prepare one mirror server, upgrade Ubuntu 16.04 → 24.04 safely, then stage and run the validated DP 6.6.0 Phase 2 workflow.
+</p>
 
-The Mirror Server downloads the production OS Core and Phase 2 artifact set from immutable Cloudflare R2 paths. **DP hosts download only from the Mirror Server over HTTP**; DP hosts do not need direct access to R2 or ACPS.
+<p align="center">
+  <strong>English</strong> · <a href="README.ko.md">한국어</a> · <a href="https://dpos.xdr.ooo/">User & Operations Guide</a>
+</p>
 
-**User and operations guide:** https://dpos.xdr.ooo/
+<p align="center">
+  <img src="https://img.shields.io/badge/target-DP%206.6.0-16A34A?style=flat-square" alt="DP 6.6.0">
+  <img src="https://img.shields.io/badge/mirror-Ubuntu%2024.04-2563EB?style=flat-square&logo=ubuntu&logoColor=white" alt="Ubuntu 24.04 mirror">
+  <img src="https://img.shields.io/badge/source-Cloudflare%20R2-F38020?style=flat-square&logo=cloudflare&logoColor=white" alt="Cloudflare R2">
+  <img src="https://img.shields.io/badge/workflow-readiness--gated-7C3AED?style=flat-square" alt="Readiness gated">
+</p>
+
+<p align="center">
+  <strong>Product guide:</strong> <a href="https://dpos.xdr.ooo/">dpos.xdr.ooo</a>
+</p>
+
+---
+
+## Upgrade a DP without giving it Internet access
+
+The Mirror Manager prepares a single Ubuntu 24.04 mirror server for Stellar Cyber DP upgrades.
+
+The mirror server retrieves the validated OS Core and DP Phase 2 artifacts. DP hosts then download only from the local Mirror Server over HTTP, so the DP itself does not need direct access to Cloudflare R2 or ACPS.
+
+```text
+Ubuntu 16.04
+   ↓
+Ubuntu 18.04
+   ↓
+Ubuntu 20.04
+   ↓
+Ubuntu 22.04
+   ↓
+Ubuntu 24.04
+   ↓
+DP 6.6.0 Phase 2
+```
+
+## What it does
+
+| Capability | What it provides |
+|---|---|
+| **Selective OS mirror** | Prepares only the Ubuntu packages required for the supported upgrade chain |
+| **Pinned Phase 2 artifacts** | Uses the validated immutable DP 6.6.0 Phase 2 artifact set |
+| **Dark-site delivery** | DP nodes download from the local Mirror Server over TCP/80 |
+| **Guided operations** | Menu-driven Configuration → Download → HTTP → Readiness → DP command workflow |
+| **Cluster support** | Generates DL/DA master and worker procedures from saved cluster configuration |
+| **Safety gates** | Requires DP precheck, service pause, powered-off snapshot/checkpoint, and readiness PASS |
+| **Retry/reuse** | Reuses valid downloads, partial R2 data, prepared OS Core, and Phase 2 bundles |
+
+## Architecture
+
+```mermaid
+flowchart LR
+    R["Cloudflare R2<br/>OS Core + DP 6.6.0 Phase 2"] --> M["Mirror Server<br/>Ubuntu 24.04"]
+    U["Ubuntu package repositories<br/>Mirror bootstrap only"] --> M
+    M -->|HTTP / TCP 80| DL["DL nodes"]
+    M -->|HTTP / TCP 80| DA["DA nodes"]
+    M -->|HTTP / TCP 80| AIO["AIO / single-node DP"]
+```
+
+The DP side consumes generated commands from the Mirror Manager. Do not construct upgrade commands manually when Menu 7 is available.
+
+## Operator workflow
+
+```text
+1  Configuration
+2  Download and Prepare Upgrade Files
+3  Enable HTTP Distribution
+4  Verify Upgrade Readiness
+7  Show DP Client Upgrade Commands
+```
+
+**Do not start a DP upgrade until Menu 4 reports `PASS`.**
+
+For the complete runbook, upgrade path selection, snapshot gate, cluster sequencing, retry behavior, and troubleshooting, use **https://dpos.xdr.ooo/**.
 
 ---
 
