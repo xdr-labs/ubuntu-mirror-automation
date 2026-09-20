@@ -54,7 +54,7 @@ DP 6.6.0 Phase 2
 | **Dark-site Delivery** | DP는 local Mirror Server에서만 파일 다운로드 |
 | **Guided Workflow** | Configuration → Download → HTTP → Readiness → DP 명령 순서 제공 |
 | **Cluster Support** | 저장된 DL/DA worker 정보로 master/worker 절차 생성 |
-| **Safety Gate** | Precheck, service pause, powered-off snapshot/checkpoint, readiness PASS 요구 |
+| **Operator Safety Step** | Precheck, service pause, powered-off snapshot/checkpoint는 운영자가 반드시 수행하며, application이 직접 enforce하는 gate는 Menu 4 readiness PASS |
 | **Retry / Reuse** | 정상 artifact, partial download, OS Core, Phase 2 bundle 재사용 |
 
 ## Architecture
@@ -79,6 +79,8 @@ flowchart LR
 ```
 
 **Menu 4가 `PASS`가 되기 전에 DP upgrade를 시작하지 않습니다.**
+
+Menu 4 readiness는 software가 직접 enforce하는 gate입니다. DP precheck, service pause, powered-off snapshot/checkpoint는 **runbook/Menu 7에서 요구하는 필수 운영 절차**이지만, software가 generated upgrade command 실행 전에 실제 완료 여부를 독립적으로 검증하는 것은 아닙니다.
 
 DP에서는 Menu 7이 생성한 명령을 사용하고 수동으로 upgrade command를 조립하지 않는 것이 기본 운영 방식입니다.
 
