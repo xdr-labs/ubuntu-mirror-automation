@@ -265,12 +265,18 @@ acps_payload_checksum_id() {
 }
 
 acps_write_verified_marker() {
+  # historical internal name; production source is immutable R2
   local dir="$1"
   local tmp f fp cid
   tmp="${dir}/.VERIFIED.tmp.$$"
   {
-    printf 'ACPS_VERIFIED_FORMAT=1\n'
+    # Format 2 binds the verified cache to the pinned R2 release identity.
+    printf 'ACPS_VERIFIED_FORMAT=2\n'
     printf 'VERIFIED_AT=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf 'PHASE2_SOURCE=R2\n'
+    printf 'PHASE2_R2_VALIDATED_RELEASE_ID=%s\n' "${PHASE2_R2_VALIDATED_RELEASE_ID:-}"
+    printf 'PHASE2_R2_MANIFEST_SHA256=%s\n' "${PHASE2_R2_MANIFEST_SHA256:-}"
+    printf 'PHASE2_R2_OBJECT_PREFIX=%s\n' "${PHASE2_R2_OBJECT_PREFIX_CONSTANT:-}"
     for f in "${DP_PHASE2_REQUIRED_FILES[@]}"; do
       fp="$(acps_file_metadata_fp "${dir}/${f}")"
       [[ -n "$fp" ]] || { rm -f "$tmp"; return 1; }
@@ -288,14 +294,24 @@ acps_write_verified_marker() {
 }
 
 acps_is_verified_cache() {
-  # Trust .VERIFIED only when format=1 metadata still matches on-disk files.
-  # Legacy timestamp-only / malformed markers never reuse.
+  # historical internal name; production source is immutable R2
+  # Production requires format=2 + exact R2 release/manifest identity.
+  # Hermetic fixtures may still accept legacy format=1 markers.
   local dir="$1"
   local marker="${dir}/.VERIFIED"
   local f line path fp stored_fp stored_cid cur_fp cur_cid fmt
   [[ -f "$marker" ]] || return 1
   fmt="$(head -n 1 "$marker" 2>/dev/null || true)"
-  [[ "$fmt" == "ACPS_VERIFIED_FORMAT=1" ]] || return 1
+  if declare -F phase2_r2_identity_enforced >/dev/null 2>&1 \
+    && phase2_r2_identity_enforced; then
+    [[ "$fmt" == "ACPS_VERIFIED_FORMAT=2" ]] || return 1
+    grep -Fxq 'PHASE2_SOURCE=R2' "$marker" || return 1
+    grep -Fxq "PHASE2_R2_VALIDATED_RELEASE_ID=${PHASE2_R2_VALIDATED_RELEASE_ID}" "$marker" || return 1
+    grep -Fxq "PHASE2_R2_MANIFEST_SHA256=${PHASE2_R2_MANIFEST_SHA256}" "$marker" || return 1
+    grep -Fxq "PHASE2_R2_OBJECT_PREFIX=${PHASE2_R2_OBJECT_PREFIX_CONSTANT}" "$marker" || return 1
+  else
+    [[ "$fmt" == "ACPS_VERIFIED_FORMAT=1" || "$fmt" == "ACPS_VERIFIED_FORMAT=2" ]] || return 1
+  fi
 
   for f in "${DP_PHASE2_REQUIRED_FILES[@]}"; do
     [[ -f "${dir}/${f}" ]] || return 1
@@ -816,51 +832,69 @@ mm_calc_disk_requirements() {
 }
 
 acps_test_connection() {
-  # Probe an authenticated artifact, not the directory index.
-  # ACPS nginx returns 403 for "/" even with valid Basic auth (no autoindex),
-  # which previously caused false ACPS_CONNECTION=FAIL.
+  # historical internal name; production source is immutable R2
+  # Probe a required public R2 artifact (no credentials).
   local owned=0
   local probe="${ACPS_CONNECTION_PROBE_FILE:-aelladeb_py3_common.tar.gz.sha1}"
   local url code
-  # Standalone callers get a private auth session; callers that already ran
-  # acps_setup_curl_auth keep their session for subsequent HEAD/download work.
   if [[ -z "${ACPS_EFFECTIVE_BASE:-}" || ( ${#ACPS_CURL_AUTH_ARGS[@]} -eq 0 && -z "${DP_PHASE2_SOURCE_BASE:-}" ) ]]; then
     acps_setup_curl_auth
     owned=1
   fi
   url="${ACPS_EFFECTIVE_BASE%/}/${probe}"
+  case "$url" in
+    *acps.stellarcyber.ai*)
+      if declare -F phase2_r2_identity_enforced >/dev/null 2>&1 \
+        && phase2_r2_identity_enforced; then
+        [[ "$owned" -eq 1 ]] && acps_cleanup_curl_auth
+        mm_error "PHASE2_R2_CONNECTION=FAIL reason=acps_runtime_forbidden"
+        return 1
+      fi
+      ;;
+  esac
+  if declare -F phase2_assert_r2_effective_url >/dev/null 2>&1 \
+    && declare -F phase2_r2_identity_enforced >/dev/null 2>&1 \
+    && phase2_r2_identity_enforced; then
+    if ! phase2_assert_r2_effective_url "$url" "phase2-probe"; then
+      [[ "$owned" -eq 1 ]] && acps_cleanup_curl_auth
+      return 1
+    fi
+  fi
+  local curl_probe_args=(
+    -sS -o /dev/null -w '%{http_code}'
+    --connect-timeout 15 --max-time 30
+    -I -L
+  )
+  if [[ "${MM_HERMETIC_TEST_MODE:-0}" != "1" ]]; then
+    curl_probe_args+=(--proto-redir '=https')
+  fi
   code="$(
-    curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 15 --max-time 30 \
+    curl "${curl_probe_args[@]}" \
       ${ACPS_CURL_TLS_ARGS[@]+"${ACPS_CURL_TLS_ARGS[@]}"} \
       ${ACPS_CURL_AUTH_ARGS[@]+"${ACPS_CURL_AUTH_ARGS[@]}"} \
-      -I -L "$url" 2>/dev/null || true
+      "$url" 2>/dev/null || true
   )"
   code="${code:-000}"
   [[ "$owned" -eq 1 ]] && acps_cleanup_curl_auth
-  # curl may print "000" on failure; ignore non-numeric garbage
   [[ "$code" =~ ^[0-9]{3}$ ]] || code="000"
   if [[ "$code" == "000" ]]; then
-    mm_error "ACPS_CONNECTION=FAIL code=${code} url=${probe}"
+    mm_error "PHASE2_R2_CONNECTION=FAIL code=${code} url=${probe}"
     return 1
   fi
-  if [[ "$code" == "401" ]]; then
-    mm_error "ACPS_CONNECTION=FAIL auth code=${code}"
-    return 1
-  fi
-  if [[ "$code" == "403" ]]; then
-    mm_error "ACPS_CONNECTION=FAIL forbidden code=${code} url=${probe}"
+  if [[ "$code" == "401" || "$code" == "403" ]]; then
+    mm_error "PHASE2_R2_CONNECTION=FAIL auth_or_forbidden code=${code}"
     return 1
   fi
   if [[ "$code" =~ ^[23][0-9][0-9]$ ]]; then
-    mm_ok "ACPS_CONNECTION=PASS code=${code} probe=${probe}"
+    mm_ok "PHASE2_R2_CONNECTION=PASS code=${code} probe=${probe}"
     return 0
   fi
-  # 404 after auth usually means wrong version/path, not bad password.
-  mm_error "ACPS_CONNECTION=FAIL unexpected code=${code} probe=${probe}"
+  mm_error "PHASE2_R2_CONNECTION=FAIL unexpected code=${code} probe=${probe}"
   return 1
 }
 
 acps_download_one() {
+  # historical internal name; production source is immutable R2
   local name="$1"
   local dest_dir="$2"
   local part="${dest_dir}/${name}.part"
@@ -871,6 +905,11 @@ acps_download_one() {
       mm_die "PHASE2_SOURCE=FAIL reason=acps_runtime_forbidden file=${name}"
       ;;
   esac
+  if declare -F phase2_assert_r2_effective_url >/dev/null 2>&1 \
+    && declare -F phase2_r2_identity_enforced >/dev/null 2>&1 \
+    && phase2_r2_identity_enforced; then
+    phase2_assert_r2_effective_url "$url" "phase2-${name}"
+  fi
   local start_ts now elapsed downloaded expected pct rate
   local have=0 status cr_start hdr resp
   local curl_args=(
@@ -882,6 +921,9 @@ acps_download_one() {
     --speed-limit "$ACPS_CURL_SPEED_LIMIT"
     --speed-time "$ACPS_CURL_SPEED_TIME"
   )
+  if [[ "${MM_HERMETIC_TEST_MODE:-0}" != "1" ]]; then
+    curl_args+=(--proto-redir '=https')
+  fi
   curl_args+=(${ACPS_CURL_TLS_ARGS[@]+"${ACPS_CURL_TLS_ARGS[@]}"})
   curl_args+=(${ACPS_CURL_AUTH_ARGS[@]+"${ACPS_CURL_AUTH_ARGS[@]}"})
 
@@ -1101,6 +1143,7 @@ acps_acquire_all() {
       mm_die "PHASE2_R2_MANIFEST_DOWNLOAD=FAIL"
     fi
     mv -f "${parent}/${PHASE2_R2_MANIFEST_NAME}" "$r2_manifest"
+    phase2_verify_r2_manifest_identity "$r2_manifest"
     phase2_verify_r2_manifest "$cache" "$r2_manifest"
     phase2_verify_r2_frozen_identity "$cache"
   fi

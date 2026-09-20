@@ -155,6 +155,28 @@ MAN="${TMP}/manifest.sha256"
   done
 ) >"$MAN"
 
+# The production manifest itself is immutable and must be pinned before its
+# per-object hashes can be trusted. Hermetic fixtures use an explicit test hash.
+export MM_HERMETIC_TEST_MODE=1
+export PHASE2_R2_TEST_MANIFEST_SHA256="$(sha256sum "$MAN" | awk '{print $1}')"
+set +e
+miout="$(phase2_verify_r2_manifest_identity "$MAN" 2>&1)"
+mirc=$?
+set -e
+[[ "$mirc" -eq 0 ]] && printf '%s' "$miout" | grep -q 'PHASE2_R2_MANIFEST_IDENTITY=PASS' \
+  && pass "matching pinned R2 manifest identity verifies" \
+  || fail "matching manifest identity should PASS (rc=${mirc} out=${miout})"
+
+export PHASE2_R2_TEST_MANIFEST_SHA256="0000000000000000000000000000000000000000000000000000000000000000"
+set +e
+miout="$(phase2_verify_r2_manifest_identity "$MAN" 2>&1)"
+mirc=$?
+set -e
+[[ "$mirc" -ne 0 ]] && printf '%s' "$miout" | grep -q 'PHASE2_R2_MANIFEST_IDENTITY=FAIL' \
+  && pass "R2 manifest identity mismatch fails closed" \
+  || fail "manifest identity mismatch did not fail closed (rc=${mirc} out=${miout})"
+unset PHASE2_R2_TEST_MANIFEST_SHA256
+
 set +e
 mout="$(phase2_verify_r2_manifest "$FILES" "$MAN" 2>&1)"
 mrc=$?
@@ -301,6 +323,24 @@ sha256sum "${CACHE}/images-6.6.0.tar" | awk '{print $1 "  images-6.6.0.tar"}' \
 seq 1 2 >"${CACHE}/images-6.6.0.list"
 mm_acps_verify_payload_checksums "$CACHE" >/dev/null
 acps_write_verified_marker "$CACHE"
+
+# Production reuse must be bound to the exact immutable R2 release identity.
+export MM_HERMETIC_TEST_MODE=0
+if acps_is_verified_cache "$CACHE"; then
+  pass "verified cache marker is bound to current R2 release"
+else
+  fail "current R2-bound cache marker should be reusable"
+fi
+cp -a "${CACHE}/.VERIFIED" "${CACHE}/.VERIFIED.good"
+sed -i 's/^PHASE2_R2_VALIDATED_RELEASE_ID=.*/PHASE2_R2_VALIDATED_RELEASE_ID=stale-release/' "${CACHE}/.VERIFIED"
+if acps_is_verified_cache "$CACHE"; then
+  fail "stale R2 release marker was incorrectly reusable"
+else
+  pass "stale R2 release marker is rejected"
+fi
+mv -f "${CACHE}/.VERIFIED.good" "${CACHE}/.VERIFIED"
+export MM_HERMETIC_TEST_MODE=1
+
 : >"$CURL_LOG"
 set +e
 aout="$(acps_acquire_all 6.6.0 2>&1)"
@@ -358,6 +398,13 @@ grep -q 'PHASE2_TARGET_VERSION_FIXED="6.6.0"' \
   "${ROOT}/scripts/lib/mirror_manager_common.sh" \
   && pass "Phase 2 target remains 6.6.0" \
   || fail "Phase 2 target version changed"
+
+grep -q 'PHASE2_R2_RELEASE_IDENTITY=PASS' "${ROOT}/scripts/lib/mirror_install_engine.sh" \
+  && grep -q 'phase2_release_env_r2_identity_reason' "${ROOT}/scripts/lib/mirror_install_engine.sh" \
+  && grep -q 'phase2_emit_r2_release_provenance' "${ROOT}/scripts/lib/mirror_install_engine.sh" \
+  && grep -q 'r2_release_identity_mismatch' "${ROOT}/scripts/lib/dp-phase2-common.sh" \
+  && pass "Mirror Manager final reuse is release-identity bound" \
+  || fail "Mirror Manager R2 release identity gate missing"
 dp2_set_version 6.6.0
 [[ "${#DP_PHASE2_REQUIRED_FILES[@]}" -eq 9 ]] \
   && pass "Phase 2 required file count remains 9" \
@@ -372,6 +419,7 @@ printf '%s\n' "${DP_PHASE2_REQUIRED_FILES[@]}" | grep -qx 'images-6.6.0.tar' \
 [[ "${PHASE2_R2_BRINGUP_SHA256}" == "6a69ff8671a1bd396efb4d103314cd5d347003fbda957e49a20c99fb5957e622" ]] \
   && [[ "${PHASE2_R2_IMAGES_SHA256}" == "91cf6a2c4de178b616d539e0c22817bf86952ae6020a14f248d32efe9f453fe0" ]] \
   && [[ "${PHASE2_R2_IMAGES_BYTES}" == "29579332096" ]] \
+  && [[ "${PHASE2_R2_MANIFEST_SHA256}" == "606e2967652ad4d0f0bfad4a23b562217a062ea17ccb54c47d2a5ea8bdf7c898" ]] \
   && pass "frozen R2 identity pins match validated-20260919" \
   || fail "frozen identity pins drifted"
 

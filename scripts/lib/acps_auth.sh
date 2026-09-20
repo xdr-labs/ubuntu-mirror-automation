@@ -26,6 +26,9 @@ PHASE2_R2_PUBLIC_BASE_URL_CONSTANT="https://downloads.xdr.ooo"
 PHASE2_R2_VALIDATED_RELEASE_ID="validated-20260919"
 PHASE2_R2_OBJECT_PREFIX_CONSTANT="dp-os-upgrade/phase2/6.6.0/validated-20260919"
 PHASE2_R2_BASE_URL_CONSTANT="https://downloads.xdr.ooo/dp-os-upgrade/phase2/6.6.0/validated-20260919"
+# Keep in lockstep with scripts/lib/dp-phase2-common.sh (single production pin).
+PHASE2_R2_MANIFEST_SHA256="606e2967652ad4d0f0bfad4a23b562217a062ea17ccb54c47d2a5ea8bdf7c898"
+PHASE2_R2_MANIFEST_BYTES=956
 
 # Explicit hermetic-test boundary. Never document in GUI/help.
 # Production must not honor ACPS_INSECURE_TLS, DP_PHASE2_SOURCE_BASE,

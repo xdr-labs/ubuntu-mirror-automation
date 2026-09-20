@@ -226,14 +226,28 @@ if mm_acquisition_auth_or_verified_cache_ready; then
 else
   fail "Menu2 gate should allow verified-cache reuse without credentials"
 fi
-# Corrupt/unverified cache requires credentials
+# Corrupt/unverified cache: production R2 needs no ACPS credentials.
 rm -f "${CACHE}/.VERIFIED" "${CACHE}/.acps-verified" 2>/dev/null || true
 printf 'broken\n' >"${CACHE}/.VERIFIED"
-if ! acps_is_verified_cache "$CACHE" \
-  && ! mm_acquisition_auth_or_verified_cache_ready; then
-  pass "corrupt/unverified cache still requires credentials"
+if ! acps_is_verified_cache "$CACHE"; then
+  pass "corrupt/unverified cache is not trusted"
 else
-  fail "unverified cache unexpectedly trusted by Menu2 gate"
+  fail "unverified cache unexpectedly trusted"
+fi
+# Production Menu2 gate is credential-free (public R2). Hermetic ACPS-auth
+# gating is covered by dedicated hermetic tests.
+if [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" ]]; then
+  if ! mm_acquisition_auth_or_verified_cache_ready; then
+    pass "hermetic corrupt cache still requires credentials"
+  else
+    fail "hermetic unverified cache unexpectedly allowed"
+  fi
+else
+  if mm_acquisition_auth_or_verified_cache_ready; then
+    pass "production R2 Menu2 gate does not require ACPS credentials"
+  else
+    fail "production R2 Menu2 gate unexpectedly blocked"
+  fi
 fi
 
 # ---------- Phase2-only atomic publication preserves previous ----------

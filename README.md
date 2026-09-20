@@ -4,7 +4,7 @@ Prepare one HTTP mirror server for Stellar Cyber DP upgrades:
 
 **Ubuntu 16.04 → 18.04 → 20.04 → 22.04 → 24.04**, followed by DP **6.6.0 Phase 2 bringup**.
 
-The Mirror Server downloads what it needs from Cloudflare R2 and ACPS. **DP hosts download only from the Mirror Server over HTTP**; DP hosts do not need direct access to R2 or ACPS.
+The Mirror Server downloads the production OS Core and Phase 2 artifact set from immutable Cloudflare R2 paths. **DP hosts download only from the Mirror Server over HTTP**; DP hosts do not need direct access to R2 or ACPS.
 
 **User and operations guide:** https://dpos.xdr.ooo/
 
@@ -23,8 +23,8 @@ Use a clean **Ubuntu 24.04 LTS amd64** server.
 | Disk | **100 GB total** for the current artifact set |
 | Mirror Server IP | A stable IPv4 address reachable by the DP hosts |
 | DP → Mirror Server | TCP **80** |
-| Mirror Server outbound | HTTPS to GitHub, Ubuntu package repositories, R2, and ACPS |
-| Credentials | ACPS username and password |
+| Mirror Server outbound | HTTPS to GitHub, Ubuntu package repositories, and `downloads.xdr.ooo` |
+| Credentials | No Phase 2 download credentials; Worker SSH password only for clustered bringup |
 
 Current data sizes are approximately:
 
@@ -71,13 +71,11 @@ In **Configuration**, set all of the following:
 
 1. **Preparation Mode**
 2. **Mirror Server IP**
-3. **ACPS Username**
-4. **ACPS Password**
-5. **DL Worker IP addresses**
-6. **DA Worker IP addresses**
-7. **Worker SSH Password (aella)**
-8. **Test ACPS Connection**
-9. **Save Configuration**
+3. **DL Worker IP addresses**
+4. **DA Worker IP addresses**
+5. **Worker SSH Password (aella)**
+6. **Test R2 Connection**
+7. **Save Configuration**
 
 For a DL/DA cluster, set the worker IP lists and one common **Worker SSH Password (aella)**. Leave both worker-IP lists empty for AIO/single-node; the worker password is not required in that case.
 
@@ -132,7 +130,7 @@ The Phase 2 target is fixed at **6.6.0**. Starting DP version is detected on the
 
 ## Before running commands on a DP
 
-Create a **full hypervisor snapshot of every DP VM** before the upgrade.
+Run the DP precheck first, pause DP services, then **power off each DP VM/node and create a full hypervisor snapshot/checkpoint**. Power it back on only after the snapshot/checkpoint completes, and do not resume DP services before the upgrade.
 
 This project does not provide OS or DP-runtime rollback commands:
 
@@ -150,15 +148,12 @@ Intermediate Ubuntu releases are upgrade steps, not recovery points.
 ## How the system works
 
 ```text
-Cloudflare R2 ─────┐
-                   ├─> Mirror Server ──HTTP/TCP 80──> DP hosts
-ACPS ──────────────┘
+Cloudflare R2 ───────> Mirror Server ──HTTP/TCP 80──> DP hosts
 ```
 
 | Source | Used for | Who connects to it |
 | --- | --- | --- |
-| Cloudflare R2 | Ubuntu OS Core selective mirror | Mirror Server only, Full mode only |
-| ACPS | DP 6.6.0 Phase 2 artifacts | Mirror Server only |
+| Cloudflare R2 | Ubuntu OS Core selective mirror + pinned DP 6.6.0 Phase 2 release | Mirror Server only |
 | Mirror Server HTTP | OS-hop and Phase 2 client files | DP hosts |
 
 The project does **not** create a full Ubuntu archive mirror and does **not** use `apt-mirror` for the active upgrade workflow. It keeps one selective OS data set and one final DP 6.6.0 Phase 2 bundle.
@@ -170,8 +165,7 @@ The project does **not** create a full Ubuntu archive mirror and does **not** us
 The Mirror Server needs outbound HTTPS access to:
 
 - `github.com` / GitHub endpoints needed for the initial clone or later source update
-- `https://downloads.xdr.ooo` for the R2 OS Core package in Full mode
-- the fixed ACPS endpoint for Phase 2 artifacts
+- `https://downloads.xdr.ooo` for the R2 OS Core package and immutable Phase 2 release
 - Ubuntu package repositories used by the Mirror Server bootstrap
 
 DP hosts need only:
@@ -196,7 +190,7 @@ The installer:
 6. Installs the nginx base configuration
 7. Opens the GUI when running on an interactive TTY
 
-It does **not** start the large R2 or ACPS downloads. Those begin only when you run **Menu 2 — Download and Prepare Upgrade Files**.
+It does **not** start the large R2 downloads. Those begin only when you run **Menu 2 — Download and Prepare Upgrade Files**.
 
 For non-interactive/CI bootstrap:
 
@@ -243,8 +237,6 @@ Required operator inputs:
 
 - Preparation Mode
 - Mirror Server IP
-- ACPS Username
-- ACPS Password
 
 Cluster configuration is also entered here once:
 
@@ -257,16 +249,16 @@ Leave both worker-IP fields empty for a single DP / AIO / master without workers
 Read-only/fixed values:
 
 - Phase 2 target: **6.6.0**
-- ACPS endpoint: fixed in the application
+- Phase 2 source: immutable Cloudflare R2 release `validated-20260919`
 - OS Core source: Cloudflare R2 in Full mode
 
-ACPS credentials are stored root-owned with mode `600` under:
+Configuration is stored root-owned with mode `600` under:
 
 ```text
 /etc/ubuntu-mirror/dp-upgrade-mirror.conf
 ```
 
-Credentials are redacted from application logs.
+Worker SSH credentials are redacted from application logs.
 
 ### 2. Download and Prepare Upgrade Files
 
@@ -274,15 +266,15 @@ Credentials are redacted from application logs.
 
 - verifies/reuses an existing OS Core selective tree when valid
 - otherwise downloads OS Core from R2 and materializes the selective mirror
-- downloads/reuses ACPS Phase 2 files
+- downloads/reuses the pinned Cloudflare R2 Phase 2 files
 - verifies checksums
 - creates one DP 6.6.0 final bundle
 - prepares client upgrade artifacts
 
 **Phase 2 Only**:
 
-- skips R2 and all OS-hop mirror preparation
-- prepares/reuses only the DP 6.6.0 Phase 2 artifacts
+- skips the R2 OS Core package and all OS-hop mirror preparation
+- downloads/reuses only the pinned R2 DP 6.6.0 Phase 2 artifacts
 
 Long checksum and tar operations emit progress/heartbeat messages. Do not assume a several-minute SHA256 operation is hung while those messages continue.
 
@@ -307,23 +299,23 @@ FAIL
 
 Menu 7 uses the DL/DA worker lists and Worker SSH Password saved in **Configuration**; it does not ask for worker IPs again.
 
-For clustered deployments, **STEPS 1–6 are one common procedure** on every DP node being upgraded. Only STEP 7 is role-specific:
+For clustered Full-mode deployments, **STEPS 0–7 are the common procedure** on every DP node being upgraded. Only STEP 8 is role-specific:
 
 | Steps | Execution target |
 | --- | --- |
-| **STEP 1–6** | DL master + all DL workers + DA master + all DA workers |
-| **STEP 7A** | DL master only |
-| **STEP 7B** | DA master only |
+| **STEP 0–7** | DL master + all DL workers + DA master + all DA workers |
+| **STEP 8A** | DL master only |
+| **STEP 8B** | DA master only |
 
 - Enter DL worker IPs in Configuration (not the DL master IP)
 - Enter DA worker IPs in Configuration (not the DA master IP)
 - Use one common Worker SSH Password (aella)
-- Run the same STEP 1–6 commands on every node
-- Run **STEP 7A** on the DL master only (uses `DL_WORKER_IPS`)
-- Run **STEP 7B** on the DA master only (uses `DA_WORKER_IPS`)
-- Never run STEP 7 manually on workers; each master uses `--worker-ips` to start bringup on its own workers
+- Run the precheck, pause, powered-off snapshot/checkpoint gate, OS hops, and STEP 7 staging on every node as instructed
+- Run **STEP 8A** on the DL master only (uses `DL_WORKER_IPS`)
+- Run **STEP 8B** on the DA master only (uses `DA_WORKER_IPS`)
+- Never run STEP 8 manually on workers; each master uses `--worker-ips` to start bringup on its own workers
 
-Complete STEP 6 on **all** cluster nodes before starting STEP 7. For an AIO/single-node DP, run STEP 1–7 on that DP; no `--worker-ips` or `--worker-password` is added.
+Complete STEP 7 on **all** cluster nodes before starting STEP 8. For an AIO/single-node DP, follow STEP 0–10 on that DP; no `--worker-ips` or `--worker-password` is added.
 
 The generated commands are also saved at:
 
@@ -341,21 +333,22 @@ Use Menu 7 output rather than constructing upgrade commands manually.
 
 Menu 7 guides the operator through the required sequence, which is conceptually:
 
-1. Create hypervisor snapshot(s)
-2. Pause DP services on Ubuntu 16.04
-3. Upgrade Ubuntu one LTS hop at a time:
+1. Run the DP precheck
+2. Pause DP services
+3. Power off the VM/node, create the recovery snapshot/checkpoint, then power it back on without resuming DP
+4. Upgrade Ubuntu one LTS hop at a time:
    - 16.04 → 18.04
    - 18.04 → 20.04
    - 20.04 → 22.04
    - 22.04 → 24.04
-4. Stage DP 6.6.0 Phase 2 on **every** DL/DA master and worker (same STEP 6 command)
-5. Run STEP 7A on the **DL master only** and STEP 7B on the **DA master only**
-6. Resume DP services
-7. Verify DP/cluster status
+5. Stage DP 6.6.0 Phase 2 on **every** DL/DA master and worker (same STEP 7 command)
+6. Run STEP 8A on the **DL master only** and STEP 8B on the **DA master only**
+7. Resume DP services
+8. Verify DP/cluster status
 
 ### Phase 2 Only
 
-For a DP already on Ubuntu 24.04, Menu 7 skips the OS-hop commands. Common staging/prerequisite steps still run on every target node; bringup remains DL-master (`STEP 3A`) / DA-master (`STEP 3B`) only.
+For a DP already on Ubuntu 24.04, Menu 7 still performs the DP precheck → pause → powered-off snapshot/checkpoint gate before prerequisites and staging. OS-hop commands are skipped; clustered bringup is DL-master (`STEP 5A`) / DA-master (`STEP 5B`) only.
 
 ### Ubuntu 22.04 intermediate state
 
@@ -384,18 +377,18 @@ A separate data disk is optional. If you use one, the following must remain on t
 
 The disk preflight is intentionally conservative and reserves at least **10 GiB** of safety space.
 
-For interrupted ACPS downloads, the preflight is resume-aware:
+For interrupted Phase 2 R2 downloads, the preflight is resume-aware. Some internal compatibility field names still use the historical `ACPS_*` prefix, but production acquisition is R2-only:
 
 ```text
-ACPS total expected bytes
-- already completed reusable ACPS bytes
+Phase 2 R2 total expected bytes
+- already completed reusable Phase 2 bytes
 - reusable .part bytes
-= remaining ACPS download growth
+= remaining Phase 2 download growth
 ```
 
 The final Phase 2 bundle is still budgeted at its full size. Existing reusable data is not counted twice against current free space.
 
-**Do not delete ACPS `.part` files just to retry.** They are resume data.
+**Do not delete Phase 2 `.part` files just to retry.** They are resume data.
 
 ---
 
@@ -409,9 +402,9 @@ If a download is interrupted:
 
 The workflow supports retry/reuse behavior:
 
-- R2 partial download data can resume
-- ACPS partial download data can resume
-- completed ACPS files are reused
+- R2 OS Core partial download data can resume
+- Phase 2 R2 partial download data can resume
+- completed, release-bound Phase 2 files are reused
 - a valid existing OS Core tree is reused
 - a valid existing DP 6.6.0 final bundle is reused
 

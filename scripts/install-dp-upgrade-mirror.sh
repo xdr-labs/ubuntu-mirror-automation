@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # scripts/install-dp-upgrade-mirror.sh — DP Ubuntu Upgrade Mirror Manager (whiptail TUI)
-# Single workflow: R2 OS Core + ACPS Phase 2 → one HTTP artifact set.
+# Single workflow: R2 OS Core + immutable R2 Phase 2 → one HTTP artifact set.
 # Sensor-Installer style: dynamic sizing, --fb, inputbox/passwordbox/msgbox/textbox.
 set -euo pipefail
 set +x
@@ -445,25 +445,21 @@ gui_configuration() {
     choice="$(mm_whiptail_menu "Configuration" \
       "Preparation Mode: ${mode_label}
 Mirror Server IP: ${ip_label}
-ACPS Username: $(mm_configured_label "$ACPS_USERNAME")
-ACPS Password: $(mm_configured_label "$ACPS_PASSWORD")
 DL Worker IPs: ${DL_WORKER_IPS:-(not set)}
 DA Worker IPs: ${DA_WORKER_IPS:-(not set)}
 Worker SSH Password (aella): $(mm_configured_label "$WORKER_SSH_PASSWORD")
-ACPS Server: Fixed
 OS Core Source: Cloudflare R2
+Phase 2 Source: Cloudflare R2
 
 ${footer}
 " \
       "1" "Preparation Mode" \
       "2" "Mirror Server IP" \
-      "3" "ACPS Username" \
-      "4" "ACPS Password" \
-      "5" "DL Worker IP addresses" \
-      "6" "DA Worker IP addresses" \
-      "7" "Worker SSH Password (aella)" \
-      "8" "Test ACPS Connection" \
-      "9" "Save Configuration" \
+      "3" "DL Worker IP addresses" \
+      "4" "DA Worker IP addresses" \
+      "5" "Worker SSH Password (aella)" \
+      "6" "Test R2 Connection" \
+      "7" "Save Configuration" \
       "0" "Back")" || return 0
     case "$choice" in
       1)
@@ -520,16 +516,6 @@ Choose an address that exists on this host."
         MIRROR_HTTP_URL="$(mirror_base_url_from_ipv4 "$ip_in")"
         ;;
       3)
-        local u
-        u="$(mm_whiptail_input "ACPS Username" "Enter ACPS username" "${ACPS_USERNAME}")" || continue
-        ACPS_USERNAME="$u"
-        ;;
-      4)
-        local p
-        p="$(mm_whiptail_password "ACPS Password" "Enter ACPS password (not displayed later)")" || continue
-        ACPS_PASSWORD="$p"
-        ;;
-      5)
         local dl_in dl_clean
         dl_in="$(mm_whiptail_input "DL Worker IP addresses" \
           "Enter worker IP addresses belonging to the DL cluster.
@@ -555,7 +541,7 @@ Do not include the DL master IP, trailing commas, duplicates, or shell metachara
         fi
         DL_WORKER_IPS="$dl_clean"
         ;;
-      6)
+      4)
         local da_in da_clean
         da_in="$(mm_whiptail_input "DA Worker IP addresses" \
           "Enter worker IP addresses belonging to the DA cluster.
@@ -581,7 +567,7 @@ Do not include the DA master IP, trailing commas, duplicates, or shell metachara
         fi
         DA_WORKER_IPS="$da_clean"
         ;;
-      7)
+      5)
         local wp
         wp="$(mm_whiptail_password "Worker SSH Password (aella)" \
           "Common aella SSH password used by each cluster master to access its workers.
@@ -590,40 +576,28 @@ Required when DL Worker IPs or DA Worker IPs are configured.
 May be left empty for AIO/single-node deployments.")" || continue
         WORKER_SSH_PASSWORD="$wp"
         ;;
-      8)
-        # Use in-memory credentials from this Configuration session.
-        # Do NOT reload from disk here — that discarded unsaved Username/Password
-        # entries and made the form look "reset".
+      6)
         load_mirror_defaults
         engine_resolve_paths
-        if [[ -z "${ACPS_USERNAME:-}" || -z "${ACPS_PASSWORD:-}" ]]; then
-          mm_whiptail_msg "ACPS" \
-            "Enter ACPS Username and ACPS Password first.
-
-Use menu items 3 and 4, then Test again.
-Use 9) Save Configuration to persist them."
-          continue
-        fi
-        ACPS_BASE_URL="$ACPS_BASE_URL_FIXED"
         if acps_test_connection; then
-          mm_status_set ACPS_CONNECTION PASS
-          mm_whiptail_msg "ACPS" "ACPS_CONNECTION=PASS"
+          mm_status_set PHASE2_R2_CONNECTION PASS
+          mm_whiptail_msg "Cloudflare R2" "R2_CONNECTION=PASS\n\nSource: ${PHASE2_R2_BASE_URL_CONSTANT}"
         else
-          mm_status_set ACPS_CONNECTION FAIL
-          mm_whiptail_msg "ACPS" "ACPS_CONNECTION=FAIL"
+          mm_status_set PHASE2_R2_CONNECTION FAIL
+          mm_whiptail_msg "Cloudflare R2" "R2_CONNECTION=FAIL\n\nSource: ${PHASE2_R2_BASE_URL_CONSTANT}"
         fi
         ;;
-      9)
+      7)
         local normalized_dl="" normalized_da=""
         if [[ -n "${DL_WORKER_IPS:-}" ]]; then
           normalized_dl="$(mm_validate_worker_ips "${DL_WORKER_IPS}")" || {
-            mm_whiptail_msg "Configuration" "DL Worker IP addresses are invalid. Re-enter them with menu 5."
+            mm_whiptail_msg "Configuration" "DL Worker IP addresses are invalid. Re-enter them with menu 3."
             continue
           }
         fi
         if [[ -n "${DA_WORKER_IPS:-}" ]]; then
           normalized_da="$(mm_validate_worker_ips "${DA_WORKER_IPS}")" || {
-            mm_whiptail_msg "Configuration" "DA Worker IP addresses are invalid. Re-enter them with menu 6."
+            mm_whiptail_msg "Configuration" "DA Worker IP addresses are invalid. Re-enter them with menu 4."
             continue
           }
         fi
@@ -634,7 +608,7 @@ Use 9) Save Configuration to persist them."
           mm_whiptail_msg "Configuration" \
             "Worker SSH Password (aella) is required when DL or DA worker IPs are configured.
 
-Set it with menu 7 before saving."
+Set it with menu 5 before saving."
           continue
         fi
         mm_force_phase2_target
@@ -850,7 +824,7 @@ Do NOT skip Menu 2 when OS Core or Phase 2 is missing/invalid."
   if ! mm_artifacts_ready_for_http 2>/dev/null; then
     mm_info "Heavy upgrade artifacts: READY"
     mm_info "$(printf '%s\n' "$gate_msg" | grep -E '^(Client set|Client recovery|Heavy artifact download required):' || true)"
-    mm_info "CLIENT_RECOVERY=REBUILD_SIGN_PUBLISH (local-fs only; no R2/ACPS download)"
+    mm_info "CLIENT_RECOVERY=REBUILD_SIGN_PUBLISH (local-fs only; no R2 download)"
   else
     mm_info "Heavy upgrade artifacts: READY"
     mm_info "Client set: CURRENT_VERIFIED"
@@ -1288,7 +1262,7 @@ gui_cluster_bringup_command_line() {
     "$ver" "$worker_ips"
 }
 
-# STEP 7A/7B (FULL) and STEP 3A/3B (PHASE2_ONLY) master bringup section.
+# STEP 8A/8B (FULL) and STEP 5A/5B (PHASE2_ONLY) master bringup section.
 gui_emit_cluster_master_bringup() {
   local step_id="$1"
   local role="$2"
@@ -1395,15 +1369,15 @@ gui_build_client_commands() {
 
   if [[ "$topology" == "cluster" ]]; then
     if mm_is_phase2_only; then
-      cluster_rule="$(gui_cluster_execution_rule "STEPS 1–2" "STEP 3" "STEP 3A" "STEP 3B")"
+      cluster_rule="$(gui_cluster_execution_rule "STEPS 0–4" "STEP 5" "STEP 5A" "STEP 5B")"
     else
-      cluster_rule="$(gui_cluster_execution_rule "STEPS 1–6" "STEP 7" "STEP 7A" "STEP 7B")"
+      cluster_rule="$(gui_cluster_execution_rule "STEPS 0–7" "STEP 8" "STEP 8A" "STEP 8B")"
     fi
-    step6_where="$(gui_cluster_stage_guidance "STEP 6" "STEP 7")"
-    step2_where="$(gui_cluster_stage_guidance "STEP 2" "STEP 3")"
+    step6_where="$(gui_cluster_stage_guidance "STEP 7" "STEP 8")"
+    step2_where="$(gui_cluster_stage_guidance "STEP 4" "STEP 5")"
   else
-    step6_where="$(gui_aio_stage_guidance "STEP 6")"
-    step2_where="$(gui_aio_stage_guidance "STEP 2")"
+    step6_where="$(gui_aio_stage_guidance "STEP 7")"
+    step2_where="$(gui_aio_stage_guidance "STEP 4")"
     cluster_rule=""
   fi
 
@@ -1427,7 +1401,9 @@ Follow the steps in order.
 
 IMPORTANT
 ---------
-• Create a snapshot before starting.
+• Run the DP precheck first.
+• Pause DP services before taking the recovery snapshot/checkpoint.
+• Take the snapshot/checkpoint only while the DP VM/node is powered off.
 • This procedure requires Ubuntu 24.04 already.
 • Do not edit the generated commands.
 • If DP ${ver} is already healthy on Ubuntu 24.04, stop.
@@ -1443,11 +1419,32 @@ Starting DP Version is detected automatically on the DP.
 Do not edit the stage command to add a source version.
 DP_COMMAND_BLOCK_VERSION=SUBSHELL_V2
 
-STEP 0 — SNAPSHOT
+STEP 0 — DP PRECHECK
+--------------------
+Run aella_cli and check current DP status before making any change.
+
+Confirm there is no unexpected critical condition that should block the upgrade.
+
+STEP 1 — PAUSE DP
 -----------------
+Run aella_cli and pause the DP.
+
+Confirm:
+  System paused.
+
+Do not continue until the DP is paused.
+Do not run pause in the Linux bash shell.
+
+STEP 2 — POWER OFF / SNAPSHOT CHECKPOINT / POWER ON
+---------------------------------------------------
+After the DP is paused, power off the DP VM/node from the hypervisor or cloud console.
 ${snap_line}
 
-STEP 1 — VERIFY UBUNTU 24.04 AND PREREQUISITES
+Do not continue until the snapshot/checkpoint is complete.
+Power the DP VM/node back on and confirm it is reachable.
+Do not resume DP services.
+
+STEP 3 — VERIFY UBUNTU 24.04 AND PREREQUISITES
 ----------------------------------------------
 Confirm before staging (~30+ GiB):
 • Ubuntu 24.04 Noble
@@ -1458,7 +1455,7 @@ ${hop_copy_guide}
 
 ${prereq_cmd}
 
-STEP 2 — PHASE 2 STAGING
+STEP 4 — PHASE 2 STAGING
 ------------------------
 Stage and verify the DP ${ver} Phase 2 files.
 
@@ -1471,19 +1468,19 @@ ${stage_cmd}
 EOF
     if [[ "$topology" == "cluster" ]]; then
       cat <<EOF
-STEP 3 — DP ${ver} BRINGUP
+STEP 5 — DP ${ver} BRINGUP
 --------------------------
-After STEP 2 on ALL nodes, run masters only.
+After STEP 4 on ALL nodes, run masters only.
 
 Management or cluster IPs may be used for --worker-ips.
 Cluster IP addresses are recommended when reachable.
 
 EOF
-      gui_emit_cluster_master_bringup "STEP 3A" "DL" "$dl_worker_ips" "$dl_bringup_cmd"
-      gui_emit_cluster_master_bringup "STEP 3B" "DA" "$da_worker_ips" "$da_bringup_cmd"
+      gui_emit_cluster_master_bringup "STEP 5A" "DL" "$dl_worker_ips" "$dl_bringup_cmd"
+      gui_emit_cluster_master_bringup "STEP 5B" "DA" "$da_worker_ips" "$da_bringup_cmd"
     else
       cat <<EOF
-STEP 3 — DP ${ver} BRINGUP
+STEP 5 — DP ${ver} BRINGUP
 --------------------------
 AIO:
 Run Phase 2 bringup on this DP.
@@ -1495,7 +1492,7 @@ ${bringup_cmd}
 EOF
     fi
     cat <<EOF
-STEP 4 — RESUME DP SERVICES WHEN REQUIRED
+STEP 6 — RESUME DP SERVICES WHEN REQUIRED
 -----------------------------------------
 BRINGUP_RESULT=PASS means bringup succeeded.
 It does NOT mean DP_UPGRADE_COMPLETE=YES.
@@ -1513,7 +1510,7 @@ The DP may still be paused.
 3) Re-check:
      sudo bash /home/aella/bringup_py3_dp_after_os_upgrade.sh --validate-cluster
 
-STEP 5 — VERIFY DP HEALTH / RECORD COMPLETION
+STEP 7 — VERIFY DP HEALTH / RECORD COMPLETION
 ---------------------------------------------
 Confirm readiness signals such as:
 • All cluster nodes are ready
@@ -1556,8 +1553,9 @@ Follow the steps in order.
 
 IMPORTANT
 ---------
-• Create a snapshot before starting.
-• Pause DP services before the first OS upgrade.
+• Run the DP precheck first.
+• Pause DP services before taking the recovery snapshot/checkpoint.
+• Take the snapshot/checkpoint only while the DP VM/node is powered off.
 • Do not resume DP services between OS upgrade hops.
 • Upgrade only ONE DP node at a time.
 • Do not edit the generated commands.
@@ -1574,9 +1572,12 @@ Do not edit the stage command to add a source version.
 DP_COMMAND_BLOCK_VERSION=SUBSHELL_V2
 DP_OS_HOP_COMMAND_VERSION=WRAPPER_V1
 
-STEP 0 — SNAPSHOT
------------------
-${snap_line}
+STEP 0 — DP PRECHECK
+--------------------
+Run aella_cli and check current DP status before making any change.
+
+Confirm the DP is in the expected starting state and there is no unexpected
+critical condition that should block the upgrade.
 
 STEP 1 — PAUSE DP
 -----------------
@@ -1589,7 +1590,16 @@ Do not continue until the DP is paused.
 Do not run pause in the Linux bash shell.
 Do not resume DP services between OS upgrade hops.
 
-STEP 2 — UBUNTU 16.04 → 18.04
+STEP 2 — POWER OFF / SNAPSHOT CHECKPOINT / POWER ON
+---------------------------------------------------
+After the DP is paused, power off the DP VM/node from the hypervisor or cloud console.
+${snap_line}
+
+Do not continue until the snapshot/checkpoint is complete.
+Power the DP VM/node back on and confirm it is reachable.
+Do not resume DP services.
+
+STEP 3 — UBUNTU 16.04 → 18.04
 ------------------------------
 Run the generated command below.
 The DP reboots automatically.
@@ -1600,7 +1610,7 @@ ${hop_copy_guide}
 
 ${hop2}
 
-STEP 3 — UBUNTU 18.04 → 20.04
+STEP 4 — UBUNTU 18.04 → 20.04
 ------------------------------
 Run the generated command below.
 
@@ -1608,7 +1618,7 @@ ${hop_copy_guide}
 
 ${hop3}
 
-STEP 4 — UBUNTU 20.04 → 22.04
+STEP 5 — UBUNTU 20.04 → 22.04
 ------------------------------
 Run the generated command below.
 
@@ -1616,7 +1626,7 @@ ${hop_copy_guide}
 
 ${hop4}
 
-STEP 5 — UBUNTU 22.04 → 24.04
+STEP 6 — UBUNTU 22.04 → 24.04
 ------------------------------
 Run the generated command below.
 
@@ -1624,7 +1634,7 @@ ${hop_copy_guide}
 
 ${hop5}
 
-STEP 6 — PHASE 2 STAGING
+STEP 7 — PHASE 2 STAGING
 ------------------------
 Stage and verify the DP ${ver} Phase 2 files.
 
@@ -1637,22 +1647,22 @@ ${stage_cmd}
 EOF
     if [[ "$topology" == "cluster" ]]; then
       cat <<EOF
-STEP 7 — DP ${ver} BRINGUP
+STEP 8 — DP ${ver} BRINGUP
 --------------------------
 Cluster:
-After STEP 6 on ALL nodes, run masters only.
+After STEP 7 on ALL nodes, run masters only.
 
 Management or cluster IPs may be used for --worker-ips.
 Cluster IP addresses are recommended when reachable.
 
-Do not run STEP 7 manually on workers.
+Do not run STEP 8 manually on workers.
 
 EOF
-      gui_emit_cluster_master_bringup "STEP 7A" "DL" "$dl_worker_ips" "$dl_bringup_cmd"
-      gui_emit_cluster_master_bringup "STEP 7B" "DA" "$da_worker_ips" "$da_bringup_cmd"
+      gui_emit_cluster_master_bringup "STEP 8A" "DL" "$dl_worker_ips" "$dl_bringup_cmd"
+      gui_emit_cluster_master_bringup "STEP 8B" "DA" "$da_worker_ips" "$da_bringup_cmd"
     else
       cat <<EOF
-STEP 7 — DP ${ver} BRINGUP
+STEP 8 — DP ${ver} BRINGUP
 --------------------------
 AIO:
 Run Phase 2 bringup on this DP.
@@ -1664,7 +1674,7 @@ ${bringup_cmd}
 EOF
     fi
     cat <<EOF
-STEP 8 — RESUME DP SERVICES WHEN REQUIRED
+STEP 9 — RESUME DP SERVICES WHEN REQUIRED
 -----------------------------------------
 BRINGUP_RESULT=PASS means bringup succeeded.
 It does NOT mean DP_UPGRADE_COMPLETE=YES.
@@ -1682,8 +1692,8 @@ The DP may still be paused.
 3) Re-check:
      sudo bash /home/aella/bringup_py3_dp_after_os_upgrade.sh --validate-cluster
 
-STEP 9 — VERIFY DP HEALTH / RECORD COMPLETION
----------------------------------------------
+STEP 10 — VERIFY DP HEALTH / RECORD COMPLETION
+----------------------------------------------
 Confirm readiness signals such as:
 • All cluster nodes are ready
 • All host services are ready
@@ -1802,7 +1812,7 @@ Set Mirror Server IP in Configuration before generating commands."
     return 0
   }
   # Persist resolved URL for next runs (no secrets). Merge so a URL-only
-  # persistence cannot wipe ACPS credentials or worker settings.
+  # persistence cannot wipe legacy compatibility auth fields or worker settings.
   if [[ -z "${MIRROR_HTTP_URL:-}" ]]; then
     MIRROR_HTTP_URL="$mirror"
     mm_merge_gui_config >/dev/null 2>&1 || true
@@ -1969,7 +1979,7 @@ usage() {
   cat <<EOF
 Usage: $0 <command>
 
-DP Ubuntu Upgrade Mirror Manager (single workflow: R2 OS Core + ACPS Phase 2).
+DP Ubuntu Upgrade Mirror Manager (single workflow: R2 OS Core + immutable R2 Phase 2).
 
 Fresh hosts should bootstrap with: sudo ./install.sh
 Re-open GUI after install:         sudo ubuntu-offline-mirror mirror-manager

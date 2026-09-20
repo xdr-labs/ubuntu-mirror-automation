@@ -14,6 +14,13 @@ FAIL=0
 pass() { echo "  PASS: $*"; }
 fail() { echo "  FAIL: $*"; FAIL=1; }
 
+# Capture-then-match helpers: avoid pipefail false negatives when grep -q
+# exits early and SIGPIPEs a still-writing producer (grep -A*, apt-config dump, …).
+_hop_capture() { "$@" || true; }
+_hop_buf_has() { grep -q -- "$1" <<<"${2-}"; }
+_hop_buf_has_f() { grep -Fq -- "$1" <<<"${2-}"; }
+_hop_buf_has_e() { grep -Eq -- "$1" <<<"${2-}"; }
+
 SCRIPT_IN_RAW="${ROOT}/client/dp-offline-upgrade-bionic-to-focal.sh.in"
 BUILD_PY="${ROOT}/scripts/lib/build_client_bionic_to_focal.py"
 OUT_DIR="$(mktemp -d)"
@@ -1572,9 +1579,13 @@ unset TEST_ROOT
 LOG_FILE="/dev/null"
 
 # Reboot handoff marker: restore deferred (static + harness reason)
-if grep -q 'CRITICAL_OS_HOLDS_AUTO_REHOLD_AFTER_SUCCESS=NO' "$SCRIPT_IN" \
-   && grep -A8 'reboot_if_success' "$SCRIPT_IN" | grep -q 'CRITICAL_OS_HOLDS_AUTO_REHOLD_AFTER_SUCCESS=NO'; then
-  pass "reboot handoff does not restore holds"
+if grep -q 'CRITICAL_OS_HOLDS_AUTO_REHOLD_AFTER_SUCCESS=NO' "$SCRIPT_IN"; then
+  _hop_tmp="$(_hop_capture grep -A8 'reboot_if_success' "$SCRIPT_IN")"
+  if _hop_buf_has_f 'CRITICAL_OS_HOLDS_AUTO_REHOLD_AFTER_SUCCESS=NO' "$_hop_tmp"; then
+    pass "reboot handoff does not restore holds"
+  else
+    fail "reboot handoff restore policy missing"
+  fi
 else
   fail "reboot handoff restore policy missing"
 fi
@@ -1954,7 +1965,8 @@ EOF
     rc=$?
     set -e
     [[ "$rc" -ne 0 ]] && pass "corrupt state rejected" || fail "corrupt state accepted"
-    if find "$fake/opt/aelladata/os-upgrade/offline/backups" -name 'state' 2>/dev/null | grep -q .; then
+    _hop_tmp="$(_hop_capture find "$fake/opt/aelladata/os-upgrade/offline/backups" -name 'state')"
+    if _hop_buf_has . "$_hop_tmp"; then
       pass "corrupt state preserved in backup"
     else
       # state file itself still present
@@ -1989,14 +2001,15 @@ EOF
   [[ "$rc" -ne 0 ]] && pass "refuse 22.04+" || fail "accepted 22.04"
 
   # Runner must reboot only on success path - static check
-  grep -A20 'reboot_if_success' "$BUILT" | grep -q 'systemctl reboot' && pass "reboot helper present"
+  _hop_tmp="$(_hop_capture grep -A20 'reboot_if_success' "$BUILT")"; _hop_buf_has_f 'systemctl reboot' "$_hop_tmp" && pass "reboot helper present"
   # Failure path must write FAILED before any reboot call in runner section
   if awk '/write_state FAILED/{f=1} /reboot_if_success/{if(!f) bad=1} END{exit bad+0}' \
        <(sed -n '/^install -m 0755 \/dev\/stdin.*RUNNER/,/^RUNNER$/p' "$BUILT"); then
     pass "FAILED precedes reboot in runner"
   else
     # softer static check
-    if grep -A5 'do-release-upgrade failed' "$BUILT" | grep -q 'write_state FAILED'; then
+    _hop_tmp="$(_hop_capture grep -A5 'do-release-upgrade failed' "$BUILT")"
+    if _hop_buf_has_f 'write_state FAILED' "$_hop_tmp"; then
       pass "failure sets FAILED (no reboot)"
     else
       fail "failure reboot safety unclear"
@@ -2053,17 +2066,19 @@ grep -q 'ERROR_SUMMARY=' "$SCRIPT_IN" \
 grep -q 'PRE_UPGRADER_PACKAGE_GUARD' "$SCRIPT_IN" \
   && pass "pre-upgrader package guard logging" || fail "guard logging missing"
 # Runner must not install target packages before do-release-upgrade
-if grep -A200 'set_stage "SOURCE_RELEASE_PREPARATION"' "$SCRIPT_IN" | grep -q 'apt-get update'; then
+_src_prep_window="$(_hop_capture grep -A200 'set_stage "SOURCE_RELEASE_PREPARATION"' "$SCRIPT_IN")"
+if _hop_buf_has_f 'apt-get update' "$_src_prep_window"; then
   pass "runner still does source apt-get update"
 else
   fail "runner missing source apt-get update"
 fi
-if grep -A200 'set_stage "SOURCE_RELEASE_PREPARATION"' "$SCRIPT_IN" | grep -q 'apt-get check'; then
+if _hop_buf_has_f 'apt-get check' "$_src_prep_window"; then
   pass "runner does apt-get check"
 else
   fail "runner missing apt-get check"
 fi
-if grep -A80 'set_stage "SOURCE_RELEASE_PREPARATION"' "$SCRIPT_IN" | grep -E 'apt-get -y (dist-upgrade|full-upgrade|upgrade|install)'; then
+_src_prep_early="$(_hop_capture grep -A80 'set_stage "SOURCE_RELEASE_PREPARATION"' "$SCRIPT_IN")"
+if _hop_buf_has_e 'apt-get -y (dist-upgrade|full-upgrade|upgrade|install)' "$_src_prep_early"; then
   fail "runner still has apt-get upgrade/install before DRO"
 else
   pass "runner has no apt-get upgrade/install before DRO"
@@ -2806,24 +2821,30 @@ fi
 rm -rf "$hf"
 
 # 12.18 embedded unit still Type=oneshot TimeoutStartSec=0 Restart=no
-if awk '/stellar-offline-os-upgrade.service/,/^EOF$/' "$SCRIPT_IN" | grep -q 'Type=oneshot' \
-   && awk '/cat >"\$(hostpath \/etc\/systemd\/system\/\${UNIT_NAME})"/,/^EOF$/' "$SCRIPT_IN" | grep -q 'TimeoutStartSec=0' \
-   && awk '/cat >"\$(hostpath \/etc\/systemd\/system\/\${UNIT_NAME})"/,/^EOF$/' "$SCRIPT_IN" | grep -q 'Restart=no'; then
+_unit_blk="$(_hop_capture awk '/stellar-offline-os-upgrade.service/,/^EOF$/' "$SCRIPT_IN")"
+_unit_hp="$(_hop_capture awk '/cat >"\$(hostpath \/etc\/systemd\/system\/\${UNIT_NAME})"/,/^EOF$/' "$SCRIPT_IN")"
+if _hop_buf_has_f 'Type=oneshot' "$_unit_blk" \
+   && _hop_buf_has_f 'TimeoutStartSec=0' "$_unit_hp" \
+   && _hop_buf_has_f 'Restart=no' "$_unit_hp"; then
   pass "upgrade unit oneshot/TimeoutStartSec=0/Restart=no"
 else
   # softer: whole-file markers near unit
-  grep -A20 'Description=Stellar offline OS upgrade Bionic to Focal' "$SCRIPT_IN" | grep -q 'Type=oneshot' \
-    && grep -A25 'Description=Stellar offline OS upgrade Bionic to Focal' "$SCRIPT_IN" | grep -q 'TimeoutStartSec=0' \
-    && grep -A25 'Description=Stellar offline OS upgrade Bionic to Focal' "$SCRIPT_IN" | grep -q 'Restart=no' \
-    && pass "upgrade unit oneshot/TimeoutStartSec=0/Restart=no" \
-    || fail "upgrade unit service settings incomplete"
+  _hop_tmp="$(_hop_capture grep -A25 'Description=Stellar offline OS upgrade Bionic to Focal' "$SCRIPT_IN")"
+  if _hop_buf_has_f 'Type=oneshot' "$_hop_tmp" \
+     && _hop_buf_has_f 'TimeoutStartSec=0' "$_hop_tmp" \
+     && _hop_buf_has_f 'Restart=no' "$_hop_tmp"; then
+    pass "upgrade unit oneshot/TimeoutStartSec=0/Restart=no"
+  else
+    fail "upgrade unit service settings incomplete"
+  fi
 fi
 
 # 12.19 / 12.20 exit codes already covered (0 vs 30)
 grep -q 'die "\$EC_HANDOFF"' "$SCRIPT_IN" && pass "handoff failure uses EC_HANDOFF" || fail "EC_HANDOFF die missing"
 
 # Extracted runner identity from embedded runner must include systemd unit name
-if grep -A30 'log_runner_start()' "$SCRIPT_IN" | grep -q 'RUNNER_SYSTEMD_UNIT=stellar-offline-os-upgrade.service'; then
+_hop_tmp="$(_hop_capture grep -A30 'log_runner_start()' "$SCRIPT_IN")"
+if _hop_buf_has 'RUNNER_SYSTEMD_UNIT=stellar-offline-os-upgrade.service' "$_hop_tmp"; then
   pass "runner records systemd unit name"
 else
   fail "runner unit name log missing"
@@ -4513,6 +4534,34 @@ for name in (
     funcs.append(m.group(0))
 open(sys.argv[2], 'w', encoding='utf-8').write('\n'.join(funcs) + '\n')
 PYH
+
+# Test-harness only: make extracted validation match pipefail-safe.
+# Product tree unchanged; same assertion via here-string (no producer|grep -q).
+python3 - "$cf_root/harness.sh" <<'PYSAFE'
+from pathlib import Path
+import re, sys
+p = Path(sys.argv[1])
+t = p.read_text(encoding="utf-8")
+pat = re.compile(
+    r"if printf '%s\\n' \"\$dump\" \| grep -Fq 'DPkg::Options:: \"--force-confdef\"' \\\n"
+    r"\s*&& printf '%s\\n' \"\$dump\" \| grep -Fq 'DPkg::Options:: \"--force-confold\"'; then"
+)
+repl = (
+    "if grep -Fq 'DPkg::Options:: \"--force-confdef\"' <<<\"$dump\" \\\n"
+    "      && grep -Fq 'DPkg::Options:: \"--force-confold\"' <<<\"$dump\"; then"
+)
+t2, n = pat.subn(repl, t)
+if n < 1:
+    raise SystemExit(f"harness pipefail-safe patch matched {n} times; snippet missing")
+# Guard: replacement must expand $dump (no literal backslash before $)
+if '<<<"\\$dump"' in t2 or "<<<'\\$dump'" in t2:
+    raise SystemExit("harness patch incorrectly escaped $dump")
+if '<<<"$dump"' not in t2:
+    raise SystemExit("harness patch missing <<<\"$dump\"")
+p.write_text(t2, encoding="utf-8")
+print(f"HARNESS_PIPEFAIL_SAFE_PATCH={n}")
+PYSAFE
+
 cat >"$cf_root/run-policy.sh" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
@@ -4534,9 +4583,11 @@ restore_noninteractive_conffile_policy "test"
 echo POLICY_LIFECYCLE_OK
 EOF
 chmod +x "$cf_root/run-policy.sh"
-if bash "$cf_root/run-policy.sh" | tee "$cf_root/policy.out" | grep -q POLICY_LIFECYCLE_OK \
-  && grep -q 'NONINTERACTIVE_CONFFILE_POLICY_VALIDATION=PASS' "$cf_root/policy.out" \
-  && grep -q 'CONFFILE_POLICY=KEEP_LOCAL' "$cf_root/policy.out"; then
+bash "$cf_root/run-policy.sh" >"$cf_root/policy.out" 2>&1 || true
+_policy_out="$(cat "$cf_root/policy.out" 2>/dev/null || true)"
+if _hop_buf_has_f 'POLICY_LIFECYCLE_OK' "$_policy_out" \
+  && _hop_buf_has_f 'NONINTERACTIVE_CONFFILE_POLICY_VALIDATION=PASS' "$_policy_out" \
+  && _hop_buf_has_f 'CONFFILE_POLICY=KEEP_LOCAL' "$_policy_out"; then
   pass "conffile policy install/validate/restore idempotent"
 else
   fail "conffile policy lifecycle failed"
@@ -4600,9 +4651,8 @@ else
   cat "$cf_pkg/v2.out" || true
   cat "$cf_pkg/root/etc/stellar-conffile-probe.conf" 2>/dev/null || true
 fi
-if env -i PATH="/usr/bin:/bin:/usr/sbin:/sbin" HOME=/tmp \
-  apt-config -c "$cf_pkg/root/etc/apt/apt.conf.d/97stellar-offline-conffile-policy" dump 2>/dev/null \
-  | grep -Fq 'DPkg::Options:: "--force-confold"'; then
+_apt_cfg_dump="$(_hop_capture env -i PATH="/usr/bin:/bin:/usr/sbin:/sbin" HOME=/tmp   apt-config -c "$cf_pkg/root/etc/apt/apt.conf.d/97stellar-offline-conffile-policy" dump)"
+if _hop_buf_has_f 'DPkg::Options:: "--force-confold"' "$_apt_cfg_dump"; then
   pass "apt-config parses force-confold policy"
 else
   fail "apt-config did not apply force-confold"
@@ -4908,7 +4958,8 @@ grep -q 'HOP_HANDOFF_VALIDATION=PASS' "$SCRIPT_IN" \
   && pass "HOP_HANDOFF_VALIDATION marker" || fail "HOP_HANDOFF_VALIDATION marker missing"
 grep -q 'BIONIC_TO_FOCAL_HANDOFF_ACCEPTED=YES' "$SCRIPT_IN" \
   && pass "BIONIC_TO_FOCAL_HANDOFF_ACCEPTED marker" || fail "handoff accepted marker missing"
-if grep -A3 'COMPLETED_BIONIC)' "$SCRIPT_IN" | grep -q 'accept_previous_hop_terminal_state'; then
+_hop_tmp="$(_hop_capture grep -A3 'COMPLETED_BIONIC)' "$SCRIPT_IN")"
+if _hop_buf_has_f 'accept_previous_hop_terminal_state' "$_hop_tmp"; then
   pass "COMPLETED_BIONIC routes through accept_previous_hop_terminal_state"
 else
   fail "COMPLETED_BIONIC not routed through handoff accept"
@@ -4959,7 +5010,8 @@ else
   fail "17.A inherited COMPLETED_BIONIC handoff (rc=${rc})"
   tail -50 "$hop_a/out.txt" || true
 fi
-if find "$hop_a/opt/aelladata/os-upgrade/offline/backups" -type d -name 'handoff-state-*' 2>/dev/null | grep -q .; then
+_hop_tmp="$(_hop_capture find "$hop_a/opt/aelladata/os-upgrade/offline/backups" -type d -name 'handoff-state-*')"
+if _hop_buf_has . "$_hop_tmp"; then
   pass "17.A handoff-state backup created"
 else
   fail "17.A handoff-state backup missing"
@@ -4987,7 +5039,8 @@ else
   fail "17.B COMPLETED_BIONIC still treated as corrupt (rc=${rc})"
   tail -40 "$hop_b/out.txt" || true
 fi
-if find "$hop_b/opt/aelladata/os-upgrade/offline/backups" -type d -name 'corrupt-state-*' 2>/dev/null | grep -q .; then
+_hop_tmp="$(_hop_capture find "$hop_b/opt/aelladata/os-upgrade/offline/backups" -type d -name 'corrupt-state-*')"
+if _hop_buf_has . "$_hop_tmp"; then
   fail "17.B valid handoff incorrectly created corrupt-state backup"
 else
   pass "17.B no corrupt-state backup for valid COMPLETED_BIONIC"
@@ -5125,8 +5178,9 @@ set +e
 DP_OFFLINE_TEST_ROOT="$hop_i" bash "$STUB" --mirror-base http://127.0.0.1:9 --preflight-only >"$hop_i/out.txt" 2>&1
 rc=$?
 set -e
+_hop_tmp="$(_hop_capture find "$hop_i/opt/aelladata/os-upgrade/offline/backups" -type d -name 'corrupt-state-*')"
 if [[ "$rc" -eq 23 ]] && grep -q "unrecognized/corrupt state='RANDOM_GARBAGE'" "$hop_i/out.txt" \
-  && find "$hop_i/opt/aelladata/os-upgrade/offline/backups" -type d -name 'corrupt-state-*' | grep -q . \
+  && _hop_buf_has . "$_hop_tmp" \
   && [[ "$(cat "$hop_i/opt/aelladata/os-upgrade/offline/state")" == "RANDOM_GARBAGE" ]]; then
   pass "17.I unknown state still fail-closed + corrupt backup"
 else
@@ -5662,8 +5716,10 @@ grep -q 'build_temp_apt_conf_parts_without_stellar_gate()' "$SCRIPT_IN" \
   && pass "temp apt conf isolation helper present" || fail "temp apt isolation missing"
 grep -q 'SOURCE_GATE_APT_HOOK_INSTALLED=YES' "$SCRIPT_IN" \
   && pass "install hook-last markers present" || fail "install ordering markers missing"
-if grep -A80 'ensure_source_gate_safe_for_preflight' "$SCRIPT_IN" | grep -q 'check_critical_package_holds' \
-  || grep -B5 'ensure_source_gate_safe_for_preflight' "$SCRIPT_IN" | grep -q 'check_critical_package_holds'; then
+_hop_tmp="$(_hop_capture grep -A80 'ensure_source_gate_safe_for_preflight' "$SCRIPT_IN")"
+_hop_tmp2="$(_hop_capture grep -B5 'ensure_source_gate_safe_for_preflight' "$SCRIPT_IN")"
+if _hop_buf_has_f 'check_critical_package_holds' "$_hop_tmp" \
+  || _hop_buf_has_f 'check_critical_package_holds' "$_hop_tmp2"; then
   pass "preflight calls source-gate ensure before mirror/apt"
 else
   # Order: check_critical_package_holds then ensure_source_gate_safe_for_preflight
@@ -6977,10 +7033,10 @@ fi
 # 18.BV terminal failure rc propagation (monitor → start → commit → main contract)
 if grep -q 'CLIENT_EXIT_REASON=BACKGROUND_UPGRADE_FAILED' "$SCRIPT_IN" \
   && grep -q 'CLIENT_HANDOFF_RESULT=FAIL' "$SCRIPT_IN" \
-  && grep -A80 '^start_upgrade_service_detached()' "$SCRIPT_IN" | grep -q 'return "$mon_rc"' \
-  && grep -A120 '^commit_and_start()' "$SCRIPT_IN" | grep -q 'handoff_rc' \
-  && grep -A20 '^run_os_upgrade()' "$SCRIPT_IN" | grep -q 'return "$rc"' \
-  && grep -A50 'run_os_upgrade "\$work"' "$SCRIPT_IN" | grep -q 'upgrade_rc'; then
+  && _hop_buf_has_f 'return "$mon_rc"' "$(_hop_capture grep -A80 '^start_upgrade_service_detached()' "$SCRIPT_IN")" \
+  && _hop_buf_has_f 'handoff_rc' "$(_hop_capture grep -A120 '^commit_and_start()' "$SCRIPT_IN")" \
+  && _hop_buf_has_f 'return "$rc"' "$(_hop_capture grep -A20 '^run_os_upgrade()' "$SCRIPT_IN")" \
+  && _hop_buf_has_f 'upgrade_rc' "$(_hop_capture grep -A50 'run_os_upgrade "\$work"' "$SCRIPT_IN")"; then
   pass "18.BV terminal failure rc propagation contract"
 else
   fail "18.BV rc propagation markers missing"

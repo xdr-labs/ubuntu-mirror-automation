@@ -22,10 +22,15 @@ r2_cache_dir() {
 }
 
 r2_require_url() {
+  mm_bind_os_core_r2_url
   if ! mm_r2_url_configured; then
     mm_error "CONFIGURATION_REQUIRED=YES"
     mm_error "R2_URL_REQUIRED_LOCATION=scripts/lib/mirror_manager_common.sh:OS_CORE_R2_URL_CONSTANT"
     mm_die "OS_CORE_R2_URL=CONFIGURATION_REQUIRED"
+  fi
+  if [[ "${MM_HERMETIC_TEST_MODE:-0}" != "1" \
+    && "${OS_CORE_R2_URL}" != "${OS_CORE_R2_URL_CONSTANT}" ]]; then
+    mm_die "OS_CORE_R2_URL=FAIL reason=production_forbidden"
   fi
   mm_ok "OS_CORE_R2_URL=CONFIGURED"
 }
@@ -104,6 +109,9 @@ r2_http_download_to_part() {
     -D "$hdr"
     -o "$resp"
   )
+  if [[ "${MM_HERMETIC_TEST_MODE:-0}" != "1" ]]; then
+    curl_args+=(--proto-redir '=https')
+  fi
 
   if [[ "$have" -gt 0 ]]; then
     mm_info "R2_RESUME_ATTEMPT file=${label} local_bytes=${have}"
@@ -187,17 +195,22 @@ r2_http_download_fresh() {
   local part="$2"
   local label="${3:-$(basename "$part")}"
   local err
+  local -a curl_args=(
+    -f -L
+    --connect-timeout "$R2_CURL_CONNECT_TIMEOUT"
+    --retry "$R2_CURL_RETRIES"
+    --retry-delay "$R2_CURL_RETRY_DELAY"
+    --retry-all-errors
+    -H "Cache-Control: no-cache"
+    -H "Pragma: no-cache"
+    -o "$part"
+  )
+  if [[ "${MM_HERMETIC_TEST_MODE:-0}" != "1" ]]; then
+    curl_args+=(--proto-redir '=https')
+  fi
   err="$(mktemp)"
   rm -f "$part"
-  if ! curl -f -L \
-    --connect-timeout "$R2_CURL_CONNECT_TIMEOUT" \
-    --retry "$R2_CURL_RETRIES" \
-    --retry-delay "$R2_CURL_RETRY_DELAY" \
-    --retry-all-errors \
-    -H "Cache-Control: no-cache" \
-    -H "Pragma: no-cache" \
-    -o "$part" \
-    "$url" 2>"$err"; then
+  if ! curl "${curl_args[@]}" "$url" 2>"$err"; then
     mm_redact <"$err" >&2 || true
     rm -f "$err" "$part"
     return 1
@@ -214,6 +227,24 @@ r2_download_package() {
   dest_dir="$(r2_cache_dir)"
   mkdir -p "$dest_dir"
   url="${OS_CORE_R2_URL}"
+  if declare -F phase2_assert_r2_effective_url >/dev/null 2>&1; then
+    phase2_assert_r2_effective_url "$url" "os-core"
+  elif [[ "${MM_HERMETIC_TEST_MODE:-0}" != "1" ]]; then
+    local effective host scheme
+    effective="$(
+      curl -sS -o /dev/null -w '%{url_effective}' -I -L \
+        --proto-redir '=https' \
+        --connect-timeout 15 --max-time 60 \
+        "$url" 2>/dev/null || true
+    )"
+    scheme="$(printf '%s' "$effective" | sed -E 's#^([a-zA-Z][a-zA-Z0-9+.-]*)://.*#\1#')"
+    host="$(printf '%s' "$effective" | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##' | cut -d/ -f1 | cut -d@ -f2 | cut -d: -f1)"
+    if [[ "${scheme,,}" != "https" || "$host" != "downloads.xdr.ooo" ]]; then
+      mm_die "R2_REDIRECT_AUTHORITY=FAIL reason=unexpected_host scheme=${scheme:-MISSING} host=${host:-MISSING}"
+    fi
+    mm_ok "R2_EFFECTIVE_HOST=${host}"
+    mm_ok "R2_REDIRECT_AUTHORITY=PASS"
+  fi
   local base_name
   base_name="$(basename "${url%%\?*}")"
   [[ -n "$base_name" ]] || base_name="ubuntu-os-core.tar"
@@ -236,11 +267,13 @@ r2_download_package() {
   expected=""
   local cl err_head
   err_head="$(mktemp)"
+  local head_args=(-sS -I -L --connect-timeout "$R2_CURL_CONNECT_TIMEOUT"
+    -H "Cache-Control: no-cache" -H "Pragma: no-cache")
+  if [[ "${MM_HERMETIC_TEST_MODE:-0}" != "1" ]]; then
+    head_args+=(--proto-redir '=https')
+  fi
   cl="$(
-    curl -sS -I -L \
-      --connect-timeout "$R2_CURL_CONNECT_TIMEOUT" \
-      -H "Cache-Control: no-cache" \
-      -H "Pragma: no-cache" \
+    curl "${head_args[@]}" \
       "$url" 2>"$err_head" \
       | tr -d '\r' | awk -F': ' 'tolower($1)=="content-length"{v=$2} END{print v}'
   )" || true

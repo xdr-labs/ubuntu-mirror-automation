@@ -207,10 +207,7 @@ FILE_COUNT=${DP_PHASE2_FILE_COUNT}
 BUNDLE_NAME=${bundle_name}
 STABLE_BUNDLE_NAME=$(dp2_stable_bundle_name)
 IMAGE_LIST_COUNT=${list_count}
-SOURCE_HOST=$(printf '%s' "${ACPS_EFFECTIVE_BASE:-${PHASE2_R2_BASE_URL_CONSTANT}}" | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##' | cut -d/ -f1)
-SOURCE_PATH=/$(printf '%s' "${ACPS_EFFECTIVE_BASE:-${PHASE2_R2_BASE_URL_CONSTANT}}" | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##' | cut -d/ -f2-)
-PHASE2_SOURCE=R2
-PHASE2_R2_VALIDATED_RELEASE_ID=${PHASE2_R2_VALIDATED_RELEASE_ID}
+$(phase2_emit_r2_release_provenance)
 VERIFICATION_RESULT=PASS
 EOF
   if dp2_release_has_secret "${release_dir}/release.env"; then
@@ -384,6 +381,7 @@ cmd_sync() {
   dp2_assert_exact_files_dir "${STAGING_DIR}/files"
   dp2_verify_payload_checksums "${STAGING_DIR}/files"
   if [[ -z "${DP_PHASE2_SOURCE_BASE:-}" ]]; then
+    phase2_verify_r2_manifest_identity "${STAGING_DIR}/${PHASE2_R2_MANIFEST_NAME}"
     phase2_verify_r2_manifest "${STAGING_DIR}/files" "${STAGING_DIR}/${PHASE2_R2_MANIFEST_NAME}"
     phase2_verify_r2_frozen_identity "${STAGING_DIR}/files"
   fi

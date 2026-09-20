@@ -443,21 +443,23 @@ pkg_url="$(printf '%s\n' "$derived" | sed -n '1p')"
 sha_url="$(printf '%s\n' "$derived" | sed -n '2p')"
 [[ "$pkg_url" == "$PROD_URL" ]] && pass "C package URL from constant" || fail "C package URL"
 [[ "$sha_url" == "${PROD_URL}.sha256" ]] && pass "C checksum URL derivation" || fail "C sha URL"
-# Fail-closed when URL is cleared after constants load (simulates misconfig)
+# Production binds empty/overridden URL back to the immutable constant.
 set +e
 out_c="$(
-  MM_PROJECT_ROOT="$ROOT" bash -c '
+  MM_PROJECT_ROOT="$ROOT" MM_HERMETIC_TEST_MODE=0 bash -c '
     set -euo pipefail
     source "'"${ROOT}"'/scripts/lib/mirror_manager_common.sh"
     source "'"${ROOT}"'/scripts/lib/r2_acquire.sh"
-    OS_CORE_R2_URL=""
+    OS_CORE_R2_URL="https://example.invalid/foo.tar"
     r2_require_url
+    printf "BOUND=%s\n" "${OS_CORE_R2_URL}"
   ' 2>&1
 )"
 rc_c=$?
 set -e
-[[ "$rc_c" -ne 0 ]] && echo "$out_c" | grep -q 'CONFIGURATION_REQUIRED' \
-  && pass "C CONFIGURATION_REQUIRED when cleared" || fail "C cleared URL should require config"
+[[ "$rc_c" -eq 0 ]] && echo "$out_c" | grep -q "BOUND=${PROD_URL}" \
+  && pass "C production URL override rebound to constant" \
+  || fail "C production URL override should rebind (rc=${rc_c} out=${out_c})"
 
 echo "======== E. OS Core package verify ========"
 SEL="${WORKDIR}/sel-e"; make_selective_fixture "$SEL"

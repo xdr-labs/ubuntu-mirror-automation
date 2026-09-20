@@ -2,7 +2,7 @@
 # install.sh — Fresh Ubuntu 24.04 bootstrap for DP Upgrade Mirror Manager
 # Default: sudo ./install.sh
 #   host preflight → packages → dirs → runtime → nginx base → GUI
-# Large R2/ACPS downloads are NOT started here; use the GUI menu.
+# Large Cloudflare R2 downloads are NOT started here; use the GUI menu.
 set -euo pipefail
 
 UM_PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -56,7 +56,7 @@ Mirror Manager server.
 
 Single workflow:
   OS Core source  = Cloudflare R2 (fixed URL in code)
-  Phase 2 source  = ACPS (fixed endpoint; credentials via GUI)
+  Phase 2 source  = Cloudflare R2 (immutable validated release)
   DP client       = Mirror Server HTTP only
 
 What this installer does:
@@ -69,7 +69,7 @@ What this installer does:
 
 What this installer does NOT do:
   - Download the R2 OS Core package
-  - Download Phase 2 artifacts from R2
+  - Download Phase 2 artifacts from the immutable R2 release
   - Start background mirror synchronization
   - Create generation trees (current / previous / releases)
 

@@ -17,6 +17,7 @@ export MM_CONFIG_DIR="${TMP}/config"
 export MM_CONFIG_FILE="${MM_CONFIG_DIR}/config"
 export MM_STATUS_FILE="${MM_CONFIG_DIR}/status"
 export MM_SKIP_ROOT_CHECK=1
+export MM_HERMETIC_TEST_MODE=1
 export PHASE2_TARGET_VERSION=6.6.0
 export TARGET_DP_VERSION=6.6.0
 export ACPS_USERNAME=""

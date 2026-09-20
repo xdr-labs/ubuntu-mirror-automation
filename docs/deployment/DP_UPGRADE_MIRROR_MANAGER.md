@@ -78,7 +78,7 @@ Menu 7 shows copy-paste one-line DP commands (download + checksum + execute) and
 writes the same text to
 `/var/log/ubuntu-mirror-automation/dp-client-upgrade-commands.txt`.
 
-There is no install-mode menu, no local OS Core path picker, no R2/ACPS URL editor, and no rollback menu.
+There is no install-mode menu, no local OS Core path picker, no production R2 URL editor, and no rollback menu.
 
 ## Configuration
 
@@ -86,10 +86,9 @@ GUI fields:
 
 - Preparation Mode (`FULL` or `PHASE2_ONLY`)
 - Mirror Server IP
-- ACPS Username / Password
 - DL Worker IP addresses / DA Worker IP addresses
 - Worker SSH Password (aella) — required when any worker IP is set
-- Test ACPS Connection
+- Test R2 Connection
 - Save Configuration
 
 Save is an **authoritative full save**: clearing a field and saving persists
@@ -119,7 +118,6 @@ Invalidation is dependency-scoped (not “any save resets everything”):
 | --- | --- | --- | --- |
 | No semantic change | none | everything | none |
 | Worker IPs / worker password only | commands | artifacts, client set, HTTP, readiness | Menu 7 regenerate |
-| ACPS username/password only | ACPS auth status | verified artifacts + readiness | re-test ACPS if acquisition needed |
 | Mirror Server IP / HTTP URL | PREPARED (client/HTTP/readiness) | downloaded OS/Phase2 content | rebuild/republish clients |
 | Preparation Mode FULL ↔ PHASE2_ONLY | CONFIGURED | on-disk cache files | Download and Prepare |
 
@@ -135,8 +133,8 @@ Read-only:
 - Phase 2 artifacts: current pinned Phase 2 R2 release (`https://downloads.xdr.ooo/dp-os-upgrade/phase2/6.6.0/validated-20260919`)
 - OS Core Source: Cloudflare R2 — configured by installer (FULL mode)
 
-Credentials are stored root-owned mode `600` at
-`/etc/ubuntu-mirror/dp-upgrade-mirror.conf` and redacted from logs.
+Configuration is stored root-owned mode `600` at
+`/etc/ubuntu-mirror/dp-upgrade-mirror.conf`; Worker SSH credentials are redacted from logs.
 
 Decision matrix:
 
@@ -282,7 +280,7 @@ bundle is removed before rebuilding.
 
 The maximum large Phase 2 data present during a build is:
 
-- one ACPS source set
+- one pinned R2 Phase 2 source set
 - one new bundle
 
 The projected peak including Ubuntu OS data is approximately 70 GiB.
@@ -291,7 +289,7 @@ Required mirror server disk:
 
 100GB
 
-The disk preflight must use actual free space and actual ACPS Content-Length,
+The disk preflight must use actual free space and actual Phase 2 R2 Content-Length,
 and it must preserve at least 10 GiB of safety space.
 
 120GB, 150GB, and 200GB are not required by this workflow.
@@ -308,12 +306,11 @@ Preflight free-space model (`CURRENT_AVAILABLE_BASED_REQUIRED_BYTES`):
 
 ```
 OS_STAGE_EXTRA = OS payload temp + metadata
-PHASE2_STAGE_EXTRA = ACPS source + new bundle + metadata   # 0 when REUSE
+PHASE2_STAGE_EXTRA = pinned R2 Phase 2 source + new bundle + metadata   # 0 when REUSE
 REQUIRED = max(OS_STAGE_EXTRA, PHASE2_STAGE_EXTRA) + SAFETY_RESERVE
 ```
 
-Valid finals set `PHASE2_BUNDLE_ACTION=REUSE` so Phase 2 ACPS/bundle required
-bytes are 0. Invalid finals are deleted before rebuild and are not counted as
+Valid finals set `PHASE2_BUNDLE_ACTION=REUSE` only when their R2 release identity matches the current pinned release, so Phase 2 source/bundle required bytes are 0. Invalid or stale-release finals are deleted before rebuild and are not counted as
 future required. Selective OS data already on disk reduces `df` available and
 is not double-counted.
 
@@ -321,11 +318,11 @@ Hard requirements:
 
 - `MM_MIRROR_ROOT`, `.install-cache`, `selective`, and `dp-phase2` must share one
   filesystem (hard links + atomic rename). Split mounts are blocked in preflight.
-- Large ACPS payloads are hard-linked into the work staging dir; automatic full
+- Large Phase 2 R2 payloads are hard-linked into the work staging dir; automatic full
   copy of large files is refused.
 - R2 OS Core package is removed immediately after selective OS materialize
   (before Phase 2 build).
-- ACPS cache/work is deleted as soon as the verified `.new` bundle exists, before
+- Phase 2 source cache/work is deleted as soon as the verified `.new` bundle exists, before
   the atomic publish rename.
 - Checksums and entry-count checks are never skipped.
 
@@ -339,8 +336,8 @@ with `DISK_PREFLIGHT=FAIL`.
 Authoritative integrity for `bringup_py3_dp_after_os_upgrade.sh` has two
 blocking gates:
 
-1. Current ACPS `.sha1` sidecar must match downloaded bytes
-   (`ACPS_BRINGUP_CHECKSUM`).
+1. The pinned R2 release `.sha1` sidecar must match downloaded bringup bytes
+   (the internal compatibility status key remains `ACPS_BRINGUP_CHECKSUM`).
 2. `SHA256(upstream bytes)` must match a digest in the repository-controlled
    allowlist `vendor/dp-phase2/approved-upstream-bringup.sha256`
    (`UPSTREAM_BRINGUP_PROVENANCE`). Unknown digests fail closed with
@@ -363,7 +360,7 @@ fresh upstream** by `scripts/lib/patch_dp_phase2_bringup.py`. Missing anchors
 or a failed generation is fatal (`BRINGUP_PATCH_COMPAT` /
 `PATCHED_BRINGUP_GENERATION` / `BRINGUP_PATCH_RESULT` /
 `PATCHED_BRINGUP_SYNTAX`). The repository vendor full copy is a reference
-artifact only and is never copied over a newly downloaded ACPS bringup.
+artifact only and is never copied over a newly downloaded pinned-R2 bringup.
 
 Worker SSH uses `StrictHostKeyChecking=accept-new` with a persistent
 project-owned `known_hosts` under `/var/lib/dp-phase2-bringup` (mode
@@ -408,17 +405,15 @@ RECOVERY_TARGET=PRE_UPGRADE_UBUNTU_16_04_STATE
 INTERMEDIATE_OS_RECOVERY_SUPPORTED=NO
 ```
 
-Create a full DP VM hypervisor snapshot before upgrade. Intermediate Ubuntu
-versions are not recovery points. This project does not create or validate
-snapshots and does not provide rollback commands.
+Run the DP precheck, pause DP services, then power off the DP VM/node and create a full hypervisor snapshot/checkpoint. Power it back on only after the snapshot completes. Intermediate Ubuntu versions are not recovery points. This project does not create or validate snapshots and does not provide rollback commands.
 
-The ACPS bringup file `bringup_py3_dp_after_os_upgrade.sh` is versionless.
+The pinned R2 bringup file `bringup_py3_dp_after_os_upgrade.sh` is versionless.
 Download and Prepare records its exact generation as `BRINGUP_UPSTREAM_SHA1`
 together with `BRINGUP_PATCH_GENERATION` and `BRINGUP_PATCHED_SHA1` in
 `release.env`. UVP and images must match the same `TARGET_DP_VERSION`.
 
 ## Production note
 
-Repository tests use synthetic fixtures and mock HTTP only. Real R2/ACPS
+Repository tests use synthetic fixtures and mock HTTP only. Real R2
 downloads on a disposable fresh mirror VM require separate operator approval.
 Bootstrap tests use temporary roots and must not modify production mirror data.

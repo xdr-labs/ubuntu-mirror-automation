@@ -55,10 +55,25 @@ ACPS_BASE_URL_FIXED="${ACPS_PRODUCTION_BASE_URL}"
 
 # Cloudflare R2 OS Core package URL — single code constant (custom domain).
 # Checksum sidecar is derived as "${OS_CORE_R2_URL}.sha256" (no separate constant).
-# Tests may override via environment: OS_CORE_R2_URL=http://127.0.0.1:<port>/pkg.tar
+# Production always binds OS_CORE_R2_URL to OS_CORE_R2_URL_CONSTANT.
+# Hermetic tests may override via OS_CORE_R2_URL=http://127.0.0.1:<port>/pkg.tar
 # shellcheck disable=SC2034
 OS_CORE_R2_URL_CONSTANT="https://downloads.xdr.ooo/ubuntu-os-core/ubuntu-os-core-xenial-to-noble.tar"
-: "${OS_CORE_R2_URL:=${OS_CORE_R2_URL_CONSTANT}}"
+
+# Bind Phase 1 download URL authority. Env overrides are hermetic-only.
+mm_bind_os_core_r2_url() {
+  if [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" ]]; then
+    : "${OS_CORE_R2_URL:=${OS_CORE_R2_URL_CONSTANT}}"
+    return 0
+  fi
+  if [[ -n "${OS_CORE_R2_URL:-}" && "${OS_CORE_R2_URL}" != "${OS_CORE_R2_URL_CONSTANT}" ]]; then
+    if declare -F mm_warn >/dev/null 2>&1; then
+      mm_warn "OS_CORE_R2_URL=IGNORED reason=production_forbidden"
+    fi
+  fi
+  OS_CORE_R2_URL="${OS_CORE_R2_URL_CONSTANT}"
+}
+mm_bind_os_core_r2_url
 
 MM_LOCK_FD=""
 MM_LOCK_HELD=0
@@ -942,15 +957,13 @@ mm_load_gui_config() {
 mm_save_gui_config() {
   local save_mode="${1:-full}"
   local prev_mode="" cmd_file
-  local mem_user="${ACPS_USERNAME-}"
-  local mem_pass="${ACPS_PASSWORD-}"
   local mem_worker_pass="${WORKER_SSH_PASSWORD-}"
   local mem_dl_worker_ips="${DL_WORKER_IPS-}"
   local mem_da_worker_ips="${DA_WORKER_IPS-}"
   local mem_mirror="${MIRROR_HTTP_URL-}"
   local mem_ip="${MIRROR_SERVER_IP-}"
   local mem_mode="${PREPARATION_MODE-}"
-  local disk_user="" disk_pass="" disk_worker_pass="" disk_dl_worker_ips="" disk_da_worker_ips="" disk_mirror="" disk_ip=""
+  local disk_worker_pass="" disk_dl_worker_ips="" disk_da_worker_ips="" disk_mirror="" disk_ip=""
   local disk_mode=""
 
   case "$save_mode" in
@@ -970,8 +983,6 @@ mm_save_gui_config() {
       # shellcheck source=/dev/null
       source "${MM_CONFIG_FILE}"
       set +a
-      printf 'disk_user=%s\n' "$(printf '%q' "${ACPS_USERNAME:-}")"
-      printf 'disk_pass=%s\n' "$(printf '%q' "${ACPS_PASSWORD:-}")"
       printf 'disk_worker_pass=%s\n' "$(printf '%q' "${WORKER_SSH_PASSWORD:-}")"
       printf 'disk_dl_worker_ips=%s\n' "$(printf '%q' "${DL_WORKER_IPS:-}")"
       printf 'disk_da_worker_ips=%s\n' "$(printf '%q' "${DA_WORKER_IPS:-}")"
@@ -983,9 +994,7 @@ mm_save_gui_config() {
 
   if [[ "$save_mode" == "merge" ]]; then
     # Partial/internal persistence: preserve unrelated disk values when memory
-    # left a field empty/unset.
-    ACPS_USERNAME="${mem_user:-$disk_user}"
-    ACPS_PASSWORD="${mem_pass:-$disk_pass}"
+    # left a field empty/unset. Obsolete ACPS credential keys are never kept.
     WORKER_SSH_PASSWORD="${mem_worker_pass:-$disk_worker_pass}"
     DL_WORKER_IPS="${mem_dl_worker_ips:-$disk_dl_worker_ips}"
     DA_WORKER_IPS="${mem_da_worker_ips:-$disk_da_worker_ips}"
@@ -994,8 +1003,6 @@ mm_save_gui_config() {
     PREPARATION_MODE="${mem_mode:-${disk_mode:-${prev_mode:-FULL}}}"
   else
     # Authoritative full GUI save: explicit empty clears the setting.
-    ACPS_USERNAME="${mem_user}"
-    ACPS_PASSWORD="${mem_pass}"
     WORKER_SSH_PASSWORD="${mem_worker_pass}"
     DL_WORKER_IPS="${mem_dl_worker_ips}"
     DA_WORKER_IPS="${mem_da_worker_ips}"
@@ -1003,6 +1010,11 @@ mm_save_gui_config() {
     MIRROR_SERVER_IP="${mem_ip}"
     PREPARATION_MODE="${mem_mode:-${prev_mode:-FULL}}"
   fi
+
+  # Production no longer requires or persists ACPS credentials.
+  ACPS_USERNAME=""
+  ACPS_PASSWORD=""
+  unset ACPS_USER ACPS_PASS 2>/dev/null || true
 
   # Keep MIRROR_SERVER_IP and MIRROR_HTTP_URL consistent.
   if [[ -n "${MIRROR_SERVER_IP}" ]]; then
@@ -1023,9 +1035,8 @@ mm_save_gui_config() {
     printf '%s\n' "# DP Upgrade Mirror Manager configuration (managed by GUI)"
     printf '%s\n' "# Do not store secrets in world-readable locations."
     printf '%s\n' "# Phase 2 target is fixed at ${PHASE2_TARGET_VERSION} (not user-editable)."
+    printf '%s\n' "# Phase 2 production source is immutable Cloudflare R2 (no ACPS credentials)."
     printf 'PREPARATION_MODE=%s\n' "$(printf '%q' "${PREPARATION_MODE}")"
-    printf 'ACPS_USERNAME=%s\n' "$(printf '%q' "${ACPS_USERNAME}")"
-    printf 'ACPS_PASSWORD=%s\n' "$(printf '%q' "${ACPS_PASSWORD}")"
     printf 'WORKER_SSH_PASSWORD=%s\n' "$(printf '%q' "${WORKER_SSH_PASSWORD}")"
     printf 'DL_WORKER_IPS=%s\n' "$(printf '%q' "${DL_WORKER_IPS}")"
     printf 'DA_WORKER_IPS=%s\n' "$(printf '%q' "${DA_WORKER_IPS}")"
@@ -1539,7 +1550,8 @@ mm_config_base_ready() {
   return 0
 }
 
-# ACPS credentials required only when a new ACPS acquisition needs them.
+# Historical ACPS credential check (hermetic fixtures / negative auth tests).
+# Production Menu2 does not require this — Phase 2 source is public R2.
 mm_acquisition_auth_ready() {
   mm_load_gui_config
   [[ -n "${ACPS_USERNAME:-}" ]] || return 1
@@ -1564,9 +1576,13 @@ mm_acps_verified_cache_reuse_available() {
   acps_is_verified_cache "$cache"
 }
 
-# Menu2 / acquisition gate: credentials OR verified-cache reuse (or prior
-# assessment that ACPS download is not required).
+# Menu2 / acquisition gate: production R2 needs no credentials.
+# Hermetic fixtures may still require credentials OR verified-cache reuse.
+# historical internal name; production source is immutable R2
 mm_acquisition_auth_or_verified_cache_ready() {
+  if [[ "${MM_HERMETIC_TEST_MODE:-0}" != "1" ]]; then
+    return 0
+  fi
   if [[ "${ACPS_DOWNLOAD_REQUIRED:-}" == "NO" ]]; then
     return 0
   fi
@@ -1583,6 +1599,7 @@ mm_config_ready() {
 }
 
 mm_r2_url_configured() {
+  mm_bind_os_core_r2_url
   [[ -n "${OS_CORE_R2_URL:-}" ]]
 }
 

@@ -16,7 +16,7 @@ for architecture, provenance, and heavy-vs-client plane behavior.
 
 - R2 OS Core download and verification
 - OS mirror materialization and `selective/state/READY`
-- ACPS Phase 2 download, bundle creation, and verification
+- immutable R2 Phase 2 download, bundle creation, and verification
 - First-time client build/sign/publish
 
 **When to use:** validating download/network/disk behavior, first install on a
@@ -33,8 +33,8 @@ This is the original clean-room retest flow.
 **Create Snapshot B after:**
 
 1. Menu 2 completed successfully once (OS Core verified, Phase 2 bundle verified)
-2. Temporary download artifacts cleaned (R2 package removed post-materialize;
-   ACPS cache/work temps cleaned per engine policy)
+2. Temporary download artifacts cleaned (OS Core R2 package removed post-materialize;
+   Phase 2 source cache/work temps cleaned per engine policy)
 3. **Prefer creating the snapshot before Menu 3 (HTTP enable)** so HTTP/nginx state
    is not part of the baseline
 
@@ -53,7 +53,7 @@ This is the original clean-room retest flow.
 1. Confirm the lab snapshot restored and the host rebooted (section 1).
 2. Repository clean check + pull latest `origin/main` (sections 2–4).
 3. `sudo ./install.sh` (section 5) — refreshes `/usr/local/lib/ubuntu-mirror` runtime.
-4. Menu 1 Configuration — confirm mode, Mirror IP, ACPS credentials (section 6).
+4. Menu 1 Configuration — confirm mode, Mirror IP, and cluster worker settings if applicable (section 6).
 5. **Menu 2 Download and Prepare — DO NOT SKIP** (section 7).
 
    Expected heavy-artifact behavior when inputs unchanged:
@@ -62,7 +62,7 @@ This is the original clean-room retest flow.
    OS_CORE_ACTION=REUSE_VERIFIED
    R2_DOWNLOAD_REQUIRED=NO
    PHASE2_BUNDLE_ACTION=REUSE
-   ACPS_DOWNLOAD_REQUIRED=NO
+   ACPS_DOWNLOAD_REQUIRED=NO   # legacy internal field name; production source is R2
    PHASE2_BUNDLE_REBUILD_REQUIRED=NO
    ```
 
@@ -196,14 +196,15 @@ Menu **1 Configuration**:
 
 1. Preparation Mode = **Full OS Upgrade + Phase 2**
 2. Confirm **Mirror Server IP** (operator-confirmed; do not rely on auto-detect alone)
-3. Enter ACPS username / password
-4. Save
+3. Configure DL/DA worker IPs and Worker SSH Password only when testing a cluster
+4. Run **Test R2 Connection**
+5. Save
 
-**Expected:** Configuration `[COMPLETED]`.
+**Expected:** R2 connection `PASS` and Configuration `[COMPLETED]`.
 
 **Failure:** Mirror IP interface validation FAIL → fix networking or choose the correct host IP.
 
-**Stop if:** ACPS credentials are wrong and connection test fails (download will fail later).
+**Stop if:** R2 connection test fails. Do not continue to Download and Prepare until `downloads.xdr.ooo` is reachable.
 
 ---
 

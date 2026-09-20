@@ -18,6 +18,107 @@ PHASE2_R2_BRINGUP_SHA256="6a69ff8671a1bd396efb4d103314cd5d347003fbda957e49a20c99
 PHASE2_R2_IMAGES_SHA256="91cf6a2c4de178b616d539e0c22817bf86952ae6020a14f248d32efe9f453fe0"
 PHASE2_R2_IMAGES_BYTES=29579332096
 PHASE2_R2_MANIFEST_NAME="manifest.sha256"
+PHASE2_R2_MANIFEST_SHA256="606e2967652ad4d0f0bfad4a23b562217a062ea17ccb54c47d2a5ea8bdf7c898"
+PHASE2_R2_MANIFEST_BYTES=956
+PHASE2_R2_PRODUCTION_SOURCE_HOST="downloads.xdr.ooo"
+
+# Shared production provenance values for release.env / .VERIFIED writers.
+# Keep a single definition so Mirror Manager and download-dp-phase2 cannot drift.
+phase2_r2_production_source_host() {
+  printf '%s\n' "${PHASE2_R2_PRODUCTION_SOURCE_HOST}"
+}
+
+phase2_r2_production_source_path() {
+  printf '/%s\n' "${PHASE2_R2_OBJECT_PREFIX_CONSTANT}"
+}
+
+# Emit SOURCE_*/PHASE2_* provenance lines for a newly built production final.
+phase2_emit_r2_release_provenance() {
+  cat <<EOF
+SOURCE_HOST=$(phase2_r2_production_source_host)
+SOURCE_PATH=$(phase2_r2_production_source_path)
+PHASE2_SOURCE=R2
+PHASE2_R2_VALIDATED_RELEASE_ID=${PHASE2_R2_VALIDATED_RELEASE_ID}
+PHASE2_R2_MANIFEST_SHA256=${PHASE2_R2_MANIFEST_SHA256}
+EOF
+}
+
+# Classify release.env R2 identity. Prints one reason token on failure.
+# Returns 0 when production reuse identity is valid.
+phase2_release_env_r2_identity_reason() {
+  local envf="$1"
+  local source_type="" release_id="" manifest_pin="" source_host="" source_path=""
+  local want_host want_path
+  want_host="$(phase2_r2_production_source_host)"
+  want_path="$(phase2_r2_production_source_path)"
+  [[ -f "$envf" ]] || {
+    printf 'r2_release_identity_missing\n'
+    return 1
+  }
+  source_type="$(grep -E '^PHASE2_SOURCE=' "$envf" | head -1 | cut -d= -f2- || true)"
+  release_id="$(grep -E '^PHASE2_R2_VALIDATED_RELEASE_ID=' "$envf" | head -1 | cut -d= -f2- || true)"
+  manifest_pin="$(grep -E '^PHASE2_R2_MANIFEST_SHA256=' "$envf" | head -1 | cut -d= -f2- || true)"
+  source_host="$(grep -E '^SOURCE_HOST=' "$envf" | head -1 | cut -d= -f2- || true)"
+  source_path="$(grep -E '^SOURCE_PATH=' "$envf" | head -1 | cut -d= -f2- || true)"
+
+  if [[ -z "$source_type" && -z "$release_id" && -z "$manifest_pin" ]]; then
+    printf 'r2_release_identity_missing\n'
+    return 1
+  fi
+  if [[ "$source_type" != "R2" \
+    || "$source_host" != "$want_host" \
+    || "$source_path" != "$want_path" ]]; then
+    if [[ -z "$source_type" || -z "$release_id" ]]; then
+      printf 'r2_release_identity_missing\n'
+      return 1
+    fi
+    printf 'r2_source_identity_mismatch\n'
+    return 1
+  fi
+  if [[ -z "$release_id" ]]; then
+    printf 'r2_release_identity_missing\n'
+    return 1
+  fi
+  if [[ "$release_id" != "${PHASE2_R2_VALIDATED_RELEASE_ID}" ]]; then
+    printf 'r2_release_identity_mismatch\n'
+    return 1
+  fi
+  if [[ -z "$manifest_pin" ]]; then
+    printf 'r2_manifest_identity_missing\n'
+    return 1
+  fi
+  if [[ "${manifest_pin,,}" != "${PHASE2_R2_MANIFEST_SHA256,,}" ]]; then
+    printf 'r2_manifest_identity_mismatch\n'
+    return 1
+  fi
+  return 0
+}
+
+# Production downloads must remain on downloads.xdr.ooo over HTTPS after -L.
+# Hermetic fixtures may use localhost/test HTTP only behind MM_HERMETIC_TEST_MODE.
+phase2_assert_r2_effective_url() {
+  local url="$1"
+  local label="${2:-r2}"
+  local effective scheme host
+  if [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" ]]; then
+    dp2_ok "R2_REDIRECT_AUTHORITY=SKIP reason=hermetic label=${label}"
+    return 0
+  fi
+  effective="$(
+    curl -sS -o /dev/null -w '%{url_effective}' -I -L \
+      --proto-redir '=https' \
+      --connect-timeout 15 --max-time 60 \
+      "$url" 2>/dev/null || true
+  )"
+  [[ -n "$effective" ]] || dp2_die "R2_REDIRECT_AUTHORITY=FAIL reason=empty_effective label=${label}"
+  scheme="$(printf '%s' "$effective" | sed -E 's#^([a-zA-Z][a-zA-Z0-9+.-]*)://.*#\1#')"
+  host="$(printf '%s' "$effective" | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##' | cut -d/ -f1 | cut -d@ -f2 | cut -d: -f1)"
+  if [[ "${scheme,,}" != "https" || "$host" != "${PHASE2_R2_PRODUCTION_SOURCE_HOST}" ]]; then
+    dp2_die "R2_REDIRECT_AUTHORITY=FAIL reason=unexpected_host scheme=${scheme:-MISSING} host=${host:-MISSING} label=${label} want_host=${PHASE2_R2_PRODUCTION_SOURCE_HOST}"
+  fi
+  dp2_ok "R2_EFFECTIVE_HOST=${host}"
+  dp2_ok "R2_REDIRECT_AUTHORITY=PASS label=${label}"
+}
 
 dp2_set_version() {
   local ver="${1:-}"
@@ -332,6 +433,37 @@ phase2_verify_r2_frozen_identity() {
     dp2_die "PHASE2_R2_IMAGES_IDENTITY=FAIL expected=${PHASE2_R2_IMAGES_SHA256} actual=${images_sha}"
   fi
   dp2_ok "PHASE2_R2_IDENTITY=PASS release=${PHASE2_R2_VALIDATED_RELEASE_ID}"
+}
+
+# Verify the immutable production manifest itself before trusting any hashes in it.
+# Hermetic tests may supply a synthetic manifest hash/size explicitly; production never can.
+phase2_verify_r2_manifest_identity() {
+  local manifest="$1"
+  local expected="${PHASE2_R2_MANIFEST_SHA256}"
+  local expected_bytes="${PHASE2_R2_MANIFEST_BYTES}"
+  local actual actual_bytes
+  [[ -f "$manifest" ]] || dp2_die "PHASE2_R2_MANIFEST_IDENTITY=FAIL reason=missing path=${manifest}"
+  if [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" ]]; then
+    if [[ -n "${PHASE2_R2_TEST_MANIFEST_SHA256:-}" ]]; then
+      expected="${PHASE2_R2_TEST_MANIFEST_SHA256}"
+    fi
+    if [[ -n "${PHASE2_R2_TEST_MANIFEST_BYTES:-}" ]]; then
+      expected_bytes="${PHASE2_R2_TEST_MANIFEST_BYTES}"
+    else
+      expected_bytes=""
+    fi
+  fi
+  dp2_validate_sha256_hex "$expected" \
+    || dp2_die "PHASE2_R2_MANIFEST_IDENTITY=FAIL reason=bad_expected_hash"
+  actual_bytes="$(stat -c%s "$manifest" 2>/dev/null || echo 0)"
+  if [[ -n "$expected_bytes" && "$actual_bytes" != "$expected_bytes" ]]; then
+    dp2_die "PHASE2_R2_MANIFEST_IDENTITY=FAIL reason=size_mismatch expected=${expected_bytes} actual=${actual_bytes}"
+  fi
+  actual="$(sha256sum "$manifest" | awk '{print $1}')"
+  if [[ "${actual,,}" != "${expected,,}" ]]; then
+    dp2_die "PHASE2_R2_MANIFEST_IDENTITY=FAIL reason=sha256_mismatch expected=${expected} actual=${actual}"
+  fi
+  dp2_ok "PHASE2_R2_MANIFEST_IDENTITY=PASS sha256=${actual}"
 }
 
 # Verify the 9 required files against a frozen R2 manifest.sha256 (bare filenames).

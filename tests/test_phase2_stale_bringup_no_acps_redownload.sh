@@ -186,6 +186,7 @@ TARGET_DP_VERSION=6.6.0
 PHASE2_ARTIFACT_VERSION=6.6.0
 STABLE_BUNDLE_NAME=${stable}
 PHASE2_BUNDLE_ENTRY_COUNT=9
+$(phase2_emit_r2_release_provenance)
 EOF
   if [[ -n "$patched_sha" ]]; then
     printf 'BRINGUP_PATCHED_SHA1=%s\n' "$patched_sha" >>"${dest}/release.env"

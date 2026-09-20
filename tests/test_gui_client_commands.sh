@@ -91,8 +91,6 @@ pass "worker SSH password validation"
 
 # Persist / reload / update worker password
 PREPARATION_MODE=FULL
-ACPS_USERNAME=u
-ACPS_PASSWORD=p
 MIRROR_HTTP_URL="http://192.0.2.10"
 WORKER_SSH_PASSWORD='customer-password'
 DL_WORKER_IPS='192.0.2.23,192.0.2.25'
@@ -101,6 +99,8 @@ mm_save_gui_config >/dev/null
 grep -q 'WORKER_SSH_PASSWORD=' "$MM_CONFIG_FILE" || fail "WORKER_SSH_PASSWORD not written"
 grep -q 'DL_WORKER_IPS=' "$MM_CONFIG_FILE" || fail "DL_WORKER_IPS not written"
 grep -q 'DA_WORKER_IPS=' "$MM_CONFIG_FILE" || fail "DA_WORKER_IPS not written"
+grep -qE 'ACPS_USERNAME=|ACPS_PASSWORD=' "$MM_CONFIG_FILE" \
+  && fail "ACPS credentials must not be persisted" || true
 WORKER_SSH_PASSWORD=""
 DL_WORKER_IPS=""
 DA_WORKER_IPS=""
@@ -116,8 +116,6 @@ mm_load_gui_config
 # Empty password remains allowed when no worker IPs are configured.
 WORKER_SSH_PASSWORD=""
 rm -f "$MM_CONFIG_FILE"
-ACPS_USERNAME=u
-ACPS_PASSWORD=p
 MIRROR_HTTP_URL="http://192.0.2.10"
 mm_save_gui_config >/dev/null
 WORKER_SSH_PASSWORD="stale"
@@ -130,10 +128,14 @@ echo "WORKER_PASSWORD_PERSISTENCE=PASS"
 
 # --- Configuration: Preparation Mode only; no DP version fields ---
 grep -q '"1" "Preparation Mode"' "$INSTALLER" || fail "Preparation Mode menu missing"
-grep -q '"5" "DL Worker IP addresses"' "$INSTALLER" || fail "DL Worker IP menu item missing"
-grep -q '"6" "DA Worker IP addresses"' "$INSTALLER" || fail "DA Worker IP menu item missing"
-grep -q '"7" "Worker SSH Password (aella)"' "$INSTALLER" \
+grep -q '"3" "DL Worker IP addresses"' "$INSTALLER" || fail "DL Worker IP menu item missing"
+grep -q '"4" "DA Worker IP addresses"' "$INSTALLER" || fail "DA Worker IP menu item missing"
+grep -q '"5" "Worker SSH Password (aella)"' "$INSTALLER" \
   || fail "Worker SSH Password menu item missing"
+grep -q '"6" "Test R2 Connection"' "$INSTALLER" || fail "R2 connection test menu item missing"
+grep -q '"7" "Save Configuration"' "$INSTALLER" || fail "Save Configuration menu item missing"
+grep -q 'ACPS Username\|ACPS Password\|Test ACPS Connection' "$INSTALLER" \
+  && fail "ACPS credential UI still present" || true
 grep -q 'Common aella SSH password used by each cluster master to access its workers' "$INSTALLER" \
   || fail "Worker SSH Password help text missing"
 grep -qE 'Current DP Version|Starting DP Version"|Target DP Version|"DP Version"' "$INSTALLER" \
@@ -152,13 +154,12 @@ pass "Configuration uses Preparation Mode + exact footer"
 # Menu height must fit Configuration instruction+footer (not a fixed +12 chrome).
 # Match production: trailing blank line avoids newt clipping the last footer line.
 config_text="Preparation Mode: Full OS Upgrade + Phase 2
-ACPS Username: configured
-ACPS Password: configured
+Mirror Server IP: 192.0.2.10
 DL Worker IPs: 192.0.2.23,192.0.2.25
 DA Worker IPs: 192.0.2.24,192.0.2.26
 Worker SSH Password (aella): configured
-ACPS Server: Fixed
 OS Core Source: Cloudflare R2
+Phase 2 Source: Cloudflare R2
 
 ${footer}
 "
@@ -166,13 +167,13 @@ config_text_lines="$(printf '%b' "$config_text" | wc -l)"
 # mm_term_size normally overwrites HEIGHT/WIDTH via tput; pin sizes for this check.
 mm_term_size() { :; }
 HEIGHT=50 WIDTH=140
-read -r cfg_h cfg_w cfg_list <<<"$(mm_calc_menu_size 9 74 8 "${config_text_lines}")"
+read -r cfg_h cfg_w cfg_list <<<"$(mm_calc_menu_size 8 74 8 "${config_text_lines}")"
 # Whiptail text rows ≈ dialog_height - list_height - chrome(10).
 cfg_text_rows=$((cfg_h - cfg_list - 10))
 [[ "$cfg_text_rows" -ge "$config_text_lines" ]] \
   || fail "config menu text rows ${cfg_text_rows} < footer block ${config_text_lines} (h=${cfg_h} list=${cfg_list})"
 HEIGHT=40 WIDTH=100
-read -r cfg_h cfg_w cfg_list <<<"$(mm_calc_menu_size 9 74 8 "${config_text_lines}")"
+read -r cfg_h cfg_w cfg_list <<<"$(mm_calc_menu_size 8 74 8 "${config_text_lines}")"
 cfg_text_rows=$((cfg_h - cfg_list - 10))
 [[ "$cfg_text_rows" -ge "$config_text_lines" ]] \
   || fail "mid-term config menu clips footer (rows=${cfg_text_rows} need=${config_text_lines} h=${cfg_h} list=${cfg_list})"
@@ -206,24 +207,32 @@ grep -q 'Copy and paste the following entire line into the DP terminal:' "$OUT" 
 grep -q 'Do not copy only one or two lines' "$OUT" && fail "obsolete three-line Phase2 warning still present" || true
 true  # OS-hop one-line guidance is now required
 grep -q 'Visual wrapping does not insert a newline' "$OUT" && fail "obsolete wrap guidance still present" || true
-grep -qE 'STEP 0 — SNAPSHOT|Step 0 —' "$OUT" || fail "missing step 0"
+grep -q 'STEP 0 — DP PRECHECK' "$OUT" || fail "missing DP precheck"
 grep -qE 'STEP 1 — PAUSE|Step 1 — Pause' "$OUT" || fail "missing pause"
-grep -qE 'STEP 2 — UBUNTU 16.04 → 18.04|STEP 2 — UBUNTU 16.04 TO 18.04|Step 2 — Ubuntu 16.04 to 18.04' "$OUT" \
+grep -q 'STEP 2 — POWER OFF / SNAPSHOT CHECKPOINT / POWER ON' "$OUT" || fail "missing powered-off snapshot gate"
+full_precheck_ln="$(grep -n 'STEP 0 — DP PRECHECK' "$OUT" | head -1 | cut -d: -f1)"
+full_pause_ln="$(grep -n 'STEP 1 — PAUSE DP' "$OUT" | head -1 | cut -d: -f1)"
+full_snapshot_ln="$(grep -n 'STEP 2 — POWER OFF / SNAPSHOT CHECKPOINT / POWER ON' "$OUT" | head -1 | cut -d: -f1)"
+full_hop_ln="$(grep -n 'STEP 3 — UBUNTU 16.04' "$OUT" | head -1 | cut -d: -f1)"
+[[ "$full_precheck_ln" -lt "$full_pause_ln" && "$full_pause_ln" -lt "$full_snapshot_ln" && "$full_snapshot_ln" -lt "$full_hop_ln" ]] \
+  || fail "FULL safety order must be precheck -> pause -> powered-off snapshot -> first OS hop"
+pass "FULL safety order precheck -> pause -> powered-off snapshot -> upgrade"
+grep -qE 'STEP 3 — UBUNTU 16.04 → 18.04|STEP 3 — UBUNTU 16.04 TO 18.04|Step 3 — Ubuntu 16.04 to 18.04' "$OUT" \
   || fail "missing hop 16→18"
 grep -q 'The Xenial-to-Bionic client automatically sets the aella and root login' "$OUT" \
   || fail "missing automatic login shell guidance"
-grep -qE 'STEP 3 — UBUNTU 18.04 → 20.04|STEP 3 — UBUNTU 18.04 TO 20.04|Step 3 — Ubuntu 18.04 to 20.04' "$OUT" \
+grep -qE 'STEP 4 — UBUNTU 18.04 → 20.04|STEP 4 — UBUNTU 18.04 TO 20.04|Step 4 — Ubuntu 18.04 to 20.04' "$OUT" \
   || fail "missing hop 18→20"
-grep -qE 'STEP 4 — UBUNTU 20.04 → 22.04|STEP 4 — UBUNTU 20.04 TO 22.04|Step 4 — Ubuntu 20.04 to 22.04' "$OUT" \
+grep -qE 'STEP 5 — UBUNTU 20.04 → 22.04|STEP 5 — UBUNTU 20.04 TO 22.04|Step 5 — Ubuntu 20.04 to 22.04' "$OUT" \
   || fail "missing hop 20→22"
-grep -qE 'STEP 5 — UBUNTU 22.04 → 24.04|STEP 5 — UBUNTU 22.04 TO 24.04|Step 5 — Ubuntu 22.04 to 24.04' "$OUT" \
+grep -qE 'STEP 6 — UBUNTU 22.04 → 24.04|STEP 6 — UBUNTU 22.04 TO 24.04|Step 6 — Ubuntu 22.04 to 24.04' "$OUT" \
   || fail "missing hop 22→24"
-grep -qE 'STEP 6 — PHASE 2 STAGING|STEP 6 — STAGE DP 6.6.0|Step 6 — Stage DP 6.6.0 files' "$OUT" \
+grep -qE 'STEP 7 — PHASE 2 STAGING|STEP 7 — STAGE DP 6.6.0|Step 7 — Stage DP 6.6.0 files' "$OUT" \
   || fail "missing stage"
-grep -qE 'STEP 7 — DP 6.6.0 BRINGUP|STEP 7 — RUN DP 6.6.0 BRINGUP|Step 7 — Run DP 6.6.0 bringup' "$OUT" \
+grep -qE 'STEP 8 — DP 6.6.0 BRINGUP|STEP 8 — RUN DP 6.6.0 BRINGUP|Step 8 — Run DP 6.6.0 bringup' "$OUT" \
   || fail "missing bringup"
-grep -qE 'STEP 8 — RESUME|Step 8 — Resume' "$OUT" || fail "missing resume"
-grep -qE 'STEP 9 — VERIFY|Step 9 — Verify' "$OUT" || fail "missing health"
+grep -qE 'STEP 9 — RESUME|Step 9 — Resume' "$OUT" || fail "missing resume"
+grep -qE 'STEP 10 — VERIFY|Step 10 — Verify' "$OUT" || fail "missing health"
 grep -q 'Verify bash login shells' "$OUT" && fail "manual shell verify step still present" || true
 grep -q 'getent passwd aella root' "$OUT" && fail "manual getent shell command still present" || true
 grep -q 'Show complete instructions' "$OUT" && fail "Show complete instructions still present" || true
@@ -243,8 +252,8 @@ grep -q 'dp-client-command-runner.sh' "$MM_CLIENT_ROOT/dp-launch-xenial-to-bioni
 grep -q 'rm -f "\$SCRIPT"' "$OUT" && fail "must not rm existing files before HTTP" || true
 grep -Eq 'curl -fsSLO([[:space:]]|$)' "$OUT" && fail "naked curl -fsSLO present" || true
 grep -q 'less -S' "$OUT" && fail "less pager guidance must be removed" || true
-# Full mode must still cover steps 0..9
-for n in 0 1 2 3 4 5 6 7 8 9; do
+# Full mode must cover precheck/pause/powered-off-snapshot plus all upgrade steps.
+for n in 0 1 2 3 4 5 6 7 8 9 10; do
   grep -qE "Step ${n} —|STEP ${n} —" "$OUT" || fail "missing step ${n}"
 done
 for script in \
@@ -290,9 +299,19 @@ grep -q 'DP Phase 2 Upgrade Commands' "$P2_OUT" || fail "phase2 title missing"
 grep -q 'Required OS: Ubuntu 24.04' "$P2_OUT" || fail "required OS missing"
 grep -q 'Ubuntu 16.04 to 18.04\|UBUNTU 16.04 TO 18.04\|UBUNTU 16.04 → 18.04' "$P2_OUT" && fail "PHASE2_ONLY still has OS hops" || true
 grep -q 'dp-offline-upgrade-xenial-to-bionic' "$P2_OUT" && fail "PHASE2_ONLY hop script present" || true
-grep -qE 'STEP 2 — PHASE 2 STAGING|STEP 2 — STAGE DP 6.6.0|Step 2 — Stage DP 6.6.0 files' "$P2_OUT" \
+grep -q 'STEP 0 — DP PRECHECK' "$P2_OUT" || fail "PHASE2_ONLY precheck missing"
+grep -q 'STEP 1 — PAUSE DP' "$P2_OUT" || fail "PHASE2_ONLY pause missing"
+grep -q 'STEP 2 — POWER OFF / SNAPSHOT CHECKPOINT / POWER ON' "$P2_OUT" || fail "PHASE2_ONLY powered-off snapshot gate missing"
+p2_precheck_ln="$(grep -n 'STEP 0 — DP PRECHECK' "$P2_OUT" | head -1 | cut -d: -f1)"
+p2_pause_ln="$(grep -n 'STEP 1 — PAUSE DP' "$P2_OUT" | head -1 | cut -d: -f1)"
+p2_snapshot_ln="$(grep -n 'STEP 2 — POWER OFF / SNAPSHOT CHECKPOINT / POWER ON' "$P2_OUT" | head -1 | cut -d: -f1)"
+p2_prereq_ln="$(grep -n 'STEP 3 — VERIFY UBUNTU 24.04 AND PREREQUISITES' "$P2_OUT" | head -1 | cut -d: -f1)"
+[[ "$p2_precheck_ln" -lt "$p2_pause_ln" && "$p2_pause_ln" -lt "$p2_snapshot_ln" && "$p2_snapshot_ln" -lt "$p2_prereq_ln" ]] \
+  || fail "PHASE2_ONLY safety order must be precheck -> pause -> powered-off snapshot -> prerequisites"
+pass "PHASE2_ONLY safety order precheck -> pause -> powered-off snapshot -> prerequisites"
+grep -qE 'STEP 4 — PHASE 2 STAGING|STEP 4 — STAGE DP 6.6.0|Step 4 — Stage DP 6.6.0 files' "$P2_OUT" \
   || fail "phase2 stage step missing"
-grep -qE 'STEP 3 — DP 6.6.0 BRINGUP|STEP 3 — RUN DP 6.6.0 BRINGUP|Step 3 — Run DP 6.6.0 bringup' "$P2_OUT" \
+grep -qE 'STEP 5 — DP 6.6.0 BRINGUP|STEP 5 — RUN DP 6.6.0 BRINGUP|Step 5 — Run DP 6.6.0 bringup' "$P2_OUT" \
   || fail "phase2 bringup missing"
 grep -q 'upgrade-phase2.sh' "$P2_OUT" || fail "phase2 wrapper missing from PHASE2_ONLY commands"
 grep -Fq -- '--same-version-recovery' "$P2_OUT" && fail "same-version-recovery leaked into PHASE2_ONLY Menu 7" || true
@@ -450,8 +469,8 @@ gui_build_client_commands "http://192.0.2.10" "cluster" \
   "customer-password" >"$DUAL_OUT"
 [[ "$(grep -cE 'bringup_py3_dp_after_os_upgrade\.sh|--prompt-worker-password' "$DUAL_OUT" || true)" -ge 2 ]] \
   || fail "dual cluster output must contain DL and DA bringup prompts"
-grep -q 'STEP 7A — DL CLUSTER MASTER' "$DUAL_OUT" || fail "STEP 7A missing"
-grep -q 'STEP 7B — DA CLUSTER MASTER' "$DUAL_OUT" || fail "STEP 7B missing"
+grep -q 'STEP 8A — DL CLUSTER MASTER' "$DUAL_OUT" || fail "STEP 8A missing"
+grep -q 'STEP 8B — DA CLUSTER MASTER' "$DUAL_OUT" || fail "STEP 8B missing"
 grep -Fq '192.0.2.23' "$DUAL_OUT" && grep -Fq '192.0.2.25' "$DUAL_OUT" \
   || fail "dual DL worker list missing"
 grep -Fq '192.0.2.24' "$DUAL_OUT" && grep -Fq '192.0.2.26' "$DUAL_OUT" \
@@ -483,15 +502,15 @@ for spec_pass in 'Test123!' 'Abc$123!' 'worker@Pass#2026' 'A&b!c$123'; do
 done
 pass "special-character worker passwords not embedded in generated command"
 
-# Config save: PREPARATION_MODE, no TARGET_DP_VERSION / CURRENT
+# Config save: PREPARATION_MODE, no TARGET_DP_VERSION / CURRENT / ACPS creds
 PREPARATION_MODE=FULL
-ACPS_USERNAME=u
-ACPS_PASSWORD=p
 MIRROR_HTTP_URL="http://192.0.2.10"
 mm_save_gui_config >/dev/null
 grep -q '^PREPARATION_MODE=FULL$' "$MM_CONFIG_FILE" || fail "PREPARATION_MODE not saved"
 grep -q 'TARGET_DP_VERSION' "$MM_CONFIG_FILE" && fail "TARGET_DP_VERSION still written" || true
 grep -q 'CURRENT_DP_VERSION' "$MM_CONFIG_FILE" && fail "CURRENT_DP_VERSION still written" || true
+grep -qE 'ACPS_USERNAME=|ACPS_PASSWORD=' "$MM_CONFIG_FILE" \
+  && fail "ACPS credentials still written" || true
 # Legacy ignored
 cat >"$MM_CONFIG_FILE" <<EOF
 CURRENT_DP_VERSION=6.3.0
@@ -508,6 +527,10 @@ mm_load_gui_config
 [[ "$TARGET_DP_VERSION" == "6.6.0" ]] || fail "legacy TARGET not forced to 6.6.0"
 [[ -z "${CURRENT_DP_VERSION:-}" ]] || fail "CURRENT not unset"
 mm_config_ready || fail "config_ready should pass without source version"
+# Save migrates away obsolete ACPS credential keys.
+mm_save_gui_config >/dev/null
+grep -qE 'ACPS_USERNAME=|ACPS_PASSWORD=' "$MM_CONFIG_FILE" \
+  && fail "save must strip legacy ACPS credentials" || true
 pass "config save/load ignores legacy versions; mode required"
 
 # Mode change stale commands
@@ -689,13 +712,13 @@ REG_DL_IPS='198.51.100.21,198.51.100.22'
 REG_DA_IPS='203.0.113.21,203.0.113.22'
 REG_PW='Sp3c#Pw!x9Q'
 
-grep -q '"5" "DL Worker IP addresses"' "$INSTALLER" \
+grep -q '"3" "DL Worker IP addresses"' "$INSTALLER" \
   || fail "CONFIG_HAS_DL_WORKER_IP_FIELD missing"
 echo "CONFIG_HAS_DL_WORKER_IP_FIELD=YES"
-grep -q '"6" "DA Worker IP addresses"' "$INSTALLER" \
+grep -q '"4" "DA Worker IP addresses"' "$INSTALLER" \
   || fail "CONFIG_HAS_DA_WORKER_IP_FIELD missing"
 echo "CONFIG_HAS_DA_WORKER_IP_FIELD=YES"
-grep -q '"7" "Worker SSH Password (aella)"' "$INSTALLER" \
+grep -q '"5" "Worker SSH Password (aella)"' "$INSTALLER" \
   || fail "CONFIG_HAS_COMMON_WORKER_PASSWORD missing"
 echo "CONFIG_HAS_COMMON_WORKER_PASSWORD=YES"
 
@@ -711,7 +734,7 @@ REG_DUAL="$TMP/reg-dual-full.txt"
 gui_build_client_commands "http://192.0.2.10" "cluster" \
   "$REG_DL_IPS" "$REG_DA_IPS" "$REG_PW" >"$REG_DUAL"
 
-for n in 1 2 3 4 5 6; do
+for n in 0 1 2 3 4 5 6 7; do
   step_count="$(grep -cE "^STEP ${n} —" "$REG_DUAL" || true)"
   [[ "$step_count" -eq 1 ]] || fail "STEP ${n} header count=${step_count} (expected 1 common step)"
 done
@@ -720,28 +743,28 @@ grep -qE 'Run on every DP node being upgraded|Run the same steps on every DP nod
   || fail "common all-nodes guidance missing"
 grep -q 'DL master, all DL workers, DA master, and all DA workers' "$REG_DUAL" \
   || fail "all-nodes target list missing"
-echo "MENU7_COMMON_STEPS_1_TO_6=PASS"
+echo "MENU7_COMMON_STEPS_0_TO_7=PASS"
 
-[[ "$(grep -cE '^STEP 6 — (PHASE 2 STAGING|STAGE DP)' "$REG_DUAL")" -eq 1 ]] \
-  || fail "STEP 6 heading not unique"
+[[ "$(grep -cE '^STEP 7 — (PHASE 2 STAGING|STAGE DP)' "$REG_DUAL")" -eq 1 ]] \
+  || fail "STEP 7 heading not unique"
 [[ "$(grep -cE '^cd /home/aella && curl -fsSLo upgrade-phase2\.sh\.download ' "$REG_DUAL")" -eq 1 ]] \
   || fail "expected exactly one common stage command"
 grep -q 'Use the SAME staging command on every node' "$REG_DUAL" \
   || fail "same staging command guidance missing"
-grep -qE 'STEP 6A|STEP 6B|DL STAGE|DA STAGE' "$REG_DUAL" \
-  && fail "duplicated DL/DA STEP 6 commands present" || true
-echo "MENU7_STEP6_SINGLE_COMMON_COMMAND=PASS"
+grep -qE 'STEP 7A|STEP 7B|DL STAGE|DA STAGE' "$REG_DUAL" \
+  && fail "duplicated DL/DA STEP 7 staging commands present" || true
+echo "MENU7_STEP7_SINGLE_COMMON_COMMAND=PASS"
 
-grep -q 'STEP 7A — DL CLUSTER MASTER' "$REG_DUAL" || fail "MENU7_DL_COMMAND_PRESENT"
-grep -q 'STEP 7B — DA CLUSTER MASTER' "$REG_DUAL" || fail "MENU7_DA_COMMAND_PRESENT"
+grep -q 'STEP 8A — DL CLUSTER MASTER' "$REG_DUAL" || fail "MENU7_DL_COMMAND_PRESENT"
+grep -q 'STEP 8B — DA CLUSTER MASTER' "$REG_DUAL" || fail "MENU7_DA_COMMAND_PRESENT"
 echo "MENU7_DL_COMMAND_PRESENT=PASS"
 echo "MENU7_DA_COMMAND_PRESENT=PASS"
 
 REG_DL_SEC="$TMP/reg-dl-sec.txt"
 REG_DA_SEC="$TMP/reg-da-sec.txt"
-awk '/STEP 7A — DL CLUSTER MASTER/,/STEP 7B — DA CLUSTER MASTER/' "$REG_DUAL" \
+awk '/STEP 8A — DL CLUSTER MASTER/,/STEP 8B — DA CLUSTER MASTER/' "$REG_DUAL" \
   >"$REG_DL_SEC"
-awk '/STEP 7B — DA CLUSTER MASTER/,/^STEP 8 —/' "$REG_DUAL" \
+awk '/STEP 8B — DA CLUSTER MASTER/,/^STEP 9 —/' "$REG_DUAL" \
   >"$REG_DA_SEC"
 grep -q -- '--worker-ips' "$REG_DL_SEC" || fail "MENU7_DL_COMMAND_USES_ONLY_DL_WORKERS"
 grep -Fq '198.51.100.21' "$REG_DL_SEC" && grep -Fq '198.51.100.22' "$REG_DL_SEC" \
@@ -762,16 +785,16 @@ grep -q 'Run this command on the DL MASTER ONLY' "$REG_DUAL" \
   || fail "DL master-only guidance missing"
 grep -q 'Run this command on the DA MASTER ONLY' "$REG_DUAL" \
   || fail "DA master-only guidance missing"
-grep -q 'STEP 7A: DL master only' "$REG_DUAL" || fail "rule missing STEP 7A master-only"
-grep -q 'STEP 7B: DA master only' "$REG_DUAL" || fail "rule missing STEP 7B master-only"
-echo "MENU7_STEP7_MASTER_ONLY_GUIDANCE=PASS"
+grep -q 'STEP 8A: DL master only' "$REG_DUAL" || fail "rule missing STEP 8A master-only"
+grep -q 'STEP 8B: DA master only' "$REG_DUAL" || fail "rule missing STEP 8B master-only"
+echo "MENU7_STEP8_MASTER_ONLY_GUIDANCE=PASS"
 grep -q 'Do NOT run this command manually on DL workers' "$REG_DUAL" \
-  || fail "DL worker STEP 7 prohibition missing"
+  || fail "DL worker STEP 8 prohibition missing"
 grep -q 'Do NOT run this command manually on DA workers' "$REG_DUAL" \
-  || fail "DA worker STEP 7 prohibition missing"
-grep -q 'Do not run STEP 7 manually on workers' "$REG_DUAL" \
-  || fail "cluster rule missing worker STEP 7 prohibition"
-echo "MENU7_WORKER_MANUAL_STEP7_PROHIBITED=PASS"
+  || fail "DA worker STEP 8 prohibition missing"
+grep -q 'Do not run STEP 8 manually on workers' "$REG_DUAL" \
+  || fail "cluster rule missing worker STEP 8 prohibition"
+echo "MENU7_WORKER_MANUAL_STEP8_PROHIBITED=PASS"
 
 reg_dl_line="$(grep -E 'bringup_py3_dp_after_os_upgrade\.sh|--prompt-worker-password' "$REG_DL_SEC" | head -1)"
 reg_da_line="$(grep -E 'bringup_py3_dp_after_os_upgrade\.sh|--prompt-worker-password' "$REG_DA_SEC" | head -1)"
@@ -835,28 +858,28 @@ REG_P2="$TMP/reg-dual-p2.txt"
 gui_build_client_commands "http://192.0.2.10" "cluster" \
   "$REG_DL_IPS" "$REG_DA_IPS" "$REG_PW" >"$REG_P2"
 grep -qE '^CLUSTER$|CLUSTER EXECUTION RULE' "$REG_P2" || fail "PHASE2 cluster rule missing"
-grep -q 'STEP 3A: DL master only' "$REG_P2" || fail "PHASE2 missing STEP 3A master-only"
-grep -q 'STEP 3B: DA master only' "$REG_P2" || fail "PHASE2 missing STEP 3B master-only"
+grep -q 'STEP 5A: DL master only' "$REG_P2" || fail "PHASE2 missing STEP 5A master-only"
+grep -q 'STEP 5B: DA master only' "$REG_P2" || fail "PHASE2 missing STEP 5B master-only"
 grep -q 'Use the SAME staging command on every node' "$REG_P2" \
   || fail "PHASE2 missing shared stage command guidance"
 [[ "$(grep -cE '^cd /home/aella && curl -fsSLo upgrade-phase2\.sh\.download ' "$REG_P2")" -eq 1 ]] \
   || fail "PHASE2 expected exactly one stage command"
-awk '/STEP 3A — DL CLUSTER MASTER/,/STEP 3B — DA CLUSTER MASTER/' "$REG_P2" \
+awk '/STEP 5A — DL CLUSTER MASTER/,/STEP 5B — DA CLUSTER MASTER/' "$REG_P2" \
   | grep -q -- '--worker-ips' \
   || fail "PHASE2 DL command missing --worker-ips"
-awk '/STEP 3A — DL CLUSTER MASTER/,/STEP 3B — DA CLUSTER MASTER/' "$REG_P2" \
+awk '/STEP 5A — DL CLUSTER MASTER/,/STEP 5B — DA CLUSTER MASTER/' "$REG_P2" \
   | grep -Fq '198.51.100.21' \
   || fail "PHASE2 DL command missing DL workers"
-awk '/STEP 3A — DL CLUSTER MASTER/,/STEP 3B — DA CLUSTER MASTER/' "$REG_P2" \
+awk '/STEP 5A — DL CLUSTER MASTER/,/STEP 5B — DA CLUSTER MASTER/' "$REG_P2" \
   | grep -F "$REG_DA_IPS" \
   && fail "PHASE2 DL command contains DA workers" || true
-awk '/STEP 3B — DA CLUSTER MASTER/,/^STEP 4 —/' "$REG_P2" \
+awk '/STEP 5B — DA CLUSTER MASTER/,/^STEP 6 —/' "$REG_P2" \
   | grep -q -- '--worker-ips' \
   || fail "PHASE2 DA command missing --worker-ips"
-awk '/STEP 3B — DA CLUSTER MASTER/,/^STEP 4 —/' "$REG_P2" \
+awk '/STEP 5B — DA CLUSTER MASTER/,/^STEP 6 —/' "$REG_P2" \
   | grep -Fq '203.0.113.21' \
   || fail "PHASE2 DA command missing DA workers"
-awk '/STEP 3B — DA CLUSTER MASTER/,/^STEP 4 —/' "$REG_P2" \
+awk '/STEP 5B — DA CLUSTER MASTER/,/^STEP 6 —/' "$REG_P2" \
   | grep -F "$REG_DL_IPS" \
   && fail "PHASE2 DA command contains DL workers" || true
 pass "PHASE2_ONLY cluster routing matches FULL"

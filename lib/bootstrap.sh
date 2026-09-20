@@ -187,7 +187,7 @@ um_bootstrap_storage_preflight() {
     avail_kib="$(um_df_avail_kib "$base" 2>/dev/null || echo 0)"
     avail_gib=$(( ${avail_kib:-0} / 1024 / 1024 ))
     um_ok "STORAGE_FREE=${avail_gib} GiB at ${base}"
-    um_info "Disk requirements for R2/ACPS downloads are calculated at Download and Prepare time"
+    um_info "Disk requirements for Cloudflare R2 downloads are calculated at Download and Prepare time"
     um_info "(package size + extract + Phase 2 + safety margin). Bootstrap does not download OS Core."
   fi
 
@@ -352,11 +352,9 @@ um_bootstrap_persist_local_mirror_url() {
   local confdir="${INSTALL_CONF_DIR:-/etc/ubuntu-mirror}"
   local conf="${confdir}/dp-upgrade-mirror.conf"
   local mirror_base="${1:-}"
-  local tmp prep user pass worker_pass dl_worker_ips da_worker_ips server_ip
+  local tmp prep worker_pass dl_worker_ips da_worker_ips server_ip
   mkdir -p "$confdir"
   prep="FULL"
-  user=""
-  pass=""
   worker_pass=""
   dl_worker_ips=""
   da_worker_ips=""
@@ -368,8 +366,6 @@ um_bootstrap_persist_local_mirror_url() {
     source "$conf"
     set +a
     prep="${PREPARATION_MODE:-FULL}"
-    user="${ACPS_USERNAME:-}"
-    pass="${ACPS_PASSWORD:-}"
     worker_pass="${WORKER_SSH_PASSWORD:-}"
     dl_worker_ips="${DL_WORKER_IPS:-}"
     da_worker_ips="${DA_WORKER_IPS:-}"
@@ -382,9 +378,8 @@ um_bootstrap_persist_local_mirror_url() {
   cat >"$tmp" <<EOF
 # DP Upgrade Mirror Manager configuration (managed by install/bootstrap)
 # Phase 2 target is fixed at 6.6.0 (not user-editable).
+# Phase 2 production source is immutable Cloudflare R2 (no ACPS credentials).
 PREPARATION_MODE=$(printf '%q' "${prep}")
-ACPS_USERNAME=$(printf '%q' "${user}")
-ACPS_PASSWORD=$(printf '%q' "${pass}")
 WORKER_SSH_PASSWORD=$(printf '%q' "${worker_pass}")
 DL_WORKER_IPS=$(printf '%q' "${dl_worker_ips}")
 DA_WORKER_IPS=$(printf '%q' "${da_worker_ips}")
@@ -942,15 +937,15 @@ Runtime:
 Mirror root:
   ${BASE_PATH:-/var/spool/apt-mirror}
 
-Config (GUI credentials, mode 600 after save):
+Config (Mirror Manager settings, mode 600 after save):
   ${INSTALL_CONF_DIR:-/etc/ubuntu-mirror}/dp-upgrade-mirror.conf
 
 Logs:
   /var/log/ubuntu-mirror-automation/
 
 Next steps (Mirror Manager GUI):
-  1. Configuration — Preparation Mode, ACPS username/password
-  2. Download and Prepare Upgrade Files — R2 OS Core (FULL) + R2 Phase 2
+  1. Configuration — Preparation Mode, Mirror Server IP, cluster worker settings
+  2. Download and Prepare Upgrade Files — R2 OS Core (FULL) + immutable R2 Phase 2
   3. Enable HTTP Distribution
   4. Verify Upgrade Readiness
   7. Show DP Client Upgrade Commands
@@ -961,7 +956,7 @@ If the DP is already on Ubuntu 24.04, choose Phase 2 Only.
 
 Large downloads are NOT started by bootstrap. Start them from the GUI.
 
-Recovery: take a full hypervisor snapshot of the DP VM before upgrade.
+Recovery: precheck → pause DP → power off VM/node → snapshot/checkpoint → power on without resuming DP.
 This project does not provide rollback commands.
 
 EOF

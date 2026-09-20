@@ -170,29 +170,25 @@ else
 fi
 
 # --- merge must not wipe unrelated fields ---
-ACPS_USERNAME=fixture
-ACPS_PASSWORD=fixture-secret
 DL_WORKER_IPS=192.0.2.21
 DA_WORKER_IPS=192.0.2.31
 WORKER_SSH_PASSWORD='KeepCluster'
 MIRROR_SERVER_IP=192.0.2.10
 MIRROR_HTTP_URL=http://192.0.2.10
 mm_save_gui_config_full >/dev/null
-ACPS_USERNAME=""
-ACPS_PASSWORD=""
+grep -qE 'ACPS_USERNAME=|ACPS_PASSWORD=' "$MM_CONFIG_FILE" \
+  && fail "ACPS credentials must not be persisted" || true
 DL_WORKER_IPS=""
 DA_WORKER_IPS=""
 WORKER_SSH_PASSWORD=""
 MIRROR_HTTP_URL=http://192.0.2.10
 mm_merge_gui_config >/dev/null
 mm_load_gui_config
-expect "merge preserves ACPS username" test "${ACPS_USERNAME}" = "fixture"
 expect "merge preserves DL workers" test "${DL_WORKER_IPS}" = "192.0.2.21"
+expect "merge preserves worker password" test "${WORKER_SSH_PASSWORD}" = "KeepCluster"
 
 # --- I01 no-op save preserves generations ---
 PREPARATION_MODE=PHASE2_ONLY
-ACPS_USERNAME=fixture
-ACPS_PASSWORD=fixture-secret
 DL_WORKER_IPS=""
 DA_WORKER_IPS=""
 WORKER_SSH_PASSWORD=""
@@ -306,26 +302,29 @@ grep -Fq '192.0.2.21' "$cmd_file" || fail "G02 DL worker ips missing"
 grep -q -- '--prompt-worker-password' "$cmd_file" || fail "G02 worker password prompt missing"
 pass "G02 DL master worker command correct"
 
-# --- I07 ACPS credential only ---
+# --- I07 obsolete ACPS credentials are stripped; no AUTH_CREDENTIAL churn ---
 ACPS_USERNAME=fixture
 ACPS_PASSWORD=fixture-secret
 DL_WORKER_IPS=""
 DA_WORKER_IPS=""
 WORKER_SSH_PASSWORD=""
 mm_save_gui_config_full >/dev/null
+grep -qE 'ACPS_USERNAME=|ACPS_PASSWORD=' "$MM_CONFIG_FILE" \
+  && fail "I07 ACPS credentials must not persist" || true
 seed_ready_workflow COMMANDS_GENERATED
 mm_status_set ACPS_CONNECTION PASS
 ACPS_PASSWORD='new-acps-secret'
 mm_save_gui_config_full >/dev/null
-expect "I07 class AUTH_CREDENTIAL" test "$(mm_wf_get CONFIG_CHANGE_CLASS)" = "AUTH_CREDENTIAL"
+expect "I07 class NONE (ACPS no longer a config input)" \
+  test "$(mm_wf_get CONFIG_CHANGE_CLASS)" = "NONE"
 expect "I07 readiness preserved" test "$(mm_wf_get READINESS_VERIFIED_GENERATION_ID)" = "gen-ready-1"
 expect "I07 client preserved" test "$(mm_wf_get CLIENT_SET_GENERATION_ID)" = "gen-ready-1"
 expect "I07 commands preserved" test "$(mm_wf_get COMMAND_FILE_GENERATION_ID)" = "gen-ready-1"
-expect "I07 ACPS status cleared" test -z "$(mm_status_get ACPS_CONNECTION)"
 expect "I07 next NONE" test "$(mm_wf_get NEXT_REQUIRED_ACTION)" = "NONE"
+grep -qE 'ACPS_USERNAME=|ACPS_PASSWORD=' "$MM_CONFIG_FILE" \
+  && fail "I07 second save must still omit ACPS credentials" || true
 
 # --- I08 mirror IP change ---
-ACPS_PASSWORD=fixture-secret
 MIRROR_SERVER_IP=192.0.2.10
 MIRROR_HTTP_URL=http://192.0.2.10
 mm_save_gui_config_full >/dev/null

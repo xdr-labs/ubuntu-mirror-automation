@@ -1961,6 +1961,7 @@ engine_assess_phase2_final() {
   local ver="${1:-${TARGET_DP_VERSION:-${PHASE2_TARGET_VERSION}}}"
   local dest envf bundle sidecar stable
   local target_field artifact_field stable_field
+  local release_id
   local current_gen published_gen published_patched published_upstream
   local inner_patched cache_dir cache_bringup cache_upstream
   local bringup_invalid_reason="" store_cache=0
@@ -2015,6 +2016,16 @@ engine_assess_phase2_final() {
   if dp2_release_has_secret "$envf"; then
     engine_phase2_mark_existing INVALID release_env_secret
     return 0
+  fi
+  if phase2_r2_identity_enforced; then
+    local r2_id_reason=""
+    if ! r2_id_reason="$(phase2_release_env_r2_identity_reason "$envf")"; then
+      mm_warn "PHASE2_R2_RELEASE_IDENTITY=STALE reason=${r2_id_reason}"
+      engine_phase2_mark_existing INVALID "${r2_id_reason}"
+      return 0
+    fi
+    release_id="$(grep -E '^PHASE2_R2_VALIDATED_RELEASE_ID=' "$envf" | head -1 | cut -d= -f2- || true)"
+    mm_info "PHASE2_R2_RELEASE_IDENTITY=PASS release=${release_id}"
   fi
   # Reuse identity is (upstream SHA, patch-generation, inner patched SHA).
   # The frozen vendor full copy is not an authority for reuse.
@@ -2501,8 +2512,7 @@ CREATED_AT=${created_at}
 FILE_COUNT=${DP_PHASE2_FILE_COUNT}
 STABLE_BUNDLE_NAME=${stable}
 IMAGE_LIST_COUNT=${list_count}
-SOURCE_HOST=acps
-SOURCE_PATH=provision
+$(phase2_emit_r2_release_provenance)
 VERIFICATION_RESULT=PASS
 SOURCE_REPOSITORY_COMMIT=${commit}
 BRINGUP_UPSTREAM_SHA1=${BRINGUP_UPSTREAM_SHA1:-}
@@ -2512,7 +2522,6 @@ UVP_VERSION=${ver}
 UVP_SHA1=${uvp_sha1}
 IMAGES_VERSION=${ver}
 IMAGES_SHA256=${images_sha256}
-ACPS_SOURCE_VERSION=${ver}
 EOF
   if dp2_release_has_secret "${dest_tmp}/release.env"; then
     rm -rf "$dest_tmp"

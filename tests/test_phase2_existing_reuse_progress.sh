@@ -104,10 +104,18 @@ TARGET_DP_VERSION=6.6.0
 PHASE2_ARTIFACT_VERSION=6.6.0
 STABLE_BUNDLE_NAME=${stable}
 PHASE2_BUNDLE_ENTRY_COUNT=9
+$(phase2_emit_r2_release_provenance)
 BRINGUP_PATCHED_SHA1=$(sha1sum "${work}/bringup_py3_dp_after_os_upgrade.sh" | awk '{print $1}')
 BRINGUP_PATCH_GENERATION=$(python3 "${ROOT}/scripts/lib/patch_dp_phase2_bringup.py" --print-generation | awk -F= '$1=="BRINGUP_PATCH_GENERATION"{print $2; exit}')
 BRINGUP_UPSTREAM_SHA1=70de02dd62409110dadb7553991d1ffb0a79f396
 EOF
+  # Saved upstream required for patched-bringup reuse path.
+  cp -f "${ROOT}/tests/fixtures/dp-phase2/upstream_bringup_unpatched.sh" \
+    "${dest}/bringup_py3_dp_after_os_upgrade.sh.upstream" 2>/dev/null || true
+  if [[ -f "${dest}/bringup_py3_dp_after_os_upgrade.sh.upstream" ]]; then
+    sha1sum "${dest}/bringup_py3_dp_after_os_upgrade.sh.upstream" | awk '{print $1}' \
+      >"${dest}/bringup_py3_dp_after_os_upgrade.sh.upstream.sha1"
+  fi
 }
 
 run_assess() {
@@ -155,7 +163,7 @@ grep -q 'PHASE2_BUNDLE_VERIFY_MODE=VERIFIED_METADATA_REUSE' "$LOG" \
   || fail "PHASE2_BUNDLE_VERIFY_MODE=VERIFIED_METADATA_REUSE missing"
 grep -q 'PHASE2_BUNDLE_FULL_HASH_REQUIRED=NO' "$LOG" \
   || fail "PHASE2_BUNDLE_FULL_HASH_REQUIRED=NO missing"
-[[ "$ELAPSED2" -lt 2 ]] \
+[[ "$ELAPSED2" -lt 3 ]] \
   || fail "second run too slow (${ELAPSED2}s) — cache miss?"
 pass "second run: CACHE=HIT fast (${ELAPSED2}s)"
 

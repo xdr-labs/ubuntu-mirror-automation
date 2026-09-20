@@ -84,7 +84,7 @@ seed_cache
 mm_acps_verify_payload_checksums "$CACHE" >/dev/null
 acps_write_verified_marker "$CACHE" || fail "write verified marker"
 [[ -f "${CACHE}/.VERIFIED" ]] || fail "marker missing"
-grep -q '^ACPS_VERIFIED_FORMAT=1$' "${CACHE}/.VERIFIED" || fail "format line missing"
+grep -q '^ACPS_VERIFIED_FORMAT=2$' "${CACHE}/.VERIFIED" || fail "format line missing"
 acps_is_verified_cache "$CACHE" || fail "fresh marker should verify"
 pass "verified marker written after checksum pass"
 
@@ -155,7 +155,7 @@ old="$(sha256sum "${CACHE}/.VERIFIED" | awk '{print $1}')"
 mm_acps_verify_payload_checksums "$CACHE" >/dev/null
 acps_write_verified_marker "$CACHE"
 new="$(sha256sum "${CACHE}/.VERIFIED" | awk '{print $1}')"
-grep -q '^ACPS_VERIFIED_FORMAT=1$' "${CACHE}/.VERIFIED" || fail "refreshed marker missing format"
+grep -q '^ACPS_VERIFIED_FORMAT=2$' "${CACHE}/.VERIFIED" || fail "refreshed marker missing format"
 [[ "$old" != "$new" ]] || fail "successful revalidation did not refresh marker"
 acps_is_verified_cache "$CACHE" || fail "refreshed marker not trusted"
 pass "successful revalidation refreshes marker"
