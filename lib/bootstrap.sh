@@ -221,6 +221,116 @@ um_bootstrap_install_packages() {
   um_ok "PACKAGE_INSTALL=PASS commands verified (whiptail nginx python3 present)"
 }
 
+# APT drop-in that disables automatic package installation (test override:
+# UM_BOOTSTRAP_APT_PERIODIC_CONF). Package-list refresh is intentionally left alone.
+um_bootstrap_unattended_upgrade_conf_path() {
+  printf '%s\n' \
+    "${UM_BOOTSTRAP_APT_PERIODIC_CONF:-/etc/apt/apt.conf.d/99ubuntu-mirror-disable-unattended-upgrade}"
+}
+
+um_bootstrap_unattended_upgrade_conf_desired() {
+  cat <<'EOF'
+# Managed by ubuntu-mirror-automation bootstrap.
+# Disables automatic unattended package installation on the transient mirror
+# appliance. Manual apt update / apt upgrade remain available to operators.
+# Package-list refresh (Update-Package-Lists) is not disabled here.
+APT::Periodic::Unattended-Upgrade "0";
+EOF
+}
+
+# Stop/disable apt-daily-upgrade timer+service when present. Missing units are
+# treated as already-safe (nothing that can auto-install packages).
+um_bootstrap_disable_apt_daily_upgrade_unit() {
+  local unit="$1"
+  local was_active=0
+  local was_enabled=0
+
+  if um_bootstrap_systemctl cat "$unit" >/dev/null 2>&1; then
+    :
+  else
+    um_info "UNATTENDED_UPGRADE_UNIT_ABSENT=${unit}"
+    return 0
+  fi
+
+  if um_bootstrap_systemctl is-active --quiet "$unit" 2>/dev/null; then
+    was_active=1
+  fi
+  if um_bootstrap_systemctl is-enabled "$unit" >/dev/null 2>&1; then
+    was_enabled=1
+  fi
+
+  if [[ "$was_active" -eq 1 ]]; then
+    if ! um_bootstrap_systemctl stop "$unit" >/dev/null 2>&1; then
+      um_error "UNATTENDED_UPGRADE_STOP=FAIL unit=${unit}"
+      um_die "UNATTENDED_UPGRADE_DISABLE=FAIL stop failed for ${unit}"
+    fi
+    if um_bootstrap_systemctl is-active --quiet "$unit" 2>/dev/null; then
+      um_error "UNATTENDED_UPGRADE_STOP=FAIL still_active unit=${unit}"
+      um_die "UNATTENDED_UPGRADE_DISABLE=FAIL ${unit} still active after stop"
+    fi
+    um_ok "UNATTENDED_UPGRADE_STOP=PASS unit=${unit}"
+  fi
+
+  if [[ "$was_enabled" -eq 1 ]]; then
+    if ! um_bootstrap_systemctl disable "$unit" >/dev/null 2>&1; then
+      um_error "UNATTENDED_UPGRADE_DISABLE_UNIT=FAIL unit=${unit}"
+      um_die "UNATTENDED_UPGRADE_DISABLE=FAIL disable failed for ${unit}"
+    fi
+    if um_bootstrap_systemctl is-enabled "$unit" >/dev/null 2>&1; then
+      um_error "UNATTENDED_UPGRADE_DISABLE_UNIT=FAIL still_enabled unit=${unit}"
+      um_die "UNATTENDED_UPGRADE_DISABLE=FAIL ${unit} still enabled after disable"
+    fi
+    um_ok "UNATTENDED_UPGRADE_DISABLE_UNIT=PASS unit=${unit}"
+  fi
+
+  if um_bootstrap_systemctl is-active --quiet "$unit" 2>/dev/null; then
+    um_die "UNATTENDED_UPGRADE_DISABLE=FAIL ${unit} active"
+  fi
+  if um_bootstrap_systemctl is-enabled "$unit" >/dev/null 2>&1; then
+    um_die "UNATTENDED_UPGRADE_DISABLE=FAIL ${unit} enabled"
+  fi
+  return 0
+}
+
+# Fresh/reinstall bootstrap: prevent apt-daily-upgrade / unattended-upgrade from
+# auto-installing packages (which can restart nginx mid-download). Idempotent.
+um_bootstrap_disable_unattended_upgrades() {
+  local conf conf_dir tmp desired
+
+  conf="$(um_bootstrap_unattended_upgrade_conf_path)"
+  conf_dir="$(dirname "$conf")"
+
+  if [[ "${UM_DRY_RUN:-0}" == "1" ]]; then
+    um_dry "Would disable unattended package upgrades (${conf}; apt-daily-upgrade.timer)"
+    return 0
+  fi
+
+  desired="$(um_bootstrap_unattended_upgrade_conf_desired)"
+  mkdir -p "$conf_dir"
+  tmp="$(mktemp "${conf_dir}/.um-unattended-upgrade.XXXXXX")"
+  printf '%s' "$desired" >"$tmp"
+  if [[ -f "$conf" ]] && cmp -s "$tmp" "$conf"; then
+    rm -f "$tmp"
+    um_ok "UNATTENDED_UPGRADE_APT_CONF=PASS unchanged path=${conf}"
+  else
+    install -m 0644 "$tmp" "$conf"
+    rm -f "$tmp"
+    um_ok "UNATTENDED_UPGRADE_APT_CONF=PASS installed path=${conf}"
+  fi
+
+  if ! grep -qE 'APT::Periodic::Unattended-Upgrade[[:space:]]+"0"' "$conf"; then
+    um_die "UNATTENDED_UPGRADE_APT_CONF=FAIL missing APT::Periodic::Unattended-Upgrade \"0\""
+  fi
+
+  um_bootstrap_disable_apt_daily_upgrade_unit apt-daily-upgrade.timer
+  um_bootstrap_disable_apt_daily_upgrade_unit apt-daily-upgrade.service
+
+  um_ok "UNATTENDED_UPGRADE_DISABLE=PASS"
+  um_info "UNATTENDED_UPGRADE_POLICY=DISABLED"
+  um_info "APT_PERIODIC_UNATTENDED_UPGRADE=0"
+  um_info "MANUAL_APT_ADMIN_PRESERVED=YES"
+}
+
 um_bootstrap_prepare_dirs() {
   local base="${BASE_PATH:-/var/spool/apt-mirror}"
   local mm_log_dir="${UM_MM_LOG_DIR:-/var/log/ubuntu-mirror-automation}"
@@ -1082,6 +1192,9 @@ um_bootstrap_run() {
 
   phase "Install required packages"
   um_bootstrap_install_packages
+
+  phase "Disable unattended package upgrades"
+  um_bootstrap_disable_unattended_upgrades
 
   phase "Prepare directories"
   um_bootstrap_prepare_dirs
