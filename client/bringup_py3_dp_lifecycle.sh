@@ -43,6 +43,10 @@ if [[ -f "${LIB_DIR}/dp-phase2-time-readiness.sh" ]]; then
   # shellcheck source=/dev/null
   source "${LIB_DIR}/dp-phase2-time-readiness.sh"
 fi
+if [[ -f "${LIB_DIR}/dp-phase2-staging-contract.sh" ]]; then
+  # shellcheck source=/dev/null
+  source "${LIB_DIR}/dp-phase2-staging-contract.sh"
+fi
 if [[ -f "${LIB_DIR}/dp-phase2-post-bringup-migration.sh" ]]; then
   # shellcheck source=/dev/null
   source "${LIB_DIR}/dp-phase2-post-bringup-migration.sh"
@@ -408,6 +412,20 @@ start_or_monitor() {
   echo "BRINGUP_READINESS_RESULT=YES"
   echo "TIME_READINESS=${TIME_READINESS}"
 
+  # Hard gate: require authoritative Phase 2 staging PASS + consumable prereq
+  # state (REQUIRED=YES or REQUIRED=NO). Do not launch the detached worker when
+  # staging was interrupted after an early controller publish historically.
+  if declare -F dp_phase2_bringup_staging_gate >/dev/null 2>&1; then
+    if ! dp_phase2_bringup_staging_gate "$TARGET_VERSION"; then
+      echo "BRINGUP_READINESS_RESULT=NO"
+      echo "VENDOR_BRINGUP_EXECUTED=NO"
+      p2b_lifecycle_die "bringup blocked: Phase 2 staging contract incomplete (re-run stage-dp-phase2.sh to PASS, then retry)"
+    fi
+  else
+    p2b_lifecycle_die "bringup blocked: staging contract helper missing"
+  fi
+  echo "BRINGUP_STAGING_GATE=PASS"
+
   run_id="$(p2b_new_run_id)"
   started="$(p2b_utc_now)"
   p2b_ensure_dir
@@ -418,7 +436,8 @@ start_or_monitor() {
     cp -a "${LIB_DIR}/dp-phase2-ubuntu-prerequisites.sh" "${d}/lib/" 2>/dev/null || true
   fi
   local _extra
-  for _extra in dp-phase2-time-readiness.sh dp-phase2-post-bringup-migration.sh dp-phase2-cluster-validation.sh; do
+  for _extra in dp-phase2-time-readiness.sh dp-phase2-staging-contract.sh \
+    dp-phase2-post-bringup-migration.sh dp-phase2-cluster-validation.sh; do
     if [[ -f "${LIB_DIR}/${_extra}" ]]; then
       cp -a "${LIB_DIR}/${_extra}" "${d}/lib/" 2>/dev/null || true
     fi

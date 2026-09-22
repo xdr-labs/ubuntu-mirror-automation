@@ -136,6 +136,7 @@ TEST_LIST=(
   test_phase2_virtual_provides.py
   test_phase2_prereq_dpkg_rc.sh
   test_phase2_prereq_stage_failclosed.sh
+  test_phase2_staging_atomic_bringup_gate.sh
   test_phase2_prereq_identity_trust.sh
   test_phase2_prereq_worker_contract.sh
   test_phase2_prereq_version_aware.sh

@@ -34,6 +34,7 @@ PHASE2_HELPER_GENERATION_FILES=(
   lib/dp-phase2-bringup-lifecycle.sh
   lib/dp-phase2-ubuntu-prerequisites.sh
   lib/dp-phase2-time-readiness.sh
+  lib/dp-phase2-staging-contract.sh
   lib/dp-phase2-post-bringup-migration.sh
   lib/dp-phase2-cluster-validation.sh
 )
@@ -140,6 +141,7 @@ PHASE2_STAGE_PHASE=""
 BUNDLE_DOWNLOAD_ATTEMPTED="NO"
 ARTIFACT_MUTATION_ATTEMPTED="NO"
 BRINGUP_INSTALL_ATTEMPTED="NO"
+BRINGUP_HOLD=""
 LIFECYCLE_WRAPPER_SRC="${SCRIPT_DIR}/bringup_py3_dp_lifecycle.sh"
 VENDOR_BRINGUP_INSTALLED="${BRINGUP_DIR}/bringup_py3_dp_after_os_upgrade.vendor.sh"
 
@@ -231,6 +233,10 @@ cleanup() {
   if [[ -n "$NEW_ART" && -d "$NEW_ART" ]]; then
     rm -rf "$NEW_ART" 2>/dev/null || true
     NEW_ART=""
+  fi
+  if [[ -n "$BRINGUP_HOLD" && -d "$BRINGUP_HOLD" ]]; then
+    rm -rf "$BRINGUP_HOLD" 2>/dev/null || true
+    BRINGUP_HOLD=""
   fi
   return "$rc"
 }
@@ -1060,6 +1066,40 @@ ensure_verified_bundle() {
 # Time readiness helpers (shared with bringup lifecycle hard gate).
 # shellcheck source=/dev/null
 source "${_STAGE_LIB_DIR}/dp-phase2-time-readiness.sh"
+# Staging completion contract (invalidate on mutation; PASS only after publish).
+# shellcheck source=/dev/null
+source "${_STAGE_LIB_DIR}/dp-phase2-staging-contract.sh"
+
+# Retract a previously published runnable bringup controller so an interrupted
+# re-stage cannot leave an apparently-ready path without a PASS contract.
+retract_live_bringup_controller() {
+  local reason="${1:-staging_mutation}"
+  if [[ -e "$BRINGUP_SCRIPT" || -L "$BRINGUP_SCRIPT" ]]; then
+    rm -f "$BRINGUP_SCRIPT"
+    log "BRINGUP_CONTROLLER=RETRACTED path=${BRINGUP_SCRIPT} reason=${reason}"
+  fi
+  return 0
+}
+
+# Preserve verified vendor bringup out of the candidate tree before trim removes
+# it (ARTIFACT_FILES intentionally excludes bringup; live controller is published
+# only after FINAL_VALIDATION + prerequisite staging).
+preserve_bringup_vendor_hold() {
+  local src_dir="${1:-$NEW_ART}"
+  [[ -n "$src_dir" && -d "$src_dir" ]] || die "bringup hold source missing"
+  [[ -f "${src_dir}/bringup_py3_dp_after_os_upgrade.sh" ]] \
+    || die "bringup vendor missing before hold"
+  [[ -f "${src_dir}/bringup_py3_dp_after_os_upgrade.sh.sha1" ]] \
+    || die "bringup vendor sha1 missing before hold"
+  BRINGUP_HOLD="${src_dir}.bringup-hold.${RUN_ID:-$$}"
+  rm -rf "$BRINGUP_HOLD"
+  mkdir -p "$BRINGUP_HOLD"
+  cp -a "${src_dir}/bringup_py3_dp_after_os_upgrade.sh" \
+    "${BRINGUP_HOLD}/bringup_py3_dp_after_os_upgrade.sh"
+  cp -a "${src_dir}/bringup_py3_dp_after_os_upgrade.sh.sha1" \
+    "${BRINGUP_HOLD}/bringup_py3_dp_after_os_upgrade.sh.sha1"
+  log "BRINGUP_VENDOR_HOLD=${BRINGUP_HOLD}"
+}
 
 emit_final_report() {
   cat <<EOF
@@ -1375,8 +1415,11 @@ install_bringup_lifecycle_wrapper() {
   PHASE2_STAGE_PHASE="PUBLISH_BRINGUP_CONTROLLER"
   log "PHASE2_STAGE_PHASE=${PHASE2_STAGE_PHASE}"
   BRINGUP_INSTALL_ATTEMPTED="YES"
-  local wrapper_src vendor_src lib_dest
-  vendor_src="${STAGE_ROOT}/bringup_py3_dp_after_os_upgrade.sh"
+  local wrapper_src vendor_src lib_dest vendor_dir
+  vendor_dir="${BRINGUP_HOLD:-${STAGE_ROOT}}"
+  [[ -n "$vendor_dir" && -d "$vendor_dir" ]] \
+    || die "bringup vendor hold missing; cannot publish controller"
+  vendor_src="${vendor_dir}/bringup_py3_dp_after_os_upgrade.sh"
   wrapper_src="$LIFECYCLE_WRAPPER_SRC"
   if [[ ! -f "$wrapper_src" ]]; then
     if ! _stage_fetch_helper_verified "$LIFECYCLE_WRAPPER_SRC" "bringup_py3_dp_lifecycle.sh"; then
@@ -1388,7 +1431,7 @@ install_bringup_lifecycle_wrapper() {
   install -o "$AELLA_UID" -g "$AELLA_PRIMARY_GID" -m 0755 \
     "$vendor_src" "$VENDOR_BRINGUP_INSTALLED"
   install -o "$AELLA_UID" -g "$AELLA_PRIMARY_GID" -m 0644 \
-    "${STAGE_ROOT}/bringup_py3_dp_after_os_upgrade.sh.sha1" \
+    "${vendor_dir}/bringup_py3_dp_after_os_upgrade.sh.sha1" \
     "${VENDOR_BRINGUP_INSTALLED}.sha1"
   verify_sha1_pair "$VENDOR_BRINGUP_INSTALLED" "${VENDOR_BRINGUP_INSTALLED}.sha1"
 
@@ -1414,7 +1457,8 @@ install_bringup_lifecycle_wrapper() {
       "${BRINGUP_DIR}/lib/dp-phase2-ubuntu-prerequisites.sh"
   fi
   local _extra
-  for _extra in dp-phase2-time-readiness.sh dp-phase2-post-bringup-migration.sh dp-phase2-cluster-validation.sh; do
+  for _extra in dp-phase2-time-readiness.sh dp-phase2-staging-contract.sh \
+    dp-phase2-post-bringup-migration.sh dp-phase2-cluster-validation.sh; do
     if [[ -f "${_STAGE_LIB_DIR}/${_extra}" ]]; then
       install -o root -g root -m 0600 "${_STAGE_LIB_DIR}/${_extra}" "${lib_dest}/${_extra}"
       install -o root -g root -m 0644 "${_STAGE_LIB_DIR}/${_extra}" "${BRINGUP_DIR}/lib/${_extra}"
@@ -1499,6 +1543,12 @@ stage_main() {
   # Extract verified bundle directly into the candidate artifact tree (NEW_ART).
   # Live ARTIFACT_DIR stays intact until atomic rename.
   ARTIFACT_MUTATION_ATTEMPTED="YES"
+  # Invalidate prior PASS so bringup cannot launch against an in-progress/partial
+  # restage. Retract live controller until this run publishes after success.
+  if declare -F dp_phase2_invalidate_staging_contract >/dev/null 2>&1; then
+    dp_phase2_invalidate_staging_contract "staging_mutation_start"
+  fi
+  retract_live_bringup_controller "staging_mutation_start"
   NEW_ART="${ARTIFACT_DIR}.new.${RUN_ID}"
   STAGE_ROOT="$NEW_ART"
   rm -rf "$NEW_ART"
@@ -1531,14 +1581,9 @@ stage_main() {
     "${NEW_ART}/images-${TARGET_DP_VERSION}.tar" \
     "${NEW_ART}/images-${TARGET_DP_VERSION}.tar.sha256"
 
-  install_bringup_lifecycle_wrapper
-  if ! verify_installed_bringup_vendor_compat; then
-    BRINGUP_READY="NO"
-    PHASE2_STAGE_RESULT="FAIL"
-    log "BRINGUP_READY=NO"
-    log "PHASE2_STAGE_RESULT=FAIL"
-    die "installed vendor bringup is incompatible with --worker-password"
-  fi
+  # Hold verified vendor bringup before trim removes it from the candidate tree.
+  # Runnable controller is published only after FINAL_VALIDATION + prerequisites.
+  preserve_bringup_vendor_hold "$NEW_ART"
 
   PHASE2_STAGE_PHASE="TRIM_CANDIDATE_TO_ARTIFACTS"
   log "PHASE2_STAGE_PHASE=${PHASE2_STAGE_PHASE}"
@@ -1609,6 +1654,24 @@ ${f}"
   # Separate Phase 2 Ubuntu prerequisite artifact (not part of the 9 ACPS files).
   stage_phase2_ubuntu_prerequisites || die "PHASE2_PREREQ_STAGE=FAIL"
 
+  # Publish runnable bringup controller only after artifacts + prereqs succeed.
+  install_bringup_lifecycle_wrapper
+  if ! verify_installed_bringup_vendor_compat; then
+    BRINGUP_READY="NO"
+    PHASE2_STAGE_RESULT="FAIL"
+    log "BRINGUP_READY=NO"
+    log "PHASE2_STAGE_RESULT=FAIL"
+    retract_live_bringup_controller "vendor_compat_fail"
+    if declare -F dp_phase2_invalidate_staging_contract >/dev/null 2>&1; then
+      dp_phase2_invalidate_staging_contract "vendor_compat_fail"
+    fi
+    die "installed vendor bringup is incompatible with --worker-password"
+  fi
+  if [[ -n "$BRINGUP_HOLD" && -d "$BRINGUP_HOLD" ]]; then
+    rm -rf "$BRINGUP_HOLD"
+    BRINGUP_HOLD=""
+  fi
+
   # Candidate already published or discarded; do not delete live ARTIFACT_DIR.
   STAGE_ROOT=""
 
@@ -1644,9 +1707,19 @@ ${f}"
       log "ERROR: POST_BRINGUP_MIGRATION_PERSIST=FAIL decision=REQUIRED"
       log "ERROR: DP_UPGRADE_COMPLETE=NO"
       log "ERROR: REMEDIATION=Ensure $(p2b_migration_env_path) is writable, then re-run staging so the required post-bringup migration decision is persisted. Do not treat bringup process PASS as upgrade complete. Do not auto-run upgrade_script.sh."
+      retract_live_bringup_controller "migration_persist_fail"
+      if declare -F dp_phase2_invalidate_staging_contract >/dev/null 2>&1; then
+        dp_phase2_invalidate_staging_contract "migration_persist_fail"
+      fi
       die "required post-bringup migration decision could not be persisted"
     fi
     log "WARNING: POST_BRINGUP_MIGRATION_PERSIST=FAIL decision=${mig} (non-required; continuing)"
+  fi
+  if ! dp_phase2_persist_staging_contract "$TARGET_DP_VERSION"; then
+    PHASE2_STAGE_RESULT="FAIL"
+    ARTIFACT_STAGING_RESULT="FAIL"
+    retract_live_bringup_controller "staging_contract_persist_fail"
+    die "authoritative Phase 2 staging contract could not be persisted"
   fi
   emit_final_report
 }

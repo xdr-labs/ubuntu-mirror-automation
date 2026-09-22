@@ -156,6 +156,7 @@ UM_RUNTIME_CLIENT_LIB_FILES=(
   dp-phase2-bringup-lifecycle.sh
   dp-phase2-ubuntu-prerequisites.sh
   dp-phase2-time-readiness.sh
+  dp-phase2-staging-contract.sh
   dp-phase2-post-bringup-migration.sh
   dp-phase2-cluster-validation.sh
   dp-offline-durable-write.sh

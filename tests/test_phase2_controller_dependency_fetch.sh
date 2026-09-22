@@ -51,6 +51,10 @@ cat >"${CLIENT_ROOT}/lib/dp-phase2-time-readiness.sh" <<'LIB'
 #!/usr/bin/env bash
 TIME_HELPER_LOADED=YES
 LIB
+cat >"${CLIENT_ROOT}/lib/dp-phase2-staging-contract.sh" <<'LIB'
+#!/usr/bin/env bash
+STAGING_CONTRACT_HELPER_LOADED=YES
+LIB
 cat >"${CLIENT_ROOT}/lib/dp-phase2-post-bringup-migration.sh" <<'LIB'
 #!/usr/bin/env bash
 MIGRATION_HELPER_LOADED=YES
@@ -100,6 +104,7 @@ grep -q '^PHASE2_CONTROLLER_DEPENDENCY=DOWNLOAD path=lib/dp-offline-source-produ
 grep -q '^PHASE2_CONTROLLER_DEPENDENCY=DOWNLOAD path=lib/dp-phase2-operation-progress.sh$' "$OUT"
 grep -q '^PHASE2_CONTROLLER_DEPENDENCY=DOWNLOAD path=lib/dp-phase2-ubuntu-prerequisites.sh$' "$OUT"
 grep -q '^PHASE2_CONTROLLER_DEPENDENCY=DOWNLOAD path=lib/dp-phase2-time-readiness.sh$' "$OUT"
+grep -q '^PHASE2_CONTROLLER_DEPENDENCY=DOWNLOAD path=lib/dp-phase2-staging-contract.sh$' "$OUT"
 grep -q '^PHASE2_CONTROLLER_DEPENDENCY=DOWNLOAD path=lib/dp-phase2-post-bringup-migration.sh$' "$OUT"
 grep -q '^PHASE2_CONTROLLER_DEPENDENCY=DOWNLOAD path=lib/dp-phase2-cluster-validation.sh$' "$OUT"
 grep -q '^PHASE2_CONTROLLER_DEPENDENCIES=PASS$' "$OUT"
@@ -110,6 +115,7 @@ test -s "${WORK_ROOT}/lib/dp-offline-source-product-version.sh"
 test -s "${WORK_ROOT}/lib/dp-phase2-operation-progress.sh"
 test -s "${WORK_ROOT}/lib/dp-phase2-ubuntu-prerequisites.sh"
 test -s "${WORK_ROOT}/lib/dp-phase2-time-readiness.sh"
+test -s "${WORK_ROOT}/lib/dp-phase2-staging-contract.sh"
 test -s "${WORK_ROOT}/lib/dp-phase2-post-bringup-migration.sh"
 test -s "${WORK_ROOT}/lib/dp-phase2-cluster-validation.sh"
 bash -n "${WORK_ROOT}/bringup_py3_dp_lifecycle.sh"
@@ -127,6 +133,7 @@ grep -q '^PHASE2_CONTROLLER_DEPENDENCY=REUSED path=lib/dp-offline-source-product
 grep -q '^PHASE2_CONTROLLER_DEPENDENCY=REUSED path=lib/dp-phase2-operation-progress.sh$' "$REUSE_OUT"
 grep -q '^PHASE2_CONTROLLER_DEPENDENCY=REUSED path=lib/dp-phase2-ubuntu-prerequisites.sh$' "$REUSE_OUT"
 grep -q '^PHASE2_CONTROLLER_DEPENDENCY=REUSED path=lib/dp-phase2-time-readiness.sh$' "$REUSE_OUT"
+grep -q '^PHASE2_CONTROLLER_DEPENDENCY=REUSED path=lib/dp-phase2-staging-contract.sh$' "$REUSE_OUT"
 grep -q '^PHASE2_CONTROLLER_DEPENDENCY=REUSED path=lib/dp-phase2-post-bringup-migration.sh$' "$REUSE_OUT"
 grep -q '^PHASE2_CONTROLLER_DEPENDENCY=REUSED path=lib/dp-phase2-cluster-validation.sh$' "$REUSE_OUT"
 grep -q '^reused$' "${TMP}/extract/reused.txt"

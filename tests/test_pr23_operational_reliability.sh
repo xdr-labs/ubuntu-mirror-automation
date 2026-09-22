@@ -492,6 +492,7 @@ for hop in xenial-to-bionic bionic-to-focal focal-to-jammy jammy-to-noble; do
 done
 
 bash -n "${ROOT}/client/lib/dp-phase2-time-readiness.sh"
+bash -n "${ROOT}/client/lib/dp-phase2-staging-contract.sh"
 bash -n "${ROOT}/client/lib/dp-phase2-post-bringup-migration.sh"
 bash -n "${ROOT}/client/lib/dp-phase2-cluster-validation.sh"
 bash -n "$HELPER"

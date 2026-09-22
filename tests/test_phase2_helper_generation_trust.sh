@@ -148,6 +148,8 @@ grep -q 'bringup_py3_dp_lifecycle.sh' "${UNIT}/phase2-helper-generation.manifest
   || fail "lifecycle wrapper not in generation manifest"
 grep -q 'lib/dp-phase2-ubuntu-prerequisites.sh' "${UNIT}/phase2-helper-generation.manifest" \
   || fail "ubuntu-prerequisites helper not in generation manifest"
+grep -q 'lib/dp-phase2-staging-contract.sh' "${UNIT}/phase2-helper-generation.manifest" \
+  || fail "staging-contract helper not in generation manifest"
 pass "lifecycle wrapper and ubuntu-prerequisites covered by generation"
 
 # Menu 7 command remains copy/paste valid and pins the wrapper hash.

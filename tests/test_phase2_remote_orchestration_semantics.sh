@@ -655,6 +655,9 @@ cat >"$(p2b_dir)/lib/dp-phase2-time-readiness.sh" <<'EOF'
 dp_phase2_load_time_ref_url() { return 0; }
 dp_phase2_bringup_time_gate() { return 0; }
 EOF
+cat >"$(p2b_dir)/lib/dp-phase2-staging-contract.sh" <<'EOF'
+dp_phase2_bringup_staging_gate() { return 0; }
+EOF
 cat >"$(p2b_dir)/lib/dp-phase2-ubuntu-prerequisites.sh" <<'EOF'
 dp2_install_phase2_ubuntu_prerequisites() { return 0; }
 EOF

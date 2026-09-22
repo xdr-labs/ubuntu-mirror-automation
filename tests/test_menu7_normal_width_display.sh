@@ -74,6 +74,10 @@ cat >"${CLIENT_ROOT}/lib/dp-phase2-time-readiness.sh" <<'HELPER6'
 #!/usr/bin/env bash
 TIME_HELPER_LOADED=YES
 HELPER6
+cat >"${CLIENT_ROOT}/lib/dp-phase2-staging-contract.sh" <<'HELPER6B'
+#!/usr/bin/env bash
+STAGING_CONTRACT_HELPER_LOADED=YES
+HELPER6B
 cat >"${CLIENT_ROOT}/lib/dp-phase2-post-bringup-migration.sh" <<'HELPER7'
 #!/usr/bin/env bash
 MIGRATION_HELPER_LOADED=YES
