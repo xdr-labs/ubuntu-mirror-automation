@@ -820,6 +820,74 @@ set -e
 flock -u "$lockfd"; eval "exec ${lockfd}>&-"
 [[ "$rc_v" -ne 0 ]] && echo "$out_v" | grep -q 'INSTALL_LOCK=BUSY' && pass "P lock" || fail "P lock"
 
+# Same-process Menu 2 lifecycle: prepare must release before returning to the
+# GUI loop. External-holder coverage above does not catch self-lock.
+echo "======== P2. same-process prepare lock lifecycle ========"
+if awk '
+  /^engine_download_and_prepare\(\)/ { in_fn=1 }
+  in_fn && /mm_acquire_install_lock/ { acq=1 }
+  in_fn && acq && /trap .*mm_release_install_lock.*RETURN/ { rel=1 }
+  in_fn && /^}/ { exit((acq && rel) ? 0 : 1) }
+' "${ROOT}/scripts/lib/mirror_install_engine.sh"; then
+  pass "P2 engine RETURN trap releases install lock"
+else
+  fail "P2 engine missing operation-scoped lock release"
+fi
+
+set +e
+P2_OUT="$(
+  MM_LOCK_FILE="${WORKDIR}/lock-same-proc" \
+  MM_HERMETIC_TEST_MODE=1 \
+  bash -c '
+    set -euo pipefail
+    # shellcheck source=/dev/null
+    source "'"${ROOT}"'/scripts/lib/mirror_manager_common.sh"
+
+    # Mirror engine_download_and_prepare lock lifecycle (acquire + RETURN release).
+    simulate_prepare_op() {
+      mm_acquire_install_lock
+      trap "mm_release_install_lock; trap - RETURN" RETURN
+      # Successful prepare returns to the GUI menu without process EXIT.
+      return 0
+    }
+
+    simulate_prepare_op
+    [[ "${MM_LOCK_HELD}" == "0" ]]
+    [[ -z "${MM_LOCK_FD}" ]]
+    [[ ! -f "${MM_LOCK_FILE}.meta" ]]
+
+    # Second Menu 2 in the same process must acquire cleanly (no self-lock).
+    simulate_prepare_op
+    [[ "${MM_LOCK_HELD}" == "0" ]]
+
+    # Idempotent release (already-released is safe).
+    mm_release_install_lock
+    mm_release_install_lock
+    [[ "${MM_LOCK_HELD}" == "0" ]]
+
+    # External holder still fails closed.
+    exec {extfd}>"${MM_LOCK_FILE}"
+    flock -n "$extfd"
+    set +e
+    busy_out="$(mm_acquire_install_lock 2>&1)"
+    busy_rc=$?
+    set -e
+    flock -u "$extfd"
+    eval "exec ${extfd}>&-"
+    [[ "$busy_rc" -ne 0 ]]
+    echo "$busy_out" | grep -q "INSTALL_LOCK=BUSY"
+    printf "P2_BEHAVIOR=PASS\n"
+  ' 2>&1
+)"
+P2_RC=$?
+set -e
+if [[ "$P2_RC" -eq 0 ]] && echo "$P2_OUT" | grep -q 'P2_BEHAVIOR=PASS'; then
+  pass "P2 same-process sequential prepare lock + external BUSY"
+else
+  fail "P2 same-process lock lifecycle"
+  echo "$P2_OUT" | tail -n 40
+fi
+
 bash "${ROOT}/scripts/ubuntu-offline-mirror.sh" --help 2>&1 | grep -q 'mirror-manager' \
   && pass "entrypoint mirror-manager" || fail "entrypoint missing"
 bash "${ROOT}/scripts/ubuntu-offline-mirror.sh" --help 2>&1 | grep -qE 'install-standard|install-menu|Mode 2' \
