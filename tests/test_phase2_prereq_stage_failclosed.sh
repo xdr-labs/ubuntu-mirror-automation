@@ -25,6 +25,14 @@ bash -n "$STAGE" && pass "bash -n stage helper" || fail "bash -n stage helper"
 grep -q 'stage_phase2_ubuntu_prerequisites || die' "$STAGE" \
   && pass "stage call is fail-closed (no || true)" \
   || fail "stage still ignores prerequisite failures"
+# Controller publish must follow prerequisite staging (atomic publication).
+python3 - <<'PY' && pass "controller publish after prereq staging" || fail "controller publish before prereq staging"
+from pathlib import Path
+body = Path("client/stage-dp-phase2.sh").read_text()
+idx = body.rfind("stage_main() {")
+body = body[idx:]
+assert body.find("stage_phase2_ubuntu_prerequisites") < body.find("install_bringup_lifecycle_wrapper")
+PY
 grep -q 'EXPECTED_PREREQ_IDENTITY_SHA256' "$STAGE" \
   && pass "stage requires trusted prerequisite identity pin" \
   || fail "stage missing identity pin"

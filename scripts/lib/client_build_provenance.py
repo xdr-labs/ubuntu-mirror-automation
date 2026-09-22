@@ -86,6 +86,7 @@ CATEGORY_PATTERNS = {
         "client/lib/dp-phase2-bringup-lifecycle.sh",
         "client/lib/dp-phase2-ubuntu-prerequisites.sh",
         "client/lib/dp-phase2-time-readiness.sh",
+        "client/lib/dp-phase2-staging-contract.sh",
         "client/lib/dp-phase2-post-bringup-migration.sh",
         "client/lib/dp-phase2-cluster-validation.sh",
     ),

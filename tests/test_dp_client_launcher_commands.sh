@@ -205,7 +205,7 @@ install -m 0755 "${ROOT}/client/stage-dp-phase2.sh" "${CLIENT_ROOT}/stage-dp-pha
 install -m 0755 "${ROOT}/client/bringup_py3_dp_lifecycle.sh" "${CLIENT_ROOT}/bringup_py3_dp_lifecycle.sh"
 for hf in dp-offline-source-product-version.sh dp-phase2-operation-progress.sh \
   dp-phase2-bringup-lifecycle.sh dp-phase2-ubuntu-prerequisites.sh \
-  dp-phase2-time-readiness.sh dp-phase2-post-bringup-migration.sh \
+  dp-phase2-time-readiness.sh dp-phase2-staging-contract.sh dp-phase2-post-bringup-migration.sh \
   dp-phase2-cluster-validation.sh
 do
   install -m 0755 "${ROOT}/client/lib/${hf}" "${CLIENT_ROOT}/lib/${hf}"

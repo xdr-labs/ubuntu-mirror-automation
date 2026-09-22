@@ -18,6 +18,7 @@ export PHASE2_BRINGUP_DIR="${TMP}/lifecycle"
 export PHASE2_BRINGUP_LOG_DEFAULT="${TMP}/bringup.log"
 export PHASE2_BRINGUP_ALLOW_NONROOT=1
 export DP_PHASE2_BRINGUP_LIB_ONLY=1
+export PHASE2_STAGING_CONTRACT_ENV="${TMP}/lifecycle/staging-result.env"
 mkdir -p "$PHASE2_BRINGUP_DIR"
 # shellcheck source=/dev/null
 source "$LIB"
@@ -128,6 +129,14 @@ reset_lifecycle_dir() {
   rm -rf "$PHASE2_BRINGUP_DIR"
   mkdir -p "$PHASE2_BRINGUP_DIR" "$(dirname "$PHASE2_BRINGUP_LOG_DEFAULT")"
   : >"$PHASE2_BRINGUP_LOG_DEFAULT"
+  # Staging PASS contract required before the lifecycle can launch a worker.
+  cat >"$PHASE2_STAGING_CONTRACT_ENV" <<'EOF'
+PHASE2_STAGE_RESULT=PASS
+ARTIFACT_STAGING_RESULT=PASS
+TARGET_DP_VERSION=6.6.0
+PHASE2_STAGING_CONTRACT_PERSISTED_AT=2026-01-01T00:00:00Z
+EOF
+  chmod 0600 "$PHASE2_STAGING_CONTRACT_ENV"
 }
 
 VENDOR="${TMP}/vendor.sh"
@@ -147,6 +156,7 @@ run_wrapper() {
     PHASE2_BRINGUP_MONITOR_SECONDS="${PHASE2_BRINGUP_MONITOR_SECONDS:-1}" \
     PHASE2_BRINGUP_ALLOW_NONROOT=1 \
     PHASE2_PREREQ_STATE="$PREREQ_STATE" \
+    PHASE2_STAGING_CONTRACT_ENV="$PHASE2_STAGING_CONTRACT_ENV" \
     BRINGUP_VENDOR_SCRIPT="${BRINGUP_VENDOR_SCRIPT:-$VENDOR}" \
     P2B_TEST_FAIL_PASSWORD_OWNED_MARKER="${P2B_TEST_FAIL_PASSWORD_OWNED_MARKER:-0}" \
     bash "$WRAPPER" "$@"
@@ -218,6 +228,8 @@ env -u DP_PHASE2_BRINGUP_LIB_ONLY \
   PHASE2_BRINGUP_DIR="$PHASE2_BRINGUP_DIR" \
   PHASE2_BRINGUP_LOG_DEFAULT="$PHASE2_BRINGUP_LOG_DEFAULT" \
   PHASE2_BRINGUP_ALLOW_NONROOT=1 \
+  PHASE2_PREREQ_STATE="$PREREQ_STATE" \
+  PHASE2_STAGING_CONTRACT_ENV="$PHASE2_STAGING_CONTRACT_ENV" \
   BRINGUP_VENDOR_SCRIPT="$VENDOR" \
   bash "$WRAPPER" --worker-password 'handoff-fail-secret' --version 6.6.0 --detach \
   >"${TMP}/handoff.out" 2>&1
@@ -267,9 +279,10 @@ pass "ownership_marker_write_failure_cleanup"
 reset_lifecycle_dir
 MONITOR_SECRET='monitor-ctrlc-secret'
 python3 - "$WRAPPER" "$PHASE2_BRINGUP_DIR" "$PHASE2_BRINGUP_LOG_DEFAULT" \
-  "$VENDOR" "$MONITOR_SECRET" "${TMP}/monitor-pty.out" "$PREREQ_STATE" <<'PY'
+  "$VENDOR" "$MONITOR_SECRET" "${TMP}/monitor-pty.out" "$PREREQ_STATE" \
+  "$PHASE2_STAGING_CONTRACT_ENV" <<'PY'
 import os, pty, select, signal, sys, time
-wrapper, bringup_dir, log_path, vendor, secret, out_path, prereq = sys.argv[1:]
+wrapper, bringup_dir, log_path, vendor, secret, out_path, prereq, staging = sys.argv[1:]
 pid, fd = pty.fork()
 if pid == 0:
     env = os.environ.copy()
@@ -280,6 +293,7 @@ if pid == 0:
     env["PHASE2_BRINGUP_ALLOW_NONROOT"] = "1"
     env["BRINGUP_VENDOR_SCRIPT"] = vendor
     env["PHASE2_PREREQ_STATE"] = prereq
+    env["PHASE2_STAGING_CONTRACT_ENV"] = staging
     os.execve("/bin/bash", ["bash", wrapper, "--version", "6.6.0",
                             "--skip-download", "--worker-password", secret], env)
 buf = b""
@@ -399,6 +413,8 @@ env -u DP_PHASE2_BRINGUP_LIB_ONLY \
   PHASE2_BRINGUP_DIR="$PHASE2_BRINGUP_DIR" \
   PHASE2_BRINGUP_LOG_DEFAULT="$PHASE2_BRINGUP_LOG_DEFAULT" \
   PHASE2_BRINGUP_ALLOW_NONROOT=1 \
+  PHASE2_PREREQ_STATE="$PREREQ_STATE" \
+  PHASE2_STAGING_CONTRACT_ENV="$PHASE2_STAGING_CONTRACT_ENV" \
   BRINGUP_VENDOR_SCRIPT="$VENDOR" \
   bash "$WRAPPER" --worker-password-file "$ext" --version 6.6.0 --detach \
   >"${TMP}/ext-handoff.out" 2>&1
