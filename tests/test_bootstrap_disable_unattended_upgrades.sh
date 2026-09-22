@@ -28,7 +28,7 @@ mkdir -p "$MOCKBIN" "$APT_DIR"
 #   1: apt-daily-upgrade.timer active|inactive|absent
 #   2: apt-daily-upgrade.timer enabled|disabled|absent
 #   3: apt-daily-upgrade.service active|inactive|absent
-#   4: apt-daily-upgrade.service enabled|disabled|absent
+#   4: apt-daily-upgrade.service enabled|disabled|static|absent
 printf 'active\nenabled\ninactive\ndisabled\n' >"$STATE"
 : >"$LOG"
 
@@ -97,10 +97,14 @@ case "$cmd" in
       echo "not-found" >&2
       exit 4
     fi
-    if [[ "$EN" == "enabled" ]]; then
-      echo "enabled"
-      exit 0
-    fi
+    # Match systemd: static/indirect/etc. print the state and exit 0 even though
+    # the unit is not install-enabled / disableable.
+    case "$EN" in
+      enabled|enabled-runtime|linked|linked-runtime|static|indirect|alias)
+        echo "$EN"
+        exit 0
+        ;;
+    esac
     echo "disabled"
     exit 1
     ;;
@@ -120,6 +124,16 @@ case "$cmd" in
       exit 1
     fi
     read_pair "$unit"
+    # Static units cannot become disabled; leave enablement state unchanged
+    # (mirrors Ubuntu 24.04 apt-daily-upgrade.service behavior).
+    if [[ "$EN" == "static" || "$EN" == "indirect" ]]; then
+      echo "disable:${unit}:noop-static" >>"$LOG_FILE"
+      exit 0
+    fi
+    if [[ "${UM_MOCK_DISABLE_STUCK:-0}" == "1" ]]; then
+      echo "disable:${unit}:stuck" >>"$LOG_FILE"
+      exit 0
+    fi
     write_pair "$unit" "$ACT" "disabled"
     echo "disable:${unit}" >>"$LOG_FILE"
     exit 0
@@ -142,6 +156,7 @@ run_disable() {
     UM_BOOTSTRAP_APT_PERIODIC_CONF="$CONF" \
     UM_MOCK_STOP_FAIL="${UM_MOCK_STOP_FAIL:-0}" \
     UM_MOCK_DISABLE_FAIL="${UM_MOCK_DISABLE_FAIL:-0}" \
+    UM_MOCK_DISABLE_STUCK="${UM_MOCK_DISABLE_STUCK:-0}" \
     UM_DRY_RUN="${UM_DRY_RUN:-0}" \
     bash -c '
       set -euo pipefail
@@ -230,6 +245,66 @@ unset UM_MOCK_STOP_FAIL
 [[ "$rc_e" -ne 0 ]] && pass "stop failure non-zero" || fail "stop failure should FAIL"
 echo "$out_e" | grep -q 'UNATTENDED_UPGRADE_DISABLE=FAIL' \
   && pass "DISABLE=FAIL on stop" || fail "DISABLE=FAIL missing on stop"
+
+echo "======== G. Ubuntu 24.04 static apt-daily-upgrade.service ========"
+# Timer enabled/active; service inactive+static (production Noble semantics).
+printf 'active\nenabled\ninactive\nstatic\n' >"$STATE"
+: >"$LOG"
+rm -f "$CONF"
+set +e
+out_g="$(run_disable)"
+rc_g=$?
+set -e
+[[ "$rc_g" -eq 0 ]] && pass "static service PASS" || fail "static service FAIL rc=${rc_g} out=${out_g}"
+echo "$out_g" | grep -q 'UNATTENDED_UPGRADE_DISABLE=PASS' \
+  && pass "static DISABLE=PASS" || fail "static DISABLE"
+echo "$out_g" | grep -q 'UNATTENDED_UPGRADE_UNIT_NON_ENABLEABLE=apt-daily-upgrade.service state=static' \
+  && pass "static noted non-enableable" || fail "static non-enableable note"
+grep -q 'disable:apt-daily-upgrade.timer' "$LOG" && pass "static: timer disabled" || fail "static: timer not disabled"
+grep -q 'disable:apt-daily-upgrade.service' "$LOG" \
+  && fail "static: must not attempt service disable" \
+  || pass "static: no service disable"
+[[ "$(sed -n '2p' "$STATE")" == "disabled" ]] && pass "static: timer left disabled" || fail "static: timer enablement"
+[[ "$(sed -n '4p' "$STATE")" == "static" ]] && pass "static: service remains static" || fail "static: service state changed"
+[[ -f "$CONF" ]] && grep -qE 'APT::Periodic::Unattended-Upgrade[[:space:]]+"0"' "$CONF" \
+  && pass "static: APT conf present" || fail "static: APT conf"
+
+echo "======== G2. static service re-run is idempotent ========"
+: >"$LOG"
+set +e
+out_g2="$(run_disable)"
+rc_g2=$?
+set -e
+[[ "$rc_g2" -eq 0 ]] && pass "static idempotent PASS" || fail "static idempotent FAIL"
+[[ ! -s "$LOG" ]] && pass "static idempotent no systemctl" || fail "static idempotent spurious: $(cat "$LOG")"
+
+echo "======== H. enabled service that cannot be disabled fails closed ========"
+printf 'inactive\ndisabled\ninactive\nenabled\n' >"$STATE"
+: >"$LOG"
+rm -f "$CONF"
+export UM_MOCK_DISABLE_FAIL=1
+set +e
+out_h="$(run_disable)"
+rc_h=$?
+set -e
+unset UM_MOCK_DISABLE_FAIL
+[[ "$rc_h" -ne 0 ]] && pass "disable failure non-zero" || fail "disable failure should FAIL"
+echo "$out_h" | grep -q 'UNATTENDED_UPGRADE_DISABLE=FAIL' \
+  && pass "DISABLE=FAIL on disable" || fail "DISABLE=FAIL missing on disable"
+
+echo "======== I. enabled service stuck enabled after disable fails closed ========"
+printf 'inactive\ndisabled\ninactive\nenabled\n' >"$STATE"
+: >"$LOG"
+rm -f "$CONF"
+export UM_MOCK_DISABLE_STUCK=1
+set +e
+out_i="$(run_disable)"
+rc_i=$?
+set -e
+unset UM_MOCK_DISABLE_STUCK
+[[ "$rc_i" -ne 0 ]] && pass "stuck-enabled non-zero" || fail "stuck-enabled should FAIL"
+echo "$out_i" | grep -q 'still_enabled' \
+  && pass "stuck-enabled still_enabled marker" || fail "stuck-enabled marker"
 
 echo "======== F. function is wired into bootstrap run phases ========"
 grep -q 'um_bootstrap_disable_unattended_upgrades' "${ROOT}/lib/bootstrap.sh" \

@@ -238,12 +238,23 @@ APT::Periodic::Unattended-Upgrade "0";
 EOF
 }
 
+# Enablement states that mean the unit is install-enabled and must be disabled.
+# "static"/"indirect"/etc. also make `systemctl is-enabled` succeed, but those
+# units are not disableable via WantedBy= install config (Ubuntu 24.04
+# apt-daily-upgrade.service is typically static and pulled by its timer).
+um_bootstrap_unit_is_install_enabled() {
+  case "${1:-}" in
+    enabled|enabled-runtime|linked|linked-runtime) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # Stop/disable apt-daily-upgrade timer+service when present. Missing units are
 # treated as already-safe (nothing that can auto-install packages).
 um_bootstrap_disable_apt_daily_upgrade_unit() {
   local unit="$1"
   local was_active=0
-  local was_enabled=0
+  local en_state=""
 
   if um_bootstrap_systemctl cat "$unit" >/dev/null 2>&1; then
     :
@@ -255,9 +266,7 @@ um_bootstrap_disable_apt_daily_upgrade_unit() {
   if um_bootstrap_systemctl is-active --quiet "$unit" 2>/dev/null; then
     was_active=1
   fi
-  if um_bootstrap_systemctl is-enabled "$unit" >/dev/null 2>&1; then
-    was_enabled=1
-  fi
+  en_state="$(um_bootstrap_systemctl is-enabled "$unit" 2>/dev/null || true)"
 
   if [[ "$was_active" -eq 1 ]]; then
     if ! um_bootstrap_systemctl stop "$unit" >/dev/null 2>&1; then
@@ -271,23 +280,27 @@ um_bootstrap_disable_apt_daily_upgrade_unit() {
     um_ok "UNATTENDED_UPGRADE_STOP=PASS unit=${unit}"
   fi
 
-  if [[ "$was_enabled" -eq 1 ]]; then
+  if um_bootstrap_unit_is_install_enabled "$en_state"; then
     if ! um_bootstrap_systemctl disable "$unit" >/dev/null 2>&1; then
       um_error "UNATTENDED_UPGRADE_DISABLE_UNIT=FAIL unit=${unit}"
       um_die "UNATTENDED_UPGRADE_DISABLE=FAIL disable failed for ${unit}"
     fi
-    if um_bootstrap_systemctl is-enabled "$unit" >/dev/null 2>&1; then
-      um_error "UNATTENDED_UPGRADE_DISABLE_UNIT=FAIL still_enabled unit=${unit}"
+    en_state="$(um_bootstrap_systemctl is-enabled "$unit" 2>/dev/null || true)"
+    if um_bootstrap_unit_is_install_enabled "$en_state"; then
+      um_error "UNATTENDED_UPGRADE_DISABLE_UNIT=FAIL still_enabled unit=${unit} state=${en_state}"
       um_die "UNATTENDED_UPGRADE_DISABLE=FAIL ${unit} still enabled after disable"
     fi
     um_ok "UNATTENDED_UPGRADE_DISABLE_UNIT=PASS unit=${unit}"
+  elif [[ -n "$en_state" ]]; then
+    um_info "UNATTENDED_UPGRADE_UNIT_NON_ENABLEABLE=${unit} state=${en_state}"
   fi
 
   if um_bootstrap_systemctl is-active --quiet "$unit" 2>/dev/null; then
     um_die "UNATTENDED_UPGRADE_DISABLE=FAIL ${unit} active"
   fi
-  if um_bootstrap_systemctl is-enabled "$unit" >/dev/null 2>&1; then
-    um_die "UNATTENDED_UPGRADE_DISABLE=FAIL ${unit} enabled"
+  en_state="$(um_bootstrap_systemctl is-enabled "$unit" 2>/dev/null || true)"
+  if um_bootstrap_unit_is_install_enabled "$en_state"; then
+    um_die "UNATTENDED_UPGRADE_DISABLE=FAIL ${unit} enabled state=${en_state}"
   fi
   return 0
 }
