@@ -3116,6 +3116,12 @@ engine_download_and_prepare() {
 
   engine_preflight_host
   mm_acquire_install_lock
+  # Scope the install lock to this Download-and-Prepare operation, not the
+  # Mirror Manager process lifetime. Without this, a successful Menu 2 leaves
+  # MM_LOCK_FD held until GUI EXIT and the next Menu 2 self-locks with BUSY.
+  # RETURN covers normal success/early-return paths; the script EXIT trap remains
+  # the crash/mm_die safety net. Release is idempotent.
+  trap 'mm_release_install_lock; trap - RETURN' RETURN
   # Bind long-running prepare to the config identity observed at start so a
   # concurrent Save cannot publish PREPARED for a stale generation.
   if declare -F mm_wf_set >/dev/null 2>&1; then
