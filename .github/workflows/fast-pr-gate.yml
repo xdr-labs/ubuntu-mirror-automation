@@ -68,6 +68,7 @@ jobs:
           bash tests/test_phase2_staging_bringup_exclusion.sh
           bash tests/test_status_store_concurrent_writers.sh
           bash tests/test_install_lock_metadata_handoff.sh
+          bash tests/test_uom_lock_metadata_handoff.sh
           bash tests/test_publication_mutation_lock.sh
           bash tests/test_http_publication_quiesce.sh
           bash tests/test_audit_p1_publication_followups.sh

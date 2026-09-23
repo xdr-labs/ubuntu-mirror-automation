@@ -90,6 +90,7 @@ TEST_LIST=(
   test_workflow_state_concurrent_writers.sh
   test_status_store_concurrent_writers.sh
   test_install_lock_metadata_handoff.sh
+  test_uom_lock_metadata_handoff.sh
   test_publication_mutation_lock.sh
   test_http_publication_quiesce.sh
   test_audit_p1_publication_followups.sh

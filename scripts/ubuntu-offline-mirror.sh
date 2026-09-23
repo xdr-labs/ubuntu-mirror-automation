@@ -128,6 +128,7 @@ LOCK_COMMAND=""
 LOCK_HOP=""
 LOCK_MODE=""
 LOCK_ACQUIRED_AT=""
+UOM_LOCK_OWNER_TOKEN=""
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -176,6 +177,7 @@ _uom_write_lock_meta() {
     printf 'hop=%s\n' "${LOCK_HOP:-}"
     printf 'hostname=%s\n' "$(hostname 2>/dev/null || printf 'unknown')"
     printf 'lock_mode=%s\n' "${LOCK_MODE:-STANDALONE}"
+    printf 'owner_token=%s\n' "${UOM_LOCK_OWNER_TOKEN:-}"
   } >"$tmp"
   mv -f "$tmp" "$meta"
 }
@@ -191,16 +193,30 @@ release_global_lock() {
   if [[ "${LOCK_HELD:-0}" != "1" ]] && [[ -z "${LOCK_FD:-}" ]]; then
     return 0
   fi
-  local meta
+  local meta meta_token=""
   meta="$(_uom_lock_meta_path)"
+  # Delete metadata only while this process still holds the flock, and only
+  # when the owner token matches. Otherwise: unlock → successor writes meta →
+  # this process removes the new owner's diagnostics.
+  if [[ "${LOCK_HELD:-0}" == "1" && -n "${LOCK_FD:-}" && -n "${UOM_LOCK_OWNER_TOKEN:-}" && -f "$meta" ]]; then
+    meta_token="$(_uom_read_lock_meta_field owner_token || true)"
+    if [[ "$meta_token" == "$UOM_LOCK_OWNER_TOKEN" ]]; then
+      rm -f "$meta" 2>/dev/null || true
+    fi
+  fi
   if [[ -n "${LOCK_FD:-}" ]]; then
     flock -u "$LOCK_FD" 2>/dev/null || true
     eval "exec ${LOCK_FD}>&-" 2>/dev/null || true
     LOCK_FD=""
   fi
   LOCK_HELD=0
+  UOM_LOCK_OWNER_TOKEN=""
   publication_lock_release
-  rm -f "$meta" 2>/dev/null || true
+  # Test seam: runs only after both locks are released, and must not delete
+  # metadata. Production does not define this function.
+  if declare -F uom_lock_release_after_unlock_hook >/dev/null 2>&1; then
+    uom_lock_release_after_unlock_hook
+  fi
   info "LOCK_RELEASED=PASS"
 }
 
@@ -265,6 +281,7 @@ acquire_global_lock_once() {
   LOCK_HOP="$hop"
   LOCK_MODE="$mode"
   LOCK_ACQUIRED_AT="$(iso_now)"
+  UOM_LOCK_OWNER_TOKEN="$$:$(date +%s%N)"
   _uom_write_lock_meta
   ok "LOCK_ACQUIRED=PASS LOCK_MODE=${LOCK_MODE} command=${cmd}${hop:+ hop=${hop}}"
 }
@@ -2704,4 +2721,6 @@ main() {
   esac
 }
 
-main "$@"
+if [[ "${UOM_SOURCE_ONLY:-0}" != "1" ]]; then
+  main "$@"
+fi
