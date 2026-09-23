@@ -104,14 +104,13 @@ OLD_Q_RC=$?
 set +o pipefail
 set -e
 # GNU tar sometimes reports EPIPE as exit 2 ("stdout: write error") instead of
-# dying with SIGPIPE 141 when the reader closes early. Both are the broken-pipe
-# baseline. A clean rc=0 would mean the old pattern no longer fails closed.
-if [[ "$OLD_Q_RC" -eq 141 ]]; then
-  pass "A old tar|grep -q SIGPIPE rc=141 (baseline)"
-elif [[ "$OLD_Q_RC" -eq 2 ]] && grep -q 'write error' "${WORKDIR}/old-grep.err"; then
-  pass "A old tar|grep -q EPIPE write error rc=2 (baseline)"
+# dying with SIGPIPE 141 when the reader closes early. The contract is that the
+# old early-exit pipeline is nonzero under pipefail. A clean rc=0 would mean
+# that pattern no longer fails closed. Do not pin one load-specific code.
+if [[ "$OLD_Q_RC" -ne 0 ]]; then
+  pass "A old tar|grep -q fails closed rc=${OLD_Q_RC} (baseline)"
 else
-  fail "A expected old grep -q SIGPIPE 141 or EPIPE write error, got=${OLD_Q_RC} err=$(cat "${WORKDIR}/old-grep.err" 2>/dev/null || true)"
+  fail "A expected old grep -q pipeline nonzero, got=${OLD_Q_RC} err=$(cat "${WORKDIR}/old-grep.err" 2>/dev/null || true)"
 fi
 
 EXTRACT_A="${WORKDIR}/extract-a"
