@@ -104,6 +104,8 @@ engine_rebuild_publish_local_client_set() {
       CLIENT_FINALIZATION_EVIDENCE_LOG="$evidence_log" \
       MM_CONFIG_DIR="${MM_CONFIG_DIR:-}" \
       MM_WORKFLOW_FILE="${MM_WORKFLOW_FILE:-}" \
+      MM_LOCK_FILE="${MM_LOCK_FILE:-}" \
+      MM_PUBLICATION_LOCK_HELD_BY_PARENT=1 \
       CONTENT_SOURCE=local-fs \
       SKIP_HTTP_VERIFY="$skip_http" \
       bash "$rebuild" 2>&1
@@ -2114,39 +2116,72 @@ engine_assess_phase2_final() {
 }
 
 engine_disable_http_and_readiness() {
-  # Live HTTP must not keep serving a generation Menu 2 is about to replace.
-  # Quiesce first (unavailable service), then record disabled state.
-  engine_quiesce_live_http_publication
-  mm_status_set HTTP_DISTRIBUTION DISABLED
-  mm_state_set HTTP_DISTRIBUTION_READY NO
-  mm_status_set HTTP_CONFIGURATION_READY FAIL
-  mm_status_set UPGRADE_READINESS FAIL
-  mm_status_set READINESS_RESULT ""
-  mm_status_set READINESS_ARTIFACT_FINGERPRINT ""
+  # Quiesce must succeed and be verified before any disabled/quiesced mark.
+  # A failed nginx stop must not look like maintenance completed.
+  if ! engine_quiesce_live_http_publication; then
+    mm_error "HTTP_QUIESCE=FAIL publication_state_unchanged=YES"
+    return 1
+  fi
+  mm_status_set HTTP_DISTRIBUTION DISABLED || return 1
+  mm_state_set HTTP_DISTRIBUTION_READY NO || return 1
+  mm_status_set HTTP_CONFIGURATION_READY FAIL || return 1
+  mm_status_set UPGRADE_READINESS FAIL || return 1
+  mm_status_set READINESS_RESULT "" || return 1
+  mm_status_set READINESS_ARTIFACT_FINGERPRINT "" || return 1
+  return 0
 }
 
-# Stop a live nginx publisher for the mutation window. Hermetic tests record
-# the request instead of calling systemctl. Idempotent.
+# Stop a live nginx publisher before publication mutation.
+# Production and injected MM_SYSTEMCTL_BIN consult the service, not only
+# persisted HTTP_DISTRIBUTION. Hermetic tests without a fake systemctl do not
+# touch the host nginx.
 engine_quiesce_live_http_publication() {
-  local dist
-  dist="$(mm_status_get HTTP_DISTRIBUTION 2>/dev/null || true)"
-  if [[ "$dist" != "ENABLED" && "${MM_HTTP_FORCE_QUIESCE:-0}" != "1" ]]; then
-    return 0
-  fi
-  if [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" ]]; then
+  local sc rc dist
+  if [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" && -z "${MM_SYSTEMCTL_BIN:-}" ]]; then
+    dist="$(mm_status_get HTTP_DISTRIBUTION 2>/dev/null || true)"
+    if [[ "$dist" != "ENABLED" && "${MM_HTTP_FORCE_QUIESCE:-0}" != "1" ]]; then
+      return 0
+    fi
     if [[ -n "${MM_HTTP_QUIESCE_LOG:-}" ]]; then
       printf 'nginx-stop\n' >>"$MM_HTTP_QUIESCE_LOG"
     fi
-    mm_status_set HTTP_PUBLICATION_QUIESCED YES
+    mm_status_set HTTP_PUBLICATION_QUIESCED YES || return 1
     return 0
   fi
-  local sc
   sc="$(engine_systemctl_bin)"
-  if command -v "$sc" >/dev/null 2>&1 && "$sc" is-active --quiet nginx 2>/dev/null; then
-    "$sc" stop nginx || return 1
-    HTTP_NGINX_STOPPED_FOR_MUTATION=1
+  if ! command -v "$sc" >/dev/null 2>&1; then
+    mm_error "HTTP_QUIESCE=FAIL reason=service_state_unknown"
+    return 1
   fi
-  mm_status_set HTTP_PUBLICATION_QUIESCED YES
+  # Do not toggle global errexit. Menu 2 runs under set +e in the GUI and
+  # relies on the explicit failure check around this helper.
+  rc=0
+  "$sc" is-active --quiet nginx || rc=$?
+  if [[ "$rc" -ne 0 && "$rc" -ne 3 && "$rc" -ne 4 ]]; then
+    mm_error "HTTP_QUIESCE=FAIL reason=service_state_unknown rc=${rc}"
+    return 1
+  fi
+  if [[ "$rc" -eq 0 ]]; then
+    if ! "$sc" stop nginx; then
+      mm_error "HTTP_QUIESCE=FAIL reason=nginx_stop_failed"
+      return 1
+    fi
+    rc=0
+    "$sc" is-active --quiet nginx || rc=$?
+    if [[ "$rc" -eq 0 ]]; then
+      mm_error "HTTP_QUIESCE=FAIL reason=nginx_still_active"
+      return 1
+    fi
+    if [[ "$rc" -ne 3 && "$rc" -ne 4 ]]; then
+      mm_error "HTTP_QUIESCE=FAIL reason=service_state_unknown rc=${rc}"
+      return 1
+    fi
+    HTTP_NGINX_STOPPED_FOR_MUTATION=1
+    if [[ -n "${MM_HTTP_QUIESCE_LOG:-}" ]]; then
+      printf 'nginx-stop\n' >>"$MM_HTTP_QUIESCE_LOG"
+    fi
+  fi
+  mm_status_set HTTP_PUBLICATION_QUIESCED YES || return 1
   return 0
 }
 
@@ -2365,7 +2400,7 @@ engine_remove_invalid_phase2_final() {
   local ver="${1:-${TARGET_DP_VERSION:-${PHASE2_TARGET_VERSION}}}"
   local dest
   dest="$(engine_phase2_final_dir "$ver")"
-  engine_disable_http_and_readiness
+  engine_disable_http_and_readiness || mm_die "HTTP_QUIESCE=FAIL"
   mm_info "INVALID_EXISTING_BUNDLE_ACTION=DELETE_BEFORE_REBUILD"
   mm_info "INVALID_FINAL_REMOVED=YES path=${dest}"
   rm -rf "$dest"
@@ -2383,7 +2418,7 @@ engine_release_phase2_final_after_extract() {
   local ver="${1:-${TARGET_DP_VERSION:-${PHASE2_TARGET_VERSION}}}"
   local dest
   dest="$(engine_phase2_final_dir "$ver")"
-  engine_disable_http_and_readiness
+  engine_disable_http_and_readiness || mm_die "HTTP_QUIESCE=FAIL"
   mm_info "PHASE2_EXISTING_FINAL_RELEASED_AFTER_EXTRACT=YES path=${dest}"
   rm -rf "$dest"
   find "${MM_DP_PHASE2_ROOT}" -maxdepth 1 \( -name "${ver}.new.*" -o -name "${ver}.old.*" \) \
@@ -3150,6 +3185,11 @@ engine_download_and_prepare() {
   # RETURN covers normal success/early-return paths; the script EXIT trap remains
   # the crash/mm_die safety net. Release is idempotent.
   trap 'mm_release_install_lock; trap - RETURN' RETURN
+  # Fail closed before any selective / Phase 2 / client mutation while nginx
+  # may already be serving. Persisted status alone is not the liveness signal.
+  if ! engine_disable_http_and_readiness; then
+    mm_die "HTTP_QUIESCE=FAIL"
+  fi
   # Bind long-running prepare to the config identity observed at start so a
   # concurrent Save cannot publish PREPARED for a stale generation.
   if declare -F mm_wf_set >/dev/null 2>&1; then
@@ -3209,7 +3249,7 @@ engine_download_and_prepare() {
       PHASE2_BUNDLE_ACTION=REBUILD
       PHASE2_REBUILD_REQUIRED=YES
       mm_info "PHASE2_EXISTING_INVALID_REASON=${PHASE2_EXISTING_INVALID_REASON:-}"
-      engine_disable_http_and_readiness
+      engine_disable_http_and_readiness || mm_die "HTTP_QUIESCE=FAIL"
       if engine_phase2_existing_final_reusable; then
         # Keep the verified final until payloads are extracted. Do not claim
         # verified_cache_reuse — the source is the existing final bundle.

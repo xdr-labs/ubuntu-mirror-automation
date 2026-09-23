@@ -18,6 +18,19 @@ source "${ROOT}/scripts/lib/client_mirror_gates.sh"
 source "${ROOT}/scripts/lib/local_client_signing.sh"
 # shellcheck source=lib/http_publication_permissions.sh
 source "${ROOT}/scripts/lib/http_publication_permissions.sh"
+# shellcheck source=lib/publication_lock.sh
+source "${ROOT}/scripts/lib/publication_lock.sh"
+
+if [[ "${MM_PUBLICATION_LOCK_PROBE:-0}" == "1" ]]; then
+  if ! publication_lock_acquire; then
+    exit 1
+  fi
+  printf 'PUBLICATION_LOCK_ACQUIRED=YES path=%s\n' "${PUBLICATION_LOCK_PATH}"
+  exit 0
+fi
+if ! publication_lock_acquire; then
+  exit 1
+fi
 
 # Local destructive-path guard (do not source full mirror_manager_common here).
 _rpc_assert_safe_destructive_path() {

@@ -182,6 +182,7 @@ PY
 HTTP_PID=$!
 sleep 0.4
 export DP_PHASE2_SOURCE_BASE="http://127.0.0.1:8765"
+export DP_PHASE2_ALLOW_LEGACY_GENERATION_SYNC=1
 
 # First sync
 if ! bash "${ROOT}/scripts/download-dp-phase2-6.6.0.sh" sync; then

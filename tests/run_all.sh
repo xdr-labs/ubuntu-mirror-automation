@@ -92,6 +92,7 @@ TEST_LIST=(
   test_install_lock_metadata_handoff.sh
   test_publication_mutation_lock.sh
   test_http_publication_quiesce.sh
+  test_audit_p1_publication_followups.sh
   test_phase2_same_version_recovery_default.sh
   test_selective_readiness_content_identity.sh
   test_phase2_prerequisite_archive_safety.sh

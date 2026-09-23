@@ -63,24 +63,17 @@ fi
 eval "exec ${dfd}>&-"
 mm_release_install_lock
 
-# Overlapping client finalizers: two processes cannot both hold the publication lock.
+# Overlapping client finalizer: the real publisher probe must block, not a
+# second direct mm_acquire_install_lock stand-in.
 mm_acquire_install_lock >/dev/null
 set +e
-(
-  export MM_PROJECT_ROOT="$ROOT"
-  export MM_LOCK_FILE
-  export SKIP_MIRROR_HOST_VALIDATE=1
-  export MM_HERMETIC_TEST_MODE=1
-  export MM_SKIP_ROOT_CHECK=1
-  # shellcheck source=/dev/null
-  source "$COMMON"
-  mm_acquire_install_lock
-) >"$TMP/c.out" 2>"$TMP/c.err"
+MM_LOCK_FILE="$MM_LOCK_FILE" MM_PUBLICATION_LOCK_PROBE=1 \
+  bash "${ROOT}/scripts/rebuild-publish-clients.sh" >"$TMP/c.out" 2>"$TMP/c.err"
 CRC=$?
 set -e
-[[ "$CRC" -ne 0 ]] && grep -q 'INSTALL_LOCK=BUSY' "$TMP/c.err" \
-  && pass "overlapping finalizer/mutator blocked" \
-  || fail "overlapping mutator not blocked rc=${CRC}"
+[[ "$CRC" -ne 0 ]] && grep -q 'PUBLICATION_LOCK=BUSY' "$TMP/c.err" \
+  && pass "overlapping client publisher blocked" \
+  || fail "overlapping client publisher not blocked rc=${CRC} err=$(cat "$TMP/c.err")"
 mm_release_install_lock
 
 # Legacy publish order: prerequisite contract before public pointer.
@@ -130,7 +123,7 @@ set +e
 ) >"$TMP/v2.out" 2>"$TMP/v2.err"
 VRC2=$?
 set -e
-[[ "$VRC2" -ne 0 ]] && grep -q 'missing prerequisite contract' "$TMP/v2.out" \
+[[ "$VRC2" -ne 0 ]] && grep -q 'VERIFY=FAIL' "$TMP/v2.out" \
   && pass "verify rejects missing prerequisite contract" \
   || fail "missing contract not rejected rc=${VRC2}"
 

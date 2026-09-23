@@ -156,6 +156,9 @@ error() { log ERROR "$*"; }
 die() { error "$*"; exit 1; }
 ok() { log OK "$*"; }
 
+# shellcheck source=lib/publication_lock.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/publication_lock.sh"
+
 # Global exclusive lock (advisory flock). Exclusivity is the open FD + flock,
 # not the mere presence of LOCK_FILE. Metadata is diagnostic only.
 _uom_lock_meta_path() {
@@ -196,6 +199,7 @@ release_global_lock() {
     LOCK_FD=""
   fi
   LOCK_HELD=0
+  publication_lock_release
   rm -f "$meta" 2>/dev/null || true
   info "LOCK_RELEASED=PASS"
 }
@@ -219,6 +223,17 @@ acquire_global_lock_once() {
     error "LOCK_PATH=${LOCK_FILE}"
     die "Reentrant global lock acquire refused (same process already holds ${LOCK_FILE})"
   fi
+
+  # Mutating selective/publication commands share the Mirror Manager lock.
+  # Read-only verify/status/diagnose stay off that lock so they can run concurrently.
+  case "$cmd" in
+    verify*|status*|diagnose*) ;;
+    *)
+      if ! publication_lock_acquire; then
+        die "PUBLICATION_LOCK=BUSY command=${cmd}"
+      fi
+      ;;
+  esac
 
   mkdir -p "$(dirname "$LOCK_FILE")"
   # Fresh empty varname → bash allocates one new FD; never reuse LOCK_FD here.

@@ -37,6 +37,9 @@ mm_hermetic_escape_permitted() {
   [[ -n "$flag_value" && "$flag_value" == "$expect" ]]
 }
 
+# shellcheck source=publication_lock.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/publication_lock.sh"
+
 # Authoritative Mirror Host IPv4 resolution (single source of truth).
 # shellcheck source=mirror_host_ip.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/mirror_host_ip.sh"
@@ -1616,29 +1619,34 @@ _mm_status_set_unlocked() {
   local f="${MM_STATUS_FILE}"
   local tmp dir old_umask
   dir="$(dirname "$f")"
-  mkdir -p "$dir"
+  mkdir -p "$dir" || return 1
   if [[ ! -f "$f" ]]; then
     old_umask="$(umask)"
     umask 077
-    : >"$f"
+    : >"$f" || { umask "$old_umask"; return 1; }
     umask "$old_umask"
     chmod 600 "$f" 2>/dev/null || true
   fi
-  tmp="$(mktemp "${dir}/.status.XXXXXX")"
+  tmp="$(mktemp "${dir}/.status.XXXXXX")" || return 1
   old_umask="$(umask)"
   umask 077
   if [[ -f "$f" ]] && grep -q "^${key}=" "$f" 2>/dev/null; then
-    awk -F= -v k="$key" -v v="$val" 'BEGIN{done=0} $1==k && !done {print k"="v; done=1; next} {print} END{if(!done) print k"="v}' "$f" >"$tmp"
+    awk -F= -v k="$key" -v v="$val" 'BEGIN{done=0} $1==k && !done {print k"="v; done=1; next} {print} END{if(!done) print k"="v}' "$f" >"$tmp" || {
+      umask "$old_umask"
+      rm -f "$tmp"
+      return 1
+    }
   elif [[ -f "$f" ]]; then
-    cat "$f" >"$tmp"
-    printf '%s=%s\n' "$key" "$val" >>"$tmp"
+    cat "$f" >"$tmp" || { umask "$old_umask"; rm -f "$tmp"; return 1; }
+    printf '%s=%s\n' "$key" "$val" >>"$tmp" || { umask "$old_umask"; rm -f "$tmp"; return 1; }
   else
-    printf '%s=%s\n' "$key" "$val" >"$tmp"
+    printf '%s=%s\n' "$key" "$val" >"$tmp" || { umask "$old_umask"; rm -f "$tmp"; return 1; }
   fi
   umask "$old_umask"
   chmod 600 "$tmp" 2>/dev/null || true
-  mv -f "$tmp" "$f"
+  mv -f "$tmp" "$f" || { rm -f "$tmp"; return 1; }
   chmod 600 "$f" 2>/dev/null || true
+  return 0
 }
 
 mm_status_acquire_lock() {
@@ -1682,14 +1690,18 @@ mm_status_release_lock() {
 mm_status_set() {
   local key="$1"
   local val="$2"
+  local rc=0
   if ! mm_status_acquire_lock; then
     # Fail closed: never apply an unlocked status write under contention/timeout.
     printf 'ERROR: STATUS_LOCK=FAIL path=%s\n' "$(mm_status_lock_file)" >&2
     return 1
   fi
-  _mm_status_set_unlocked "$key" "$val"
+  _mm_status_set_unlocked "$key" "$val" || rc=$?
   mm_status_release_lock
-  return 0
+  if [[ "$rc" -ne 0 ]]; then
+    printf 'ERROR: STATUS_WRITE=FAIL key=%s path=%s\n' "$key" "${MM_STATUS_FILE}" >&2
+  fi
+  return "$rc"
 }
 
 mm_status_get() {
@@ -2231,32 +2243,47 @@ mm_state_set() {
   local val="$2"
   # Hold the status lock across both status and state.env so mm_state_set
   # inherits the same serialization as mm_status_set (no nested flock deadlock).
+  local rc=0
   if ! mm_status_acquire_lock; then
     printf 'ERROR: STATUS_LOCK=FAIL path=%s\n' "$(mm_status_lock_file)" >&2
     return 1
   fi
-  _mm_status_set_unlocked "$key" "$val"
+  if ! _mm_status_set_unlocked "$key" "$val"; then
+    mm_status_release_lock
+    printf 'ERROR: STATUS_WRITE=FAIL key=%s path=%s\n' "$key" "${MM_STATUS_FILE}" >&2
+    return 1
+  fi
   local f="${MM_STATE_DIR:-}/state.env"
   if [[ -n "${MM_STATE_DIR:-}" ]]; then
-    mkdir -p "$MM_STATE_DIR"
-    if [[ -f "$f" ]] && grep -q "^${key}=" "$f" 2>/dev/null; then
+    mkdir -p "$MM_STATE_DIR" || rc=1
+    if [[ "$rc" -eq 0 && -f "$f" ]] && grep -q "^${key}=" "$f" 2>/dev/null; then
       local tmp
-      tmp="$(mktemp "${MM_STATE_DIR}/.state.XXXXXX")"
-      awk -F= -v k="$key" -v v="$val" 'BEGIN{done=0} $1==k && !done {print k"="v; done=1; next} {print} END{if(!done) print k"="v}' "$f" >"$tmp"
-      mv -f "$tmp" "$f"
-    else
-      printf '%s=%s\n' "$key" "$val" >>"$f"
+      tmp="$(mktemp "${MM_STATE_DIR}/.state.XXXXXX")" || rc=1
+      if [[ "$rc" -eq 0 ]]; then
+        awk -F= -v k="$key" -v v="$val" 'BEGIN{done=0} $1==k && !done {print k"="v; done=1; next} {print} END{if(!done) print k"="v}' "$f" >"$tmp" || rc=1
+        if [[ "$rc" -eq 0 ]]; then
+          mv -f "$tmp" "$f" || rc=1
+        else
+          rm -f "$tmp"
+        fi
+      fi
+    elif [[ "$rc" -eq 0 ]]; then
+      printf '%s=%s\n' "$key" "$val" >>"$f" || rc=1
     fi
-    cp -f "$f" "${MM_STATE_DIR}/report.env" 2>/dev/null || true
+    if [[ "$rc" -eq 0 ]]; then
+      cp -f "$f" "${MM_STATE_DIR}/report.env" 2>/dev/null || true
+    fi
   fi
   mm_status_release_lock
-  return 0
+  return "$rc"
 }
 
 mm_acquire_install_lock() {
-  local new_fd
-  mkdir -p "$(dirname "$MM_LOCK_FILE")"
-  exec {new_fd}>"$MM_LOCK_FILE"
+  local new_fd lock
+  lock="$(publication_lock_path)"
+  MM_LOCK_FILE="$lock"
+  mkdir -p "$(dirname "$MM_LOCK_FILE")" || mm_die "INSTALL_LOCK=FAIL path=${MM_LOCK_FILE}"
+  exec {new_fd}>"$MM_LOCK_FILE" || mm_die "INSTALL_LOCK=FAIL path=${MM_LOCK_FILE}"
   if ! flock -n "$new_fd"; then
     eval "exec ${new_fd}>&-" 2>/dev/null || true
     mm_die "INSTALL_LOCK=BUSY path=${MM_LOCK_FILE}"
@@ -2265,7 +2292,8 @@ mm_acquire_install_lock() {
   MM_LOCK_HELD=1
   MM_LOCK_OWNER_TOKEN="$$:${MM_RUN_ID:-nouuid}:$(mm_ts)"
   printf 'pid=%s\nrun_id=%s\nstarted_at=%s\nowner_token=%s\n' \
-    "$$" "${MM_RUN_ID:-}" "$(mm_ts)" "$MM_LOCK_OWNER_TOKEN" >"${MM_LOCK_FILE}.meta"
+    "$$" "${MM_RUN_ID:-}" "$(mm_ts)" "$MM_LOCK_OWNER_TOKEN" >"${MM_LOCK_FILE}.meta" \
+    || mm_die "INSTALL_LOCK=FAIL reason=metadata_write path=${MM_LOCK_FILE}"
   mm_ok "INSTALL_LOCK=PASS"
 }
 

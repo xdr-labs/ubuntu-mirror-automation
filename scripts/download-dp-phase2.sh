@@ -225,7 +225,7 @@ maybe_skip_identical_current() {
   local cur_files="${current}/files"
   [[ -d "$cur_files" ]] || return 1
 
-  local f
+  local f rel
   for f in "${DP_PHASE2_REQUIRED_FILES[@]}"; do
     [[ -f "${cur_files}/${f}" && -f "${files_dir}/${f}" ]] || return 1
     local a b
@@ -233,6 +233,12 @@ maybe_skip_identical_current() {
     b="$(sha256sum "${files_dir}/${f}" | awk '{print $1}')"
     [[ "$a" == "$b" ]] || return 1
   done
+  rel="$(readlink -f "$current" 2>/dev/null || true)"
+  [[ -n "$rel" && -d "$rel" ]] || return 1
+  # Identical bundle bytes are not enough: the published generation must still
+  # carry a valid prerequisite contract. Do not die; caller rebuilds.
+  local py="${SCRIPT_DIR}/lib/phase2_ubuntu_prerequisites.py"
+  python3 "$py" validate-state --dest "${rel}/extras" >/dev/null 2>&1 || return 1
   return 0
 }
 
@@ -348,15 +354,11 @@ verify_release_bundle() {
 
 verify_release_prereq_contract() {
   local release_dir="$1"
-  local state="${release_dir}/extras/phase2-ubuntu-prerequisites.state"
-  [[ -f "$state" ]] || dp2_die "VERIFY=FAIL missing prerequisite contract path=${state}"
-  grep -q '^PHASE2_PREREQ_BUILD=PASS$' "$state" \
-    || dp2_die "VERIFY=FAIL prerequisite build not PASS"
-  local target
-  target="$(grep -E '^TARGET_DP_VERSION=' "$state" | head -1 | cut -d= -f2- || true)"
-  if [[ -n "$target" && "$target" != "$DP_PHASE2_VERSION" ]]; then
-    dp2_die "VERIFY=FAIL prerequisite target=${target} want=${DP_PHASE2_VERSION}"
-  fi
+  local extras="${release_dir}/extras"
+  local py="${SCRIPT_DIR}/lib/phase2_ubuntu_prerequisites.py"
+  [[ -f "$py" ]] || dp2_die "VERIFY=FAIL prerequisite validator missing"
+  python3 "$py" validate-state --dest "$extras" \
+    || dp2_die "VERIFY=FAIL prerequisite contract invalid extras=${extras}"
 }
 
 verify_release_dir() {
@@ -367,6 +369,11 @@ verify_release_dir() {
 }
 
 cmd_sync() {
+  # Generation/current layout is not the Mirror Manager flat publication.
+  # Production operators must not publish it. Hermetic bundle tests opt in.
+  if [[ "${DP_PHASE2_ALLOW_LEGACY_GENERATION_SYNC:-0}" != "1" ]]; then
+    dp2_die "LEGACY_SYNC_DP_PHASE2=DISABLED reason=obsolete_generation_layout use=Mirror Manager flat dp-phase2/<ver>/dp_bundle_<ver>-current.tar"
+  fi
   dp2_require_root
   dp2_require_cmds curl tar sha1sum sha256sum awk flock stat df readlink mv ln find mkdir chmod
   acquire_dp2_lock
