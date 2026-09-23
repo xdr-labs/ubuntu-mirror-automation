@@ -57,7 +57,7 @@ DP_PHASE2_VERSION="${DP_PHASE2_VERSION:-${DP_PHASE2_VERSION_DEFAULT}}"
 DP_PHASE2_ROOT="${DP_PHASE2_ROOT:-/var/spool/apt-mirror/dp-phase2}"
 DP_PHASE2_MIN_FREE_GIB="${DP_PHASE2_MIN_FREE_GIB:-70}"
 DP_PHASE2_KEEP_PREVIOUS="${DP_PHASE2_KEEP_PREVIOUS:-true}"
-DP_PHASE2_LOCK_FILE="${DP_PHASE2_LOCK_FILE:-/run/ubuntu-mirror-dp-phase2.lock}"
+DP_PHASE2_LOCK_FILE="${DP_PHASE2_LOCK_FILE:-/run/ubuntu-mirror-publication.lock}"
 UOM_LOCK_FILE="${UOM_LOCK_FILE:-/run/ubuntu-offline-mirror.lock}"
 DP_PHASE2_LOG_FILE="${DP_PHASE2_LOG_FILE:-/var/log/ubuntu-mirror/dp-phase2-sync.log}"
 CURL_CONNECT_TIMEOUT="${CURL_CONNECT_TIMEOUT:-30}"
@@ -266,6 +266,24 @@ publish_atomic() {
     fi
   fi
 
+  # Flat nginx extras path tracks this generation. Install it before the
+  # current pointer moves so a published generation is never missing its
+  # prerequisite contract, and readers of current still see the previous
+  # generation until both the contract and the pointer are in place.
+  local flat_extras="${version_root}/extras"
+  local staged_extras="${dest}/extras"
+  if [[ -d "$staged_extras" ]]; then
+    rm -rf "${flat_extras}.new"
+    mkdir -p "${flat_extras}.new"
+    cp -a "${staged_extras}/." "${flat_extras}.new/"
+    if [[ -d "$flat_extras" && ! -L "$flat_extras" ]]; then
+      rm -rf "${flat_extras}.prev"
+      mv -f "$flat_extras" "${flat_extras}.prev"
+    fi
+    mv -f "${flat_extras}.new" "$flat_extras"
+    rm -rf "${flat_extras}.prev"
+  fi
+
   dp2_atomic_symlink "releases/${run_id}" "$current"
   dp2_ok "ATOMIC_PUBLISH=PASS current=releases/${run_id}"
 
@@ -303,7 +321,7 @@ publish_atomic() {
   fi
 }
 
-verify_release_dir() {
+verify_release_bundle() {
   local release_dir="$1"
   local files_dir="${release_dir}/files"
   [[ -d "$files_dir" ]] || dp2_die "VERIFY=FAIL missing files/"
@@ -326,6 +344,25 @@ verify_release_dir() {
   env_target="$(grep -E '^(TARGET_DP_VERSION|PHASE2_ARTIFACT_VERSION|DP_PHASE2_VERSION)=' "${release_dir}/release.env" | head -1 | cut -d= -f2-)"
   [[ "$env_target" == "$DP_PHASE2_VERSION" ]] || dp2_die "VERIFY=FAIL release.env version=${env_target} want=${DP_PHASE2_VERSION}"
   dp2_verify_manifest_sha256 "$release_dir"
+}
+
+verify_release_prereq_contract() {
+  local release_dir="$1"
+  local state="${release_dir}/extras/phase2-ubuntu-prerequisites.state"
+  [[ -f "$state" ]] || dp2_die "VERIFY=FAIL missing prerequisite contract path=${state}"
+  grep -q '^PHASE2_PREREQ_BUILD=PASS$' "$state" \
+    || dp2_die "VERIFY=FAIL prerequisite build not PASS"
+  local target
+  target="$(grep -E '^TARGET_DP_VERSION=' "$state" | head -1 | cut -d= -f2- || true)"
+  if [[ -n "$target" && "$target" != "$DP_PHASE2_VERSION" ]]; then
+    dp2_die "VERIFY=FAIL prerequisite target=${target} want=${DP_PHASE2_VERSION}"
+  fi
+}
+
+verify_release_dir() {
+  local release_dir="$1"
+  verify_release_bundle "$release_dir"
+  verify_release_prereq_contract "$release_dir"
   dp2_ok "VERIFY_RELEASE=PASS path=${release_dir}"
 }
 
@@ -409,19 +446,27 @@ cmd_sync() {
 
   write_release_env "$STAGING_DIR" "$run_id" "$bundle_name" "$list_count"
   dp2_write_manifest_sha256 "$STAGING_DIR"
-  verify_release_dir "$STAGING_DIR"
+  # Bundle checks only — prerequisite contract is not present yet.
+  verify_release_bundle "$STAGING_DIR"
 
-  publish_atomic "$STAGING_DIR" "$run_id"
-  verify_release_dir "$(readlink -f "$(dp2_current_dir)")"
-
-  # Separate prerequisite artifact; never mutates the 9-file ACPS bundle.
+  # Prerequisite publication is part of the same unpublished generation.
+  # The public current pointer must not move until this contract exists.
+  if [[ "${DP_PHASE2_TEST_INTERRUPT_BEFORE_PREREQ:-0}" == "1" ]]; then
+    dp2_die "INTERRUPT_BEFORE_PREREQ=YES staging=${STAGING_DIR}"
+  fi
   if [[ -f "${SCRIPT_DIR}/prepare-phase2-ubuntu-prerequisites.sh" ]]; then
+    PHASE2_PREREQ_OUT_DIR="${STAGING_DIR}/extras" \
+    PHASE2_PREREQ_ACPS_COMMON="${STAGING_DIR}/files/aelladeb_py3_common.tar.gz" \
     DP_PHASE2_ROOT="$DP_PHASE2_ROOT" \
       bash "${SCRIPT_DIR}/prepare-phase2-ubuntu-prerequisites.sh" "$DP_PHASE2_VERSION" \
-      || dp2_die "PHASE2_PREREQ=FAIL (Download and Prepare cannot continue)"
+      || dp2_die "PHASE2_PREREQ=FAIL (publication not updated)"
   else
     dp2_die "PHASE2_PREREQ=FAIL reason=prepare_script_missing"
   fi
+  verify_release_prereq_contract "$STAGING_DIR"
+
+  publish_atomic "$STAGING_DIR" "$run_id"
+  verify_release_dir "$(readlink -f "$(dp2_current_dir)")"
 
   dp2_ok "SYNC_RESULT=PASS run_id=${run_id} bundle=${bundle_name} stable=${stable}"
   printf 'DP_PHASE2_SYNC_RESULT=PASS\n'
@@ -556,5 +601,9 @@ main() {
     *) usage; exit 1 ;;
   esac
 }
+
+if [[ "${DP_PHASE2_LIB_ONLY:-0}" == "1" ]]; then
+  return 0 2>/dev/null || exit 0
+fi
 
 main "$@"

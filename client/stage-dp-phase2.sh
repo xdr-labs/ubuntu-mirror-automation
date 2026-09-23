@@ -111,6 +111,8 @@ source "${_STAGE_LIB_DIR}/dp-offline-source-product-version.sh"
 source "${_STAGE_LIB_DIR}/dp-phase2-operation-progress.sh"
 # shellcheck source=/dev/null
 source "${_STAGE_LIB_DIR}/dp-phase2-post-bringup-migration.sh"
+# shellcheck source=/dev/null
+source "${_STAGE_LIB_DIR}/dp-phase2-bringup-lifecycle.sh"
 
 readonly MIN_SUPPORTED_SOURCE_DP_VERSION="6.2.0"
 # No built-in mirror address: the address is site-specific and a stale default
@@ -1543,6 +1545,12 @@ stage_main() {
   # Extract verified bundle directly into the candidate artifact tree (NEW_ART).
   # Live ARTIFACT_DIR stays intact until atomic rename.
   ARTIFACT_MUTATION_ATTEMPTED="YES"
+  # Mutual exclusion with a live bringup worker (and start-handoff parent):
+  # fail closed before invalidating the contract or mutating artifacts/controller.
+  if ! p2b_assert_staging_may_mutate_artifacts; then
+    ARTIFACT_MUTATION_ATTEMPTED="NO"
+    die "Phase 2 staging blocked: live bringup worker or lifecycle lock holds artifact trees (re-run staging after bringup completes or clears)"
+  fi
   # Invalidate prior PASS so bringup cannot launch against an in-progress/partial
   # restage. Retract live controller until this run publishes after success.
   if declare -F dp_phase2_invalidate_staging_contract >/dev/null 2>&1; then

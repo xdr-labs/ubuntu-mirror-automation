@@ -88,6 +88,10 @@ TEST_LIST=(
   test_download_fingerprint_fail_closed.sh
   test_os_core_safe_tar_extract.py
   test_workflow_state_concurrent_writers.sh
+  test_status_store_concurrent_writers.sh
+  test_install_lock_metadata_handoff.sh
+  test_publication_mutation_lock.sh
+  test_http_publication_quiesce.sh
   test_phase2_same_version_recovery_default.sh
   test_selective_readiness_content_identity.sh
   test_phase2_prerequisite_archive_safety.sh
@@ -137,6 +141,7 @@ TEST_LIST=(
   test_phase2_prereq_dpkg_rc.sh
   test_phase2_prereq_stage_failclosed.sh
   test_phase2_staging_atomic_bringup_gate.sh
+  test_phase2_staging_bringup_exclusion.sh
   test_phase2_prereq_identity_trust.sh
   test_phase2_prereq_worker_contract.sh
   test_phase2_prereq_version_aware.sh

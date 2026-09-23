@@ -24,9 +24,12 @@ bash -n "$WRAP" && pass "bash -n lifecycle wrapper" || fail "bash -n lifecycle w
 bash -n "$CONTRACT" && pass "bash -n staging contract" || fail "bash -n staging contract"
 
 # Ordering: runnable controller publish must follow prerequisite staging.
-python3 - <<'PY' && pass "publish ordering after prerequisites" || fail "publish ordering after prerequisites"
+# Use ROOT-absolute paths so this check works under tests/run_all.sh (cwd=tests/).
+python3 - "$ROOT" <<'PY' && pass "publish ordering after prerequisites" || fail "publish ordering after prerequisites"
+import sys
 from pathlib import Path
-text = Path("client/stage-dp-phase2.sh").read_text()
+root = Path(sys.argv[1])
+text = (root / "client/stage-dp-phase2.sh").read_text()
 # Restrict to stage_main body (after function definitions).
 idx = text.rfind("stage_main() {")
 body = text[idx:]
@@ -41,7 +44,7 @@ assert final > 0 and final < publish, "controller publish still before FINAL_VAL
 assert "dp_phase2_invalidate_staging_contract" in body
 assert "retract_live_bringup_controller" in body
 assert "dp_phase2_persist_staging_contract" in body
-assert "dp_phase2_bringup_staging_gate" in Path("client/bringup_py3_dp_lifecycle.sh").read_text()
+assert "dp_phase2_bringup_staging_gate" in (root / "client/bringup_py3_dp_lifecycle.sh").read_text()
 PY
 
 grep -q 'dp_phase2_bringup_staging_gate' "$WRAP" \

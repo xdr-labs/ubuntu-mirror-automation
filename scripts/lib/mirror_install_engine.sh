@@ -2114,12 +2114,40 @@ engine_assess_phase2_final() {
 }
 
 engine_disable_http_and_readiness() {
+  # Live HTTP must not keep serving a generation Menu 2 is about to replace.
+  # Quiesce first (unavailable service), then record disabled state.
+  engine_quiesce_live_http_publication
   mm_status_set HTTP_DISTRIBUTION DISABLED
   mm_state_set HTTP_DISTRIBUTION_READY NO
   mm_status_set HTTP_CONFIGURATION_READY FAIL
   mm_status_set UPGRADE_READINESS FAIL
   mm_status_set READINESS_RESULT ""
   mm_status_set READINESS_ARTIFACT_FINGERPRINT ""
+}
+
+# Stop a live nginx publisher for the mutation window. Hermetic tests record
+# the request instead of calling systemctl. Idempotent.
+engine_quiesce_live_http_publication() {
+  local dist
+  dist="$(mm_status_get HTTP_DISTRIBUTION 2>/dev/null || true)"
+  if [[ "$dist" != "ENABLED" && "${MM_HTTP_FORCE_QUIESCE:-0}" != "1" ]]; then
+    return 0
+  fi
+  if [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" ]]; then
+    if [[ -n "${MM_HTTP_QUIESCE_LOG:-}" ]]; then
+      printf 'nginx-stop\n' >>"$MM_HTTP_QUIESCE_LOG"
+    fi
+    mm_status_set HTTP_PUBLICATION_QUIESCED YES
+    return 0
+  fi
+  local sc
+  sc="$(engine_systemctl_bin)"
+  if command -v "$sc" >/dev/null 2>&1 && "$sc" is-active --quiet nginx 2>/dev/null; then
+    "$sc" stop nginx || return 1
+    HTTP_NGINX_STOPPED_FOR_MUTATION=1
+  fi
+  mm_status_set HTTP_PUBLICATION_QUIESCED YES
+  return 0
 }
 
 # True when a PID from a .new.<pid> / .old.<pid> name still appears alive.
@@ -3449,6 +3477,12 @@ engine_nginx_bin() { printf '%s\n' "${MM_NGINX_BIN:-nginx}"; }
 engine_systemctl_bin() { printf '%s\n' "${MM_SYSTEMCTL_BIN:-systemctl}"; }
 
 engine_enable_http_distribution() {
+  # Serialize with Menu 2 / legacy sync / other publication mutators.
+  # Skip when this process already holds the per-operation install lock.
+  if [[ "${MM_LOCK_HELD:-0}" != "1" ]]; then
+    mm_acquire_install_lock
+    trap 'mm_release_install_lock; trap - RETURN' RETURN
+  fi
   # Real nginx enable: layout check → permission closure → site install →
   # nginx -t → enable/reload → local + advertised HTTP smoke.
   # On any failure: restore previous site config/service state; preserve artifacts.
