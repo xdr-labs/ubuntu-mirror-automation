@@ -50,6 +50,11 @@ export ACPS_USERNAME=testuser
 export ACPS_PASSWORD=testpass
 export OS_CORE_R2_URL='http://127.0.0.1:9/os-core.tar'
 export PREPARATION_MODE=FULL
+# Unit fixture: Menu 2 quiesce must not stop the host nginx. Production still
+# consults systemctl unless both hermetic mode is set and no fake systemctl
+# is injected.
+export MM_HERMETIC_TEST_MODE=1
+unset MM_SYSTEMCTL_BIN || true
 
 mkdir -p "$MM_CLIENT_ROOT" "$MM_CACHE_ROOT" "$MM_DP_PHASE2_ROOT" \
   "$MM_LOG_DIR" "$MM_STATE_ROOT" "$MM_CONFIG_DIR" "$MM_SELECTIVE_ROOT"
