@@ -33,9 +33,33 @@ publication_lock_path() {
   printf '%s\n' "$lock"
 }
 
+# True when fd is an open handle on the publication lock file and this
+# process already holds its exclusive flock. A bare environment boolean is
+# not ownership.
+_publication_lock_fd_holds_ours() {
+  local fd="$1"
+  local expected path
+  [[ "$fd" =~ ^[0-9]+$ ]] || return 1
+  [[ -e "/proc/self/fd/${fd}" ]] || return 1
+  expected="$(publication_lock_path)"
+  expected="$(readlink -f "$expected" 2>/dev/null || printf '%s' "$expected")"
+  path="$(readlink -f "/proc/self/fd/${fd}" 2>/dev/null || true)"
+  [[ -n "$path" && "$path" == "$expected" ]] || return 1
+  flock -n "$fd"
+}
+
 publication_lock_acquire() {
-  local lock new_fd
-  if [[ "${MM_PUBLICATION_LOCK_HELD_BY_PARENT:-0}" == "1" || "${PUBLICATION_LOCK_HELD:-0}" == "1" ]]; then
+  local lock new_fd inherited=""
+  if [[ -n "${PUBLICATION_LOCK_FD:-}" ]] && _publication_lock_fd_holds_ours "$PUBLICATION_LOCK_FD"; then
+    PUBLICATION_LOCK_HELD=1
+    PUBLICATION_LOCK_PATH="$(readlink -f "/proc/self/fd/${PUBLICATION_LOCK_FD}" 2>/dev/null || true)"
+    return 0
+  fi
+  inherited="${MM_PUBLICATION_LOCK_INHERITED_FD:-}"
+  if [[ -n "$inherited" ]] && _publication_lock_fd_holds_ours "$inherited"; then
+    PUBLICATION_LOCK_FD="$inherited"
+    PUBLICATION_LOCK_HELD=1
+    PUBLICATION_LOCK_PATH="$(readlink -f "/proc/self/fd/${PUBLICATION_LOCK_FD}" 2>/dev/null || true)"
     return 0
   fi
   lock="$(publication_lock_path)"

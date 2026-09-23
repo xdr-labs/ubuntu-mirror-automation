@@ -328,6 +328,114 @@ if [[ "${EUID}" -ne 0 ]]; then
   fi
 fi
 
+# --- rc=4 / unknown nginx state must not count as quiesced ---
+cat >"$TMP/systemctl-rc4" <<'EOS'
+#!/bin/bash
+if [[ "$1" == "is-active" ]]; then
+  exit 4
+fi
+exit 0
+EOS
+chmod 0700 "$TMP/systemctl-rc4"
+export MM_SYSTEMCTL_BIN="$TMP/systemctl-rc4"
+printf 'HTTP_DISTRIBUTION=ENABLED\nUPGRADE_READINESS=PASS\nHTTP_PUBLICATION_QUIESCED=NO\n' >"$MM_STATUS_FILE"
+set +e
+engine_quiesce_live_http_publication >"$TMP/rc4.out" 2>"$TMP/rc4.err"
+RC4=$?
+set -e
+unset MM_SYSTEMCTL_BIN
+[[ "$RC4" -ne 0 ]] && grep -q 'service_state_unknown rc=4' "$TMP/rc4.err" \
+  && [[ "$(mm_status_get HTTP_PUBLICATION_QUIESCED)" != "YES" ]] \
+  && pass "rc=4 unknown service state fails closed" \
+  || fail "rc=4 accepted rc=${RC4} quiesced=$(mm_status_get HTTP_PUBLICATION_QUIESCED) err=$(cat "$TMP/rc4.err")"
+
+# --- single env flags must not bypass production behavior ---
+set +e
+MM_HERMETIC_TEST_MODE=0 UOM_SOURCE_ONLY=1 \
+  bash "${ROOT}/scripts/ubuntu-offline-mirror.sh" definitely-not-a-command \
+  >"$TMP/uom-alone.out" 2>"$TMP/uom-alone.err"
+UOM_ALONE_RC=$?
+MM_HERMETIC_TEST_MODE=1 UOM_SOURCE_ONLY=1 \
+  bash "${ROOT}/scripts/ubuntu-offline-mirror.sh" definitely-not-a-command \
+  >"$TMP/uom-both.out" 2>"$TMP/uom-both.err"
+UOM_BOTH_RC=$?
+set -e
+[[ "$UOM_ALONE_RC" -ne 0 ]] && grep -q 'Unknown command' "$TMP/uom-alone.err" \
+  && pass "UOM_SOURCE_ONLY alone still runs main" \
+  || fail "UOM_SOURCE_ONLY alone rc=${UOM_ALONE_RC} err=$(cat "$TMP/uom-alone.err")"
+[[ "$UOM_BOTH_RC" -eq 0 ]] && pass "UOM_SOURCE_ONLY requires hermetic mode" \
+  || fail "dual-gated UOM_SOURCE_ONLY rc=${UOM_BOTH_RC}"
+
+set +e
+MM_HERMETIC_TEST_MODE=0 MM_PUBLICATION_LOCK_PROBE=1 \
+  MM_LOCK_FILE="$TMP/probe.lock" \
+  BASE_PATH="$TMP/probe-base" CLIENT_HTTP_ROOT="$TMP/probe-not-client" \
+  bash "${ROOT}/scripts/rebuild-publish-clients.sh" \
+  >"$TMP/probe-alone.out" 2>"$TMP/probe-alone.err"
+PROBE_ALONE_RC=$?
+MM_HERMETIC_TEST_MODE=1 MM_PUBLICATION_LOCK_PROBE=1 \
+  MM_LOCK_FILE="$TMP/probe-ok.lock" \
+  bash "${ROOT}/scripts/rebuild-publish-clients.sh" \
+  >"$TMP/probe-both.out" 2>"$TMP/probe-both.err"
+PROBE_BOTH_RC=$?
+set -e
+[[ "$PROBE_ALONE_RC" -ne 0 ]] && ! grep -q 'PUBLICATION_LOCK_ACQUIRED=YES' "$TMP/probe-alone.out" \
+  && pass "publication lock probe alone is not a no-op" \
+  || fail "probe alone rc=${PROBE_ALONE_RC} out=$(cat "$TMP/probe-alone.out")"
+[[ "$PROBE_BOTH_RC" -eq 0 ]] && grep -q 'PUBLICATION_LOCK_ACQUIRED=YES' "$TMP/probe-both.out" \
+  && pass "publication lock probe requires hermetic mode" \
+  || fail "dual-gated probe rc=${PROBE_BOTH_RC} out=$(cat "$TMP/probe-both.out") err=$(cat "$TMP/probe-both.err")"
+
+set +e
+env -u DP_PHASE2_LIB_ONLY \
+  MM_HERMETIC_TEST_MODE=0 DP_PHASE2_ALLOW_LEGACY_GENERATION_SYNC=1 \
+  DP_PHASE2_SKIP_ROOT_CHECK=1 \
+  bash "${ROOT}/scripts/download-dp-phase2.sh" --version 6.6.0 sync \
+  >"$TMP/legacy-alone.out" 2>"$TMP/legacy-alone.err"
+LEGACY_ALONE_RC=$?
+set -e
+[[ "$LEGACY_ALONE_RC" -ne 0 ]] && grep -q 'LEGACY_SYNC_DP_PHASE2=DISABLED' "$TMP/legacy-alone.out" \
+  && pass "legacy sync flag alone stays disabled" \
+  || fail "legacy flag alone rc=${LEGACY_ALONE_RC} out=$(cat "$TMP/legacy-alone.out") err=$(cat "$TMP/legacy-alone.err")"
+
+# --- bare parent-lock boolean is not ownership ---
+LOCK="$TMP/parent-lock"
+export MM_LOCK_FILE="$LOCK"
+# shellcheck source=/dev/null
+source "${ROOT}/scripts/lib/publication_lock.sh"
+publication_lock_acquire
+HELD_FD="${PUBLICATION_LOCK_FD}"
+[[ -n "$HELD_FD" ]] && pass "parent acquired publication lock fd" || fail "parent lock fd missing"
+set +e
+bare_out="$(
+  MM_HERMETIC_TEST_MODE=1 \
+  MM_LOCK_FILE="$LOCK" \
+  MM_PUBLICATION_LOCK_HELD_BY_PARENT=1 \
+  bash -c "set -euo pipefail; exec ${HELD_FD}>&-; source '${ROOT}/scripts/lib/publication_lock.sh'; publication_lock_acquire; echo CHILD_HELD=\${PUBLICATION_LOCK_HELD:-unset}" 2>&1
+)"
+BARE_RC=$?
+set -e
+printf '%s\n' "$bare_out" | grep -q 'PUBLICATION_LOCK=BUSY' \
+  && ! printf '%s\n' "$bare_out" | grep -q 'CHILD_HELD=1' \
+  && [[ "$BARE_RC" -ne 0 ]] \
+  && pass "bare parent boolean cannot claim a held publication lock" \
+  || fail "bare boolean claimed lock rc=${BARE_RC} out=${bare_out}"
+set +e
+inherit_out="$(
+  MM_HERMETIC_TEST_MODE=1 \
+  MM_LOCK_FILE="$LOCK" \
+  MM_PUBLICATION_LOCK_INHERITED_FD="$HELD_FD" \
+  bash -c "set -euo pipefail; source '${ROOT}/scripts/lib/publication_lock.sh'; publication_lock_acquire; echo CHILD_HELD=\${PUBLICATION_LOCK_HELD:-unset}; echo CHILD_FD=\${PUBLICATION_LOCK_FD:-unset}"
+)"
+INHERIT_RC=$?
+set -e
+[[ "$INHERIT_RC" -eq 0 ]] \
+  && printf '%s\n' "$inherit_out" | grep -q "CHILD_FD=${HELD_FD}" \
+  && printf '%s\n' "$inherit_out" | grep -q 'CHILD_HELD=1' \
+  && pass "inherited publication lock fd is accepted" \
+  || fail "inherited fd rejected rc=${INHERIT_RC} out=${inherit_out}"
+publication_lock_release
+
 if [[ "$FAIL" -ne 0 ]]; then
   exit 1
 fi

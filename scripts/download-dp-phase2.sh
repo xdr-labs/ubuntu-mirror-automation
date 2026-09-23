@@ -371,7 +371,7 @@ verify_release_dir() {
 cmd_sync() {
   # Generation/current layout is not the Mirror Manager flat publication.
   # Production operators must not publish it. Hermetic bundle tests opt in.
-  if [[ "${DP_PHASE2_ALLOW_LEGACY_GENERATION_SYNC:-0}" != "1" ]]; then
+  if [[ "${MM_HERMETIC_TEST_MODE:-0}" != "1" || "${DP_PHASE2_ALLOW_LEGACY_GENERATION_SYNC:-0}" != "1" ]]; then
     dp2_die "LEGACY_SYNC_DP_PHASE2=DISABLED reason=obsolete_generation_layout use=Mirror Manager flat dp-phase2/<ver>/dp_bundle_<ver>-current.tar"
   fi
   dp2_require_root

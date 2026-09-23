@@ -21,7 +21,7 @@ source "${ROOT}/scripts/lib/http_publication_permissions.sh"
 # shellcheck source=lib/publication_lock.sh
 source "${ROOT}/scripts/lib/publication_lock.sh"
 
-if [[ "${MM_PUBLICATION_LOCK_PROBE:-0}" == "1" ]]; then
+if [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" && "${MM_PUBLICATION_LOCK_PROBE:-0}" == "1" ]]; then
   if ! publication_lock_acquire; then
     exit 1
   fi

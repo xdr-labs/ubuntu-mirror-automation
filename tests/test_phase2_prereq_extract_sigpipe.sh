@@ -99,13 +99,20 @@ echo "  INFO: large archive match=${MATCH_POS} members=$(tar -tzf "$LARGE" | wc 
 
 set +e
 set -o pipefail
-tar -tzf "$LARGE" | grep -q 'py3-apt-packages.tar.gz$'
+tar -tzf "$LARGE" 2>"${WORKDIR}/old-grep.err" | grep -q 'py3-apt-packages.tar.gz$'
 OLD_Q_RC=$?
 set +o pipefail
 set -e
-[[ "$OLD_Q_RC" -eq 141 ]] \
-  && pass "A old tar|grep -q still SIGPIPE rc=141 (baseline)" \
-  || fail "A expected old grep -q SIGPIPE 141 got=${OLD_Q_RC}"
+# GNU tar sometimes reports EPIPE as exit 2 ("stdout: write error") instead of
+# dying with SIGPIPE 141 when the reader closes early. Both are the broken-pipe
+# baseline. A clean rc=0 would mean the old pattern no longer fails closed.
+if [[ "$OLD_Q_RC" -eq 141 ]]; then
+  pass "A old tar|grep -q SIGPIPE rc=141 (baseline)"
+elif [[ "$OLD_Q_RC" -eq 2 ]] && grep -q 'write error' "${WORKDIR}/old-grep.err"; then
+  pass "A old tar|grep -q EPIPE write error rc=2 (baseline)"
+else
+  fail "A expected old grep -q SIGPIPE 141 or EPIPE write error, got=${OLD_Q_RC} err=$(cat "${WORKDIR}/old-grep.err" 2>/dev/null || true)"
+fi
 
 EXTRACT_A="${WORKDIR}/extract-a"
 set +e

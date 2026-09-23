@@ -2721,6 +2721,8 @@ main() {
   esac
 }
 
-if [[ "${UOM_SOURCE_ONLY:-0}" != "1" ]]; then
+if [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" && "${UOM_SOURCE_ONLY:-0}" == "1" ]]; then
+  :
+else
   main "$@"
 fi

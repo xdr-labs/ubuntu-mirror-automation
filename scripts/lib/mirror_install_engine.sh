@@ -105,7 +105,7 @@ engine_rebuild_publish_local_client_set() {
       MM_CONFIG_DIR="${MM_CONFIG_DIR:-}" \
       MM_WORKFLOW_FILE="${MM_WORKFLOW_FILE:-}" \
       MM_LOCK_FILE="${MM_LOCK_FILE:-}" \
-      MM_PUBLICATION_LOCK_HELD_BY_PARENT=1 \
+      MM_PUBLICATION_LOCK_INHERITED_FD="${MM_LOCK_FD:-}" \
       CONTENT_SOURCE=local-fs \
       SKIP_HTTP_VERIFY="$skip_http" \
       bash "$rebuild" 2>&1
@@ -2157,7 +2157,9 @@ engine_quiesce_live_http_publication() {
   # relies on the explicit failure check around this helper.
   rc=0
   "$sc" is-active --quiet nginx || rc=$?
-  if [[ "$rc" -ne 0 && "$rc" -ne 3 && "$rc" -ne 4 ]]; then
+  # rc=0 active, rc=3 inactive. rc=4 is unknown/no such unit and must not
+  # be treated as a quiesced publisher.
+  if [[ "$rc" -ne 0 && "$rc" -ne 3 ]]; then
     mm_error "HTTP_QUIESCE=FAIL reason=service_state_unknown rc=${rc}"
     return 1
   fi
@@ -2172,7 +2174,7 @@ engine_quiesce_live_http_publication() {
       mm_error "HTTP_QUIESCE=FAIL reason=nginx_still_active"
       return 1
     fi
-    if [[ "$rc" -ne 3 && "$rc" -ne 4 ]]; then
+    if [[ "$rc" -ne 3 ]]; then
       mm_error "HTTP_QUIESCE=FAIL reason=service_state_unknown rc=${rc}"
       return 1
     fi

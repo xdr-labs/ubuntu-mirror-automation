@@ -23,6 +23,7 @@ cleanup() {
 trap cleanup EXIT
 
 source_uom() {
+  export MM_HERMETIC_TEST_MODE=1
   export UOM_SOURCE_ONLY=1
   export LOCK_FILE="${TMP}/uom.lock"
   export LOG_FILE="${TMP}/uom-a.log"
@@ -101,6 +102,7 @@ uom_lock_release_after_unlock_hook() {
 cat >"${TMP}/holder-b.sh" <<EOS
 #!/usr/bin/env bash
 set -euo pipefail
+export MM_HERMETIC_TEST_MODE=1
 export UOM_SOURCE_ONLY=1
 export LOCK_FILE="${LOCK_FILE}"
 export LOG_FILE="${TMP}/uom-b.log"
