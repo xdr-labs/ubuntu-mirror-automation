@@ -25,7 +25,7 @@ if [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" && "${MM_PUBLICATION_LOCK_PROBE:-0}" 
   if ! publication_lock_acquire; then
     exit 1
   fi
-  printf 'PUBLICATION_LOCK_ACQUIRED=YES path=%s\n' "${PUBLICATION_LOCK_PATH}"
+  printf 'PUBLICATION_LOCK_ACQUIRED=YES path=%s fd=%s\n' "${PUBLICATION_LOCK_PATH}" "${PUBLICATION_LOCK_FD}"
   exit 0
 fi
 if ! publication_lock_acquire; then

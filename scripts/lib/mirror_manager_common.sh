@@ -2290,6 +2290,11 @@ mm_acquire_install_lock() {
   fi
   MM_LOCK_FD="$new_fd"
   MM_LOCK_HELD=1
+  # Menu 2's install lock is the publication lock. Record that same descriptor
+  # so client finalization can inherit PUBLICATION_LOCK_FD, not a different FD.
+  PUBLICATION_LOCK_FD="$new_fd"
+  PUBLICATION_LOCK_HELD=1
+  PUBLICATION_LOCK_PATH="$MM_LOCK_FILE"
   MM_LOCK_OWNER_TOKEN="$$:${MM_RUN_ID:-nouuid}:$(mm_ts)"
   printf 'pid=%s\nrun_id=%s\nstarted_at=%s\nowner_token=%s\n' \
     "$$" "${MM_RUN_ID:-}" "$(mm_ts)" "$MM_LOCK_OWNER_TOKEN" >"${MM_LOCK_FILE}.meta" \
@@ -2308,6 +2313,11 @@ mm_release_install_lock() {
       if [[ "$meta_token" == "$MM_LOCK_OWNER_TOKEN" ]]; then
         rm -f "$meta" 2>/dev/null || true
       fi
+    fi
+    if [[ "${PUBLICATION_LOCK_FD:-}" == "$MM_LOCK_FD" ]]; then
+      PUBLICATION_LOCK_FD=""
+      PUBLICATION_LOCK_HELD=0
+      PUBLICATION_LOCK_PATH=""
     fi
     flock -u "$MM_LOCK_FD" 2>/dev/null || true
     eval "exec ${MM_LOCK_FD}>&-" 2>/dev/null || true

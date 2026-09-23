@@ -24,6 +24,22 @@ engine_preflight_host() {
   mm_ok "PREFLIGHT_HOST=PASS"
 }
 
+# Descriptor the client finalizer may treat as an already-held publication lock.
+# Prefer PUBLICATION_LOCK_FD. Accept MM_LOCK_FD only when that descriptor is the
+# publication lock file. A bare install-lock FD must not be forwarded: the
+# child would reject it and then self-BUSY on the real publication lock.
+engine_inherited_publication_lock_fd() {
+  if _publication_lock_fd_holds_ours "${PUBLICATION_LOCK_FD:-}"; then
+    printf '%s\n' "$PUBLICATION_LOCK_FD"
+    return 0
+  fi
+  if _publication_lock_fd_holds_ours "${MM_LOCK_FD:-}"; then
+    printf '%s\n' "$MM_LOCK_FD"
+    return 0
+  fi
+  return 0
+}
+
 # Authoritative local client-set rebuild/sign/atomic-publish entrypoint.
 # Used by Download and Prepare finalization, Enable HTTP, and repair paths.
 # Arg1: SKIP_HTTP_VERIFY (default 1 — nginx may still be disabled during prepare).
@@ -105,7 +121,7 @@ engine_rebuild_publish_local_client_set() {
       MM_CONFIG_DIR="${MM_CONFIG_DIR:-}" \
       MM_WORKFLOW_FILE="${MM_WORKFLOW_FILE:-}" \
       MM_LOCK_FILE="${MM_LOCK_FILE:-}" \
-      MM_PUBLICATION_LOCK_INHERITED_FD="${MM_LOCK_FD:-}" \
+      MM_PUBLICATION_LOCK_INHERITED_FD="$(engine_inherited_publication_lock_fd)" \
       CONTENT_SOURCE=local-fs \
       SKIP_HTTP_VERIFY="$skip_http" \
       bash "$rebuild" 2>&1
