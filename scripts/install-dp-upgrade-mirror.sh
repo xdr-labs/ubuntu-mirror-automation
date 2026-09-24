@@ -1390,25 +1390,25 @@ DP Target Version: ${ver}
 Required OS: Ubuntu 24.04
 Mirror Server: ${mirror}
 
+QUICK FLOW
+----------
+0 Precheck → 1 Pause → 2 Power off + snapshot → 3 Prerequisites
+→ 4 Phase 2 staging → 5 Bringup → 6 Resume if needed → 7 Verify health
+
+IMPORTANT
+---------
+• Run all commands on the DP, not on the Mirror Server.
+• Snapshot/checkpoint only while the DP VM/node is powered off.
+• Do not edit the generated commands.
+• If DP ${ver} is already healthy on Ubuntu 24.04, stop.
+
+${cluster_rule}
 NAVIGATION
 ----------
 ↑ / ↓      Move up and down
 Home       Go to the top
 End        Go to the bottom
 
-Run all commands on the DP, not on the Mirror Server.
-Follow the steps in order.
-
-IMPORTANT
----------
-• Run the DP precheck first.
-• Pause DP services before taking the recovery snapshot/checkpoint.
-• Take the snapshot/checkpoint only while the DP VM/node is powered off.
-• This procedure requires Ubuntu 24.04 already.
-• Do not edit the generated commands.
-• If DP ${ver} is already healthy on Ubuntu 24.04, stop.
-
-${cluster_rule}
 Commands are also saved to:
   $(mm_client_commands_file)
 
@@ -1542,25 +1542,26 @@ Upgrade: Ubuntu 16.04 → 24.04
 DP Target Version: ${ver}
 Mirror Server: ${mirror}
 
+QUICK FLOW
+----------
+0 Precheck → 1 Pause → 2 Power off + snapshot → 3–6 OS upgrades
+→ 7 Phase 2 staging → 8 Bringup → 9 Resume if needed → 10 Verify health
+
+IMPORTANT
+---------
+• Run all commands on the DP, not on the Mirror Server.
+• Upgrade only ONE DP node at a time.
+• Snapshot/checkpoint only while the DP VM/node is powered off.
+• Do not resume DP services between OS upgrade hops.
+• Do not edit the generated commands.
+
+${cluster_rule}
 NAVIGATION
 ----------
 ↑ / ↓      Move up and down
 Home       Go to the top
 End        Go to the bottom
 
-Run all commands on the DP, not on the Mirror Server.
-Follow the steps in order.
-
-IMPORTANT
----------
-• Run the DP precheck first.
-• Pause DP services before taking the recovery snapshot/checkpoint.
-• Take the snapshot/checkpoint only while the DP VM/node is powered off.
-• Do not resume DP services between OS upgrade hops.
-• Upgrade only ONE DP node at a time.
-• Do not edit the generated commands.
-
-${cluster_rule}
 Commands are also saved to:
   $(mm_client_commands_file)
 
