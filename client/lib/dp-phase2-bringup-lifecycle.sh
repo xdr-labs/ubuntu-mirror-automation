@@ -743,6 +743,74 @@ p2b_release_lock() {
   fi
 }
 
+# Exclusive artifact-consumer lock: held by a live bringup worker for its entire
+# lifetime, and by Phase 2 staging for the mutation window. Prevents restage from
+# replacing /opt/aelladata/aelladeb_py3 (and related trees) while bringup consumes them.
+p2b_artifact_consumer_lock_path() {
+  printf '%s/artifact-consumer.lock' "$(p2b_dir)"
+}
+
+p2b_acquire_artifact_consumer_lock() {
+  local lockfile lockfd
+  p2b_ensure_dir
+  lockfile="$(p2b_artifact_consumer_lock_path)"
+  exec {lockfd}>"$lockfile"
+  if ! flock -n "$lockfd"; then
+    eval "exec ${lockfd}>&-" 2>/dev/null || true
+    return 1
+  fi
+  P2B_ARTIFACT_LOCK_FD="$lockfd"
+  return 0
+}
+
+p2b_release_artifact_consumer_lock() {
+  if [[ -n "${P2B_ARTIFACT_LOCK_FD:-}" ]]; then
+    flock -u "$P2B_ARTIFACT_LOCK_FD" 2>/dev/null || true
+    eval "exec ${P2B_ARTIFACT_LOCK_FD}>&-" 2>/dev/null || true
+    P2B_ARTIFACT_LOCK_FD=""
+  fi
+}
+
+# True when a verified live bringup worker is consuming staged artifacts.
+p2b_live_bringup_blocks_mutation() {
+  p2b_status_snapshot
+  if [[ "${BRINGUP_STATE}" == "RUNNING" || "${BRINGUP_STATE}" == "STARTING" ]] \
+    && [[ "${BRINGUP_WORKER_ALIVE}" == "YES" && "${BRINGUP_PROCESS_IDENTITY_MATCH}" == "YES" ]]; then
+    return 0
+  fi
+  return 1
+}
+
+# Fail closed before staging mutates contract/artifacts/controller.
+# Covers: (1) parent still holding lifecycle lock during start handoff,
+# (2) post-handoff live worker via status identity, (3) worker-held artifact lock.
+# On success, holds lifecycle + artifact locks for the remainder of this process
+# (FDs released on exit) so a bringup cannot start mid-mutation.
+p2b_assert_staging_may_mutate_artifacts() {
+  if ! p2b_acquire_lock; then
+    echo "STAGE_BLOCKED_BY_BRINGUP_LIFECYCLE_LOCK=YES"
+    echo "STAGE_MUTATION_ALLOWED=NO"
+    return 1
+  fi
+  if p2b_live_bringup_blocks_mutation; then
+    p2b_release_lock
+    echo "STAGE_BLOCKED_BY_LIVE_BRINGUP=YES"
+    echo "BRINGUP_STATE=${BRINGUP_STATE}"
+    echo "BRINGUP_WORKER_PID=${BRINGUP_WORKER_PID}"
+    echo "BRINGUP_RUN_ID=${BRINGUP_RUN_ID}"
+    echo "STAGE_MUTATION_ALLOWED=NO"
+    return 1
+  fi
+  if ! p2b_acquire_artifact_consumer_lock; then
+    p2b_release_lock
+    echo "STAGE_BLOCKED_BY_ARTIFACT_CONSUMER_LOCK=YES"
+    echo "STAGE_MUTATION_ALLOWED=NO"
+    return 1
+  fi
+  echo "STAGE_MUTATION_ALLOWED=YES"
+  return 0
+}
+
 # Worker body: run vendor script, write exact completion sentinel.
 p2b_worker_main() {
   local vendor="$1"
@@ -751,6 +819,15 @@ p2b_worker_main() {
   local marker_rc=0 current_log_rc=0 apt_log_rc=0 orch_fail_rc=0
   local orch_pass_rc=0 final_log_rc=0
   d="$(p2b_dir)"
+  p2b_ensure_dir
+  # Hold artifact-consumer lock for the full worker lifetime so staging cannot
+  # replace trees this process is actively reading.
+  if ! p2b_acquire_artifact_consumer_lock; then
+    echo "BRINGUP_ARTIFACT_LOCK=BUSY" >&2
+    echo "BRINGUP_BLOCKED_BY_STAGING_OR_OTHER_CONSUMER=YES" >&2
+    p2b_write_state "FAILED"
+    exit 1
+  fi
   p2b_resolve_lifecycle_password_ownership
   trap 'p2b_cleanup_lifecycle_owned_worker_password' EXIT
   # Worker re-exec may need helpers from the lifecycle lib dir.

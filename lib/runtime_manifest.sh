@@ -41,6 +41,7 @@ UM_RUNTIME_SCRIPT_ENTRYPOINTS=(
 # ---------------------------------------------------------------------------
 UM_RUNTIME_SCRIPT_LIB_SHELL=(
   mirror_manager_common.sh
+  publication_lock.sh
   mirror_install_engine.sh
   mirror_workflow_state.sh
   r2_acquire.sh

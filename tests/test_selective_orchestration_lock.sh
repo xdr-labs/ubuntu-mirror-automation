@@ -36,6 +36,7 @@ _uom_write_lock_meta() {
     printf 'hop=%s\n' "${LOCK_HOP:-}"
     printf 'hostname=%s\n' "$(hostname 2>/dev/null || printf 'unknown')"
     printf 'lock_mode=%s\n' "${LOCK_MODE:-STANDALONE}"
+    printf 'owner_token=%s\n' "${UOM_LOCK_OWNER_TOKEN:-}"
   } >"$tmp"
   mv -f "$tmp" "$meta"
 }
@@ -51,14 +52,21 @@ release_global_lock() {
   if [[ "${LOCK_HELD:-0}" != "1" ]] && [[ -z "${LOCK_FD:-}" ]]; then
     return 0
   fi
-  local meta="$(_uom_lock_meta_path)"
+  local meta meta_token=""
+  meta="$(_uom_lock_meta_path)"
+  if [[ "${LOCK_HELD:-0}" == "1" && -n "${LOCK_FD:-}" && -n "${UOM_LOCK_OWNER_TOKEN:-}" && -f "$meta" ]]; then
+    meta_token="$(_uom_read_lock_meta_field owner_token || true)"
+    if [[ "$meta_token" == "$UOM_LOCK_OWNER_TOKEN" ]]; then
+      rm -f "$meta" 2>/dev/null || true
+    fi
+  fi
   if [[ -n "${LOCK_FD:-}" ]]; then
     flock -u "$LOCK_FD" 2>/dev/null || true
     eval "exec ${LOCK_FD}>&-" 2>/dev/null || true
     LOCK_FD=""
   fi
   LOCK_HELD=0
-  rm -f "$meta" 2>/dev/null || true
+  UOM_LOCK_OWNER_TOKEN=""
   info "LOCK_RELEASED=PASS"
 }
 
@@ -96,6 +104,7 @@ acquire_global_lock_once() {
   LOCK_HOP="$hop"
   LOCK_MODE="$mode"
   LOCK_ACQUIRED_AT="$(iso_now)"
+  UOM_LOCK_OWNER_TOKEN="$$:$(date +%s%N)"
   _uom_write_lock_meta
   ok "LOCK_ACQUIRED=PASS LOCK_MODE=${LOCK_MODE} command=${cmd}"
 }
@@ -171,7 +180,7 @@ exit 0
 
 # --- reentrant ---
 LOCK_FILE="${TMP}/reentry.lock"
-LOCK_FD=""; LOCK_HELD=0; LOCK_COMMAND=""; LOCK_HOP=""; LOCK_MODE=""; LOCK_ACQUIRED_AT=""
+LOCK_FD=""; LOCK_HELD=0; LOCK_COMMAND=""; LOCK_HOP=""; LOCK_MODE=""; LOCK_ACQUIRED_AT=""; UOM_LOCK_OWNER_TOKEN=""
 acquire_global_lock_once "refresh-hop-selective" "xenial-to-bionic" "OUTER_ORCHESTRATION"
 set +e
 out="$(acquire_global_lock_once "verify-selective" "" "STANDALONE" 2>&1)"
@@ -199,7 +208,7 @@ LOCK_A="${TMP}/concurrent.lock"
 HOLDER_PID=$!
 sleep 0.2
 LOCK_FILE="$LOCK_A"
-LOCK_FD=""; LOCK_HELD=0; LOCK_COMMAND=""; LOCK_HOP=""; LOCK_MODE=""; LOCK_ACQUIRED_AT=""
+LOCK_FD=""; LOCK_HELD=0; LOCK_COMMAND=""; LOCK_HOP=""; LOCK_MODE=""; LOCK_ACQUIRED_AT=""; UOM_LOCK_OWNER_TOKEN=""
 set +e
 out="$(acquire_global_lock_once "verify-selective" "" "STANDALONE" 2>&1)"
 rc=$?
@@ -219,7 +228,7 @@ STALE="${TMP}/stale.lock"
 : >"$STALE"
 printf 'pid=999999\ncommand=ghost\nhop=\n' >"${STALE}.meta"
 LOCK_FILE="$STALE"
-LOCK_FD=""; LOCK_HELD=0; LOCK_COMMAND=""; LOCK_HOP=""; LOCK_MODE=""; LOCK_ACQUIRED_AT=""
+LOCK_FD=""; LOCK_HELD=0; LOCK_COMMAND=""; LOCK_HOP=""; LOCK_MODE=""; LOCK_ACQUIRED_AT=""; UOM_LOCK_OWNER_TOKEN=""
 acquire_global_lock_once "verify-selective" "" "STANDALONE"
 grep -q 'command=verify-selective' "${STALE}.meta" \
   && pass "stale meta overwritten after acquire" || fail "stale meta not rewritten"
@@ -250,8 +259,9 @@ _uom_write_lock_meta() {
 release_global_lock() {
   if [[ "${LOCK_HELD:-0}" != "1" ]] && [[ -z "${LOCK_FD:-}" ]]; then return 0; fi
   local meta="$(_uom_lock_meta_path)"
+  if [[ "${LOCK_HELD:-0}" == "1" && -n "${LOCK_FD:-}" ]]; then rm -f "$meta" 2>/dev/null || true; fi
   if [[ -n "${LOCK_FD:-}" ]]; then flock -u "$LOCK_FD" 2>/dev/null || true; eval "exec ${LOCK_FD}>&-" 2>/dev/null || true; LOCK_FD=""; fi
-  LOCK_HELD=0; rm -f "$meta" 2>/dev/null || true
+  LOCK_HELD=0
 }
 acquire_global_lock_once() {
   local cmd="$1" hop="${2:-}" mode="${3:-}" new_fd=""

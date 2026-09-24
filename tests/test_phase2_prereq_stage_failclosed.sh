@@ -26,9 +26,11 @@ grep -q 'stage_phase2_ubuntu_prerequisites || die' "$STAGE" \
   && pass "stage call is fail-closed (no || true)" \
   || fail "stage still ignores prerequisite failures"
 # Controller publish must follow prerequisite staging (atomic publication).
-python3 - <<'PY' && pass "controller publish after prereq staging" || fail "controller publish before prereq staging"
+# Use ROOT-absolute paths so this check works under tests/run_all.sh (cwd=tests/).
+python3 - "$ROOT" <<'PY' && pass "controller publish after prereq staging" || fail "controller publish before prereq staging"
+import sys
 from pathlib import Path
-body = Path("client/stage-dp-phase2.sh").read_text()
+body = (Path(sys.argv[1]) / "client/stage-dp-phase2.sh").read_text()
 idx = body.rfind("stage_main() {")
 body = body[idx:]
 assert body.find("stage_phase2_ubuntu_prerequisites") < body.find("install_bringup_lifecycle_wrapper")
