@@ -59,6 +59,30 @@ dp2_progress_now() {
   date -u +%s
 }
 
+# rchar for a live checksum process. Missing /proc (or a just-exited pid) is
+# a fallback signal, not a checksum failure.
+dp2_proc_rchar() {
+  local pid="$1" root io val
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  root="${DP2_CHECKSUM_PROGRESS_IO_ROOT:-/proc}"
+  io="${root}/${pid}/io"
+  [[ -r "$io" ]] || return 1
+  val="$(awk '/^rchar:/ {print $2; exit}' "$io" 2>/dev/null || true)"
+  [[ "$val" =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "$val"
+}
+
+# Cap displayed percent below 100 until the checksum process has exited.
+dp2_checksum_running_percent() {
+  awk -v read="$1" -v total="$2" 'BEGIN {
+    if (total+0 <= 0 || read+0 < 0) { print "UNKNOWN"; exit }
+    p = (read * 100.0) / total
+    if (p < 0) p = 0
+    if (p >= 100) p = 99.9
+    printf "%.1f", p
+  }'
+}
+
 # Run command with periodic OPERATION_PROGRESS heartbeats.
 # Usage: dp2_run_with_heartbeat <name> <target> <command...>
 # Or:    dp2_run_with_heartbeat <name> <target> -- <command...>
@@ -70,8 +94,19 @@ dp2_run_with_heartbeat() {
     shift
   fi
   local sanitized child_pid hb_pid start now elapsed rc=0
-  local stop_file
+  local stop_file checksum_progress=0 total_bytes=0 read_base=""
+  local read_now payload percent rate eta
   sanitized="$(dp2_progress_sanitize_target "$target")"
+  case " $* " in
+    *sha256sum*|*sha1sum*)
+      if [[ -f "$target" ]]; then
+        total_bytes="$(stat -c%s "$target" 2>/dev/null || echo 0)"
+        if [[ "$total_bytes" =~ ^[0-9]+$ && "$total_bytes" -gt 0 ]]; then
+          checksum_progress=1
+        fi
+      fi
+      ;;
+  esac
   stop_file="$(mktemp "${TMPDIR:-/tmp}/dp2-hb-stop.XXXXXX")"
   rm -f "$stop_file"
   start="$(dp2_progress_now)"
@@ -79,6 +114,9 @@ dp2_run_with_heartbeat() {
 
   "$@" &
   child_pid=$!
+  if [[ "$checksum_progress" -eq 1 ]]; then
+    read_base="$(dp2_proc_rchar "$child_pid" 2>/dev/null || true)"
+  fi
 
   (
     trap 'exit 0' TERM INT
@@ -98,6 +136,33 @@ dp2_run_with_heartbeat() {
       fi
       now="$(dp2_progress_now)"
       elapsed=$((now - start))
+      if [[ "$checksum_progress" -eq 1 ]]; then
+        read_now="$(dp2_proc_rchar "$child_pid" 2>/dev/null || true)"
+        if [[ "$read_now" =~ ^[0-9]+$ ]]; then
+          payload="$read_now"
+          if [[ "${read_base:-0}" =~ ^[0-9]+$ && "$read_now" -ge "${read_base:-0}" ]]; then
+            payload=$((read_now - read_base))
+          fi
+          percent="$(dp2_checksum_running_percent "$payload" "$total_bytes")"
+          rate="UNKNOWN"
+          eta="UNKNOWN"
+          if [[ "$elapsed" -gt 0 && "$payload" -gt 0 ]]; then
+            rate="$(awk -v read="$payload" -v elapsed="$elapsed" 'BEGIN { printf "%.1f", (read / elapsed) / (1024*1024) }')"
+            if [[ "$payload" -lt "$total_bytes" ]]; then
+              eta="$(awk -v read="$payload" -v total="$total_bytes" -v elapsed="$elapsed" 'BEGIN { printf "%d", (total - read) / (read / elapsed) }')"
+            fi
+          fi
+          case "$percent" in
+            100|100.0) percent="99.9" ;;
+          esac
+          printf 'OPERATION_PROGRESS name=%s elapsed_seconds=%s read_bytes=%s total_bytes=%s percent=%s rate_mib_s=%s eta_seconds=%s status=running\n' \
+            "$name" "$elapsed" "$payload" "$total_bytes" "$percent" "$rate" "$eta"
+          printf 'Progress : %s / %s bytes\nPercent  : %s%%\nElapsed  : %ss\nRate     : %s MiB/s\nETA      : %ss\nStatus   : Running normally\n' \
+            "$payload" "$total_bytes" "$percent" "$elapsed" "$rate" "$eta"
+          printf 'ETA is approximate and can vary on newly restored or AMI-backed EBS volumes.\n'
+          continue
+        fi
+      fi
       printf 'OPERATION_PROGRESS name=%s elapsed_seconds=%s\n' "$name" "$elapsed"
     done
   ) &

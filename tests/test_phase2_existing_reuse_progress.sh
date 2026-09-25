@@ -140,8 +140,16 @@ ELAPSED1=$(( $(date +%s) - START1 ))
   || fail "first assess bundle=${PHASE2_EXISTING_BUNDLE:-unset}"
 grep -q 'PHASE2_EXISTING_SHA256_VERIFY_START' "$LOG" \
   || fail "PHASE2_EXISTING_SHA256_VERIFY_START missing"
-grep -q 'PHASE2_EXISTING_SHA256_VERIFY_HEARTBEAT' "$LOG" \
-  || fail "PHASE2_EXISTING_SHA256_VERIFY_HEARTBEAT missing"
+if [[ -r /proc/self/io ]]; then
+  grep -q 'PHASE2_EXISTING_SHA256_VERIFY_PROGRESS ' "$LOG" \
+    || fail "PHASE2_EXISTING_SHA256_VERIFY_PROGRESS missing"
+  if grep -Eq 'percent=100([^0-9.]|$)|Percent  : 100%' "$LOG"; then
+    fail "existing bundle SHA256 reported 100% before completion"
+  fi
+else
+  grep -q 'PHASE2_EXISTING_SHA256_VERIFY_HEARTBEAT' "$LOG" \
+    || fail "PHASE2_EXISTING_SHA256_VERIFY_HEARTBEAT missing"
+fi
 grep -q 'PHASE2_EXISTING_TAR_VERIFY_START' "$LOG" \
   || fail "PHASE2_EXISTING_TAR_VERIFY_START missing"
 grep -q 'PHASE2_EXISTING_VERIFY_CACHE=STORED' "$LOG" \

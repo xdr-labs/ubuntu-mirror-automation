@@ -61,6 +61,8 @@ TEST_LIST=(
   test_ntp_dns_postboot_policy.sh
   test_dns_time_readiness_policy.sh
   test_dp_offline_upgrade_xenial_to_bionic.sh
+  test_dpkg_updates_empty_listing.sh
+  test_xenial_bionic_upgrader_env_order.py
   test_postboot_shebang_and_state_machine.sh
   test_durable_write_and_lxd_coldstart.sh
   test_lxd_long_operation_heartbeat.sh
@@ -136,6 +138,7 @@ TEST_LIST=(
   test_r2_publisher_trust.sh
   test_phase2_stale_target_state.sh
   test_mirror_long_step_progress.sh
+  test_checksum_read_progress.sh
   test_mirror_manager_menu_status.sh
   test_bringup_image_import_heartbeat.sh
   test_bringup_dp_resume_notice.sh

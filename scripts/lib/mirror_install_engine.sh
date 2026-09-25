@@ -860,7 +860,22 @@ engine_verify_os_core_package() {
   if pub="$(engine_r2_publisher_public_key)"; then
     verify_args+=(--public-key "$pub")
   fi
-  out="$(python3 "$py" "${verify_args[@]}")"
+  export MM_CHECKSUM_PROGRESS_TOTAL_BYTES="${OS_CORE_PACKAGE_BYTES:-0}"
+  export MM_CHECKSUM_PROGRESS_FILE="$(basename "$package")"
+  mm_info "OS_CORE_SHA256_VERIFY_START file=$(basename "$package") bytes=${OS_CORE_PACKAGE_BYTES:-0}"
+  if ! mm_bg_with_heartbeat \
+    "OS_CORE_SHA256_VERIFY" \
+    "file=$(basename "$package") bytes=${OS_CORE_PACKAGE_BYTES:-0}" \
+    "Still verifying OS Core checksum..." \
+    -- python3 "$py" "${verify_args[@]}"
+  then
+    unset MM_CHECKSUM_PROGRESS_TOTAL_BYTES MM_CHECKSUM_PROGRESS_FILE \
+      MM_CHECKSUM_RCHAR_BASE MM_CHECKSUM_PROGRESS_LAST_LINE
+    mm_die "VERIFY_OS_CORE=FAIL"
+  fi
+  unset MM_CHECKSUM_PROGRESS_TOTAL_BYTES MM_CHECKSUM_PROGRESS_FILE \
+    MM_CHECKSUM_RCHAR_BASE MM_CHECKSUM_PROGRESS_LAST_LINE
+  out="${MM_LONG_STEP_LAST_STDOUT:-}"
   printf '%s\n' "$out"
   OS_CORE_PAYLOAD_BYTES="$(printf '%s\n' "$out" | awk -F= '/^PAYLOAD_BYTES=/{print $2; exit}')"
   OS_CORE_RELEASE_ID="$(printf '%s\n' "$out" | awk -F= '/^RELEASE_ID=/{print $2; exit}')"
@@ -1890,17 +1905,23 @@ engine_phase2_verify_inner_payloads_in_bundle() {
   mm_human_lines \
     "Verifying SHA256 checksum of ${img} inside the existing Phase 2 bundle." \
     "Outer bundle SHA256 is not sufficient for local rebuild reuse."
+  export MM_CHECKSUM_PROGRESS_TOTAL_BYTES="$(stat -c%s "$bundle" 2>/dev/null || echo 0)"
+  export MM_CHECKSUM_PROGRESS_FILE="$img"
   if ! mm_bg_with_heartbeat \
     "PHASE2_INNER_IMAGES_SHA256_VERIFY" \
     "file=${img} algorithm=SHA256" \
     "Still verifying inner ${img} SHA256..." \
     -- bash -c 'tar -xOf "$1" "$2" | sha256sum' _ "$bundle" "$img"
   then
+    unset MM_CHECKSUM_PROGRESS_TOTAL_BYTES MM_CHECKSUM_PROGRESS_FILE \
+      MM_CHECKSUM_RCHAR_BASE MM_CHECKSUM_PROGRESS_LAST_LINE
     rm -rf "$tmp"
     PHASE2_EXISTING_INTEGRITY_FAIL_REASON=inner_images_sha256
     mm_error "PHASE2_INNER_PAYLOAD_VERIFY=FAIL reason=inner_images_sha256"
     return 1
   fi
+  unset MM_CHECKSUM_PROGRESS_TOTAL_BYTES MM_CHECKSUM_PROGRESS_FILE \
+    MM_CHECKSUM_RCHAR_BASE MM_CHECKSUM_PROGRESS_LAST_LINE
   actual="$(printf '%s\n' "${MM_LONG_STEP_LAST_STDOUT:-}" | awk '{print $1; exit}' | tr '[:upper:]' '[:lower:]')"
   if [[ "$expected" != "$actual" ]]; then
     mm_error "SHA256_VERIFY=FAIL file=${img} expected=${expected} actual=${actual}"

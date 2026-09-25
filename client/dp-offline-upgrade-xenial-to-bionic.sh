@@ -8296,6 +8296,246 @@ clear_effective_source_gate_markers() {
   fi
   rm -f "$armed" "$passed" 2>/dev/null || true
 }
+# Byte-exact dpkg updates listing. An empty directory must stay a zero-byte
+# file. Command substitution plus printf '%s\n' turns that empty listing into
+# one newline, so empty→empty was classified as dpkg_updates_changed.
+# BEGIN_DPKG_UPDATES_LISTING_COMPARE
+_write_dpkg_updates_listing() {
+  local updates_dir="$1"
+  local dest="$2"
+  if [[ -d "$updates_dir" ]]; then
+    find "$updates_dir" -mindepth 1 -maxdepth 1 -printf '%f\n' 2>/dev/null | LC_ALL=C sort >"$dest" \
+      || : >"$dest"
+  else
+    : >"$dest"
+  fi
+}
+
+_dpkg_updates_listing_differs() {
+  local updates_dir="$1"
+  local before="${HOLDS_DIR}/dpkg_updates_listing_before"
+  local now
+  [[ -f "$before" ]] || return 1
+  [[ -d "$updates_dir" ]] || return 1
+  now="$(mktemp "${TMPDIR:-/tmp}/dpkg-updates-listing.XXXXXX")"
+  _write_dpkg_updates_listing "$updates_dir" "$now"
+  if cmp -s "$now" "$before"; then
+    rm -f "$now"
+    return 1
+  fi
+  rm -f "$now"
+  return 0
+}
+
+reclassify_false_empty_dpkg_updates_transition() {
+  # Retract only the empty-listing false positive. Any other recorded source,
+  # a missing evidence file, a non-empty baseline, or a fresh real-mutation
+  # scan stays fail-closed. The transition marker otherwise never regresses.
+  local donef marker evid src ver before now
+  donef="${HOLDS_DIR}/package_transition_detection.done"
+  marker="${HOLDS_DIR}/release_upgrade_package_transition_started"
+  [[ -f "$donef" && -f "$marker" ]] || return 1
+  grep -qx 'true' "$marker" || return 1
+  src="$(awk -F= '$1=="PACKAGE_TRANSITION_DETECTION_SOURCE"{print substr($0, index($0, "=")+1); exit}' "$donef")"
+  evid="$(awk -F= '$1=="PACKAGE_TRANSITION_DETECTION_EVIDENCE"{print substr($0, index($0, "=")+1); exit}' "$donef")"
+  [[ "$src" == "dpkg_status_db" && "$evid" == "dpkg_updates_changed" ]] || return 1
+  before="${HOLDS_DIR}/dpkg_updates_listing_before"
+  [[ -f "$before" && ! -s "$before" ]] || return 1
+  ver="$(grep -E '^VERSION_ID=' "$(_hp /etc/os-release)" 2>/dev/null | cut -d= -f2 | tr -d '"' || true)"
+  [[ -n "$ver" && "$ver" == "${PIN_SOURCE_VERSION}" ]] || return 1
+  if [[ -z "${_TEST_PREFIX:-}" && -z "${TEST_ROOT:-}" ]]; then
+    if dpkg --audit 2>/dev/null | grep -q .; then
+      return 1
+    fi
+  fi
+  if detect_package_transition_evidence; then
+    return 1
+  fi
+  now="$(mktemp "${TMPDIR:-/tmp}/dpkg-updates-listing.XXXXXX")"
+  _write_dpkg_updates_listing "$(_hp /var/lib/dpkg/updates)" "$now"
+  if ! cmp -s "$now" "$before"; then
+    rm -f "$now"
+    return 1
+  fi
+  rm -f "$now"
+  printf 'false\n' >"${marker}.tmp.$$"
+  mv -f "${marker}.tmp.$$" "$marker"
+  {
+    printf 'PACKAGE_TRANSITION_RECLASSIFIED=YES\n'
+    printf 'PACKAGE_TRANSITION_RECLASSIFY_REASON=empty_dpkg_updates_listing_false_positive\n'
+    printf 'PACKAGE_TRANSITION_DETECTION_SOURCE=%s\n' "$src"
+    printf 'PACKAGE_TRANSITION_DETECTION_EVIDENCE=%s\n' "$evid"
+  } >"${donef}.tmp.$$"
+  mv -f "${donef}.tmp.$$" "$donef"
+  if [[ -f "${HOLDS_DIR}/critical-holds-state.json" ]]; then
+    sed -i 's/"release_upgrade_package_transition_started": true/"release_upgrade_package_transition_started": false/' \
+      "${HOLDS_DIR}/critical-holds-state.json" 2>/dev/null || true
+  fi
+  RELEASE_UPGRADE_PACKAGE_TRANSITION_STARTED="false"
+  persist_flags
+  log INFO "FALSE_DPKG_UPDATES_TRANSITION_RECLASSIFIED=YES"
+  log INFO "RELEASE_UPGRADE_PACKAGE_TRANSITION_STARTED=false"
+  log INFO "ROLLBACK_ELIGIBLE=YES"
+  return 0
+}
+# END_DPKG_UPDATES_LISTING_COMPARE
+
+install_xenial_bionic_glibc_env_order_hook() {
+  # Arm a sitecustomize that patches only the extracted 18.04 upgrader
+  # (argv0 basename bionic) before DistUpgradeController starts GDBus.
+  # Fail closed inside that process when the expected source shape is absent.
+  local dir="${STATE_ROOT}/upgrader-glibc-env-order"
+  mkdir -p "$dir" || return 1
+  cat >"${dir}/sitecustomize.py" <<'XENIAL_BIONIC_ENV_ORDER_PY'
+"""Reorder Xenial→Bionic DistUpgradeController environment mutations.
+
+Live RCA (Ubuntu 16.04, glibc 2.23): do-release-upgrade exited 139 before
+apt-clone or any package mutation. The kernel reported a GDBus worker
+segfault in libc-2.23.so at offset 0x3982d, which disassembles to
+getenv()+0xad (a NULL environment entry pointer).
+
+The extracted 18.04 UpgradeTool calls inhibit_sleep() first. That starts
+GIO/GDBus worker threads, then mutates RELEASE_UPGRADE_IN_PROGRESS,
+PYCENTRAL_FORCE_OVERWRITE, and PATH. glibc 2.23 getenv is not safe against
+a concurrent setenv. A minimal pthread reproduction on the failed host
+(concurrent getenv readers plus one setenv writer) failed immediately with
+RC=139 at the same libc offset. Single-thread inhibit calls did not.
+
+This module only moves those three os.environ assignments ahead of
+inhibit_sleep() on an extracted Xenial→Bionic (18.04) upgrader tree.
+Other hops are rejected. A tree whose controller text does not match the
+expected 18.04 signature is left untouched and reported as a hard failure.
+"""
+
+from __future__ import print_function
+
+import os
+import re
+import sys
+
+UNPATCHED_BLOCK = (
+    "        # install a logind sleep inhibitor\n"
+    "        self.inhibitor_fd = inhibit_sleep()\n"
+    "\n"
+    "        # setup env var \n"
+    '        os.environ["RELEASE_UPGRADE_IN_PROGRESS"] = "1"\n'
+    '        os.environ["PYCENTRAL_FORCE_OVERWRITE"] = "1"\n'
+    '        os.environ["PATH"] = "%s:%s" % (os.getcwd()+"/imported",\n'
+    '                                        os.environ["PATH"])\n'
+)
+
+PATCHED_BLOCK = (
+    "        # Xenial glibc 2.23 getenv/setenv race (exit 139):\n"
+    "        # inhibit_sleep() starts a GIO/GDBus worker that calls getenv while\n"
+    "        # this process then setenv()s. Live fault: libc-2.23.so+0x3982d\n"
+    "        # (getenv+0xad). A pthread getenv/setenv reproducer hit the same\n"
+    "        # offset. Mutate the environment before any GDBus thread exists.\n"
+    '        os.environ["RELEASE_UPGRADE_IN_PROGRESS"] = "1"\n'
+    '        os.environ["PYCENTRAL_FORCE_OVERWRITE"] = "1"\n'
+    '        os.environ["PATH"] = "%s:%s" % (os.getcwd()+"/imported",\n'
+    '                                        os.environ["PATH"])\n'
+    "\n"
+    "        # install a logind sleep inhibitor\n"
+    "        self.inhibitor_fd = inhibit_sleep()\n"
+)
+
+_VERSION_RE = re.compile(r"^VERSION\s*=\s*'18\.04\.\d+'\s*$", re.M)
+_ENV_NAMES = (
+    "RELEASE_UPGRADE_IN_PROGRESS",
+    "PYCENTRAL_FORCE_OVERWRITE",
+    "PATH",
+)
+
+
+class UpgraderPatchError(Exception):
+    """Fail closed: expected 18.04 source shape is absent or ambiguous."""
+
+
+def _read(path):
+    with open(path, "r", encoding="utf-8") as fh:
+        return fh.read()
+
+
+def validate_upgrader_tree(root):
+    """Return controller text after the 18.04 signature checks."""
+    root = os.path.abspath(root)
+    controller = os.path.join(root, "DistUpgradeController.py")
+    version = os.path.join(root, "DistUpgradeVersion.py")
+    entry = os.path.join(root, "bionic")
+    if not os.path.isfile(controller):
+        raise UpgraderPatchError("controller missing")
+    if not os.path.isfile(version):
+        raise UpgraderPatchError("version signature missing")
+    if not os.path.isfile(entry):
+        raise UpgraderPatchError("bionic entry missing")
+    version_text = _read(version)
+    if not _VERSION_RE.search(version_text):
+        raise UpgraderPatchError("unexpected upgrader version signature")
+    return _read(controller)
+
+
+def _assignments_precede_inhibit(text):
+    call = text.find("self.inhibitor_fd = inhibit_sleep()")
+    if call < 0:
+        return False
+    for name in _ENV_NAMES:
+        marker = 'os.environ["%s"]' % name
+        pos = text.find(marker)
+        if pos < 0 or pos > call:
+            return False
+    return True
+
+
+def patch_upgrader_tree(root):
+    """Patch root in place. Idempotent. Raises UpgraderPatchError on mismatch.
+
+    Returns 'patched' or 'already'.
+    """
+    text = validate_upgrader_tree(root)
+    has_old = UNPATCHED_BLOCK in text
+    has_new = PATCHED_BLOCK in text
+    if has_old and has_new:
+        raise UpgraderPatchError("ambiguous controller signature")
+    if has_new:
+        if not _assignments_precede_inhibit(text):
+            raise UpgraderPatchError("patched controller failed order check")
+        return "already"
+    if not has_old:
+        raise UpgraderPatchError("expected 18.04 inhibit/env signature missing")
+    updated = text.replace(UNPATCHED_BLOCK, PATCHED_BLOCK, 1)
+    if updated == text or UNPATCHED_BLOCK in updated:
+        raise UpgraderPatchError("controller rewrite failed")
+    if not _assignments_precede_inhibit(updated):
+        raise UpgraderPatchError("rewritten controller failed order check")
+    controller = os.path.join(os.path.abspath(root), "DistUpgradeController.py")
+    tmp = controller + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(updated)
+    os.replace(tmp, controller)
+    return "patched"
+
+
+def maybe_patch_running_upgrader():
+    """sitecustomize entry. No-op unless this process is the bionic upgrader."""
+    if os.environ.get("STELLAR_XENIAL_BIONIC_ENV_ORDER_PATCH") != "1":
+        return
+    argv0 = os.path.basename(sys.argv[0]) if sys.argv else ""
+    if argv0 != "bionic":
+        return
+    root = os.path.dirname(os.path.abspath(sys.argv[0]))
+    try:
+        result = patch_upgrader_tree(root)
+    except UpgraderPatchError as exc:
+        sys.stderr.write("XENIAL_BIONIC_ENV_ORDER_PATCH=FAIL %s\n" % exc)
+        raise SystemExit(1)
+    sys.stderr.write("XENIAL_BIONIC_ENV_ORDER_PATCH=%s\n" % result.upper())
+
+
+maybe_patch_running_upgrader()
+XENIAL_BIONIC_ENV_ORDER_PY
+  [[ -s "${dir}/sitecustomize.py" ]] || return 1
+  return 0
+}
 snapshot_pre_dro_package_state() {
   # Capture baselines used by the realtime package transition watcher.
   local status dpkglog updates_dir pkg ver
@@ -8327,12 +8567,7 @@ snapshot_pre_dro_package_state() {
     echo 0 >"${HOLDS_DIR}/dpkg_log_mtime_before"
     echo 0 >"${HOLDS_DIR}/dpkg_log_size_before"
   fi
-  if [[ -d "$updates_dir" ]]; then
-    find "$updates_dir" -mindepth 1 -maxdepth 1 -printf '%f\n' 2>/dev/null | LC_ALL=C sort \
-      >"${HOLDS_DIR}/dpkg_updates_listing_before" || : >"${HOLDS_DIR}/dpkg_updates_listing_before"
-  else
-    : >"${HOLDS_DIR}/dpkg_updates_listing_before"
-  fi
+  _write_dpkg_updates_listing "$updates_dir" "${HOLDS_DIR}/dpkg_updates_listing_before"
   : >"${HOLDS_DIR}/core_package_versions_before"
   for pkg in base-files libc6 libc-bin apt dpkg; do
     ver="$(dpkg-query -W -f='${Version}' "$pkg" 2>/dev/null || true)"
@@ -8447,7 +8682,7 @@ _dpkg_process_from_this_run() {
 detect_package_transition_evidence() {
   # Sets PACKAGE_TRANSITION_DETECTION_SOURCE/EVIDENCE. Return 0 on mutation.
   local ver status dpkglog mainlog aptlog before_mtime before_sha now_mtime now_sha
-  local status_tail slice updates_dir listing_now pkg now_ver
+  local status_tail slice updates_dir pkg now_ver
   PACKAGE_TRANSITION_DETECTION_SOURCE=""
   PACKAGE_TRANSITION_DETECTION_EVIDENCE=""
 
@@ -8491,15 +8726,10 @@ detect_package_transition_evidence() {
   fi
 
   updates_dir="$(_hp /var/lib/dpkg/updates)"
-  if [[ -d "$updates_dir" ]]; then
-    listing_now="$(find "$updates_dir" -mindepth 1 -maxdepth 1 -printf '%f\n' 2>/dev/null | LC_ALL=C sort || true)"
-    if [[ -f "${HOLDS_DIR}/dpkg_updates_listing_before" ]]; then
-      if ! printf '%s\n' "$listing_now" | diff -q - "${HOLDS_DIR}/dpkg_updates_listing_before" >/dev/null 2>&1; then
-        PACKAGE_TRANSITION_DETECTION_SOURCE="dpkg_status_db"
-        PACKAGE_TRANSITION_DETECTION_EVIDENCE="dpkg_updates_changed"
-        return 0
-      fi
-    fi
+  if _dpkg_updates_listing_differs "$updates_dir"; then
+    PACKAGE_TRANSITION_DETECTION_SOURCE="dpkg_status_db"
+    PACKAGE_TRANSITION_DETECTION_EVIDENCE="dpkg_updates_changed"
+    return 0
   fi
 
   if [[ -f "$status" ]]; then
@@ -9792,10 +10022,27 @@ main() {
     classify_dro_failure
     fail_stage 1 "FAIL_INJECTED_DRO_PRE_TRANSITION"
   fi
+  if ! install_xenial_bionic_glibc_env_order_hook; then
+    fail_stage 1 "FAIL_XENIAL_BIONIC_ENV_ORDER_HOOK_INSTALL"
+  fi
+  export STELLAR_XENIAL_BIONIC_ENV_ORDER_PATCH=1
+  if [[ -n "${PYTHONPATH:-}" ]]; then
+    export PYTHONPATH="${STATE_ROOT}/upgrader-glibc-env-order:${PYTHONPATH}"
+  else
+    export PYTHONPATH="${STATE_ROOT}/upgrader-glibc-env-order"
+  fi
+  log INFO "XENIAL_BIONIC_GLIBC_ENV_ORDER_HOOK=ARMED"
   set +e
   do-release-upgrade -f DistUpgradeViewNonInteractive
   local rc=$?
   set -e
+  unset STELLAR_XENIAL_BIONIC_ENV_ORDER_PATCH
+  if [[ "${PYTHONPATH:-}" == "${STATE_ROOT}/upgrader-glibc-env-order" ]]; then
+    unset PYTHONPATH
+  elif [[ "${PYTHONPATH:-}" == "${STATE_ROOT}/upgrader-glibc-env-order:"* ]]; then
+    PYTHONPATH="${PYTHONPATH#"${STATE_ROOT}/upgrader-glibc-env-order:"}"
+    export PYTHONPATH
+  fi
   printf 'HOP_1: 16.04 -> 18.04 rc=%s\n' "$rc" >>"$HISTORY_FILE"
   stop_package_transition_watcher 2>/dev/null || true
   # Synchronous scan closes the race if mutation happened just as DRO exited.
@@ -11653,6 +11900,18 @@ handle_existing_state() {
       refuse_duplicate_upgrade
       ;;
     FAILED_AFTER_PACKAGE_TRANSITION|FAILED_POST_TRANSACTION)
+      if declare -F reclassify_false_empty_dpkg_updates_transition >/dev/null 2>&1 \
+        && reclassify_false_empty_dpkg_updates_transition; then
+        write_state "FAILED_BEFORE_PACKAGE_TRANSITION"
+        log INFO "previous state=${st}; assessing safe resume after empty dpkg updates reclassification"
+        if assess_safe_resume_from_failed; then
+          write_state "READY_FOR_RESUME"
+          log INFO "state transition ${st} -> READY_FOR_RESUME (false empty dpkg updates listing)"
+          return 0
+        fi
+        log ERROR "empty dpkg updates marker cleared but resume safety validation failed"
+        die "$EC_STATE" "STALE_STATE_RECOVERY_REQUIRED (state=FAILED_BEFORE_PACKAGE_TRANSITION)"
+      fi
       log ERROR "FAIL_PARTIAL_RELEASE_TRANSITION_DETECTED: previous state=${st}; refusing automatic resume"
       log ERROR "RELEASE_UPGRADE_PACKAGE_TRANSITION_STARTED=true"
       log ERROR "ROLLBACK_ELIGIBLE=NO"
