@@ -590,8 +590,9 @@ _mm_checksum_eta_seconds() {
 }
 
 # Emit checksum read progress. Return 1 to let the caller fall back to heartbeat.
+# human_still is the same operator sentence the heartbeat path prints.
 _mm_emit_checksum_progress() {
-  local event_prefix="$1" pid="$2" elapsed="$3"
+  local event_prefix="$1" pid="$2" elapsed="$3" human_still="${4:-}"
   local total file base read_bytes payload percent rate eta
   local read_h total_h elapsed_h eta_h line
   total="${MM_CHECKSUM_PROGRESS_TOTAL_BYTES:-}"
@@ -618,6 +619,9 @@ _mm_emit_checksum_progress() {
   [[ "$line" == "${MM_CHECKSUM_PROGRESS_LAST_LINE:-}" ]] && return 0
   MM_CHECKSUM_PROGRESS_LAST_LINE="$line"
   mm_info "$line"
+  if [[ -n "$human_still" ]]; then
+    mm_info "$human_still"
+  fi
   read_h="$(mm_format_bytes "$payload")"
   total_h="$(mm_format_bytes "$total")"
   elapsed_h="$(mm_format_duration "$elapsed")"
@@ -688,7 +692,7 @@ mm_bg_with_heartbeat() {
       sleep "$hb_secs" || break
       kill -0 "$cmd_pid" 2>/dev/null || break
       elapsed=$(( $(date +%s) - start_ts ))
-      if _mm_emit_checksum_progress "$event_prefix" "$cmd_pid" "$elapsed"; then
+      if _mm_emit_checksum_progress "$event_prefix" "$cmd_pid" "$elapsed" "$human_still"; then
         continue
       fi
       hb_line="${event_prefix}_HEARTBEAT ${fields} elapsed=${elapsed}s status=running"
