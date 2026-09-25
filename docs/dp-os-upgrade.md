@@ -274,6 +274,30 @@ recovery evidence, and the latest hop command journal. `NOT_STARTED` means only 
 Destructive multi-hop E2E is **not** part of `tests/run_all.sh`.
 See `docs/dp-os-upgrade-lab-e2e.md` and `tests/e2e/run_dp_os_upgrade_lab.sh`.
 
+## Xenial→Bionic glibc getenv/setenv race
+
+On Ubuntu 16.04 (glibc 2.23), `do-release-upgrade` can exit 139 before apt-clone
+or any package mutation. The kernel fault is a GDBus worker segfault in
+`libc-2.23.so` at offset `0x3982d` (`getenv()+0xad`). The extracted 18.04
+UpgradeTool calls `inhibit_sleep()` first, which starts GIO/GDBus threads, and
+only then assigns `RELEASE_UPGRADE_IN_PROGRESS`, `PYCENTRAL_FORCE_OVERWRITE`,
+and `PATH`. glibc 2.23 `getenv` is not safe against a concurrent `setenv`.
+A minimal pthread reproduction on the failed host (concurrent `getenv` readers
+plus one `setenv` writer) hit the same fault offset immediately. Single-thread
+inhibit calls did not.
+
+The Xenial→Bionic client arms a `sitecustomize` hook so those three assignments
+run before `inhibit_sleep()`. The hook accepts only an extracted 18.04 upgrader
+whose `DistUpgradeController.py` matches that source signature, and it fails
+closed instead of continuing unpatched. Other hops are not modified.
+
+An empty `/var/lib/dpkg/updates` listing is compared as exact bytes. An empty
+directory is not a package transition. A previously recorded
+`dpkg_updates_changed` marker is cleared only when that was the sole evidence,
+the saved and current listings are both empty, the OS is still the hop source,
+and a fresh scan finds no real package mutation. Any other evidence stays
+fail-closed.
+
 ## Known limitations
 
 - Ubuntu version-specific `do-release-upgrade` flags differ; noninteractive mode uses
