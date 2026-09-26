@@ -694,13 +694,13 @@ Then re-run Download and Prepare."
 This mode skips R2 OS Core and OS hop repositories.
 OK / Enter starts the download.
 Live progress prints in the terminal (no empty waits).
-Long steps emit a heartbeat every 30 seconds."
+Long checksum steps print bytes read, percent, throughput, and an approximate ETA every 30 seconds. ETA can vary on newly restored EBS volumes. If progress counters are unavailable, a heartbeat is printed instead."
   else
     confirm_body="Download and prepare Full OS Upgrade + Phase 2 files for DP ${PHASE2_TARGET_VERSION}?
 
 OK / Enter starts the download.
 Live progress prints in the terminal (no empty waits).
-Long steps emit a heartbeat every 30 seconds."
+Long checksum steps print bytes read, percent, throughput, and an approximate ETA every 30 seconds. ETA can vary on newly restored EBS volumes. If progress counters are unavailable, a heartbeat is printed instead."
   fi
   if ! mm_whiptail_yesno "Confirm" "${confirm_body}"; then
     return 0
@@ -754,7 +754,9 @@ EOF
   fi
   cat <<EOF
 
-Long checksum / bundle steps print a heartbeat every 30 seconds.
+Long checksum steps print bytes read, percent, throughput, and an approximate ETA every 30 seconds.
+ETA is approximate and can vary on newly restored or AMI-backed EBS volumes.
+If progress counters are unavailable, a heartbeat is printed instead.
 Do not interrupt or close this terminal.
 ============================================================
 
@@ -849,7 +851,8 @@ $(printf '%s\n' "$gate_msg")
 
 Verifying the Phase 2 bundle SHA256 before enabling HTTP distribution.
 Stale client sets are rebuilt/signed locally (no heavy re-download).
-Long checksum steps print a heartbeat every 30 seconds.
+Long checksum steps print bytes read, percent, throughput, and an approximate ETA every 30 seconds.
+ETA is approximate and can vary on newly restored or AMI-backed EBS volumes.
 Do not interrupt or close this terminal.
 ============================================================
 
@@ -933,7 +936,8 @@ Preparation Mode: $(mm_preparation_mode_label)
 Phase 2 Target: ${PHASE2_TARGET_VERSION}
 
 HTTP URL checks and status validation run next.
-If a Phase 2 SHA256 check is required, a heartbeat prints every 30 seconds.
+If a Phase 2 SHA256 check is required, progress (bytes, percent, throughput, approximate ETA) prints every 30 seconds.
+ETA is approximate and can vary on newly restored or AMI-backed EBS volumes.
 Do not interrupt or close this terminal.
 ============================================================
 

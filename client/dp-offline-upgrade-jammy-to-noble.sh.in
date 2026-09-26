@@ -5561,6 +5561,104 @@ clear_effective_source_gate_markers() {
   fi
   rm -f "$armed" "$passed" 2>/dev/null || true
 }
+# Byte-exact dpkg updates listing. An empty directory must stay a zero-byte
+# file. Command substitution plus printf '%s\n' turns that empty listing into
+# one newline, so empty→empty was classified as dpkg_updates_changed.
+# BEGIN_DPKG_UPDATES_LISTING_COMPARE
+_write_dpkg_updates_listing() {
+  # Return 0 only after a successful enumeration. A missing directory or a
+  # failed find/sort must not become a zero-byte proof of emptiness.
+  local updates_dir="$1"
+  local dest="$2"
+  local tmp
+  [[ -d "$updates_dir" && -r "$updates_dir" ]] || return 1
+  tmp="$(mktemp "${dest}.part.XXXXXX")" || return 1
+  if ! (
+    set -o pipefail
+    find "$updates_dir" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort >"$tmp"
+  ); then
+    rm -f "$tmp"
+    return 1
+  fi
+  mv -f "$tmp" "$dest"
+}
+
+_dpkg_updates_listing_differs() {
+  local updates_dir="$1"
+  local before="${HOLDS_DIR}/dpkg_updates_listing_before"
+  local now
+  [[ -f "$before" ]] || return 1
+  now="$(mktemp "${TMPDIR:-/tmp}/dpkg-updates-listing.XXXXXX")" || return 0
+  # Unreadable current listing is not "the same". Callers treat this as
+  # a change so a missing read cannot clear or skip transition evidence.
+  if ! _write_dpkg_updates_listing "$updates_dir" "$now"; then
+    rm -f "$now"
+    return 0
+  fi
+  if cmp -s "$now" "$before"; then
+    rm -f "$now"
+    return 1
+  fi
+  rm -f "$now"
+  return 0
+}
+
+reclassify_false_empty_dpkg_updates_transition() {
+  # Retract only the empty-listing false positive. Any other recorded source,
+  # a missing evidence file, a non-empty baseline, a failed current listing
+  # read, or a fresh real-mutation scan stays fail-closed. The transition
+  # marker otherwise never regresses.
+  local donef marker evid src ver before now
+  donef="${HOLDS_DIR}/package_transition_detection.done"
+  marker="${HOLDS_DIR}/release_upgrade_package_transition_started"
+  [[ -f "$donef" && -f "$marker" ]] || return 1
+  grep -qx 'true' "$marker" || return 1
+  src="$(awk -F= '$1=="PACKAGE_TRANSITION_DETECTION_SOURCE"{print substr($0, index($0, "=")+1); exit}' "$donef")"
+  evid="$(awk -F= '$1=="PACKAGE_TRANSITION_DETECTION_EVIDENCE"{print substr($0, index($0, "=")+1); exit}' "$donef")"
+  [[ "$src" == "dpkg_status_db" && "$evid" == "dpkg_updates_changed" ]] || return 1
+  before="${HOLDS_DIR}/dpkg_updates_listing_before"
+  [[ -f "$before" && ! -s "$before" ]] || return 1
+  ver="$(grep -E '^VERSION_ID=' "$(_hp /etc/os-release)" 2>/dev/null | cut -d= -f2 | tr -d '"' || true)"
+  [[ -n "$ver" && "$ver" == "${PIN_SOURCE_VERSION}" ]] || return 1
+  if [[ -z "${_TEST_PREFIX:-}" && -z "${TEST_ROOT:-}" ]]; then
+    if dpkg --audit 2>/dev/null | grep -q .; then
+      return 1
+    fi
+  fi
+  if detect_package_transition_evidence; then
+    return 1
+  fi
+  now="$(mktemp "${TMPDIR:-/tmp}/dpkg-updates-listing.XXXXXX")" || return 1
+  if ! _write_dpkg_updates_listing "$(_hp /var/lib/dpkg/updates)" "$now"; then
+    rm -f "$now"
+    return 1
+  fi
+  if ! cmp -s "$now" "$before"; then
+    rm -f "$now"
+    return 1
+  fi
+  rm -f "$now"
+  printf 'false\n' >"${marker}.tmp.$$"
+  mv -f "${marker}.tmp.$$" "$marker"
+  {
+    printf 'PACKAGE_TRANSITION_RECLASSIFIED=YES\n'
+    printf 'PACKAGE_TRANSITION_RECLASSIFY_REASON=empty_dpkg_updates_listing_false_positive\n'
+    printf 'PACKAGE_TRANSITION_DETECTION_SOURCE=%s\n' "$src"
+    printf 'PACKAGE_TRANSITION_DETECTION_EVIDENCE=%s\n' "$evid"
+  } >"${donef}.tmp.$$"
+  mv -f "${donef}.tmp.$$" "$donef"
+  if [[ -f "${HOLDS_DIR}/critical-holds-state.json" ]]; then
+    sed -i 's/"release_upgrade_package_transition_started": true/"release_upgrade_package_transition_started": false/' \
+      "${HOLDS_DIR}/critical-holds-state.json" 2>/dev/null || true
+  fi
+  RELEASE_UPGRADE_PACKAGE_TRANSITION_STARTED="false"
+  persist_flags
+  log INFO "FALSE_DPKG_UPDATES_TRANSITION_RECLASSIFIED=YES"
+  log INFO "RELEASE_UPGRADE_PACKAGE_TRANSITION_STARTED=false"
+  log INFO "ROLLBACK_ELIGIBLE=YES"
+  return 0
+}
+# END_DPKG_UPDATES_LISTING_COMPARE
 snapshot_pre_dro_package_state() {
   # Capture baselines used by the realtime package transition watcher.
   local status dpkglog updates_dir pkg ver
@@ -5592,11 +5690,11 @@ snapshot_pre_dro_package_state() {
     echo 0 >"${HOLDS_DIR}/dpkg_log_mtime_before"
     echo 0 >"${HOLDS_DIR}/dpkg_log_size_before"
   fi
-  if [[ -d "$updates_dir" ]]; then
-    find "$updates_dir" -mindepth 1 -maxdepth 1 -printf '%f\n' 2>/dev/null | LC_ALL=C sort \
-      >"${HOLDS_DIR}/dpkg_updates_listing_before" || : >"${HOLDS_DIR}/dpkg_updates_listing_before"
-  else
-    : >"${HOLDS_DIR}/dpkg_updates_listing_before"
+  if ! _write_dpkg_updates_listing "$updates_dir" "${HOLDS_DIR}/dpkg_updates_listing_before"; then
+    rm -f "${HOLDS_DIR}/dpkg_updates_listing_before"
+    log ERROR "DPKG_UPDATES_LISTING_BASELINE=UNREADABLE"
+    log ERROR "PACKAGE_TRANSITION_STARTED=NO"
+    fail_stage 1 "DPKG_UPDATES_LISTING_BASELINE=UNREADABLE"
   fi
   : >"${HOLDS_DIR}/core_package_versions_before"
   for pkg in base-files libc6 libc-bin apt dpkg; do
@@ -5729,7 +5827,7 @@ _dpkg_process_from_this_run() {
 detect_package_transition_evidence() {
   # Sets PACKAGE_TRANSITION_DETECTION_SOURCE/EVIDENCE. Return 0 on mutation.
   local ver status dpkglog mainlog aptlog before_mtime before_sha now_mtime now_sha
-  local status_tail slice updates_dir listing_now pkg now_ver
+  local status_tail slice updates_dir pkg now_ver
   PACKAGE_TRANSITION_DETECTION_SOURCE=""
   PACKAGE_TRANSITION_DETECTION_EVIDENCE=""
 
@@ -5773,15 +5871,10 @@ detect_package_transition_evidence() {
   fi
 
   updates_dir="$(_hp /var/lib/dpkg/updates)"
-  if [[ -d "$updates_dir" ]]; then
-    listing_now="$(find "$updates_dir" -mindepth 1 -maxdepth 1 -printf '%f\n' 2>/dev/null | LC_ALL=C sort || true)"
-    if [[ -f "${HOLDS_DIR}/dpkg_updates_listing_before" ]]; then
-      if ! printf '%s\n' "$listing_now" | diff -q - "${HOLDS_DIR}/dpkg_updates_listing_before" >/dev/null 2>&1; then
-        PACKAGE_TRANSITION_DETECTION_SOURCE="dpkg_status_db"
-        PACKAGE_TRANSITION_DETECTION_EVIDENCE="dpkg_updates_changed"
-        return 0
-      fi
-    fi
+  if _dpkg_updates_listing_differs "$updates_dir"; then
+    PACKAGE_TRANSITION_DETECTION_SOURCE="dpkg_status_db"
+    PACKAGE_TRANSITION_DETECTION_EVIDENCE="dpkg_updates_changed"
+    return 0
   fi
 
   if [[ -f "$status" ]]; then
@@ -10801,6 +10894,18 @@ handle_existing_state() {
       refuse_duplicate_upgrade
       ;;
     FAILED_AFTER_PACKAGE_TRANSITION|FAILED_POST_TRANSACTION)
+      if declare -F reclassify_false_empty_dpkg_updates_transition >/dev/null 2>&1 \
+        && reclassify_false_empty_dpkg_updates_transition; then
+        write_state "FAILED_BEFORE_PACKAGE_TRANSITION"
+        log INFO "previous state=${st}; assessing safe resume after empty dpkg updates reclassification"
+        if assess_safe_resume_from_failed; then
+          write_state "READY_FOR_RESUME"
+          log INFO "state transition ${st} -> READY_FOR_RESUME (false empty dpkg updates listing)"
+          return 0
+        fi
+        log ERROR "empty dpkg updates marker cleared but resume safety validation failed"
+        die "$EC_STATE" "STALE_STATE_RECOVERY_REQUIRED (state=FAILED_BEFORE_PACKAGE_TRANSITION)"
+      fi
       log ERROR "FAIL_PARTIAL_RELEASE_TRANSITION_DETECTED: previous state=${st}; refusing automatic resume"
       log ERROR "RELEASE_UPGRADE_PACKAGE_TRANSITION_STARTED=true"
       log ERROR "ROLLBACK_ELIGIBLE=NO"

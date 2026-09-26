@@ -151,9 +151,17 @@ acps_write_verified_marker "$CACHE" || fail "acps_write_verified_marker"
 
 ACPS_START="$(count_exact 'ACPS_CHECKSUM_VERIFY_START.*images-6\.6\.0\.tar.*algorithm=SHA256' "$VERIFY_LOG")"
 ACPS_HB="$(count_exact 'ACPS_CHECKSUM_VERIFY_HEARTBEAT.*images-6\.6\.0\.tar.*algorithm=SHA256' "$VERIFY_LOG")"
+ACPS_PROG="$(count_exact 'ACPS_CHECKSUM_VERIFY_PROGRESS .*status=running' "$VERIFY_LOG")"
 ACPS_DONE="$(count_exact 'ACPS_CHECKSUM_VERIFY_COMPLETE.*images-6\.6\.0\.tar.*algorithm=SHA256.*result=PASS' "$VERIFY_LOG")"
 [[ "$ACPS_START" -eq 1 ]] || fail "ACPS SHA256 START count=${ACPS_START}"
-[[ "$ACPS_HB" -ge 2 ]] || fail "ACPS SHA256 HEARTBEAT count=${ACPS_HB}"
+if [[ -r /proc/self/io ]]; then
+  [[ "$ACPS_PROG" -ge 1 ]] || fail "ACPS SHA256 PROGRESS missing while /proc/io is readable hb=${ACPS_HB}"
+  if grep -Eq 'percent=100([^0-9.]|$)|Percent  : 100%' "$VERIFY_LOG"; then
+    fail "ACPS SHA256 reported 100% before completion"
+  fi
+else
+  [[ "$ACPS_HB" -ge 2 ]] || fail "ACPS SHA256 HEARTBEAT count=${ACPS_HB}"
+fi
 [[ "$ACPS_DONE" -eq 1 ]] || fail "ACPS SHA256 COMPLETE count=${ACPS_DONE}"
 grep -q 'algorithm=SHA1' "$VERIFY_LOG" || fail "SHA1 labeled events missing"
 if grep -E 'images-6\.6\.0\.tar.*algorithm=SHA1|algorithm=SHA1.*images-6\.6\.0\.tar' "$VERIFY_LOG"; then
@@ -227,19 +235,32 @@ pass "bundle create START/PROGRESS/COMPLETE"
 
 S_START="$(count_exact 'PHASE2_BUNDLE_SHA256_CREATE_START' "$PLACE_LOG")"
 S_HB="$(count_exact 'PHASE2_BUNDLE_SHA256_CREATE_HEARTBEAT' "$PLACE_LOG")"
+S_PROG="$(count_exact 'PHASE2_BUNDLE_SHA256_CREATE_PROGRESS .*status=running' "$PLACE_LOG")"
 S_DONE="$(count_exact 'PHASE2_BUNDLE_SHA256_CREATE_COMPLETE.*result=PASS' "$PLACE_LOG")"
 [[ "$S_START" -eq 1 ]] || fail "bundle SHA256 CREATE START=${S_START}"
-[[ "$S_HB" -ge 2 ]] || fail "bundle SHA256 CREATE HEARTBEAT=${S_HB}"
+if [[ -r /proc/self/io ]]; then
+  [[ "$S_PROG" -ge 1 ]] || fail "bundle SHA256 CREATE PROGRESS missing hb=${S_HB}"
+else
+  [[ "$S_HB" -ge 2 ]] || fail "bundle SHA256 CREATE HEARTBEAT=${S_HB}"
+fi
 [[ "$S_DONE" -eq 1 ]] || fail "bundle SHA256 CREATE COMPLETE=${S_DONE}"
-pass "bundle SHA256 create START/HEARTBEAT/COMPLETE"
+pass "bundle SHA256 create START/PROGRESS/COMPLETE"
 
 F_START="$(count_exact 'PHASE2_FINAL_SHA256_VERIFY_START' "$PLACE_LOG")"
 F_HB="$(count_exact 'PHASE2_FINAL_SHA256_VERIFY_HEARTBEAT' "$PLACE_LOG")"
+F_PROG="$(count_exact 'PHASE2_FINAL_SHA256_VERIFY_PROGRESS .*status=running' "$PLACE_LOG")"
 F_DONE="$(count_exact 'PHASE2_FINAL_SHA256_VERIFY_COMPLETE.*result=PASS' "$PLACE_LOG")"
 [[ "$F_START" -eq 1 ]] || fail "final SHA256 START=${F_START}"
-[[ "$F_HB" -ge 2 ]] || fail "final SHA256 HEARTBEAT=${F_HB}"
+if [[ -r /proc/self/io ]]; then
+  [[ "$F_PROG" -ge 1 ]] || fail "final SHA256 PROGRESS missing hb=${F_HB}"
+  if grep -Eq 'percent=100([^0-9.]|$)|Percent  : 100%' "$PLACE_LOG"; then
+    fail "final SHA256 reported 100% before completion"
+  fi
+else
+  [[ "$F_HB" -ge 2 ]] || fail "final SHA256 HEARTBEAT=${F_HB}"
+fi
 [[ "$F_DONE" -eq 1 ]] || fail "final SHA256 COMPLETE=${F_DONE}"
-pass "final SHA256 verify START/HEARTBEAT/COMPLETE"
+pass "final SHA256 verify START/PROGRESS/COMPLETE"
 
 grep -q 'DP_PHASE2_ATOMIC_PUBLISH_START' "$PLACE_LOG" || fail "ATOMIC_PUBLISH_START missing"
 grep -q 'DP_PHASE2_ATOMIC_PUBLISH=PASS' "$PLACE_LOG" || fail "ATOMIC_PUBLISH=PASS missing"
