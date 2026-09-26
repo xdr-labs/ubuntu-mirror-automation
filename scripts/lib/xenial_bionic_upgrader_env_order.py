@@ -351,7 +351,11 @@ def maybe_patch_running_upgrader():
     root = os.path.dirname(os.path.abspath(sys.argv[0]))
     try:
         result = patch_upgrader_tree(root)
-    except UpgraderPatchError as exc:
+    except Exception as exc:
+        # site.py swallows Exception from sitecustomize and would continue
+        # into the unpatched bionic entry. Ordinary failures, including
+        # UpgraderPatchError and OSError (ENOSPC, EACCES), must exit.
+        # SystemExit and other BaseException values are not caught here.
         sys.stderr.write("XENIAL_BIONIC_ENV_ORDER_PATCH=FAIL %s\n" % exc)
         raise SystemExit(1)
     sys.stderr.write("XENIAL_BIONIC_ENV_ORDER_PATCH=%s\n" % result.upper())

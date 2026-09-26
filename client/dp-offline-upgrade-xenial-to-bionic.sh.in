@@ -4596,9 +4596,13 @@ install_xenial_bionic_glibc_env_order_hook() {
   # Arm a sitecustomize that patches only the extracted 18.04 upgrader
   # (argv0 basename bionic) before DistUpgradeController starts GDBus.
   # Fail closed inside that process when the expected source shape is absent.
+  # A truncated or non-parseable hook must not become the live file.
   local dir="${STATE_ROOT}/upgrader-glibc-env-order"
+  local tmp dest
   mkdir -p "$dir" || return 1
-  cat >"${dir}/sitecustomize.py" <<'XENIAL_BIONIC_ENV_ORDER_PY'
+  dest="${dir}/sitecustomize.py"
+  tmp="$(mktemp "${dir}/sitecustomize.py.tmp.XXXXXX")" || return 1
+  if ! cat >"$tmp" <<'XENIAL_BIONIC_ENV_ORDER_PY'
 """Keep the Xenial→Bionic upgrader off the glibc 2.23 getenv/setenv race.
 
 Live RCA (Ubuntu 16.04, glibc 2.23): do-release-upgrade exited 139 before
@@ -4952,7 +4956,11 @@ def maybe_patch_running_upgrader():
     root = os.path.dirname(os.path.abspath(sys.argv[0]))
     try:
         result = patch_upgrader_tree(root)
-    except UpgraderPatchError as exc:
+    except Exception as exc:
+        # site.py swallows Exception from sitecustomize and would continue
+        # into the unpatched bionic entry. Ordinary failures, including
+        # UpgraderPatchError and OSError (ENOSPC, EACCES), must exit.
+        # SystemExit and other BaseException values are not caught here.
         sys.stderr.write("XENIAL_BIONIC_ENV_ORDER_PATCH=FAIL %s\n" % exc)
         raise SystemExit(1)
     sys.stderr.write("XENIAL_BIONIC_ENV_ORDER_PATCH=%s\n" % result.upper())
@@ -4960,7 +4968,19 @@ def maybe_patch_running_upgrader():
 
 maybe_patch_running_upgrader()
 XENIAL_BIONIC_ENV_ORDER_PY
-  [[ -s "${dir}/sitecustomize.py" ]] || return 1
+  then
+    rm -f "$tmp"
+    return 1
+  fi
+  if ! python3 -c 'import ast,sys; ast.parse(open(sys.argv[1], encoding="utf-8").read())' "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  if ! mv -f "$tmp" "$dest"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  [[ -s "$dest" ]] || return 1
   return 0
 }
 snapshot_pre_dro_package_state() {
@@ -6449,6 +6469,11 @@ main() {
   validate_distupgrade_config_ascii_before_dro
   install_noninteractive_conffile_policy
   snapshot_pre_dro_package_state
+  # Validate the glibc hook before any invocation/spawn marker. A truncated
+  # or non-parseable sitecustomize must not mark or start do-release-upgrade.
+  if ! install_xenial_bionic_glibc_env_order_hook; then
+    fail_stage 1 "FAIL_XENIAL_BIONIC_ENV_ORDER_HOOK_INSTALL"
+  fi
   # Leave ASCII gate before spawning DRO so failure journals never strand on
   # DISTUPGRADE_CONFIG_ASCII_GATE after config validation has already passed.
   set_stage "PACKAGE_TRANSACTION_WAIT"
@@ -6466,9 +6491,6 @@ main() {
     stop_package_transition_watcher 2>/dev/null || true
     classify_dro_failure
     fail_stage 1 "FAIL_INJECTED_DRO_PRE_TRANSITION"
-  fi
-  if ! install_xenial_bionic_glibc_env_order_hook; then
-    fail_stage 1 "FAIL_XENIAL_BIONIC_ENV_ORDER_HOOK_INSTALL"
   fi
   export STELLAR_XENIAL_BIONIC_ENV_ORDER_PATCH=1
   if [[ -n "${PYTHONPATH:-}" ]]; then
