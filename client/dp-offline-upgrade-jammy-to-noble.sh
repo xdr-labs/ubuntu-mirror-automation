@@ -13698,14 +13698,21 @@ clear_effective_source_gate_markers() {
 # one newline, so empty→empty was classified as dpkg_updates_changed.
 # BEGIN_DPKG_UPDATES_LISTING_COMPARE
 _write_dpkg_updates_listing() {
+  # Return 0 only after a successful enumeration. A missing directory or a
+  # failed find/sort must not become a zero-byte proof of emptiness.
   local updates_dir="$1"
   local dest="$2"
-  if [[ -d "$updates_dir" ]]; then
-    find "$updates_dir" -mindepth 1 -maxdepth 1 -printf '%f\n' 2>/dev/null | LC_ALL=C sort >"$dest" \
-      || : >"$dest"
-  else
-    : >"$dest"
+  local tmp
+  [[ -d "$updates_dir" && -r "$updates_dir" ]] || return 1
+  tmp="$(mktemp "${dest}.part.XXXXXX")" || return 1
+  if ! (
+    set -o pipefail
+    find "$updates_dir" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort >"$tmp"
+  ); then
+    rm -f "$tmp"
+    return 1
   fi
+  mv -f "$tmp" "$dest"
 }
 
 _dpkg_updates_listing_differs() {
@@ -13713,9 +13720,13 @@ _dpkg_updates_listing_differs() {
   local before="${HOLDS_DIR}/dpkg_updates_listing_before"
   local now
   [[ -f "$before" ]] || return 1
-  [[ -d "$updates_dir" ]] || return 1
-  now="$(mktemp "${TMPDIR:-/tmp}/dpkg-updates-listing.XXXXXX")"
-  _write_dpkg_updates_listing "$updates_dir" "$now"
+  now="$(mktemp "${TMPDIR:-/tmp}/dpkg-updates-listing.XXXXXX")" || return 0
+  # Unreadable current listing is not "the same". Callers treat this as
+  # a change so a missing read cannot clear or skip transition evidence.
+  if ! _write_dpkg_updates_listing "$updates_dir" "$now"; then
+    rm -f "$now"
+    return 0
+  fi
   if cmp -s "$now" "$before"; then
     rm -f "$now"
     return 1
@@ -13726,8 +13737,9 @@ _dpkg_updates_listing_differs() {
 
 reclassify_false_empty_dpkg_updates_transition() {
   # Retract only the empty-listing false positive. Any other recorded source,
-  # a missing evidence file, a non-empty baseline, or a fresh real-mutation
-  # scan stays fail-closed. The transition marker otherwise never regresses.
+  # a missing evidence file, a non-empty baseline, a failed current listing
+  # read, or a fresh real-mutation scan stays fail-closed. The transition
+  # marker otherwise never regresses.
   local donef marker evid src ver before now
   donef="${HOLDS_DIR}/package_transition_detection.done"
   marker="${HOLDS_DIR}/release_upgrade_package_transition_started"
@@ -13748,8 +13760,11 @@ reclassify_false_empty_dpkg_updates_transition() {
   if detect_package_transition_evidence; then
     return 1
   fi
-  now="$(mktemp "${TMPDIR:-/tmp}/dpkg-updates-listing.XXXXXX")"
-  _write_dpkg_updates_listing "$(_hp /var/lib/dpkg/updates)" "$now"
+  now="$(mktemp "${TMPDIR:-/tmp}/dpkg-updates-listing.XXXXXX")" || return 1
+  if ! _write_dpkg_updates_listing "$(_hp /var/lib/dpkg/updates)" "$now"; then
+    rm -f "$now"
+    return 1
+  fi
   if ! cmp -s "$now" "$before"; then
     rm -f "$now"
     return 1
@@ -13807,7 +13822,12 @@ snapshot_pre_dro_package_state() {
     echo 0 >"${HOLDS_DIR}/dpkg_log_mtime_before"
     echo 0 >"${HOLDS_DIR}/dpkg_log_size_before"
   fi
-  _write_dpkg_updates_listing "$updates_dir" "${HOLDS_DIR}/dpkg_updates_listing_before"
+  if ! _write_dpkg_updates_listing "$updates_dir" "${HOLDS_DIR}/dpkg_updates_listing_before"; then
+    rm -f "${HOLDS_DIR}/dpkg_updates_listing_before"
+    log ERROR "DPKG_UPDATES_LISTING_BASELINE=UNREADABLE"
+    log ERROR "PACKAGE_TRANSITION_STARTED=NO"
+    fail_stage 1 "DPKG_UPDATES_LISTING_BASELINE=UNREADABLE"
+  fi
   : >"${HOLDS_DIR}/core_package_versions_before"
   for pkg in base-files libc6 libc-bin apt dpkg; do
     ver="$(dpkg-query -W -f='${Version}' "$pkg" 2>/dev/null || true)"

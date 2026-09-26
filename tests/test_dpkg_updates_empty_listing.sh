@@ -109,4 +109,111 @@ grep -qx 'true' "${HOLDS_DIR}/release_upgrade_package_transition_started" \
   || fail "marker cleared despite fresh mutation evidence"
 pass "fresh real-mutation scan stays fail-closed"
 
+printf 'true\n' >"${HOLDS_DIR}/release_upgrade_package_transition_started"
+cat >"${HOLDS_DIR}/package_transition_detection.done" <<'EOF'
+PACKAGE_TRANSITION_DETECTION_SOURCE=dpkg_status_db
+PACKAGE_TRANSITION_DETECTION_EVIDENCE=dpkg_updates_changed
+EOF
+: >"${HOLDS_DIR}/dpkg_updates_listing_before"
+DETECT_RC=1
+if reclassify_false_empty_dpkg_updates_transition; then
+  :
+else
+  fail "empty directory with a successful listing read was not reclassified"
+fi
+printf 'true\n' >"${HOLDS_DIR}/release_upgrade_package_transition_started"
+if _dpkg_updates_listing_differs "${FIX}/no-such-dpkg-updates"; then
+  :
+else
+  fail "missing updates directory treated as the same listing"
+fi
+mv "${FIX}/var/lib/dpkg/updates" "${FIX}/var/lib/dpkg/updates.saved"
+if reclassify_false_empty_dpkg_updates_transition; then
+  mv "${FIX}/var/lib/dpkg/updates.saved" "${FIX}/var/lib/dpkg/updates"
+  fail "missing updates directory cleared the transition marker"
+fi
+mv "${FIX}/var/lib/dpkg/updates.saved" "${FIX}/var/lib/dpkg/updates"
+grep -qx 'true' "${HOLDS_DIR}/release_upgrade_package_transition_started" \
+  || fail "marker cleared while updates directory was missing"
+pass "missing updates directory stays fail-closed"
+
+printf '0001\n' >"${FIX}/var/lib/dpkg/updates/0001"
+find() { return 2; }
+FAILED_LISTING="${HOLDS_DIR}/failed-listing"
+rm -f "$FAILED_LISTING"
+if _write_dpkg_updates_listing "${FIX}/var/lib/dpkg/updates" "$FAILED_LISTING"; then
+  unset -f find
+  fail "listing write succeeded after find failure"
+fi
+[[ ! -e "$FAILED_LISTING" ]] || { unset -f find; fail "failed find created a listing file"; }
+if _dpkg_updates_listing_differs "${FIX}/var/lib/dpkg/updates"; then
+  :
+else
+  unset -f find
+  fail "failed listing read treated as the same listing"
+fi
+if reclassify_false_empty_dpkg_updates_transition; then
+  unset -f find
+  fail "failed find cleared the transition marker"
+fi
+grep -qx 'true' "${HOLDS_DIR}/release_upgrade_package_transition_started" \
+  || { unset -f find; fail "marker cleared after listing enumeration failure"; }
+unset -f find
+pass "listing enumeration failure stays fail-closed"
+
+# Unreadable pre-DRO baseline aborts before do-release-upgrade.
+SNAP="$(awk '
+  /^snapshot_pre_dro_package_state\(\)/ { p=1 }
+  /^_sanitize_transition_evidence\(\)/ { exit }
+  p
+' "$XENIAL")"
+[[ -n "$SNAP" ]] || fail "snapshot function missing"
+for hop in bionic-to-focal focal-to-jammy jammy-to-noble; do
+  other="$(awk '
+    /^snapshot_pre_dro_package_state\(\)/ { p=1 }
+    /^_sanitize_transition_evidence\(\)/ { exit }
+    p
+  ' "${ROOT}/client/dp-offline-upgrade-${hop}.sh.in")"
+  [[ "$other" == "$SNAP" ]] || fail "${hop} snapshot abort drifted"
+done
+run_snapshot_abort() {
+  local mode="$1"
+  local out="${TMP}/snap-${mode}.out"
+  set +e
+  (
+    # shellcheck disable=SC1090
+    source /dev/stdin <<<"$SNAP"
+    log() { printf '%s\n' "$*"; }
+    fail_stage() { printf 'FAIL_STAGE:%s\n' "$2"; printf 'ROLLBACK_ELIGIBLE=YES\n'; exit 9; }
+    do-release-upgrade() { echo SPAWNED >"${TMP}/dro-${mode}"; }
+    if [[ "$mode" == "missing" ]]; then
+      rm -rf "${FIX}/var/lib/dpkg/updates"
+    else
+      mkdir -p "${FIX}/var/lib/dpkg/updates"
+      find() { return 2; }
+    fi
+    # Earlier cases leave a true marker. This abort must not create one.
+    rm -f "${HOLDS_DIR}/release_upgrade_package_transition_started"
+    snapshot_pre_dro_package_state
+    do-release-upgrade
+  ) >"$out" 2>&1
+  local rc=$?
+  set -e
+  [[ "$rc" -eq 9 ]] || fail "snapshot ${mode} rc=${rc} $(cat "$out")"
+  grep -q 'FAIL_STAGE:DPKG_UPDATES_LISTING_BASELINE=UNREADABLE' "$out" || fail "snapshot ${mode} did not fail closed"
+  grep -q 'ROLLBACK_ELIGIBLE=YES' "$out" || fail "snapshot ${mode} rollback not eligible"
+  grep -q 'PACKAGE_TRANSITION_STARTED=NO' "$out" || fail "snapshot ${mode} missing pre-transition marker"
+  [[ ! -e "${TMP}/dro-${mode}" ]] || fail "snapshot ${mode} spawned do-release-upgrade"
+  if [[ -f "${HOLDS_DIR}/release_upgrade_package_transition_started" ]]; then
+    grep -qx 'true' "${HOLDS_DIR}/release_upgrade_package_transition_started" \
+      && fail "snapshot ${mode} set an irreversible transition marker"
+  fi
+}
+run_snapshot_abort missing
+unset -f find || true
+run_snapshot_abort enum
+unset -f find || true
+mkdir -p "${FIX}/var/lib/dpkg/updates"
+pass "unreadable pre-DRO baseline aborts before do-release-upgrade"
+
 echo "TEST_DPKG_UPDATES_EMPTY_LISTING=PASS"
