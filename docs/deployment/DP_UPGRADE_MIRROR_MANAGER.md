@@ -67,7 +67,7 @@ Progress: 3 of 4 workflow steps completed
 
 `[COMPLETED]` means the step is currently valid.
 The label is removed automatically if its configuration, artifacts, HTTP service, or readiness state is no longer valid.
-Long SHA256 verification prints read progress about every 30 seconds: bytes read, total, percent, elapsed time, throughput, and an approximate ETA. ETA is advisory and can be much longer on a newly restored or AMI-backed EBS volume while the disk is still warming. If /proc IO counters are unavailable, the same step falls back to a liveness heartbeat. PASS is reported only after the checksum process exits successfully and the digest matches.
+Long SHA256 verification prints read progress about every 30 seconds: bytes read, total, percent, elapsed time, throughput, and an approximate ETA. ETA is advisory and can be much longer on a newly restored or AMI-backed EBS volume while the disk is still warming. OS Core verify shows that progress only for the single outer package SHA256. Signature, extract, and validation then use a liveness heartbeat, because those steps read the package again and are not that one checksum. If /proc IO counters are unavailable, or a checksum is a multi-reader pipeline, the step falls back to a liveness heartbeat. PASS is reported only after the checksum process exits successfully and the digest matches.
 
 Order is intentional: enable HTTP before verifying readiness (readiness checks live HTTP URLs).
 

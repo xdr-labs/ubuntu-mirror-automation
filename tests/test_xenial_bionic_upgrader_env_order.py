@@ -3,12 +3,15 @@
 
 from __future__ import print_function
 
+import hashlib
 import importlib.util
 import os
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
+import time
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -23,7 +26,7 @@ def load_module():
     return module
 
 
-def write_tree(root, version, controller, entry_name="bionic"):
+def write_tree(root, version, controller, entry_name="bionic", utils=None):
     os.makedirs(root)
     with open(os.path.join(root, "DistUpgradeVersion.py"), "w", encoding="utf-8") as fh:
         fh.write("VERSION = '%s'\n" % version)
@@ -31,6 +34,9 @@ def write_tree(root, version, controller, entry_name="bionic"):
         fh.write(controller)
     with open(os.path.join(root, entry_name), "w", encoding="utf-8") as fh:
         fh.write("#!/usr/bin/python3\nprint('ENTRY_OK')\n")
+    if utils is not None:
+        with open(os.path.join(root, "utils.py"), "w", encoding="utf-8") as fh:
+            fh.write(utils)
 
 
 class EnvOrderPatchTests(unittest.TestCase):
@@ -42,9 +48,17 @@ class EnvOrderPatchTests(unittest.TestCase):
     def _controller(self, block):
         return "class DistUpgradeController(object):\n    def __init__(self):\n" + block + "        check_and_fix_xbit()\n"
 
+    def _utils(self):
+        return self.mod.UNPATCHED_INHIBIT + "def str_to_bool(value):\n    return True\n"
+
     def test_patch_orders_env_before_inhibit_and_is_idempotent(self):
         root = os.path.join(self.tmp, "up")
-        write_tree(root, "18.04.45", self._controller(self.mod.UNPATCHED_BLOCK))
+        write_tree(
+            root,
+            "18.04.45",
+            self._controller(self.mod.UNPATCHED_BLOCK),
+            utils=self._utils(),
+        )
         before = open(os.path.join(root, "DistUpgradeController.py"), encoding="utf-8").read()
         self.assertEqual(self.mod.patch_upgrader_tree(root), "patched")
         patched = open(os.path.join(root, "DistUpgradeController.py"), encoding="utf-8").read()
@@ -56,6 +70,11 @@ class EnvOrderPatchTests(unittest.TestCase):
         self.assertEqual(self.mod.patch_upgrader_tree(root), "already")
         again = open(os.path.join(root, "DistUpgradeController.py"), encoding="utf-8").read()
         self.assertEqual(patched, again)
+        utils = open(os.path.join(root, "utils.py"), encoding="utf-8").read()
+        self.assertIn(self.mod.PATCHED_INHIBIT, utils)
+        self.assertFalse(self.mod.inhibit_starts_inprocess_gio(utils))
+        self.assertTrue(self.mod.inhibit_is_out_of_process(utils))
+        self.assertIn("def str_to_bool(value):", utils)
 
     def test_unexpected_signature_fails_closed_without_write(self):
         root = os.path.join(self.tmp, "bad")
@@ -77,7 +96,12 @@ class EnvOrderPatchTests(unittest.TestCase):
 
     def test_sitecustomize_patches_only_bionic_entry(self):
         root = os.path.join(self.tmp, "live")
-        write_tree(root, "18.04.45", self._controller(self.mod.UNPATCHED_BLOCK))
+        write_tree(
+            root,
+            "18.04.45",
+            self._controller(self.mod.UNPATCHED_BLOCK),
+            utils=self._utils(),
+        )
         hook = os.path.join(self.tmp, "hook")
         os.makedirs(hook)
         shutil.copy(MODULE_PATH, os.path.join(hook, "sitecustomize.py"))
@@ -135,6 +159,200 @@ class EnvOrderPatchTests(unittest.TestCase):
         self.assertIn("XENIAL_BIONIC_ENV_ORDER_PATCH=FAIL", bad.stderr)
         got = open(os.path.join(root, "DistUpgradeController.py"), encoding="utf-8").read()
         self.assertEqual(got, original)
+
+    def test_later_env_writes_stay_and_inhibitor_is_out_of_process(self):
+        later = (
+            '        os.environ["RELEASE_UPGRADE_MODE"] = "server"\n'
+            '        os.environ["TERM"] = "dumb"\n'
+            '        os.environ["PAGER"] = "true"\n'
+            '        os.environ["PYTHONPATH"] = "/usr/lib/release-upgrader-python-apt"\n'
+        )
+        root = os.path.join(self.tmp, "later")
+        write_tree(
+            root,
+            "18.04.45",
+            self._controller(self.mod.UNPATCHED_BLOCK + later),
+            utils=self._utils(),
+        )
+        self.assertEqual(self.mod.patch_upgrader_tree(root), "patched")
+        controller = open(os.path.join(root, "DistUpgradeController.py"), encoding="utf-8").read()
+        utils = open(os.path.join(root, "utils.py"), encoding="utf-8").read()
+        call = controller.find("self.inhibitor_fd = inhibit_sleep()")
+        self.assertGreater(call, 0)
+        for name in ("RELEASE_UPGRADE_IN_PROGRESS", "PYCENTRAL_FORCE_OVERWRITE", "PATH"):
+            self.assertLess(controller.find('os.environ["%s"]' % name), call)
+        for marker in self.mod._PINNED_LATER_ENV_MARKERS:
+            if "RELEASE_UPGRADE_MODE" in marker and "desktop" in marker:
+                continue
+            self.assertIn(marker, controller)
+            self.assertGreater(controller.find(marker), call)
+        self.assertFalse(self.mod.inhibit_starts_inprocess_gio(utils))
+        self.assertTrue(self.mod.inhibit_is_out_of_process(utils))
+        self.assertNotIn("gi.repository", utils)
+
+    def _v229_inhibit_bin(self, state_dir):
+        bindir = os.path.join(self.tmp, "bin-" + os.path.basename(state_dir))
+        os.makedirs(bindir)
+        os.makedirs(state_dir)
+        fake = os.path.join(bindir, "systemd-inhibit")
+        with open(fake, "w", encoding="utf-8") as fh:
+            fh.write("#!/bin/bash\n")
+            fh.write("set -u\n")
+            fh.write("state='" + state_dir + "'\n")
+            fh.write('printf \'%s\\n\' "$*" > "$state/args"\n')
+            fh.write('while [[ $# -gt 0 && "$1" != "sh" ]]; do shift; done\n')
+            fh.write('echo $$ > "$state/parent.pid"\n')
+            fh.write('"$@" &\n')
+            fh.write('echo $! > "$state/child.pid"\n')
+            fh.write("trap '' TERM\n")
+            fh.write("wait $!\n")
+            fh.write("exit $?\n")
+        os.chmod(fake, 0o755)
+        return bindir
+
+    def _pids_gone(self, parent, child):
+        for _ in range(50):
+            parent_alive = parent > 0 and os.path.exists("/proc/%s" % parent)
+            child_alive = child > 0 and os.path.exists("/proc/%s" % child)
+            if not parent_alive and not child_alive:
+                return True
+            time.sleep(0.05)
+        return False
+
+    def test_v229_inhibit_close_reaps_parent_and_command(self):
+        state = os.path.join(self.tmp, "v229-close")
+        bindir = self._v229_inhibit_bin(state)
+        old_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = bindir + os.pathsep + old_path
+        ns = {"sys": sys}
+        exec(self.mod.PATCHED_INHIBIT, ns)
+        handle = None
+        try:
+            handle = ns["inhibit_sleep"]()
+            self.assertNotEqual(handle, False)
+            os.environ["RELEASE_UPGRADE_MODE"] = "server"
+            os.environ["TERM"] = "dumb"
+            os.environ["PAGER"] = "true"
+            parent = int(open(os.path.join(state, "parent.pid"), encoding="utf-8").read())
+            child = int(open(os.path.join(state, "child.pid"), encoding="utf-8").read())
+            self.assertNotEqual(parent, child)
+            args = open(os.path.join(state, "args"), encoding="utf-8").read()
+            self.assertIn("--what=shutdown:sleep", args)
+            self.assertIn("--mode=block", args)
+        finally:
+            if handle not in (None, False):
+                handle.close()
+            os.environ["PATH"] = old_path
+        self.assertTrue(self._pids_gone(parent, child), "v229 command leaked after close")
+
+    def test_v229_parent_loss_reaps_command_without_sigterm(self):
+        state = os.path.join(self.tmp, "v229-loss")
+        bindir = self._v229_inhibit_bin(state)
+        holder = os.path.join(self.tmp, "holder.py")
+        with open(holder, "w", encoding="utf-8") as fh:
+            fh.write(
+                "import os, sys, time\n"
+                "import importlib.util\n"
+                "spec = importlib.util.spec_from_file_location('m', sys.argv[1])\n"
+                "mod = importlib.util.module_from_spec(spec)\n"
+                "spec.loader.exec_module(mod)\n"
+                "ns = {'sys': sys}\n"
+                "exec(mod.PATCHED_INHIBIT, ns)\n"
+                "handle = ns['inhibit_sleep']()\n"
+                "open(sys.argv[2], 'w').write('HELD' if handle else 'FAIL')\n"
+                "time.sleep(30)\n"
+            )
+        held = os.path.join(state, "held")
+        env = os.environ.copy()
+        env["PATH"] = bindir + os.pathsep + env.get("PATH", "")
+        proc = subprocess.Popen(
+            [sys.executable, holder, MODULE_PATH, held],
+            env=env,
+        )
+        deadline = time.time() + 5
+        while time.time() < deadline and not os.path.isfile(held):
+            time.sleep(0.05)
+        self.assertEqual(open(held, encoding="utf-8").read(), "HELD")
+        parent = int(open(os.path.join(state, "parent.pid"), encoding="utf-8").read())
+        child = int(open(os.path.join(state, "child.pid"), encoding="utf-8").read())
+        os.kill(proc.pid, 9)
+        proc.wait(timeout=5)
+        self.assertTrue(self._pids_gone(parent, child), "v229 command leaked after parent loss")
+
+    def test_inhibit_acquisition_failure_aborts_before_mutation(self):
+        self.assertIn("XENIAL_BIONIC_SLEEP_INHIBIT=FAIL", self.mod.PATCHED_BLOCK)
+        self.assertLess(
+            self.mod.PATCHED_BLOCK.find("self.inhibitor_fd = inhibit_sleep()"),
+            self.mod.PATCHED_BLOCK.find("raise SystemExit(1)"),
+        )
+        old_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = "/nonexistent"
+        ns = {"sys": sys}
+        try:
+            exec(self.mod.PATCHED_INHIBIT, ns)
+            self.assertIs(ns["inhibit_sleep"](), False)
+        finally:
+            os.environ["PATH"] = old_path
+        src = (
+            "inhibitor_fd = False\n"
+            "if not inhibitor_fd:\n"
+            "    sys.stderr.write('XENIAL_BIONIC_SLEEP_INHIBIT=FAIL\\n')\n"
+            "    raise SystemExit(1)\n"
+        )
+        with self.assertRaises(SystemExit) as caught:
+            exec(src, {"sys": sys})
+        self.assertEqual(caught.exception.code, 1)
+
+    def test_pinned_1845_tarball_inhibitor_patch(self):
+        pin = "976b87d935f8aa2867fac161198812693e6bde6b8fc3fd84f9a7705f638b50a3"
+        tar_path = "/var/spool/apt-mirror/selective/shared/offline/release-upgraders/bionic/bionic.tar.gz"
+        if not os.path.isfile(tar_path):
+            self.skipTest("pinned bionic tarball is not on this host")
+        digest = hashlib.sha256()
+        with open(tar_path, "rb") as fh:
+            while True:
+                chunk = fh.read(1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+        self.assertEqual(digest.hexdigest(), pin)
+        root = os.path.join(self.tmp, "pinned")
+        os.makedirs(root)
+        want = {
+            "DistUpgradeController.py",
+            "DistUpgradeVersion.py",
+            "DistUpgradeViewNonInteractive.py",
+            "utils.py",
+            "bionic",
+        }
+        with tarfile.open(tar_path) as tar:
+            chosen = []
+            for member in tar.getmembers():
+                base = os.path.basename(member.name)
+                if base in want and member.isfile():
+                    member.name = base
+                    chosen.append(member)
+            tar.extractall(root, members=chosen)
+        before_view = open(
+            os.path.join(root, "DistUpgradeViewNonInteractive.py"), "rb"
+        ).read()
+        self.assertEqual(self.mod.patch_upgrader_tree(root), "patched")
+        controller = open(os.path.join(root, "DistUpgradeController.py"), encoding="utf-8").read()
+        utils = open(os.path.join(root, "utils.py"), encoding="utf-8").read()
+        view = open(os.path.join(root, "DistUpgradeViewNonInteractive.py"), "rb").read()
+        self.assertEqual(view, before_view)
+        self.assertTrue(self.mod._assignments_precede_inhibit(controller))
+        self.assertIn('os.environ["RELEASE_UPGRADE_MODE"] = "server"', controller)
+        self.assertIn('os.environ["TERM"] = "dumb"', view.decode("utf-8"))
+        self.assertIn('os.environ["PAGER"] = "true"', view.decode("utf-8"))
+        self.assertIn(
+            'os.environ["PYTHONPATH"] = "/usr/lib/release-upgrader-python-apt"',
+            controller,
+        )
+        self.assertNotIn("from gi.repository import Gio, GLib", utils)
+        self.assertTrue(self.mod.inhibit_is_out_of_process(utils))
+        self.assertFalse(self.mod.inhibit_starts_inprocess_gio(utils))
+        self.assertEqual(self.mod.patch_upgrader_tree(root), "already")
 
     def test_client_embed_matches_module_and_other_hops_are_untouched(self):
         text = open(TEMPLATE, encoding="utf-8").read()

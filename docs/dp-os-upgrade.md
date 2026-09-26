@@ -278,7 +278,8 @@ See `docs/dp-os-upgrade-lab-e2e.md` and `tests/e2e/run_dp_os_upgrade_lab.sh`.
 
 On Ubuntu 16.04 (glibc 2.23), `do-release-upgrade` can exit 139 before apt-clone
 or any package mutation. The kernel fault is a GDBus worker segfault in
-`libc-2.23.so` at offset `0x3982d` (`getenv()+0xad`). The extracted 18.04
+`libc-2.23.so` at offset `0x3982d` (`getenv()+0xad`). The fault address was
+`0x1d0`, an invalid/stale environment entry pointer, not a NULL pointer. The extracted 18.04
 UpgradeTool calls `inhibit_sleep()` first, which starts GIO/GDBus threads, and
 only then assigns `RELEASE_UPGRADE_IN_PROGRESS`, `PYCENTRAL_FORCE_OVERWRITE`,
 and `PATH`. glibc 2.23 `getenv` is not safe against a concurrent `setenv`.
@@ -287,16 +288,29 @@ plus one `setenv` writer) hit the same fault offset immediately. Single-thread
 inhibit calls did not.
 
 The Xenial→Bionic client arms a `sitecustomize` hook so those three assignments
-run before `inhibit_sleep()`. The hook accepts only an extracted 18.04 upgrader
-whose `DistUpgradeController.py` matches that source signature, and it fails
+run before `inhibit_sleep()`. The pinned 18.04.45 tool still assigns
+`RELEASE_UPGRADE_MODE` after the cache is opened, `TERM` and `PAGER` immediately
+before each noninteractive `pty.fork()`, and `PYTHONPATH` before a later exec.
+Those writes have to stay where they are. The hook therefore also replaces the
+in-process Gio `inhibit_sleep()` with `systemd-inhibit` in a child process that
+holds the same `shutdown:sleep` block lock (`UpdateManager` / `Updating System`).
+The command reads a pipe and exits on EOF, so closing the handle or exiting
+the upgrader ends the command and lets `systemd-inhibit` release the lock.
+Xenial systemd 229 does not forward `SIGTERM` to that command. If the
+replacement inhibitor cannot be acquired, the patched controller aborts before
+package mutation. The hook accepts only an extracted 18.04 upgrader whose
+controller and `inhibit_sleep()` match that source signature, and it fails
 closed instead of continuing unpatched. Other hops are not modified.
 
 An empty `/var/lib/dpkg/updates` listing is compared as exact bytes. An empty
 directory is not a package transition. A previously recorded
 `dpkg_updates_changed` marker is cleared only when that was the sole evidence,
-the saved and current listings are both empty, the OS is still the hop source,
-and a fresh scan finds no real package mutation. Any other evidence stays
-fail-closed.
+the saved listing is empty, the current directory was enumerated successfully
+and is empty, the OS is still the hop source, and a fresh scan finds no real
+package mutation. A missing directory or a failed listing read is not proof
+of emptiness. If that listing cannot be captured before `do-release-upgrade`,
+the hop aborts on the pre-transition rollback path and does not spawn the
+upgrader. Any other evidence stays fail-closed.
 
 ## Known limitations
 

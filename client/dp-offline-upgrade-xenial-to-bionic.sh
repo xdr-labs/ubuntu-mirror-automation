@@ -8301,14 +8301,21 @@ clear_effective_source_gate_markers() {
 # one newline, so empty→empty was classified as dpkg_updates_changed.
 # BEGIN_DPKG_UPDATES_LISTING_COMPARE
 _write_dpkg_updates_listing() {
+  # Return 0 only after a successful enumeration. A missing directory or a
+  # failed find/sort must not become a zero-byte proof of emptiness.
   local updates_dir="$1"
   local dest="$2"
-  if [[ -d "$updates_dir" ]]; then
-    find "$updates_dir" -mindepth 1 -maxdepth 1 -printf '%f\n' 2>/dev/null | LC_ALL=C sort >"$dest" \
-      || : >"$dest"
-  else
-    : >"$dest"
+  local tmp
+  [[ -d "$updates_dir" && -r "$updates_dir" ]] || return 1
+  tmp="$(mktemp "${dest}.part.XXXXXX")" || return 1
+  if ! (
+    set -o pipefail
+    find "$updates_dir" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort >"$tmp"
+  ); then
+    rm -f "$tmp"
+    return 1
   fi
+  mv -f "$tmp" "$dest"
 }
 
 _dpkg_updates_listing_differs() {
@@ -8316,9 +8323,13 @@ _dpkg_updates_listing_differs() {
   local before="${HOLDS_DIR}/dpkg_updates_listing_before"
   local now
   [[ -f "$before" ]] || return 1
-  [[ -d "$updates_dir" ]] || return 1
-  now="$(mktemp "${TMPDIR:-/tmp}/dpkg-updates-listing.XXXXXX")"
-  _write_dpkg_updates_listing "$updates_dir" "$now"
+  now="$(mktemp "${TMPDIR:-/tmp}/dpkg-updates-listing.XXXXXX")" || return 0
+  # Unreadable current listing is not "the same". Callers treat this as
+  # a change so a missing read cannot clear or skip transition evidence.
+  if ! _write_dpkg_updates_listing "$updates_dir" "$now"; then
+    rm -f "$now"
+    return 0
+  fi
   if cmp -s "$now" "$before"; then
     rm -f "$now"
     return 1
@@ -8329,8 +8340,9 @@ _dpkg_updates_listing_differs() {
 
 reclassify_false_empty_dpkg_updates_transition() {
   # Retract only the empty-listing false positive. Any other recorded source,
-  # a missing evidence file, a non-empty baseline, or a fresh real-mutation
-  # scan stays fail-closed. The transition marker otherwise never regresses.
+  # a missing evidence file, a non-empty baseline, a failed current listing
+  # read, or a fresh real-mutation scan stays fail-closed. The transition
+  # marker otherwise never regresses.
   local donef marker evid src ver before now
   donef="${HOLDS_DIR}/package_transition_detection.done"
   marker="${HOLDS_DIR}/release_upgrade_package_transition_started"
@@ -8351,8 +8363,11 @@ reclassify_false_empty_dpkg_updates_transition() {
   if detect_package_transition_evidence; then
     return 1
   fi
-  now="$(mktemp "${TMPDIR:-/tmp}/dpkg-updates-listing.XXXXXX")"
-  _write_dpkg_updates_listing "$(_hp /var/lib/dpkg/updates)" "$now"
+  now="$(mktemp "${TMPDIR:-/tmp}/dpkg-updates-listing.XXXXXX")" || return 1
+  if ! _write_dpkg_updates_listing "$(_hp /var/lib/dpkg/updates)" "$now"; then
+    rm -f "$now"
+    return 1
+  fi
   if ! cmp -s "$now" "$before"; then
     rm -f "$now"
     return 1
@@ -8387,24 +8402,45 @@ install_xenial_bionic_glibc_env_order_hook() {
   local dir="${STATE_ROOT}/upgrader-glibc-env-order"
   mkdir -p "$dir" || return 1
   cat >"${dir}/sitecustomize.py" <<'XENIAL_BIONIC_ENV_ORDER_PY'
-"""Reorder Xenial→Bionic DistUpgradeController environment mutations.
+"""Keep the Xenial→Bionic upgrader off the glibc 2.23 getenv/setenv race.
 
 Live RCA (Ubuntu 16.04, glibc 2.23): do-release-upgrade exited 139 before
 apt-clone or any package mutation. The kernel reported a GDBus worker
 segfault in libc-2.23.so at offset 0x3982d, which disassembles to
-getenv()+0xad (a NULL environment entry pointer).
+getenv()+0xad (an invalid/stale environment entry pointer; the fault address
+was 0x1d0, not NULL).
 
-The extracted 18.04 UpgradeTool calls inhibit_sleep() first. That starts
-GIO/GDBus worker threads, then mutates RELEASE_UPGRADE_IN_PROGRESS,
-PYCENTRAL_FORCE_OVERWRITE, and PATH. glibc 2.23 getenv is not safe against
-a concurrent setenv. A minimal pthread reproduction on the failed host
-(concurrent getenv readers plus one setenv writer) failed immediately with
-RC=139 at the same libc offset. Single-thread inhibit calls did not.
+The extracted 18.04.45 UpgradeTool calls inhibit_sleep() and keeps the
+logind inhibitor in-process. That starts a GIO/GDBus worker. The same
+process then keeps mutating the environment: the early
+RELEASE_UPGRADE_IN_PROGRESS / PYCENTRAL_FORCE_OVERWRITE / PATH assignments,
+then RELEASE_UPGRADE_MODE in prepare(), TERM and PAGER before every
+noninteractive pty fork, and PYTHONPATH before a later exec. glibc 2.23
+getenv is not safe against a concurrent setenv. A minimal pthread
+reproduction on the failed host (concurrent getenv readers plus one setenv
+writer) failed immediately with RC=139 at the same libc offset.
 
-This module only moves those three os.environ assignments ahead of
-inhibit_sleep() on an extracted Xenial→Bionic (18.04) upgrader tree.
-Other hops are rejected. A tree whose controller text does not match the
-expected 18.04 signature is left untouched and reported as a hard failure.
+Moving only the first three assignments before inhibit_sleep() leaves the
+later writes in a process that still has a GIO worker. Those later writes
+cannot all be hoisted: RELEASE_UPGRADE_MODE depends on the cache mode,
+and TERM/PAGER must be set on this process immediately before pty.fork so
+the maintainer-script child inherits them.
+
+This module therefore does two things, only on an extracted Xenial→Bionic
+(18.04) tree:
+- move the three early os.environ assignments ahead of inhibit_sleep()
+- replace in-process Gio inhibit_sleep() with systemd-inhibit in a child
+  process that holds the same shutdown:sleep block lock
+
+The command blocks on a pipe and exits at EOF, so handle close and
+upgrader exit both end the command and let systemd-inhibit release the
+lock. Xenial systemd 229 does not forward SIGTERM to that command.
+If the replacement inhibitor cannot be acquired, the patched controller
+aborts before package mutation. This process never imports Gio for the
+inhibitor, so later setenv calls have no in-process GDBus worker to race
+with. Other hops are rejected. A tree whose controller or inhibit_sleep()
+text does not match the 18.04 signature is left untouched and reported
+as a hard failure.
 """
 
 from __future__ import print_function
@@ -8426,10 +8462,10 @@ UNPATCHED_BLOCK = (
 
 PATCHED_BLOCK = (
     "        # Xenial glibc 2.23 getenv/setenv race (exit 139):\n"
-    "        # inhibit_sleep() starts a GIO/GDBus worker that calls getenv while\n"
-    "        # this process then setenv()s. Live fault: libc-2.23.so+0x3982d\n"
-    "        # (getenv+0xad). A pthread getenv/setenv reproducer hit the same\n"
-    "        # offset. Mutate the environment before any GDBus thread exists.\n"
+    "        # inhibit_sleep() used to start a GIO/GDBus worker that calls\n"
+    "        # getenv while this process setenv()s. Live fault:\n"
+    "        # libc-2.23.so+0x3982d (getenv+0xad), fault address 0x1d0.\n"
+    "        # Mutate the early environment before the inhibitor is taken.\n"
     '        os.environ["RELEASE_UPGRADE_IN_PROGRESS"] = "1"\n'
     '        os.environ["PYCENTRAL_FORCE_OVERWRITE"] = "1"\n'
     '        os.environ["PATH"] = "%s:%s" % (os.getcwd()+"/imported",\n'
@@ -8437,13 +8473,132 @@ PATCHED_BLOCK = (
     "\n"
     "        # install a logind sleep inhibitor\n"
     "        self.inhibitor_fd = inhibit_sleep()\n"
+    "        if not self.inhibitor_fd:\n"
+    '            sys.stderr.write("XENIAL_BIONIC_SLEEP_INHIBIT=FAIL\\n")\n'
+    "            raise SystemExit(1)\n"
 )
+
+# Exact inhibit_sleep() from pinned bionic.tar.gz 18.04.45
+# SHA256 976b87d935f8aa2867fac161198812693e6bde6b8fc3fd84f9a7705f638b50a3.
+UNPATCHED_INHIBIT = (
+    "def inhibit_sleep():\n"
+    "    \"\"\"\n"
+    "    Send a dbus signal to logind to not suspend the system, it will be\n"
+    "    released when the return value drops out of scope\n"
+    "    \"\"\"\n"
+    "    try:\n"
+    "        from gi.repository import Gio, GLib\n"
+    "        connection = Gio.bus_get_sync(Gio.BusType.SYSTEM)\n"
+    "\n"
+    "        var, fdlist = connection.call_with_unix_fd_list_sync(\n"
+    "            'org.freedesktop.login1', '/org/freedesktop/login1',\n"
+    "            'org.freedesktop.login1.Manager', 'Inhibit',\n"
+    "            GLib.Variant('(ssss)',\n"
+    "                         ('shutdown:sleep',\n"
+    "                          'UpdateManager', 'Updating System',\n"
+    "                          'block')),\n"
+    "            None, 0, -1, None, None)\n"
+    "        inhibitor = Gio.UnixInputStream(fd=fdlist.steal_fds()[var[0]])\n"
+    "\n"
+    "        return inhibitor\n"
+    "    except Exception:\n"
+    "        #print(\"could not send the dbus Inhibit signal: %s\" % e)\n"
+    "        return False\n"
+    "\n"
+    "\n"
+)
+
+PATCHED_INHIBIT = '''def inhibit_sleep():
+    """
+    Hold a logind shutdown/sleep inhibitor outside this process.
+
+    Xenial glibc 2.23 segfaults if a GIO/GDBus worker in this process calls
+    getenv while this process calls setenv. The pinned 18.04.45 upgrader
+    still assigns RELEASE_UPGRADE_MODE, TERM, PAGER, and PYTHONPATH after
+    the inhibitor is taken, so an in-process Gio inhibitor is not safe.
+    systemd-inhibit takes the same shutdown:sleep block lock (who
+    UpdateManager, why Updating System). The command reads stdin and
+    exits on EOF. Closing that pipe (handle close, or this process
+    exiting) makes the command exit so systemd-inhibit's wait() returns
+    and the lock is released. Xenial systemd v229 forks the command and
+    does not forward SIGTERM to it, and fork() clears PR_SET_PDEATHSIG,
+    so killing systemd-inhibit would leak the command.
+    """
+    class _SleepInhibitHandle(object):
+        def __init__(self, proc):
+            self._proc = proc
+
+        def close(self):
+            proc = getattr(self, "_proc", None)
+            if proc is None:
+                return
+            self._proc = None
+            stdin = getattr(proc, "stdin", None)
+            if stdin is not None:
+                try:
+                    stdin.close()
+                except Exception:
+                    pass
+            try:
+                proc.wait(timeout=5)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                try:
+                    proc.wait(timeout=2)
+                except Exception:
+                    pass
+
+        def __del__(self):
+            try:
+                self.close()
+            except Exception:
+                pass
+
+    try:
+        import subprocess
+        import select
+        proc = subprocess.Popen(
+            ["systemd-inhibit",
+             "--what=shutdown:sleep",
+             "--who=UpdateManager",
+             "--why=Updating System",
+             "--mode=block",
+             "sh", "-c", "echo OK; exec cat >/dev/null"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL)
+        ready, _, _ = select.select([proc.stdout], [], [], 5)
+        if not ready or proc.poll() is not None:
+            handle = _SleepInhibitHandle(proc)
+            handle.close()
+            return False
+        line = proc.stdout.readline()
+        if line.strip() != b"OK":
+            handle = _SleepInhibitHandle(proc)
+            handle.close()
+            return False
+        return _SleepInhibitHandle(proc)
+    except Exception:
+        return False
+
+
+'''
 
 _VERSION_RE = re.compile(r"^VERSION\s*=\s*'18\.04\.\d+'\s*$", re.M)
 _ENV_NAMES = (
     "RELEASE_UPGRADE_IN_PROGRESS",
     "PYCENTRAL_FORCE_OVERWRITE",
     "PATH",
+)
+_PINNED_LATER_ENV_MARKERS = (
+    'os.environ["RELEASE_UPGRADE_MODE"] = "server"',
+    'os.environ["RELEASE_UPGRADE_MODE"] = "desktop"',
+    'os.environ["TERM"] = "dumb"',
+    'os.environ["PAGER"] = "true"',
+    'os.environ["PYTHONPATH"] = "/usr/lib/release-upgrader-python-apt"',
 )
 
 
@@ -8454,6 +8609,13 @@ class UpgraderPatchError(Exception):
 def _read(path):
     with open(path, "r", encoding="utf-8") as fh:
         return fh.read()
+
+
+def _atomic_write(path, text):
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    os.replace(tmp, path)
 
 
 def validate_upgrader_tree(root):
@@ -8474,6 +8636,42 @@ def validate_upgrader_tree(root):
     return _read(controller)
 
 
+def _inhibit_function_body(text):
+    start = text.find("def inhibit_sleep():")
+    if start < 0:
+        return ""
+    nxt = text.find("\ndef ", start + 1)
+    if nxt < 0:
+        return text[start:]
+    return text[start:nxt]
+
+
+def inhibit_starts_inprocess_gio(text):
+    """True when inhibit_sleep() imports Gio in this process."""
+    body = _inhibit_function_body(text)
+    if not body:
+        return False
+    return ("gi.repository" in body) or ("Gio.bus_get_sync" in body)
+
+
+def inhibit_is_out_of_process(text):
+    """True when sleep inhibition is held by a systemd-inhibit child."""
+    body = _inhibit_function_body(text)
+    if not body or inhibit_starts_inprocess_gio(body):
+        return False
+    required = (
+        "systemd-inhibit",
+        "--what=shutdown:sleep",
+        "--who=UpdateManager",
+        "--why=Updating System",
+        "--mode=block",
+        "exec cat >/dev/null",
+        "stdin.close()",
+        "return _SleepInhibitHandle(proc)",
+    )
+    return all(part in body for part in required)
+
+
 def _assignments_precede_inhibit(text):
     call = text.find("self.inhibitor_fd = inhibit_sleep()")
     if call < 0:
@@ -8486,12 +8684,7 @@ def _assignments_precede_inhibit(text):
     return True
 
 
-def patch_upgrader_tree(root):
-    """Patch root in place. Idempotent. Raises UpgraderPatchError on mismatch.
-
-    Returns 'patched' or 'already'.
-    """
-    text = validate_upgrader_tree(root)
+def _rewrite_controller(text):
     has_old = UNPATCHED_BLOCK in text
     has_new = PATCHED_BLOCK in text
     if has_old and has_new:
@@ -8499,7 +8692,7 @@ def patch_upgrader_tree(root):
     if has_new:
         if not _assignments_precede_inhibit(text):
             raise UpgraderPatchError("patched controller failed order check")
-        return "already"
+        return text, "already"
     if not has_old:
         raise UpgraderPatchError("expected 18.04 inhibit/env signature missing")
     updated = text.replace(UNPATCHED_BLOCK, PATCHED_BLOCK, 1)
@@ -8507,12 +8700,49 @@ def patch_upgrader_tree(root):
         raise UpgraderPatchError("controller rewrite failed")
     if not _assignments_precede_inhibit(updated):
         raise UpgraderPatchError("rewritten controller failed order check")
-    controller = os.path.join(os.path.abspath(root), "DistUpgradeController.py")
-    tmp = controller + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        fh.write(updated)
-    os.replace(tmp, controller)
-    return "patched"
+    return updated, "patched"
+
+
+def _rewrite_inhibit(text):
+    has_old = UNPATCHED_INHIBIT in text
+    has_new = PATCHED_INHIBIT in text
+    if has_old and has_new:
+        raise UpgraderPatchError("ambiguous inhibit_sleep signature")
+    if has_new:
+        if not inhibit_is_out_of_process(text):
+            raise UpgraderPatchError("patched inhibit_sleep is not out of process")
+        return text, "already"
+    if not has_old:
+        raise UpgraderPatchError("expected 18.04 inhibit_sleep signature missing")
+    updated = text.replace(UNPATCHED_INHIBIT, PATCHED_INHIBIT, 1)
+    if updated == text or UNPATCHED_INHIBIT in updated:
+        raise UpgraderPatchError("inhibit_sleep rewrite failed")
+    if not inhibit_is_out_of_process(updated) or inhibit_starts_inprocess_gio(updated):
+        raise UpgraderPatchError("rewritten inhibit_sleep still starts Gio")
+    return updated, "patched"
+
+
+def patch_upgrader_tree(root):
+    """Patch root in place. Idempotent. Raises UpgraderPatchError on mismatch.
+
+    Returns 'patched' or 'already'. Writes nothing until both rewrites validate.
+    """
+    root = os.path.abspath(root)
+    text = validate_upgrader_tree(root)
+    utils_path = os.path.join(root, "utils.py")
+    if not os.path.isfile(utils_path):
+        raise UpgraderPatchError("utils.py missing")
+    utils_text = _read(utils_path)
+    new_controller, controller_state = _rewrite_controller(text)
+    new_utils, utils_state = _rewrite_inhibit(utils_text)
+    controller = os.path.join(root, "DistUpgradeController.py")
+    if controller_state == "patched":
+        _atomic_write(controller, new_controller)
+    if utils_state == "patched":
+        _atomic_write(utils_path, new_utils)
+    if controller_state == "patched" or utils_state == "patched":
+        return "patched"
+    return "already"
 
 
 def maybe_patch_running_upgrader():
@@ -8567,7 +8797,12 @@ snapshot_pre_dro_package_state() {
     echo 0 >"${HOLDS_DIR}/dpkg_log_mtime_before"
     echo 0 >"${HOLDS_DIR}/dpkg_log_size_before"
   fi
-  _write_dpkg_updates_listing "$updates_dir" "${HOLDS_DIR}/dpkg_updates_listing_before"
+  if ! _write_dpkg_updates_listing "$updates_dir" "${HOLDS_DIR}/dpkg_updates_listing_before"; then
+    rm -f "${HOLDS_DIR}/dpkg_updates_listing_before"
+    log ERROR "DPKG_UPDATES_LISTING_BASELINE=UNREADABLE"
+    log ERROR "PACKAGE_TRANSITION_STARTED=NO"
+    fail_stage 1 "DPKG_UPDATES_LISTING_BASELINE=UNREADABLE"
+  fi
   : >"${HOLDS_DIR}/core_package_versions_before"
   for pkg in base-files libc6 libc-bin apt dpkg; do
     ver="$(dpkg-query -W -f='${Version}' "$pkg" 2>/dev/null || true)"

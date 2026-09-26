@@ -3314,6 +3314,7 @@ make_runner_fixture() {
     "$root/etc/default" "$root/etc/apt/sources.list.d" "$root/etc/apt/apt.conf.d" \
     "$root/etc/apt/trusted.gpg.d" "$root/etc/update-manager" "$root/var/log/aella" \
     "$root/usr/local/sbin" "$root/bin" "$root/boot" "$root/etc" "$root/run"
+  mkdir -p "$root/var/lib/dpkg/updates"
   printf 'PREFLIGHT\n' >"$root/opt/aelladata/os-upgrade/offline/state"
   printf 'deb http://example.invalid/ focal main\n' >"$root/opt/aelladata/os-upgrade/offline/backups/${stamp}/apt/sources.list"
   printf 'deb http://third.example/ foo main\n' >"$root/opt/aelladata/os-upgrade/offline/backups/${stamp}/apt/sources.list.d/third-party.list"

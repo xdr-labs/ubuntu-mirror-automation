@@ -72,6 +72,68 @@ dp2_proc_rchar() {
   printf '%s\n' "$val"
 }
 
+# True when pid has the checksum target open. Does not walk unrelated /proc.
+dp2_pid_opens_target() {
+  local pid="$1" target="$2" fd link
+  [[ "$pid" =~ ^[0-9]+$ && -d "/proc/${pid}/fd" ]] || return 1
+  target="$(readlink -f "$target" 2>/dev/null || printf '%s' "$target")"
+  for fd in "/proc/${pid}/fd"/*; do
+    link="$(readlink "$fd" 2>/dev/null || true)"
+    [[ "$link" == "$target" ]] && return 0
+  done
+  return 1
+}
+
+dp2_walk_pids() {
+  local pid="$1" child
+  printf '%s\n' "$pid"
+  while read -r child; do
+    [[ "$child" =~ ^[0-9]+$ ]] || continue
+    dp2_walk_pids "$child"
+  done < <(pgrep -P "$pid" 2>/dev/null || true)
+}
+
+# One payload reader. bash -c is not that reader: sha256sum is a descendant.
+# Two openers (a pipeline reading the same file twice) stay on heartbeat.
+# The chosen pid stays fixed for the rest of the sample loop. Call this in
+# the current shell. A command substitution would drop DP2_CHECKSUM_READER_PID.
+# Sets DP2_CHECKSUM_RCHAR_OUT on success.
+dp2_authoritative_checksum_rchar() {
+  local root_pid="$1" target="$2"
+  local pid cmd openers=()
+  DP2_CHECKSUM_RCHAR_OUT=""
+  if [[ "${DP2_CHECKSUM_MULTI_READER:-0}" == "1" ]]; then
+    return 1
+  fi
+  if [[ -n "${DP2_CHECKSUM_READER_PID:-}" ]]; then
+    if kill -0 "$DP2_CHECKSUM_READER_PID" 2>/dev/null; then
+      DP2_CHECKSUM_RCHAR_OUT="$(dp2_proc_rchar "$DP2_CHECKSUM_READER_PID")" || return 1
+      return 0
+    fi
+    return 1
+  fi
+  while read -r pid; do
+    if dp2_pid_opens_target "$pid" "$target"; then
+      openers+=("$pid")
+    fi
+  done < <(dp2_walk_pids "$root_pid")
+  if [[ "${#openers[@]}" -ge 2 ]]; then
+    DP2_CHECKSUM_MULTI_READER=1
+    return 1
+  fi
+  if [[ "${#openers[@]}" -eq 1 ]]; then
+    DP2_CHECKSUM_READER_PID="${openers[0]}"
+    DP2_CHECKSUM_RCHAR_OUT="$(dp2_proc_rchar "$DP2_CHECKSUM_READER_PID")" || return 1
+    return 0
+  fi
+  cmd="$(tr '\0' ' ' < "/proc/${root_pid}/cmdline" 2>/dev/null || true)"
+  if [[ "$cmd" == *" -c "* || "$cmd" == *"-c "* ]]; then
+    return 1
+  fi
+  DP2_CHECKSUM_RCHAR_OUT="$(dp2_proc_rchar "$root_pid")" || return 1
+  return 0
+}
+
 # Cap displayed percent below 100 until the checksum process has exited.
 dp2_checksum_running_percent() {
   awk -v read="$1" -v total="$2" 'BEGIN {
@@ -114,9 +176,10 @@ dp2_run_with_heartbeat() {
 
   "$@" &
   child_pid=$!
-  if [[ "$checksum_progress" -eq 1 ]]; then
-    read_base="$(dp2_proc_rchar "$child_pid" 2>/dev/null || true)"
-  fi
+  DP2_CHECKSUM_READER_PID=""
+  DP2_CHECKSUM_MULTI_READER=0
+  DP2_CHECKSUM_RCHAR_OUT=""
+  read_base=""
 
   (
     trap 'exit 0' TERM INT
@@ -137,8 +200,14 @@ dp2_run_with_heartbeat() {
       now="$(dp2_progress_now)"
       elapsed=$((now - start))
       if [[ "$checksum_progress" -eq 1 ]]; then
-        read_now="$(dp2_proc_rchar "$child_pid" 2>/dev/null || true)"
+        read_now=""
+        if dp2_authoritative_checksum_rchar "$child_pid" "$target"; then
+          read_now="$DP2_CHECKSUM_RCHAR_OUT"
+        fi
         if [[ "$read_now" =~ ^[0-9]+$ ]]; then
+          if [[ -z "${read_base}" ]]; then
+            read_base="$read_now"
+          fi
           payload="$read_now"
           if [[ "${read_base:-0}" =~ ^[0-9]+$ && "$read_now" -ge "${read_base:-0}" ]]; then
             payload=$((read_now - read_base))

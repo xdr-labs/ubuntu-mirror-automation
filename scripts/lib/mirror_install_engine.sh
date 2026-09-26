@@ -855,26 +855,37 @@ engine_verify_os_core_package() {
     mm_die "OS_CORE_PRODUCTION_IDENTITY=FAIL"
   fi
   local py="${MM_PROJECT_ROOT}/scripts/lib/os_core_package.py"
-  local out pub=""
-  local -a verify_args=(verify --package "$package")
+  local out pub="" done_file
+  local -a verify_args=()
+  # The verifier hashes the same package bytes it then extracts. Progress
+  # covers that hash only; MM_CHECKSUM_PROGRESS_DONE_FILE switches the rest
+  # of verify (signature, extract, validation) to heartbeat.
+  done_file="$(mktemp)"
+  rm -f "$done_file"
+  export MM_CHECKSUM_PROGRESS_TOTAL_BYTES="${OS_CORE_PACKAGE_BYTES}"
+  export MM_CHECKSUM_PROGRESS_FILE="$(basename "$package")"
+  export MM_CHECKSUM_PROGRESS_DONE_FILE="$done_file"
+  mm_info "OS_CORE_SHA256_VERIFY_START file=$(basename "$package") bytes=${OS_CORE_PACKAGE_BYTES:-0} phase=outer-sha256"
+  verify_args=(verify --package "$package")
   if pub="$(engine_r2_publisher_public_key)"; then
     verify_args+=(--public-key "$pub")
   fi
-  export MM_CHECKSUM_PROGRESS_TOTAL_BYTES="${OS_CORE_PACKAGE_BYTES:-0}"
-  export MM_CHECKSUM_PROGRESS_FILE="$(basename "$package")"
-  mm_info "OS_CORE_SHA256_VERIFY_START file=$(basename "$package") bytes=${OS_CORE_PACKAGE_BYTES:-0}"
   if ! mm_bg_with_heartbeat \
     "OS_CORE_SHA256_VERIFY" \
-    "file=$(basename "$package") bytes=${OS_CORE_PACKAGE_BYTES:-0}" \
+    "file=$(basename "$package") bytes=${OS_CORE_PACKAGE_BYTES:-0} phase=outer-sha256" \
     "Still verifying OS Core checksum..." \
     -- python3 "$py" "${verify_args[@]}"
   then
     unset MM_CHECKSUM_PROGRESS_TOTAL_BYTES MM_CHECKSUM_PROGRESS_FILE \
-      MM_CHECKSUM_RCHAR_BASE MM_CHECKSUM_PROGRESS_LAST_LINE
+      MM_CHECKSUM_PROGRESS_DONE_FILE MM_CHECKSUM_RCHAR_BASE \
+      MM_CHECKSUM_PROGRESS_LAST_LINE
+    rm -f "$done_file"
     mm_die "VERIFY_OS_CORE=FAIL"
   fi
   unset MM_CHECKSUM_PROGRESS_TOTAL_BYTES MM_CHECKSUM_PROGRESS_FILE \
-    MM_CHECKSUM_RCHAR_BASE MM_CHECKSUM_PROGRESS_LAST_LINE
+    MM_CHECKSUM_PROGRESS_DONE_FILE MM_CHECKSUM_RCHAR_BASE \
+    MM_CHECKSUM_PROGRESS_LAST_LINE
+  rm -f "$done_file"
   out="${MM_LONG_STEP_LAST_STDOUT:-}"
   printf '%s\n' "$out"
   OS_CORE_PAYLOAD_BYTES="$(printf '%s\n' "$out" | awk -F= '/^PAYLOAD_BYTES=/{print $2; exit}')"
@@ -1905,6 +1916,8 @@ engine_phase2_verify_inner_payloads_in_bundle() {
   mm_human_lines \
     "Verifying SHA256 checksum of ${img} inside the existing Phase 2 bundle." \
     "Outer bundle SHA256 is not sufficient for local rebuild reuse."
+  # tar | sha256sum has two readers of one stream. Progress sampling
+  # refuses that pipeline and keeps the heartbeat.
   export MM_CHECKSUM_PROGRESS_TOTAL_BYTES="$(stat -c%s "$bundle" 2>/dev/null || echo 0)"
   export MM_CHECKSUM_PROGRESS_FILE="$img"
   if ! mm_bg_with_heartbeat \

@@ -267,9 +267,24 @@ mm_assert_os_core_production_identity() {
     return 1
   fi
 
-  got_sha="$(sha256sum "$package" | awk '{print tolower($1)}')"
-  expected_sha="$(printf '%s' "$expected_sha" | tr 'A-F' 'a-f')"
   got_bytes="$(stat -c%s "$package" 2>/dev/null || wc -c <"$package" | tr -d ' ')"
+  # Shared by the post-download pin and Menu 2 verify. One sha256sum reader.
+  export MM_CHECKSUM_PROGRESS_TOTAL_BYTES="$got_bytes"
+  export MM_CHECKSUM_PROGRESS_FILE="$(basename "$package")"
+  local id_rc=0
+  mm_bg_with_heartbeat \
+    "OS_CORE_PRODUCTION_IDENTITY" \
+    "file=$(basename "$package") bytes=${got_bytes}" \
+    "Still verifying the OS Core production identity checksum..." \
+    -- sha256sum "$package" && id_rc=0 || id_rc=$?
+  unset MM_CHECKSUM_PROGRESS_TOTAL_BYTES MM_CHECKSUM_PROGRESS_FILE \
+    MM_CHECKSUM_RCHAR_BASE MM_CHECKSUM_PROGRESS_LAST_LINE
+  if [[ "$id_rc" -ne 0 ]]; then
+    mm_error "OS_CORE_PRODUCTION_IDENTITY=FAIL reason=sha256sum rc=${id_rc}"
+    return 1
+  fi
+  got_sha="$(printf '%s\n' "$MM_LONG_STEP_LAST_STDOUT" | awk '{print tolower($1); exit}')"
+  expected_sha="$(printf '%s' "$expected_sha" | tr 'A-F' 'a-f')"
 
   # Sidecar cross-check must not replace the immutable pin.
   if [[ -f "${package}.sha256" ]]; then
@@ -534,26 +549,33 @@ _mm_proc_rchar() {
   printf '%s\n' "$val"
 }
 
-# Sum rchar for pid and its immediate children (pipeline members).
-# Fail when the root counter is unreadable. Do not walk all of /proc.
-_mm_proc_tree_rchar() {
+# One checksum read stream. A direct command uses its own rchar. A shell
+# with exactly one child uses that child only. A pipeline reads the same
+# logical bytes twice (tar | sha256sum). Detect that from the command line
+# on every sample: one stage often exits before the first heartbeat, so a
+# live child count is not enough. Return 1 and keep the heartbeat.
+_mm_checksum_authoritative_rchar() {
   local root_pid="$1"
-  local sum=0 val pid any=0
-  if ! val="$(_mm_proc_rchar "$root_pid")"; then
+  local -a kids=()
+  local pid cmd
+  cmd="$(tr '\0' ' ' < "/proc/${root_pid}/cmdline" 2>/dev/null || true)"
+  if [[ "$cmd" == *"|"* ]]; then
     return 1
   fi
-  sum="$val"
-  any=1
   if command -v pgrep >/dev/null 2>&1; then
     while read -r pid; do
       [[ "$pid" =~ ^[0-9]+$ ]] || continue
-      if val="$(_mm_proc_rchar "$pid")"; then
-        sum=$((sum + val))
-      fi
+      kids+=("$pid")
     done < <(pgrep -P "$root_pid" 2>/dev/null || true)
   fi
-  [[ "$any" -eq 1 ]] || return 1
-  printf '%s\n' "$sum"
+  if [[ "${#kids[@]}" -ge 2 ]]; then
+    return 1
+  fi
+  if [[ "${#kids[@]}" -eq 1 ]]; then
+    _mm_proc_rchar "${kids[0]}"
+    return
+  fi
+  _mm_proc_rchar "$root_pid"
 }
 
 # While the checksum process is still running, percent is capped below 100.
@@ -595,11 +617,15 @@ _mm_emit_checksum_progress() {
   local event_prefix="$1" pid="$2" elapsed="$3" human_still="${4:-}"
   local total file base read_bytes payload percent rate eta
   local read_h total_h elapsed_h eta_h line
+  # The hash pass finished. Later reads are not this checksum stream.
+  if [[ -n "${MM_CHECKSUM_PROGRESS_DONE_FILE:-}" && -e "${MM_CHECKSUM_PROGRESS_DONE_FILE}" ]]; then
+    return 1
+  fi
   total="${MM_CHECKSUM_PROGRESS_TOTAL_BYTES:-}"
   file="${MM_CHECKSUM_PROGRESS_FILE:-}"
   [[ "$total" =~ ^[0-9]+$ && "$total" -gt 0 ]] || return 1
   [[ -n "$file" ]] || return 1
-  read_bytes="$(_mm_proc_tree_rchar "$pid" 2>/dev/null || true)"
+  read_bytes="$(_mm_checksum_authoritative_rchar "$pid" 2>/dev/null || true)"
   [[ "$read_bytes" =~ ^[0-9]+$ ]] || return 1
   base="${MM_CHECKSUM_RCHAR_BASE:-0}"
   [[ "$base" =~ ^[0-9]+$ ]] || base=0
@@ -678,7 +704,7 @@ mm_bg_with_heartbeat() {
   MM_CHECKSUM_RCHAR_BASE=""
   MM_CHECKSUM_PROGRESS_LAST_LINE=""
   if [[ -n "${MM_CHECKSUM_PROGRESS_TOTAL_BYTES:-}" ]]; then
-    MM_CHECKSUM_RCHAR_BASE="$(_mm_proc_tree_rchar "$cmd_pid" 2>/dev/null || true)"
+    MM_CHECKSUM_RCHAR_BASE="$(_mm_checksum_authoritative_rchar "$cmd_pid" 2>/dev/null || true)"
   fi
 
   _mm_hb_cleanup() {
