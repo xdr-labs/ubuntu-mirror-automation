@@ -84,6 +84,8 @@ Menu 4 readiness는 software가 직접 enforce하는 gate입니다. DP precheck,
 
 DP에서는 Menu 7이 생성한 명령을 사용하고 수동으로 upgrade command를 조립하지 않는 것이 기본 운영 방식입니다.
 
+이미 검증된 Mirror Server의 IP/HTTP URL만 변경한 경우에는 무거운 artifact를 다시 준비하지 않습니다. Configuration에서 새 IP를 저장한 뒤 **Menu 3 → 4 → 7**을 실행합니다. Menu 3이 endpoint에 종속된 client/helper만 필요 시 atomic republish하며, OS Core와 검증된 Phase 2 release는 그대로 보존합니다. Menu 2는 preparation input이 실제로 변경되었거나 heavy artifact 검증이 실패한 경우에만 다시 실행합니다.
+
 ## 시작
 
 Mirror Server 요구사항:

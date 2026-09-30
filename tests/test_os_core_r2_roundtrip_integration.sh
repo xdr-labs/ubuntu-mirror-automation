@@ -568,7 +568,8 @@ export LOCAL_CLIENT_SIGNING_DIR="${CLIENT_SIGNING_DIR}"
 export PREPARATION_MODE=FULL
 
 mkdir -p "$MM_CACHE_ROOT" "$MM_LOG_DIR" "$MM_STATE_ROOT" "$MM_CONFIG_DIR" \
-  "$MM_CLIENT_ROOT" "$MM_DP_PHASE2_ROOT" "$MM_SELECTIVE_ROOT"
+  "$MM_CLIENT_ROOT" "$MM_DP_PHASE2_ROOT"
+# Fresh publication means the selective destination does not exist yet.
 
 # Prove destination started empty (no state/plan.json)
 [[ ! -f "${MM_SELECTIVE_ROOT}/state/plan.json" ]] \
@@ -584,7 +585,7 @@ mm_state_init
 engine_resolve_paths
 
 set +e
-engine_materialize_os_mirror "$PKG" >"${TMP}/engine-materialize.log" 2>&1
+( engine_materialize_os_mirror "$PKG" ) >"${TMP}/engine-materialize.log" 2>&1
 ENG_RC=$?
 set -e
 tail -40 "${TMP}/engine-materialize.log" || true

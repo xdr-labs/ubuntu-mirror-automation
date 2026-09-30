@@ -143,6 +143,7 @@ pass "HTTP cache negative probe ${code}"
 # Readiness helper must FAIL closed on HTTP 200 for a sensitive name.
 # shellcheck source=/dev/null
 source "${ROOT}/scripts/lib/mirror_manager_common.sh"
+export MM_HERMETIC_TEST_MODE=1
 export MM_VERIFY_HTTP_BASE="$base"
 export TARGET_DP_VERSION=6.6.0
 if mm_http_probe_denied "${base}/dp-phase2/6.6.0/bringup_py3_dp_after_os_upgrade.sh.upstream"; then

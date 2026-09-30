@@ -1,10 +1,19 @@
 #!/usr/bin/env bash
-# Helper-only Phase 2 publish orchestration (no bundle regenerate, no READY/pointer moves).
+# RETIRED helper-only orchestration for the historical current/ layout.
+# Production is hard-disabled; use Mirror Manager Menu 3 for endpoint/helper
+# republish against the sealed flat release. Retained for hermetic regressions.
 # Modes:
 #   (default)     deploy helpers + refresh release.env + verify
 #   --metadata-only   refresh release.env only (skip helper redeploy)
 #   --verify-only     read-only post-publish verification (no mutations)
 set -euo pipefail
+
+if [[ "${MM_HERMETIC_TEST_MODE:-0}" != "1" \
+  || "${ALLOW_LEGACY_PHASE2_MAINTENANCE:-0}" != "1" ]]; then
+  echo "LEGACY_PHASE2_MAINTENANCE_DISABLED=YES utility=$(basename "$0")" >&2
+  echo "Use the authoritative Mirror Manager workflow: Menu 2 -> 3 -> 4 -> 7." >&2
+  exit 2
+fi
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"

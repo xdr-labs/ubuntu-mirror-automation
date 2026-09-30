@@ -166,6 +166,29 @@ grep -q 'CLIENT_SET_FINALIZATION=PASS\|CLIENT_FILES_READY=PASS' "${TMP}/finalize
   && pass "CLIENT_SET_FINALIZATION/CLIENT_FILES_READY PASS" \
   || fail "finalization PASS markers missing"
 
+echo "=== 3A. post-swap failure restores previous selective generation ==="
+printf 'KNOWN_GOOD_SELECTIVE=YES\n' >"${MM_SELECTIVE_ROOT}/.known-good-selective"
+old_selective_hash="$(sha256sum "${MM_SELECTIVE_ROOT}/.known-good-selective" | awk '{print $1}')"
+set +e
+( MM_SELECTIVE_FAKE_POST_SWAP_FAIL=1 engine_materialize_os_mirror "$PKG" ) \
+  >"${TMP}/materialize-rollback.log" 2>&1
+rrc=$?
+set -e
+new_selective_hash="$(sha256sum "${MM_SELECTIVE_ROOT}/.known-good-selective" 2>/dev/null | awk '{print $1}')"
+if [[ "$rrc" -ne 0 ]] \
+  && [[ "$old_selective_hash" == "$new_selective_hash" ]] \
+  && grep -q 'OS_MIRROR_ROLLBACK=PASS previous_restored=YES' "${TMP}/materialize-rollback.log"; then
+  pass "post-swap failure restores previous selective generation"
+else
+  fail "selective rollback failed rc=${rrc}"
+  tail -40 "${TMP}/materialize-rollback.log" || true
+fi
+if compgen -G "${MM_SELECTIVE_ROOT}.new.*" >/dev/null; then
+  fail "selective rollback left candidate/previous generation path"
+else
+  pass "selective rollback leaves no transaction generation path"
+fi
+
 echo "=== 4. tamper / malformed READY rejected ==="
 if declare -F engine_verify_selective_ready_provenance >/dev/null 2>&1; then
   printf 'READY\nselective_plan_checksum=\ndiscovery_artifact_checksum=\n' \

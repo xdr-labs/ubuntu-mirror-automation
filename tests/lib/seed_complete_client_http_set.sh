@@ -9,6 +9,8 @@ seed_complete_client_http_set() {
   local fpr="${3:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA}"
   local mode="${4:-FULL}"
   local hop launcher f sha launcher_sha wrapper keyring_sha
+  local repo_root phase2_root bundle_sha prereq_sha p2h p2b p2p p2rsha
+  local identity_path bundle_path bundle_sidecar actual_bundle_sha sidecar_bundle_sha
 
   mirror="${mirror%/}"
   fpr="$(printf '%s' "$fpr" | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')"
@@ -70,39 +72,59 @@ EOF
     (cd "$root" && sha256sum "$wrapper" >"${wrapper}.sha256")
   done
 
-  cat >"${root}/upgrade-phase2.sh" <<EOF
-#!/bin/bash
-set -euo pipefail
-MIRROR='${mirror}'
-VER='6.6.0'
-SCRIPT='stage-dp-phase2.sh'
-GEN='phase2-helper-generation.manifest'
-H='0000000000000000000000000000000000000000000000000000000000000000'
-W=\$(mktemp -d)
-trap 'rm -rf "\$W"' EXIT
-cd "\$W"
-mkdir -p lib
-for F in "\$GEN" "\$SCRIPT"; do
-  curl -fsSLo "\$F" "\$MIRROR/client/\$F" || exit 1
-done
-printf '%s  %s\\n' "\$H" "\$GEN" | sha256sum -c -
-sha256sum -c "\$GEN"
-exec sudo bash "./\$SCRIPT" --target-version "\$VER" --mirror-url "\$MIRROR"
-EOF
-  chmod 0755 "${root}/upgrade-phase2.sh"
-  (cd "$root" && sha256sum upgrade-phase2.sh >upgrade-phase2.sh.sha256)
-  cat >"${root}/upgrade-phase2-same-version-recovery.sh" <<EOF
-#!/usr/bin/env bash
-set -euo pipefail
-[[ "\${CONFIRM_SAME_VERSION_RECOVERY:-}" == "YES" ]] || exit 2
-MIRROR='${mirror}'
-VER='6.6.0'
-SCRIPT='stage-dp-phase2.sh'
-exec sudo bash "./\$SCRIPT" --target-version "\$VER" --same-version-recovery --mirror-url "\$MIRROR"
-EOF
-  chmod 0755 "${root}/upgrade-phase2-same-version-recovery.sh"
-  (cd "$root" && sha256sum upgrade-phase2-same-version-recovery.sh \
-    >upgrade-phase2-same-version-recovery.sh.sha256)
+  # Production-shaped Phase 2 helper generation and trust anchors. The common
+  # fixture is used by readiness/publication tests, so keep it aligned with the
+  # same B/P/H contract enforced in production instead of a stale synthetic
+  # wrapper that can silently bypass new required helpers.
+  repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+  phase2_root="${5:-$(dirname "$root")/dp-phase2}"
+  mkdir -p "${root}/lib" "${phase2_root}/6.6.0/extras"
+  cp -f "${repo_root}/client/stage-dp-phase2.sh" "${root}/stage-dp-phase2.sh"
+  cp -f "${repo_root}/client/bringup_py3_dp_lifecycle.sh" "${root}/bringup_py3_dp_lifecycle.sh"
+  for f in \
+    dp-offline-source-product-version.sh \
+    dp-phase2-operation-progress.sh \
+    dp-phase2-bringup-lifecycle.sh \
+    dp-phase2-ubuntu-prerequisites.sh \
+    dp-phase2-time-readiness.sh \
+    dp-phase2-staging-contract.sh \
+    dp-phase2-post-bringup-migration.sh \
+    dp-phase2-cluster-validation.sh
+  do
+    cp -f "${repo_root}/client/lib/${f}" "${root}/lib/${f}"
+  done
+  chmod 0755 "${root}/stage-dp-phase2.sh" "${root}/bringup_py3_dp_lifecycle.sh" "${root}/lib/"*.sh
+  (cd "$root" && sha256sum stage-dp-phase2.sh >stage-dp-phase2.sh.sha256)
+
+  identity_path="${phase2_root}/6.6.0/extras/phase2-ubuntu-prerequisites.identity"
+  bundle_path="${phase2_root}/6.6.0/dp_bundle_6.6.0-current.tar"
+  bundle_sidecar="${bundle_path}.sha256"
+  if [[ ! -f "$identity_path" ]]; then
+    printf 'fixture-prerequisite-identity-v1\n' >"$identity_path"
+  fi
+  prereq_sha="$(sha256sum "$identity_path" | awk '{print $1}')"
+
+  if [[ -f "$bundle_path" ]]; then
+    actual_bundle_sha="$(sha256sum "$bundle_path" | awk '{print $1}')"
+    if [[ -f "$bundle_sidecar" ]]; then
+      sidecar_bundle_sha="$(awk 'NF {print tolower($1); exit}' "$bundle_sidecar")"
+      [[ "$sidecar_bundle_sha" =~ ^[0-9a-f]{64}$ && "$sidecar_bundle_sha" == "$actual_bundle_sha" ]] || return 1
+    else
+      printf '%s  dp_bundle_6.6.0-current.tar\n' "$actual_bundle_sha" >"$bundle_sidecar"
+    fi
+    bundle_sha="$actual_bundle_sha"
+  elif [[ -f "$bundle_sidecar" ]]; then
+    bundle_sha="$(awk 'NF {print tolower($1); exit}' "$bundle_sidecar")"
+    [[ "$bundle_sha" =~ ^[0-9a-f]{64}$ ]] || return 1
+  else
+    bundle_sha="$(printf 'fixture-phase2-bundle-v1\n' | sha256sum | awk '{print $1}')"
+    printf '%s  dp_bundle_6.6.0-current.tar\n' "$bundle_sha" >"$bundle_sidecar"
+  fi
+
+  # shellcheck source=../../scripts/lib/phase2_helper_generation.sh
+  source "${repo_root}/scripts/lib/phase2_helper_generation.sh"
+  phase2_helper_generation_write "$root" >/dev/null
+  phase2_upgrade_wrapper_write "$root" "$mirror" 6.6.0 "$bundle_sha" "$prereq_sha" >/dev/null
 
   {
     printf 'CLIENT_MIRROR_BASE_URL=%s\n' "$mirror"
@@ -122,8 +144,17 @@ EOF
       meta_key="CLIENT_WRAPPER_$(printf '%s' "$hop" | tr 'a-z-' 'A-Z_')_SHA256"
       printf '%s=%s\n' "$meta_key" "$sha"
     done
+    printf 'CLIENT_PROVENANCE_SCHEMA_VERSION=3\n'
     printf 'CLIENT_WRAPPER_PHASE2_SHA256=%s\n' \
       "$(sha256sum "${root}/upgrade-phase2.sh" | awk '{print $1}')"
+    p2rsha="$(sha256sum "${root}/upgrade-phase2-same-version-recovery.sh" | awk '{print $1}')"
+    p2h="$(awk -F"'" '$1=="H="{print $2; exit}' "${root}/upgrade-phase2.sh")"
+    p2b="$(awk -F"'" '$1=="B="{print $2; exit}' "${root}/upgrade-phase2.sh")"
+    p2p="$(awk -F"'" '$1=="P="{print $2; exit}' "${root}/upgrade-phase2.sh")"
+    printf 'CLIENT_WRAPPER_PHASE2_RECOVERY_SHA256=%s\n' "$p2rsha"
+    printf 'CLIENT_PHASE2_HELPER_GENERATION_SHA256=%s\n' "$p2h"
+    printf 'CLIENT_PHASE2_BUNDLE_SHA256=%s\n' "$p2b"
+    printf 'CLIENT_PHASE2_PREREQ_IDENTITY_SHA256=%s\n' "$p2p"
   } >"${root}/client-set.env"
   chmod 0644 "${root}/client-set.env"
 }

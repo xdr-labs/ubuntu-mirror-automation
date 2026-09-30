@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # GUI client-command generation, menu helpers, worker IP validation.
+# shellcheck disable=SC2218 # installer functions are dynamically sourced/stubbed below.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -544,6 +545,41 @@ mm_save_gui_config >/dev/null
 [[ ! -f "$(mm_client_commands_file)" ]] || fail "stale command file not removed on mode change"
 pass "mode change invalidates client commands file"
 
+# Configuration saves share the publication lock with Menu 2/3/7.
+export MM_LOCK_FILE="$TMP/publication.lock"
+PREPARATION_MODE=FULL
+MIRROR_SERVER_IP="192.0.2.10"
+MIRROR_HTTP_URL="http://192.0.2.10"
+mm_save_gui_config_full >/dev/null
+config_before_lock="$(sha256sum "$MM_CONFIG_FILE" | awk '{print $1}')"
+config_lock_held="$TMP/config-lock-held"
+rm -f "$config_lock_held"
+(
+  exec 9>"$MM_LOCK_FILE"
+  flock -x 9
+  : >"$config_lock_held"
+  sleep 2
+) &
+config_lock_pid=$!
+for _ in $(seq 1 200); do
+  [[ -f "$config_lock_held" ]] && break
+  sleep 0.01
+done
+[[ -f "$config_lock_held" ]] || fail "configuration lock holder did not start"
+MIRROR_SERVER_IP="192.0.2.11"
+MIRROR_HTTP_URL="http://192.0.2.11"
+if mm_save_gui_config_full >/dev/null 2>&1; then
+  fail "configuration save bypassed concurrent publication lock"
+fi
+config_after_lock="$(sha256sum "$MM_CONFIG_FILE" | awk '{print $1}')"
+[[ "$config_before_lock" == "$config_after_lock" ]] \
+  || fail "blocked configuration save mutated config"
+wait "$config_lock_pid"
+MIRROR_SERVER_IP="192.0.2.10"
+MIRROR_HTTP_URL="http://192.0.2.10"
+pass "configuration save serialized by publication lock"
+echo "CONFIG_SAVE_PUBLICATION_LOCK=PASS"
+
 # Menu 7: consumes saved DL/DA worker configuration; no topology/IP prompt.
 PREPARATION_MODE=FULL
 MIRROR_HTTP_URL="http://192.0.2.10"
@@ -627,7 +663,60 @@ engine_resolve_paths() { :; }
 mm_save_gui_config() { return 0; }
 engine_http_local_smoke() { return 0; }
 engine_http_advertised_smoke() { return 0; }
+mm_http_completed() { return 0; }
 rm -f "$(mm_client_commands_file)"
+
+# A concurrent publication/configuration mutation must block Menu 7 before it
+# can mint a command file.
+menu7_lock_held="$TMP/menu7-lock-held"
+rm -f "$menu7_lock_held"
+(
+  exec 9>"$MM_LOCK_FILE"
+  flock -x 9
+  : >"$menu7_lock_held"
+  sleep 2
+) &
+menu7_lock_pid=$!
+for _ in $(seq 1 200); do
+  [[ -f "$menu7_lock_held" ]] && break
+  sleep 0.01
+done
+[[ -f "$menu7_lock_held" ]] || fail "menu7 lock holder did not start"
+gui_client_instructions
+[[ ! -f "$(mm_client_commands_file)" ]] \
+  || fail "Menu 7 minted a command while publication lock was busy"
+grep -q 'BLOCK_REASON=PUBLICATION_LOCK_BUSY' "$MENU7_TRACE" || {
+  cat "$MENU7_TRACE" >&2
+  fail "Menu 7 did not report publication lock contention"
+}
+wait "$menu7_lock_pid"
+echo "MENU7_CONCURRENT_PUBLICATION_LOCK=PASS"
+
+# Deterministically mutate config between the first preflight and lock acquire.
+# Menu 7 must reload and re-run preflight after acquiring the lock.
+eval "$(declare -f publication_lock_acquire | sed '1s/publication_lock_acquire/_menu7_real_publication_lock_acquire/')"
+MENU7_INJECT_CONFIG_CHANGE_ON_LOCK=1
+publication_lock_acquire() {
+  if [[ "${MENU7_INJECT_CONFIG_CHANGE_ON_LOCK:-0}" == "1" ]]; then
+    MENU7_INJECT_CONFIG_CHANGE_ON_LOCK=0
+    sed -i 's/192\.0\.2\.10/192.0.2.11/g' "$MM_CONFIG_FILE"
+  fi
+  _menu7_real_publication_lock_acquire "$@"
+}
+: >"$MENU7_TRACE"
+gui_client_instructions
+[[ ! -f "$(mm_client_commands_file)" ]] \
+  || fail "Menu 7 minted stale command after config changed before lock"
+grep -q 'BLOCK_REASON=STALE_CONFIG_SHA256' "$MENU7_TRACE" \
+  || fail "Menu 7 did not re-preflight changed config after lock acquire"
+unset -f publication_lock_acquire
+eval "$(declare -f _menu7_real_publication_lock_acquire | sed '1s/_menu7_real_publication_lock_acquire/publication_lock_acquire/')"
+unset -f _menu7_real_publication_lock_acquire
+sed -i 's/192\.0\.2\.11/192.0.2.10/g' "$MM_CONFIG_FILE"
+mm_load_gui_config
+echo "MENU7_POST_LOCK_PREFLIGHT=PASS"
+
+: >"$MENU7_TRACE"
 gui_client_instructions
 [[ "$INPUTBOX_COUNT" -eq 0 ]] || fail "menu7 version inputbox count=${INPUTBOX_COUNT}"
 [[ "$MENU7_TEXTBOX_COUNT" -eq 1 ]] || fail "menu7 expected exactly one menu7 textbox, got ${MENU7_TEXTBOX_COUNT}"

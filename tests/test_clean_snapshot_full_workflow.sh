@@ -4,6 +4,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=lib/client_finalization_fixture.sh
+source "$ROOT/tests/lib/client_finalization_fixture.sh"
 FAIL=0
 HTTP_PID=""
 pass() { printf 'PASS: %s\n' "$*"; }
@@ -104,6 +106,17 @@ expect "state CONFIGURED" test "$(mm_wf_state)" = CONFIGURED
 mm_wf_mark_prepared os-fixture-1 phase2-fixture-1
 expect "state PREPARED" test "$(mm_wf_state)" = PREPARED
 
+# FULL readiness is fail-closed unless the live selective generation has a
+# verified plan/discovery/AWS semantic-contract tuple. Model the production
+# OS Core publication contract rather than bypassing that gate.
+client_fixture_write_generation_binding "$MM_SELECTIVE_ROOT" "$ROOT"
+LIVE_SELECTIVE="$(mm_wf_load_live_selective_tuple)"
+CLIENT_PLAN_CHECKSUM="$(printf '%s\n' "$LIVE_SELECTIVE" | awk -F= '$1=="SELECTIVE_PLAN_CHECKSUM"{print $2; exit}')"
+CLIENT_DISCOVERY_ARTIFACT_CHECKSUM="$(printf '%s\n' "$LIVE_SELECTIVE" | awk -F= '$1=="SELECTIVE_DISCOVERY_ARTIFACT_CHECKSUM"{print $2; exit}')"
+CLIENT_AWS_SEMANTIC_CONTRACT_SHA256="$(printf '%s\n' "$LIVE_SELECTIVE" | awk -F= '$1=="SELECTIVE_AWS_SEMANTIC_CONTRACT_SHA256"{print $2; exit}')"
+export CLIENT_PLAN_CHECKSUM CLIENT_DISCOVERY_ARTIFACT_CHECKSUM CLIENT_AWS_SEMANTIC_CONTRACT_SHA256
+expect "verified selective generation available" test -n "$CLIENT_AWS_SEMANTIC_CONTRACT_SHA256"
+
 # Ephemeral signing identity and four signed fixture clients.
 GPG_HOME="$TMP/gnupg"
 mkdir -p "$GPG_HOME"
@@ -151,16 +164,42 @@ for hop in "${HOPS[@]}"; do
 import json, sys
 hop, script, digest, dest = sys.argv[1:]
 with open(dest, "w", encoding="utf-8") as fh:
-    json.dump({"hop": hop, "script": script, "script_sha256": digest}, fh)
+    json.dump({
+        "hop": hop,
+        "script": script,
+        "script_sha256": digest,
+        "client_build_input_sha256": "a" * 64,
+    }, fh)
     fh.write("\n")
 PY
   gpg --homedir "$GPG_HOME" --batch --yes --armor --detach-sign \
     -o "$STAGE/$hop/client-manifest.json.asc" "$STAGE/$hop/client-manifest.json"
 done
-# Phase 2 stage helper + authenticated Menu 7 command-runner.
-printf '#!/usr/bin/env bash\nprintf "fixture stage\\n"\n' >"$STAGE/stage-dp-phase2.sh"
-chmod 0755 "$STAGE/stage-dp-phase2.sh"
+# Production-shaped Phase 2 helper generation + endpoint-bound wrapper.
+mkdir -p "$STAGE/lib" "$MM_DP_PHASE2_ROOT"
+cp "$RUNTIME/client/stage-dp-phase2.sh" "$STAGE/stage-dp-phase2.sh"
+cp "$RUNTIME/client/bringup_py3_dp_lifecycle.sh" "$STAGE/bringup_py3_dp_lifecycle.sh"
+for f in \
+  dp-offline-source-product-version.sh \
+  dp-phase2-operation-progress.sh \
+  dp-phase2-bringup-lifecycle.sh \
+  dp-phase2-ubuntu-prerequisites.sh \
+  dp-phase2-time-readiness.sh \
+  dp-phase2-staging-contract.sh \
+  dp-phase2-post-bringup-migration.sh \
+  dp-phase2-cluster-validation.sh
+do
+  cp "$RUNTIME/client/lib/$f" "$STAGE/lib/$f"
+done
+chmod 0755 "$STAGE/stage-dp-phase2.sh" "$STAGE/bringup_py3_dp_lifecycle.sh" "$STAGE/lib/"*.sh
 ( cd "$STAGE" && sha256sum stage-dp-phase2.sh >stage-dp-phase2.sh.sha256 )
+# shellcheck source=lib/phase2_bundle_trust_fixture.sh
+source "$ROOT/tests/lib/phase2_bundle_trust_fixture.sh"
+phase2_trust_fixture_write_bundle_sidecar "$MM_DP_PHASE2_ROOT" 6.6.0 >/dev/null
+# shellcheck disable=SC1090
+source "$RUNTIME/scripts/lib/phase2_helper_generation.sh"
+phase2_helper_generation_write "$STAGE" >/dev/null
+phase2_upgrade_wrapper_write "$STAGE" "$MIRROR_HTTP_URL" 6.6.0 >/dev/null
 LOCAL_SIGNING_PRIVATE_KEY="$LOCAL_CLIENT_SIGNING_DIR/private.gpg"
 LOCAL_SIGNING_PUBLIC_KEY="$LOCAL_CLIENT_SIGNING_DIR/public.gpg"
 LOCAL_KEY_FINGERPRINT="$FPR"
@@ -204,7 +243,11 @@ python3 "$RUNTIME/scripts/lib/atomic_dir_swap.py" \
 expect "atomic client publication" grep -q 'CLIENT_SET_ATOMIC_SWAP=PASS' "$SWAP_OUT"
 expect "live public permissions" \
   mm_client_live_postpublish_permission_verify "$MM_CLIENT_ROOT"
-mm_wf_mark_client_set_published "$CLIENT_GEN" "$FPR"
+mm_wf_mark_client_set_published "$CLIENT_GEN" "$FPR" \
+  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+  "" "" SUBSHELL_V2 1 \
+  "$CLIENT_PLAN_CHECKSUM" "$CLIENT_DISCOVERY_ARTIFACT_CHECKSUM" \
+  "$CLIENT_AWS_SEMANTIC_CONTRACT_SHA256"
 expect "state CLIENT_SET_PUBLISHED" test "$(mm_wf_state)" = CLIENT_SET_PUBLISHED
 mm_wf_mark_http_enabled "$CLIENT_GEN"
 expect "state HTTP_ENABLED" test "$(mm_wf_state)" = HTTP_ENABLED
@@ -303,12 +346,14 @@ else
 fi
 expect "wrong wrapper SHA causes zero executions" test "$(wc -l <"$RUNS")" = 0
 
-# Stale config identity blocks Menu 7 preflight.
-printf '\nACPS_USERNAME=changed-fixture\n' >>"$MM_CONFIG_FILE"
+# A readiness-relevant publication endpoint change blocks Menu 7 preflight.
+# ACPS auth-only changes are intentionally excluded from readiness identity.
+MIRROR_SERVER_IP=192.0.2.11
+MIRROR_HTTP_URL=http://192.0.2.11
 if mm_wf_commands_preflight; then
-  fail "stale CONFIG_SHA256 preflight unexpectedly passed"
+  fail "stale readiness identity preflight unexpectedly passed"
 else
-  expect "stale CONFIG_SHA256 blocks Menu 7" \
+  expect "stale readiness identity blocks Menu 7" \
     test "$MM_WF_BLOCK_REASON" = STALE_CONFIG_SHA256
 fi
 

@@ -136,12 +136,37 @@ set -e
   && pass "OLD_650_BUNDLE_ACCEPTED_AS_660_READY=NO" \
   || fail "6.5.0 incorrectly satisfied 6.6.0"
 
+# Retired current/ layout must not satisfy the flat sealed release identity.
+mkdir -p "${BASE1}/dp-phase2/6.6.0/current"
+printf '%064d  dp_bundle_6.6.0-current.tar\n' 0 \
+  >"${BASE1}/dp-phase2/6.6.0/current/dp_bundle_6.6.0-current.tar.sha256"
+set +e
+legacy660="$(MM_DP_PHASE2_ROOT="${BASE1}/dp-phase2" bash -c '
+  source "'"${ROOT}"'/scripts/lib/phase2_helper_generation.sh"
+  phase2_published_bundle_sha256 6.6.0
+' 2>/dev/null)"
+legacy_rc=$?
+set -e
+[[ "$legacy_rc" -ne 0 || -z "$legacy660" ]] \
+  && pass "retired current/ sidecar ignored for Phase 2 identity" \
+  || fail "retired current/ sidecar was accepted as published B"
+rm -rf "${BASE1}/dp-phase2/6.6.0/current"
+
 echo "======== 2. Existing published client set unchanged when 6.6.0 absent ========"
 HOST2="${WORKDIR}/host2"
 setup_host "$HOST2"
 BASE2="${HOST2}/var/spool/apt-mirror"
 CLIENT2="${BASE2}/client"
-seed_complete_client_http_set "$CLIENT2" "$MIRROR_URL"
+# Build a production-shaped existing client set outside BASE2, then copy only
+# the published client bytes. Section 2 specifically requires the target
+# mirror to have no 6.6.0 Phase 2 bundle; seeding trust anchors directly under
+# BASE2 would invalidate that precondition.
+EXISTING_SEED2="${WORKDIR}/existing-client-seed2"
+mkdir -p "${EXISTING_SEED2}/client"
+MM_DP_PHASE2_ROOT="${EXISTING_SEED2}/dp-phase2" \
+  seed_complete_client_http_set "${EXISTING_SEED2}/client" "$MIRROR_URL"
+rm -rf "$CLIENT2"
+cp -a "${EXISTING_SEED2}/client" "$CLIENT2"
 # Marker proving mixed-generation merge would be detectable
 printf 'EXISTING-GENERATION-MARKER\n' >"${CLIENT2}/.generation-marker"
 phase2_trust_fixture_write_bundle_sidecar "${BASE2}/dp-phase2" "6.5.0" "old-only" >/dev/null

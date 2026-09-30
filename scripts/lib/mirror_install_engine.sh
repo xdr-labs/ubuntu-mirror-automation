@@ -53,6 +53,7 @@ engine_rebuild_publish_local_client_set() {
   local child_out=""
   local redacted=""
   local failed_hop="" failed_stage="" error_summary=""
+  local errexit_was_on=0
 
   [[ -f "$rebuild" ]] || {
     mm_error "CLIENT_FINALIZER_MISSING=${rebuild}"
@@ -103,6 +104,7 @@ engine_rebuild_publish_local_client_set() {
   mm_info "CLIENT_FINALIZER_COMMAND_START"
 
   mm_set_phase "Publishing Local Client Set"
+  case $- in *e*) errexit_was_on=1 ;; esac
   set +e
   child_out="$(
     env \
@@ -127,7 +129,11 @@ engine_rebuild_publish_local_client_set() {
       bash "$rebuild" 2>&1
   )"
   rc=$?
-  set -e
+  if [[ "$errexit_was_on" -eq 1 ]]; then
+    set -e
+  else
+    set +e
+  fi
 
   # Persist child output (redacted). On redaction failure NEVER write raw child_out.
   if redacted="$(printf '%s\n' "$child_out" | mm_redact 2>/dev/null)"; then
@@ -179,21 +185,163 @@ engine_rebuild_publish_local_client_set() {
 # Ensure Phase 2 helper scripts are published (no OS-hop clients).
 # Stages a complete helper generation, validates it, then atomically swaps
 # into the live client root so a crash never exposes a mixed old/new set.
+engine_phase2_only_client_identity() {
+  local root="${1:?client root required}" mirror="${2:?mirror required}" ver="${3:?version required}"
+  local manifest="${root}/phase2-helper-generation.manifest"
+  local wrapper="${root}/upgrade-phase2.sh"
+  local recovery="${root}/upgrade-phase2-same-version-recovery.sh"
+  local sidecar="${MM_DP_PHASE2_ROOT}/${ver}/dp_bundle_${ver}-current.tar.sha256"
+  local identity="${MM_DP_PHASE2_ROOT}/${ver}/extras/phase2-ubuntu-prerequisites.identity"
+  local h b p w r
+  [[ -f "$manifest" && -f "$wrapper" && -f "$recovery" && -f "$sidecar" && -f "$identity" ]] || return 1
+  h="$(sha256sum "$manifest" | awk '{print tolower($1)}')"
+  b="$(awk 'NF {print tolower($1); exit}' "$sidecar")"
+  p="$(sha256sum "$identity" | awk '{print tolower($1)}')"
+  w="$(sha256sum "$wrapper" | awk '{print tolower($1)}')"
+  r="$(sha256sum "$recovery" | awk '{print tolower($1)}')"
+  [[ "$h" =~ ^[0-9a-f]{64}$ && "$b" =~ ^[0-9a-f]{64}$ && "$p" =~ ^[0-9a-f]{64}$ \
+    && "$w" =~ ^[0-9a-f]{64}$ && "$r" =~ ^[0-9a-f]{64}$ ]] || return 1
+  printf 'mode=PHASE2_ONLY\nmirror=%s\nversion=%s\nhelper=%s\nbundle=%s\nprereq=%s\nwrapper=%s\nrecovery=%s\n' \
+    "${mirror%/}" "$ver" "$h" "$b" "$p" "$w" "$r" \
+    | sha256sum | awk '{print $1}'
+}
+
+engine_phase2_only_metadata_write() {
+  local root="${1:?client root required}" mirror="${2:?mirror required}" ver="${3:?version required}"
+  local meta="${root}/client-set.env" input_sha gen helper_sha bundle_sha prereq_sha wrapper_sha recovery_sha
+  input_sha="$(engine_phase2_only_client_identity "$root" "$mirror" "$ver")" || return 1
+  gen="phase2-only-${input_sha}"
+  helper_sha="$(sha256sum "${root}/phase2-helper-generation.manifest" | awk '{print tolower($1)}')"
+  bundle_sha="$(awk 'NF {print tolower($1); exit}' "${MM_DP_PHASE2_ROOT}/${ver}/dp_bundle_${ver}-current.tar.sha256")"
+  prereq_sha="$(sha256sum "${MM_DP_PHASE2_ROOT}/${ver}/extras/phase2-ubuntu-prerequisites.identity" | awk '{print tolower($1)}')"
+  wrapper_sha="$(sha256sum "${root}/upgrade-phase2.sh" | awk '{print tolower($1)}')"
+  recovery_sha="$(sha256sum "${root}/upgrade-phase2-same-version-recovery.sh" | awk '{print tolower($1)}')"
+  cat >"${meta}.tmp" <<EOF
+CLIENT_SET_GENERATION_ID=${gen}
+CLIENT_SIGNING_FINGERPRINT=
+MIRROR_HTTP_URL=${mirror%/}
+PREPARATION_MODE=PHASE2_ONLY
+PHASE2_TARGET_VERSION=${ver}
+CLIENT_PROVENANCE_SCHEMA_VERSION=3
+CLIENT_BUILD_INPUT_SHA256=${input_sha}
+CLIENT_SOURCE_REVISION=
+CLIENT_SOURCE_TREE_STATE=
+CLIENT_RUNTIME_MANIFEST_SHA256=
+CLIENT_COMMAND_BLOCK_VERSION=SUBSHELL_V2
+CLIENT_LAUNCHER_SCHEMA_VERSION=0
+CLIENT_MIRROR_BASE_URL=${mirror%/}
+CLIENT_PLAN_CHECKSUM=
+CLIENT_DISCOVERY_ARTIFACT_CHECKSUM=
+CLIENT_AWS_SEMANTIC_CONTRACT_SHA256=
+CLIENT_BUILD_CREATED_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+CLIENT_WRAPPER_PHASE2_SHA256=${wrapper_sha}
+CLIENT_WRAPPER_PHASE2_RECOVERY_SHA256=${recovery_sha}
+CLIENT_PHASE2_HELPER_GENERATION_SHA256=${helper_sha}
+CLIENT_PHASE2_BUNDLE_SHA256=${bundle_sha}
+CLIENT_PHASE2_PREREQ_IDENTITY_SHA256=${prereq_sha}
+EOF
+  chmod 0644 "${meta}.tmp"
+  mv -f "${meta}.tmp" "$meta"
+}
+
+engine_phase2_only_metadata_current() {
+  local root="${1:?client root required}" mirror="${2:?mirror required}" ver="${3:?version required}"
+  local meta="${root}/client-set.env" mode meta_mirror target input_sha current_sha gen
+  [[ -f "$meta" ]] || return 1
+  mm_parse_env_metadata_get "$meta" >/dev/null || return 1
+  mode="$(mm_parse_env_metadata_get "$meta" PREPARATION_MODE 2>/dev/null || true)"
+  meta_mirror="$(mm_parse_env_metadata_get "$meta" CLIENT_MIRROR_BASE_URL 2>/dev/null || true)"
+  [[ -z "$meta_mirror" ]] && meta_mirror="$(mm_parse_env_metadata_get "$meta" MIRROR_HTTP_URL 2>/dev/null || true)"
+  target="$(mm_parse_env_metadata_get "$meta" PHASE2_TARGET_VERSION 2>/dev/null || true)"
+  input_sha="$(mm_parse_env_metadata_get "$meta" CLIENT_BUILD_INPUT_SHA256 2>/dev/null || true)"
+  gen="$(mm_parse_env_metadata_get "$meta" CLIENT_SET_GENERATION_ID 2>/dev/null || true)"
+  [[ "$mode" == "PHASE2_ONLY" && "${meta_mirror%/}" == "${mirror%/}" && "$target" == "$ver" ]] || return 1
+  current_sha="$(engine_phase2_only_client_identity "$root" "$mirror" "$ver")" || return 1
+  [[ "$input_sha" == "$current_sha" && "$gen" == "phase2-only-${current_sha}" ]] || return 1
+  mm_phase2_wrapper_trust_anchors_match "$root" "$MM_DP_PHASE2_ROOT" "$ver" || return 1
+  return 0
+}
+
+
+PHASE2_HELPERS_TXN_CHANGED=0
+PHASE2_HELPERS_TXN_PREVIOUS_PATH=""
+PHASE2_HELPERS_TXN_LIVE_PATH=""
+
+engine_phase2_helpers_txn_commit() {
+  if [[ "${PHASE2_HELPERS_TXN_CHANGED:-0}" == "1" \
+    && -n "${PHASE2_HELPERS_TXN_PREVIOUS_PATH:-}" ]]; then
+    rm -rf "${PHASE2_HELPERS_TXN_PREVIOUS_PATH}" \
+      || { mm_error "PHASE2_HELPERS_TRANSACTION=FAIL reason=previous_cleanup"; return 1; }
+  fi
+  PHASE2_HELPERS_TXN_CHANGED=0
+  PHASE2_HELPERS_TXN_PREVIOUS_PATH=""
+  PHASE2_HELPERS_TXN_LIVE_PATH=""
+  mm_info "PHASE2_HELPERS_TRANSACTION=COMMIT"
+  return 0
+}
+
+engine_phase2_helpers_txn_rollback() {
+  local root="${MM_PROJECT_ROOT}" out rc=0
+  if [[ "${PHASE2_HELPERS_TXN_CHANGED:-0}" != "1" ]]; then
+    return 0
+  fi
+  if [[ -z "${PHASE2_HELPERS_TXN_PREVIOUS_PATH:-}" \
+    || ! -d "${PHASE2_HELPERS_TXN_PREVIOUS_PATH}" \
+    || -z "${PHASE2_HELPERS_TXN_LIVE_PATH:-}" ]]; then
+    mm_error "PHASE2_HELPERS_TRANSACTION=ROLLBACK_FAIL reason=previous_missing"
+    return 1
+  fi
+  if out="$(python3 "${root}/scripts/lib/atomic_dir_swap.py" \
+    --stage-dir "${PHASE2_HELPERS_TXN_PREVIOUS_PATH}" \
+    --live-dir "${PHASE2_HELPERS_TXN_LIVE_PATH}" \
+    --require-exchange 2>&1)"; then
+    rc=0
+  else
+    rc=$?
+  fi
+  if [[ "$rc" -ne 0 ]]; then
+    mm_error "PHASE2_HELPERS_TRANSACTION=ROLLBACK_FAIL"
+    printf '%s\n' "$out" >&2
+    return 1
+  fi
+  PHASE2_HELPERS_TXN_CHANGED=0
+  PHASE2_HELPERS_TXN_PREVIOUS_PATH=""
+  PHASE2_HELPERS_TXN_LIVE_PATH=""
+  mm_warn "PHASE2_HELPERS_TRANSACTION=ROLLBACK_PASS previous_restored=YES"
+  return 0
+}
+
 engine_ensure_phase2_helpers() {
   local root="${MM_PROJECT_ROOT}"
   local dest="${MM_CLIENT_ROOT}"
-  local stage f swap_out
+  local stage f swap_out swap_rc=0 mirror="" ver="${PHASE2_TARGET_VERSION:-${TARGET_DP_VERSION:-6.6.0}}"
+  local env_force="${MM_PHASE2_HELPERS_FORCE_REPUBLISH:-0}" previous_path=""
+  PHASE2_HELPERS_TXN_CHANGED=0
+  PHASE2_HELPERS_TXN_PREVIOUS_PATH=""
+  PHASE2_HELPERS_TXN_LIVE_PATH="$dest"
+
+  if mm_is_phase2_only; then
+    mirror="$(mm_client_mirror_url 2>/dev/null || true)"
+    mirror="${mirror%/}"
+    [[ -n "$mirror" ]] || {
+      mm_error "PHASE2_ONLY_CLIENT_METADATA=FAIL reason=mirror_url_missing"
+      return 1
+    }
+  fi
 
   if mm_phase2_helpers_ready "$dest"; then
-    if [[ "${MM_PHASE2_HELPERS_FORCE_REPUBLISH:-0}" != "1" ]]; then
+    if [[ "$env_force" == "1" ]]; then
+      if [[ "${MM_HERMETIC_TEST_MODE:-0}" != "1" ]]; then
+        mm_error "PHASE2_HELPERS_FORCE_REPUBLISH=FAIL reason=production_forbidden"
+        return 1
+      fi
+      mm_info "PHASE2_HELPERS_FORCE_REPUBLISH=YES"
+    elif ! mm_is_phase2_only || engine_phase2_only_metadata_current "$dest" "$mirror" "$ver"; then
       mm_check_phase2_helpers_ready
       return 0
+    else
+      mm_info "PHASE2_ONLY_CLIENT_PUBLICATION=STALE — republishing local helper generation"
     fi
-    if [[ "${MM_HERMETIC_TEST_MODE:-0}" != "1" ]]; then
-      mm_error "PHASE2_HELPERS_FORCE_REPUBLISH=FAIL reason=production_forbidden"
-      return 1
-    fi
-    mm_info "PHASE2_HELPERS_FORCE_REPUBLISH=YES"
   fi
 
   mkdir -p "$dest"
@@ -221,7 +369,7 @@ engine_ensure_phase2_helpers() {
     rm -rf "$stage"
     return 1
   fi
-  local mirror="${MIRROR_HTTP_URL:-${RESOLVED_MIRROR_BASE_URL:-}}"
+  mirror="${MIRROR_HTTP_URL:-${RESOLVED_MIRROR_BASE_URL:-}}"
   mirror="${mirror%/}"
   if [[ -z "$mirror" ]] && declare -F mm_client_mirror_url >/dev/null 2>&1; then
     mirror="$(mm_client_mirror_url 2>/dev/null || true)"
@@ -238,6 +386,13 @@ engine_ensure_phase2_helpers() {
   then
     rm -rf "$stage"
     return 1
+  fi
+  if mm_is_phase2_only; then
+    if ! engine_phase2_only_metadata_write "$stage" "$mirror" "$ver"; then
+      rm -rf "$stage"
+      mm_error "PHASE2_ONLY_CLIENT_METADATA=FAIL"
+      return 1
+    fi
   fi
   if declare -F mm_normalize_http_public_tree_permissions >/dev/null 2>&1; then
     mm_normalize_http_public_tree_permissions "$stage" client || {
@@ -259,20 +414,30 @@ engine_ensure_phase2_helpers() {
     return 1
   fi
   if [[ -f "${root}/scripts/lib/atomic_dir_swap.py" ]]; then
-    set +e
-    swap_out="$(python3 "${root}/scripts/lib/atomic_dir_swap.py" \
+    if swap_out="$(python3 "${root}/scripts/lib/atomic_dir_swap.py" \
       --stage-dir "$stage" \
-      --live-dir "$dest" 2>&1)"
-    local swap_rc=$?
-    set -e
+      --live-dir "$dest" \
+      --require-exchange \
+      --keep-previous 2>&1)"; then
+      swap_rc=0
+    else
+      swap_rc=$?
+    fi
     if [[ "$swap_rc" -ne 0 ]]; then
       rm -rf "$stage"
       mm_error "PHASE2_HELPERS_ATOMIC_SWAP=FAIL"
       printf '%s\n' "$swap_out" >&2
       return 1
     fi
-    # atomic_dir_swap leaves previous generation aside; stage dir is consumed.
-    mm_info "PHASE2_HELPERS_ATOMIC_SWAP=PASS"
+    previous_path="$(printf '%s\n' "$swap_out" | awk -F= '$1=="CLIENT_SET_PREVIOUS_PATH"{print substr($0,index($0,"=")+1); exit}')"
+    if [[ -z "$previous_path" || ! -d "$previous_path" ]]; then
+      mm_error "PHASE2_HELPERS_ATOMIC_SWAP=FAIL reason=previous_generation_not_retained"
+      return 1
+    fi
+    PHASE2_HELPERS_TXN_CHANGED=1
+    PHASE2_HELPERS_TXN_PREVIOUS_PATH="$previous_path"
+    PHASE2_HELPERS_TXN_LIVE_PATH="$dest"
+    mm_info "PHASE2_HELPERS_ATOMIC_SWAP=PASS previous_retained=YES"
   else
     # Fail closed rather than non-atomic copy if swap helper is missing.
     rm -rf "$stage"
@@ -282,7 +447,13 @@ engine_ensure_phase2_helpers() {
   if declare -F mm_normalize_http_public_tree_permissions >/dev/null 2>&1; then
     mm_normalize_http_public_tree_permissions "$dest" client || true
   fi
-  mm_check_phase2_helpers_ready
+  if ! mm_check_phase2_helpers_ready; then
+    mm_error "PHASE2_HELPERS_POST_SWAP_VALIDATE=FAIL"
+    engine_phase2_helpers_txn_rollback \
+      || mm_error "PHASE2_HELPERS_POST_SWAP_ROLLBACK=FAIL"
+    return 1
+  fi
+  return 0
 }
 
 # Decide whether the existing hop client set can be reused or must be rebuilt.
@@ -403,7 +574,10 @@ engine_bind_reused_client_set_workflow() {
   plan_ck="$(mm_parse_env_metadata_get "$meta" CLIENT_PLAN_CHECKSUM 2>/dev/null || true)"
   disc_ck="$(mm_parse_env_metadata_get "$meta" CLIENT_DISCOVERY_ARTIFACT_CHECKSUM 2>/dev/null || true)"
   contract_sha="$(mm_parse_env_metadata_get "$meta" CLIENT_AWS_SEMANTIC_CONTRACT_SHA256 2>/dev/null || true)"
-  [[ -n "$gen" && -n "$fpr" && -n "$input_sha" ]] || return 1
+  [[ -n "$gen" && -n "$input_sha" ]] || return 1
+  if ! mm_is_phase2_only && [[ -z "$fpr" ]]; then
+    return 1
+  fi
   mm_wf_mark_client_set_published "$gen" "$fpr" "$input_sha" "$source_rev" "$runtime_sha" "$command_ver" "$schema_ver" \
     "$plan_ck" "$disc_ck" "$contract_sha"
   mm_info "CLIENT_SET_WORKFLOW_REBOUND=PASS CLIENT_SET_GENERATION_ID=${gen}"
@@ -446,54 +620,25 @@ engine_finalize_local_client_set() {
       mm_info "DOWNLOAD_AND_PREPARE_RESULT=FAIL_CLIENT_SET_FINALIZATION"
       return 1
     fi
-    # Mode-switch coherence: a FULL selective-bound client set must not remain
-    # the live PHASE2_ONLY generation. Reuse only when classify says CURRENT for
-    # PHASE2_ONLY (empty selective contract); otherwise rebuild when selective
-    # READY is available so hop manifests can be regenerated under that contract.
-    engine_assess_client_set_for_finalize
-    mm_info "CLIENT_SET_STATE=${CLIENT_SET_STATE}"
-    mm_info "CLIENT_SET_ACTION=${CLIENT_SET_ACTION}"
-    if [[ "${CLIENT_SET_ACTION}" == "REUSE_CURRENT" || "${CLIENT_SET_ACTION}" == "REUSE_VERIFIED" ]]; then
-      if mm_check_client_files_ready && engine_bind_reused_client_set_workflow; then
-        mm_info "CLIENT_SET_ON_DISK_READY=PASS"
-        mm_info "CLIENT_HTTP_READY=DEFERRED"
-        mm_ok "CLIENT_SET_FINALIZATION=PASS"
-        return 0
-      fi
-      mm_warn "CLIENT_SET_REUSE_FAILED — falling through to PHASE2_ONLY rebuild"
-      CLIENT_SET_ACTION=REBUILD_SIGN_PUBLISH
-    fi
-    if [[ -f "${MM_SELECTIVE_ROOT}/state/READY" ]]; then
-      mm_info "PHASE2_ONLY_CLIENT_SET_ACTION=REBUILD_SIGN_PUBLISH"
-      if ! engine_rebuild_publish_local_client_set 1; then
-        mm_error "CLIENT_SET_FINALIZATION=FAIL"
-        mm_info "PREPARATION_ARTIFACTS_READY=YES"
-        mm_info "DOWNLOAD_AND_PREPARE_RESULT=FAIL_CLIENT_SET_FINALIZATION"
-        return 1
-      fi
-      # Rebuild publishes helpers+hops atomically; re-assert Phase 2 unit ready.
-      if ! engine_ensure_phase2_helpers; then
-        mm_error "CLIENT_SET_FINALIZATION=FAIL"
-        mm_info "PREPARATION_ARTIFACTS_READY=YES"
-        mm_info "DOWNLOAD_AND_PREPARE_RESULT=FAIL_CLIENT_SET_FINALIZATION"
-        return 1
-      fi
-    fi
     if ! mm_check_client_files_ready; then
+      engine_phase2_helpers_txn_rollback >/dev/null 2>&1 || true
       mm_error "CLIENT_SET_FINALIZATION=FAIL"
       mm_info "PREPARATION_ARTIFACTS_READY=YES"
       mm_info "DOWNLOAD_AND_PREPARE_RESULT=FAIL_CLIENT_SET_FINALIZATION"
       return 1
     fi
-    # Bind workflow receipt when a coherent client-set.env exists.
-    if [[ -f "${MM_CLIENT_ROOT}/client-set.env" ]]; then
-      if ! engine_bind_reused_client_set_workflow; then
-        mm_error "CLIENT_SET_FINALIZATION=FAIL"
-        mm_info "PREPARATION_ARTIFACTS_READY=YES"
-        mm_info "DOWNLOAD_AND_PREPARE_RESULT=FAIL_CLIENT_SET_FINALIZATION"
-        return 1
-      fi
+    if ! engine_bind_reused_client_set_workflow; then
+      engine_phase2_helpers_txn_rollback >/dev/null 2>&1 || true
+      mm_error "CLIENT_SET_FINALIZATION=FAIL reason=phase2_only_workflow_binding"
+      mm_info "PREPARATION_ARTIFACTS_READY=YES"
+      mm_info "DOWNLOAD_AND_PREPARE_RESULT=FAIL_CLIENT_SET_FINALIZATION"
+      return 1
     fi
+    engine_phase2_helpers_txn_commit \
+      || { engine_phase2_helpers_txn_rollback >/dev/null 2>&1 || true; return 1; }
+    mm_info "PHASE2_ONLY_CLIENT_SET_ACTION=REUSE_OR_ATOMIC_REPUBLISH"
+    mm_info "CLIENT_SET_ON_DISK_READY=PASS"
+    mm_info "CLIENT_HTTP_READY=DEFERRED"
     mm_ok "CLIENT_SET_FINALIZATION=PASS"
     return 0
   fi
@@ -594,6 +739,28 @@ engine_resolve_paths() {
       mm_die "CONFIG_PATH=FAIL reason=path_traversal path=${p}"
     fi
   done
+
+  # Every recursively-mutated product subtree must remain strictly below the
+  # configured mirror root. A root-owned typo must not redirect rm -rf/publication
+  # work into an unrelated system directory.
+  local root_resolved child_resolved label
+  root_resolved="$(realpath -m "$MM_MIRROR_ROOT" 2>/dev/null || printf '%s' "$MM_MIRROR_ROOT")"
+  for label in SELECTIVE_ROOT DP_PHASE2_ROOT CLIENT_ROOT CACHE_ROOT; do
+    case "$label" in
+      SELECTIVE_ROOT) p="$MM_SELECTIVE_ROOT" ;;
+      DP_PHASE2_ROOT) p="$MM_DP_PHASE2_ROOT" ;;
+      CLIENT_ROOT) p="$MM_CLIENT_ROOT" ;;
+      CACHE_ROOT) p="$MM_CACHE_ROOT" ;;
+    esac
+    child_resolved="$(realpath -m "$p" 2>/dev/null || printf '%s' "$p")"
+    if [[ "$child_resolved" == "$root_resolved" ]]; then
+      mm_die "CONFIG_PATH=FAIL reason=product_root_equals_mirror_root label=${label} path=${child_resolved}"
+    fi
+    if ! mm_assert_safe_destructive_path "$p" "$MM_MIRROR_ROOT" "$label"; then
+      mm_die "CONFIG_PATH=FAIL reason=outside_mirror_root label=${label} path=${p}"
+    fi
+  done
+
   # GUI mode: keep path init in the log file, but do not spam the TTY
   # (operators otherwise see only these three lines when a menu action exits).
   if [[ "${MM_GUI_MODE:-0}" == "1" ]]; then
@@ -623,17 +790,32 @@ engine_assert_same_filesystem_layout() {
   # Hard links and atomic renames require one device for mirror root, cache,
   # selective, and dp-phase2. Split mounts force full copies and break the
   # 100GB-class peak model — fail closed with an explicit operator message.
+  #
+  # Do not create live publication destinations merely to stat their device.
+  # An empty selective/ or dp-phase2/ directory is semantically different from
+  # "no published generation" and can make first publication look like a
+  # replacement of an identity-less generation. For a missing destination,
+  # stat its nearest existing parent; a subsequently created child inherits
+  # that filesystem.
   local paths=("$MM_MIRROR_ROOT" "$MM_CACHE_ROOT" "$MM_SELECTIVE_ROOT" "$MM_DP_PHASE2_ROOT")
-  local p dev root_dev
-  for p in "${paths[@]}"; do
-    mkdir -p "$p" || mm_die "SAME_FILESYSTEM=FAIL mkdir path=${p}"
-  done
+  local p probe dev root_dev
+  mkdir -p "$MM_MIRROR_ROOT" "$MM_CACHE_ROOT" \
+    || mm_die "SAME_FILESYSTEM=FAIL mkdir root/cache"
   root_dev="$(stat -c %d "$MM_MIRROR_ROOT")"
   [[ "$root_dev" =~ ^[0-9]+$ ]] || mm_die "SAME_FILESYSTEM=FAIL cannot_stat root=${MM_MIRROR_ROOT}"
   for p in "${paths[@]}"; do
-    dev="$(stat -c %d "$p")"
+    probe="$p"
+    if [[ ! -e "$probe" && ! -L "$probe" ]]; then
+      probe="$(dirname "$probe")"
+      while [[ ! -e "$probe" && ! -L "$probe" && "$probe" != "/" ]]; do
+        probe="$(dirname "$probe")"
+      done
+    fi
+    dev="$(stat -c %d "$probe" 2>/dev/null || true)"
+    [[ "$dev" =~ ^[0-9]+$ ]] \
+      || mm_die "SAME_FILESYSTEM=FAIL cannot_stat path=${p} probe=${probe}"
     if [[ "$dev" != "$root_dev" ]]; then
-      mm_error "SAME_FILESYSTEM=FAIL path=${p} device=${dev} root_device=${root_dev}"
+      mm_error "SAME_FILESYSTEM=FAIL path=${p} probe=${probe} device=${dev} root_device=${root_dev}"
       mm_error "Place .install-cache, selective, and dp-phase2 on the same filesystem as ${MM_MIRROR_ROOT}."
       mm_error "Cross-filesystem layouts require full ~30GiB copies and are not supported for 100GB-class disks."
       mm_die "SAME_FILESYSTEM=FAIL"
@@ -869,8 +1051,16 @@ engine_verify_os_core_package() {
   mm_ok "VERIFY_OS_CORE=PASS release_id=${OS_CORE_RELEASE_ID}"
 }
 
+engine_selective_generation_id_for_root() {
+  local root="${1:-${MM_SELECTIVE_ROOT}}"
+  local ready="${root}/state/READY"
+  [[ -f "$ready" && ! -L "$ready" ]] || return 1
+  printf 'oscore:%s\n' "$(sha256sum "$ready" | awk '{print tolower($1)}')"
+}
+
 engine_verify_selective_ready_provenance() {
-  local ready="${MM_SELECTIVE_ROOT}/state/READY"
+  local root="${1:-${MM_SELECTIVE_ROOT}}"
+  local ready="${root}/state/READY"
   local out
   if [[ ! -f "$ready" ]]; then
     mm_error "SELECTIVE_READY_VERIFY=FAIL reason=missing"
@@ -974,6 +1164,8 @@ engine_materialize_os_mirror() {
   staging_extract="${MM_CACHE_ROOT}/os-core-extract/$(mm_run_id)"
   local final_tmp="${MM_SELECTIVE_ROOT}.new.$$"
   local pkg_root
+  local swap_helper swap_out swap_rc=0 previous_selective="" initial_publish=0 publish_rc=0
+  local new_selective_gen="" previous_selective_gen=""
 
   if [[ "${MM_DRY_RUN}" == "1" ]]; then
     mm_info "DRY_RUN skip materialize_os_mirror"
@@ -1026,65 +1218,219 @@ engine_materialize_os_mirror() {
   engine_write_selective_ready_from_os_core "$pkg_root" "$final_tmp" "$final_tmp" \
     || mm_die "SELECTIVE_READY_FROM_OS_CORE=FAIL"
 
-  # Preserve keys/ if present outside payload.
-  local keys_backup=""
-  if [[ -d "${MM_SELECTIVE_ROOT}/keys" ]]; then
-    keys_backup="${MM_CACHE_ROOT}/keys-backup.$$"
-    rm -rf "$keys_backup"
-    cp -a "${MM_SELECTIVE_ROOT}/keys" "$keys_backup" || mm_die "OS_KEYS_BACKUP=FAIL"
+  # Preserve existing signing/public keys inside the candidate before cutover.
+  # Package-provided keys win; otherwise carry forward the previous known-good set.
+  if [[ ! -d "${final_tmp}/keys" && -d "${MM_SELECTIVE_ROOT}/keys" ]]; then
+    cp -a "${MM_SELECTIVE_ROOT}/keys" "${final_tmp}/keys" \
+      || mm_die "OS_KEYS_STAGE=FAIL"
   fi
 
-  local old="${MM_SELECTIVE_ROOT}.old.$$"
-  rm -rf "$old"
-  if [[ -d "$MM_SELECTIVE_ROOT" ]]; then
-    mv -f "$MM_SELECTIVE_ROOT" "$old" || mm_die "OS_MIRROR_OLD_MOVE=FAIL"
-  fi
-  if ! mv -f "$final_tmp" "$MM_SELECTIVE_ROOT"; then
-    [[ -e "$old" && ! -e "$MM_SELECTIVE_ROOT" ]] && mv -f "$old" "$MM_SELECTIVE_ROOT" 2>/dev/null || true
-    mm_die "OS_MIRROR_PUBLISH_MOVE=FAIL"
-  fi
-  if [[ -n "$keys_backup" && -d "$keys_backup" ]]; then
-    # Prefer package keys; only restore backup when package shipped none.
-    if [[ ! -d "${MM_SELECTIVE_ROOT}/keys" ]]; then
-      mv -f "$keys_backup" "${MM_SELECTIVE_ROOT}/keys" || mm_die "OS_KEYS_RESTORE=FAIL"
-    else
-      rm -rf "$keys_backup"
-    fi
-  fi
-  rm -rf "$old" "$staging_extract"
-
-  # Explicitly do not create current/previous/published.previous/os-core-releases
+  # Remove legacy generation aliases from the candidate, never from live after
+  # cutover. Candidate must be complete and publication-safe before it becomes live.
   rm -rf \
-    "${MM_SELECTIVE_ROOT}/current" \
-    "${MM_SELECTIVE_ROOT}/previous" \
-    "${MM_SELECTIVE_ROOT}/published" \
-    "${MM_SELECTIVE_ROOT}/published.previous" \
-    "${MM_SELECTIVE_ROOT}/os-core-releases" \
-    "${MM_SELECTIVE_ROOT}/releases" 2>/dev/null || true
+    "${final_tmp}/current" \
+    "${final_tmp}/previous" \
+    "${final_tmp}/published" \
+    "${final_tmp}/published.previous" \
+    "${final_tmp}/os-core-releases" \
+    "${final_tmp}/releases" 2>/dev/null || true
 
-  # Public HTTP modes must not inherit a leaked umask 077 from private state
-  # file creation. Directories 0755, payload files 0644.
   if declare -F mm_normalize_http_public_tree_permissions >/dev/null 2>&1; then
-    mm_normalize_http_public_tree_permissions "${MM_SELECTIVE_ROOT}" selective \
-      || mm_die "OS_MIRROR_PUBLIC_PERMISSION_NORMALIZE=FAIL"
+    mm_normalize_http_public_tree_permissions "$final_tmp" selective \
+      || mm_die "OS_MIRROR_PUBLIC_PERMISSION_NORMALIZE=FAIL candidate=YES"
+  fi
+  engine_verify_selective_ready_provenance "$final_tmp" \
+    || mm_die "SELECTIVE_READY_VERIFY=FAIL candidate=YES"
+
+  # No-gap transactional cutover. Keep the previous live generation until all
+  # post-cutover state/status writes succeed, then commit by deleting it.
+  swap_helper="${MM_PROJECT_ROOT}/scripts/lib/atomic_dir_swap.py"
+  if [[ -d "$MM_SELECTIVE_ROOT" ]]; then
+    [[ -f "$swap_helper" ]] || mm_die "OS_MIRROR_ATOMIC_SWAP=FAIL reason=helper_missing"
+    if swap_out="$(python3 "$swap_helper" \
+      --stage-dir "$final_tmp" \
+      --live-dir "$MM_SELECTIVE_ROOT" \
+      --require-exchange \
+      --keep-previous 2>&1)"; then
+      swap_rc=0
+    else
+      swap_rc=$?
+    fi
+    if [[ "$swap_rc" -ne 0 ]]; then
+      printf '%s\n' "$swap_out" >&2
+      rm -rf "$final_tmp" "$staging_extract" 2>/dev/null || true
+      mm_die "OS_MIRROR_ATOMIC_SWAP=FAIL live_publication_preserved=YES"
+    fi
+    previous_selective="$(printf '%s\n' "$swap_out" | awk -F= '$1=="CLIENT_SET_PREVIOUS_PATH"{print substr($0,index($0,"=")+1); exit}')"
+    [[ -n "$previous_selective" && -d "$previous_selective" ]] \
+      || mm_die "OS_MIRROR_ATOMIC_SWAP=FAIL reason=previous_generation_missing"
+    previous_selective_gen="$(engine_selective_generation_id_for_root "$previous_selective" 2>/dev/null || true)"
+    [[ "$previous_selective_gen" == oscore:* ]] \
+      || mm_die "OS_MIRROR_ATOMIC_SWAP=FAIL reason=previous_generation_identity_missing"
+    mm_info "OS_MIRROR_ATOMIC_SWAP=PASS previous_retained=YES"
+  else
+    mv -f "$final_tmp" "$MM_SELECTIVE_ROOT" || {
+      rm -rf "$final_tmp" "$staging_extract" 2>/dev/null || true
+      mm_die "OS_MIRROR_PUBLISH_MOVE=FAIL"
+    }
+    initial_publish=1
+    mm_info "OS_MIRROR_ATOMIC_SWAP=PASS previous_retained=NO initial_publish=YES"
   fi
 
-  # Post-rename provenance gate — OS_MIRROR_READY only after READY verifies.
-  engine_verify_selective_ready_provenance \
-    || mm_die "SELECTIVE_READY_VERIFY=FAIL after materialize"
+  new_selective_gen="$(engine_selective_generation_id_for_root "$MM_SELECTIVE_ROOT" 2>/dev/null || true)"
+  if [[ "$new_selective_gen" != oscore:* ]]; then
+    publish_rc=1
+  elif ! mm_mark_changed \
+    || ! mm_state_set OS_MIRROR_READY PASS \
+    || ! mm_status_set OS_MIRROR_READY PASS \
+    || ! mm_status_set OS_CORE_GENERATION_ID "$new_selective_gen"; then
+    publish_rc=1
+  fi
+  if [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" && "${MM_SELECTIVE_FAKE_POST_SWAP_FAIL:-0}" == "1" ]]; then
+    publish_rc=1
+    mm_error "OS_MIRROR_POST_SWAP=FAIL reason=injected"
+  fi
 
-  mm_mark_changed
-  mm_state_set OS_MIRROR_READY PASS
-  mm_status_set OS_MIRROR_READY PASS
+  if [[ "$publish_rc" -ne 0 ]]; then
+    if [[ -n "$previous_selective" && -d "$previous_selective" ]]; then
+      if ! python3 "$swap_helper" \
+          --stage-dir "$previous_selective" \
+          --live-dir "$MM_SELECTIVE_ROOT" \
+          --require-exchange >/dev/null 2>&1; then
+        mm_error "OS_MIRROR_ROLLBACK=FAIL previous=${previous_selective}"
+        mm_die "OS_MIRROR_MATERIALIZE=FAIL reason=post_swap_state rollback=failed"
+      fi
+      mm_error "OS_MIRROR_ROLLBACK=PASS previous_restored=YES"
+      mm_status_set OS_CORE_GENERATION_ID "$previous_selective_gen" >/dev/null 2>&1 || true
+      mm_status_set OS_MIRROR_READY PASS >/dev/null 2>&1 || true
+    elif [[ "$initial_publish" == "1" ]]; then
+      rm -rf "$MM_SELECTIVE_ROOT" 2>/dev/null || true
+      mm_error "OS_MIRROR_ROLLBACK=PASS previous_restored=NO live_removed=YES"
+      mm_status_set OS_CORE_GENERATION_ID "" >/dev/null 2>&1 || true
+      mm_status_set OS_MIRROR_READY FAIL >/dev/null 2>&1 || true
+    fi
+    mm_die "OS_MIRROR_MATERIALIZE=FAIL reason=post_swap_state"
+  fi
+
+  if [[ -n "$previous_selective" && -d "$previous_selective" ]]; then
+    rm -rf "$previous_selective" \
+      || mm_warn "OS_MIRROR_PREVIOUS_CLEANUP=WARN path=${previous_selective}"
+  fi
+  rm -rf "$staging_extract" 2>/dev/null || true
   mm_ok "OS_MIRROR_MATERIALIZE=PASS path=${MM_SELECTIVE_ROOT}"
 }
 
 # Offline Ubuntu prerequisite closure is prepared from ACPS metadata.
 # Failures here fail Download and Prepare closed. Never optional.
+engine_phase2_prereq_release_sealed() {
+  local ver="${TARGET_DP_VERSION:-${PHASE2_TARGET_VERSION:-6.6.0}}"
+  local envf="${MM_DP_PHASE2_ROOT}/${ver}/release.env"
+  local id_sha=""
+  [[ -f "$envf" ]] || return 1
+  id_sha="$(awk -F= '$1=="PHASE2_PREREQ_IDENTITY_SHA256"{print $2; exit}' "$envf")"
+  [[ "$id_sha" =~ ^[0-9a-fA-F]{64}$ ]]
+}
+
+# A fully sealed field release binds both immutable heavy bundle bytes and the
+# prerequisite identity. Local patch/runtime drift must never redefine those
+# bytes in place; a different heavy payload requires a different validated
+# release identity.
+engine_phase2_release_sealed() {
+  local ver="${1:-${TARGET_DP_VERSION:-${PHASE2_TARGET_VERSION:-6.6.0}}}"
+  local envf="${MM_DP_PHASE2_ROOT}/${ver}/release.env"
+  local bundle_sha prereq_sha stable sidecar_sha
+  [[ -f "$envf" ]] || return 1
+  bundle_sha="$(awk -F= '$1=="PHASE2_BUNDLE_SHA256"{print $2; exit}' "$envf")"
+  prereq_sha="$(awk -F= '$1=="PHASE2_PREREQ_IDENTITY_SHA256"{print $2; exit}' "$envf")"
+  [[ "$bundle_sha" =~ ^[0-9a-fA-F]{64}$ ]] || return 1
+  [[ "$prereq_sha" =~ ^[0-9a-fA-F]{64}$ ]] || return 1
+  dp2_set_version "$ver"
+  stable="$(dp2_stable_bundle_name)"
+  [[ -f "${MM_DP_PHASE2_ROOT}/${ver}/${stable}.sha256" ]] || return 1
+  sidecar_sha="$(dp2_read_hash_field "${MM_DP_PHASE2_ROOT}/${ver}/${stable}.sha256" 2>/dev/null || true)"
+  [[ "$sidecar_sha" =~ ^[0-9a-fA-F]{64}$ ]] || return 1
+  [[ "${bundle_sha,,}" == "${sidecar_sha,,}" ]]
+}
+
+# Read-only authority check used by HTTP enable/readiness. A release is usable
+# only when release.env still binds the exact published bundle sidecar and the
+# exact prerequisite identity file. This catches seal drift before any client
+# command is considered ready and never rewrites/heals field artifacts.
+engine_phase2_release_seal_matches_live() {
+  local ver="${1:-${TARGET_DP_VERSION:-${PHASE2_TARGET_VERSION:-6.6.0}}}"
+  local dp="${MM_DP_PHASE2_ROOT}/${ver}"
+  local envf="${dp}/release.env" identity="${dp}/extras/phase2-ubuntu-prerequisites.identity"
+  local stable sidecar bundle_sha prereq_sha sidecar_sha identity_sha
+  [[ -f "$envf" && -f "$identity" ]] || {
+    mm_error "PHASE2_RELEASE_SEAL_LIVE=FAIL reason=seal_or_identity_missing"
+    return 1
+  }
+  dp2_set_version "$ver"
+  stable="$(dp2_stable_bundle_name)"
+  sidecar="${dp}/${stable}.sha256"
+  [[ -f "$sidecar" ]] || {
+    mm_error "PHASE2_RELEASE_SEAL_LIVE=FAIL reason=sidecar_missing"
+    return 1
+  }
+  bundle_sha="$(awk -F= '$1=="PHASE2_BUNDLE_SHA256"{print tolower($2); exit}' "$envf")"
+  prereq_sha="$(awk -F= '$1=="PHASE2_PREREQ_IDENTITY_SHA256"{print tolower($2); exit}' "$envf")"
+  sidecar_sha="$(dp2_read_hash_field "$sidecar" 2>/dev/null | tr '[:upper:]' '[:lower:]')"
+  identity_sha="$(sha256sum "$identity" 2>/dev/null | awk '{print tolower($1)}')"
+  [[ "$bundle_sha" =~ ^[0-9a-f]{64}$ ]] || {
+    mm_error "PHASE2_RELEASE_SEAL_LIVE=FAIL reason=bundle_seal_invalid"
+    return 1
+  }
+  [[ "$prereq_sha" =~ ^[0-9a-f]{64}$ ]] || {
+    mm_error "PHASE2_RELEASE_SEAL_LIVE=FAIL reason=prereq_seal_invalid"
+    return 1
+  }
+  [[ "$sidecar_sha" == "$bundle_sha" ]] || {
+    mm_error "PHASE2_RELEASE_SEAL_LIVE=FAIL reason=bundle_seal_mismatch"
+    return 1
+  }
+  [[ "$identity_sha" == "$prereq_sha" ]] || {
+    mm_error "PHASE2_RELEASE_SEAL_LIVE=FAIL reason=prereq_seal_mismatch"
+    return 1
+  }
+  mm_info "PHASE2_RELEASE_SEAL_LIVE=PASS bundle_sha256=${bundle_sha} prereq_identity_sha256=${prereq_sha}"
+  return 0
+}
+
+
+engine_phase2_prereq_reuse_verified() {
+  local ver="${TARGET_DP_VERSION:-${PHASE2_TARGET_VERSION:-6.6.0}}"
+  local extras="${MM_DP_PHASE2_ROOT}/${ver}/extras"
+  local state="${extras}/phase2-ubuntu-prerequisites.state"
+  local identity="${extras}/phase2-ubuntu-prerequisites.identity"
+  local envf="${MM_DP_PHASE2_ROOT}/${ver}/release.env"
+  local py="${MM_PROJECT_ROOT}/scripts/lib/phase2_ubuntu_prerequisites.py"
+  local state_target actual_id release_id
+
+  [[ -f "$state" && -f "$identity" && -f "$py" ]] || return 1
+  python3 "$py" validate-state --dest "$extras" >/dev/null 2>&1 || return 1
+
+  state_target="$(awk -F= '$1=="TARGET_DP_VERSION"{print $2; exit}' "$state")"
+  [[ "$state_target" == "$ver" ]] || return 1
+
+  actual_id="$(sha256sum "$identity" | awk '{print $1}')"
+  [[ "$actual_id" =~ ^[0-9a-fA-F]{64}$ ]] || return 1
+
+  # release.env is the seal for a validated field release. A legacy/unsealed
+  # release must not be treated as immutable reuse merely because its current
+  # extras happen to validate; it must take the one-time build+seal path.
+  [[ -f "$envf" ]] || return 1
+  release_id="$(awk -F= '$1=="PHASE2_PREREQ_IDENTITY_SHA256"{print $2; exit}' "$envf")"
+  [[ "$release_id" =~ ^[0-9a-fA-F]{64}$ ]] || return 1
+  [[ "${release_id,,}" == "${actual_id,,}" ]] || return 1
+  return 0
+}
+
+
 engine_prepare_phase2_ubuntu_prerequisites() {
   local script="${MM_PROJECT_ROOT}/scripts/prepare-phase2-ubuntu-prerequisites.sh"
   local work="${1:-}"
-  local extras out rc=0 child_log line
+  local extras parent candidate out rc=0 child_log line swap_out swap_rc swap_helper
+  local release_env release_backup="" previous_extras="" initial_publish=0 rollback_out rollback_rc
   [[ -f "$script" ]] || mm_die "PHASE2_PREREQ=FAIL reason=prepare_script_missing"
   mm_set_phase "Preparing Phase 2 Ubuntu Prerequisites"
   if [[ -z "$work" || ! -f "${work}/aelladeb_py3_common.tar.gz" ]]; then
@@ -1094,20 +1440,26 @@ engine_prepare_phase2_ubuntu_prerequisites() {
       work="$preserved"
     fi
   fi
-  extras="${MM_DP_PHASE2_ROOT}/${TARGET_DP_VERSION}/extras"
-  mkdir -p "$extras"
+
+  # Build outside the live HTTP path. A failed rebuild must never retract or
+  # partially overwrite the last known-good prerequisite publication.
+  parent="${MM_DP_PHASE2_ROOT}/${TARGET_DP_VERSION}"
+  extras="${parent}/extras"
+  candidate="${parent}/extras.new.$$"
+  rm -rf "$candidate"
+  mkdir -p "$candidate"
   child_log="$(mktemp "${TMPDIR:-/tmp}/phase2-prereq-child.XXXXXX")"
-  set +e
-  DP_PHASE2_VERSION="${TARGET_DP_VERSION}" \
+  if DP_PHASE2_VERSION="${TARGET_DP_VERSION}" \
     DP_PHASE2_ROOT="${MM_DP_PHASE2_ROOT}" \
     MM_SELECTIVE_ROOT="${MM_SELECTIVE_ROOT}" \
     PHASE2_PREREQ_WORK_DIR="$work" \
-    PHASE2_PREREQ_OUT_DIR="$extras" \
+    PHASE2_PREREQ_OUT_DIR="$candidate" \
     bash "$script" "${TARGET_DP_VERSION}" >"$child_log" 2>&1
-  rc=$?
-  set -e
-  # Replay child stdout/stderr through mm_log so Menu 2 live progress
-  # (/dev/tty + MM_LOG_FILE) shows the specific reason before the generic rc.
+  then
+    rc=0
+  else
+    rc=$?
+  fi
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ -z "$line" ]] && continue
     if [[ "$line" == *'=FAIL'* || "$line" == *'[ERROR]'* ]]; then
@@ -1118,17 +1470,72 @@ engine_prepare_phase2_ubuntu_prerequisites() {
   done < "$child_log"
   rm -f "$child_log"
   if [[ "$rc" -ne 0 ]]; then
-    mm_error "PHASE2_PREREQ_BUILD=FAIL rc=${rc}"
+    rm -rf "$candidate"
+    mm_error "PHASE2_PREREQ_BUILD=FAIL rc=${rc} live_publication_preserved=YES"
     mm_die "PHASE2_PREREQ=FAIL rc=${rc}"
   fi
-  [[ -f "${extras}/phase2-ubuntu-prerequisites.state" ]] \
-    || mm_die "PHASE2_PREREQ=FAIL reason=state_missing"
+  [[ -f "${candidate}/phase2-ubuntu-prerequisites.state" ]] || {
+    rm -rf "$candidate"
+    mm_die "PHASE2_PREREQ=FAIL reason=state_missing"
+  }
+  if ! python3 "${MM_PROJECT_ROOT}/scripts/lib/phase2_ubuntu_prerequisites.py" \
+    validate-state --dest "$candidate"
+  then
+    rm -rf "$candidate"
+    mm_die "PHASE2_PREREQ=FAIL reason=state_contract"
+  fi
+
+  # Publication and release.env sealing form one transaction. Keep the previous
+  # extras generation until the new release seal is durably written. Existing
+  # live publication requires no-gap RENAME_EXCHANGE; initial publish uses one
+  # atomic rename.
+  swap_helper="${MM_PROJECT_ROOT}/scripts/lib/atomic_dir_swap.py"
+  release_env="${parent}/release.env"
+  if [[ -f "$release_env" ]]; then
+    release_backup="$(mktemp "${parent}/.release.env.prereq-backup.XXXXXX")"
+    cp -a "$release_env" "$release_backup" || {
+      rm -rf "$candidate"
+      rm -f "$release_backup"
+      mm_die "PHASE2_PREREQ=FAIL reason=release_env_backup"
+    }
+  fi
+  if [[ -e "$extras" ]]; then
+    [[ -f "$swap_helper" ]] || {
+      rm -rf "$candidate"
+      rm -f "$release_backup"
+      mm_die "PHASE2_PREREQ=FAIL reason=atomic_swap_helper_missing"
+    }
+    if swap_out="$(python3 "$swap_helper" \
+      --stage-dir "$candidate" \
+      --live-dir "$extras" \
+      --require-exchange \
+      --keep-previous 2>&1)"; then
+      swap_rc=0
+    else
+      swap_rc=$?
+    fi
+    if [[ "$swap_rc" -ne 0 ]]; then
+      rm -rf "$candidate"
+      rm -f "$release_backup"
+      mm_error "PHASE2_PREREQ_ATOMIC_SWAP=FAIL live_publication_preserved=YES"
+      printf '%s\n' "$swap_out" >&2
+      mm_die "PHASE2_PREREQ=FAIL reason=atomic_publish_swap"
+    fi
+    previous_extras="$candidate"
+    mm_info "PHASE2_PREREQ_ATOMIC_SWAP=PASS method=renameat2_RENAME_EXCHANGE previous_retained=YES"
+  else
+    if ! mv "$candidate" "$extras"; then
+      rm -rf "$candidate"
+      rm -f "$release_backup"
+      mm_die "PHASE2_PREREQ=FAIL reason=atomic_publish_initial"
+    fi
+    initial_publish=1
+    mm_info "PHASE2_PREREQ_ATOMIC_SWAP=PASS method=rename_into_place"
+  fi
+
   while IFS= read -r out; do
     [[ -n "$out" ]] && mm_info "$out"
   done < "${extras}/phase2-ubuntu-prerequisites.state"
-  python3 "${MM_PROJECT_ROOT}/scripts/lib/phase2_ubuntu_prerequisites.py" \
-    validate-state --dest "$extras" \
-    || mm_die "PHASE2_PREREQ=FAIL reason=state_contract"
   local required count sha
   required="$(awk -F= '$1=="PHASE2_PREREQ_REQUIRED"{print $2; exit}' \
     "${extras}/phase2-ubuntu-prerequisites.state")"
@@ -1136,7 +1543,39 @@ engine_prepare_phase2_ubuntu_prerequisites() {
     "${extras}/phase2-ubuntu-prerequisites.state")"
   sha="$(awk -F= '$1=="PHASE2_PREREQ_SHA256"{print $2; exit}' \
     "${extras}/phase2-ubuntu-prerequisites.state")"
-  engine_record_phase2_prereq_release_identity
+
+  if ! engine_record_phase2_prereq_release_identity; then
+    mm_error "PHASE2_PREREQ_SEAL_TRANSACTION=ROLLBACK_START"
+    rollback_rc=0
+    if [[ -n "$previous_extras" && -d "$previous_extras" ]]; then
+      if rollback_out="$(python3 "$swap_helper" \
+        --stage-dir "$previous_extras" \
+        --live-dir "$extras" \
+        --require-exchange 2>&1)"; then
+        rollback_rc=0
+      else
+        rollback_rc=$?
+        printf '%s\n' "$rollback_out" >&2
+      fi
+    elif [[ "$initial_publish" == "1" ]]; then
+      rm -rf "$extras"
+    fi
+    if [[ -n "$release_backup" && -f "$release_backup" ]]; then
+      mv -f "$release_backup" "$release_env" || rollback_rc=1
+      release_backup=""
+    fi
+    [[ "$rollback_rc" -eq 0 ]] \
+      || mm_die "PHASE2_PREREQ=FAIL reason=release_seal_rollback_failed"
+    mm_error "PHASE2_PREREQ_SEAL_TRANSACTION=ROLLED_BACK previous_live_restored=YES"
+    mm_die "PHASE2_PREREQ=FAIL reason=release_seal"
+  fi
+
+  # Commit only after both new extras and release.env seal are valid.
+  if [[ -n "$previous_extras" && -d "$previous_extras" ]]; then
+    rm -rf "$previous_extras"
+  fi
+  rm -f "$release_backup"
+  mm_info "PHASE2_PREREQ_SEAL_TRANSACTION=COMMIT"
   mm_ok "PHASE2_PREREQ=PASS required=${required} count=${count} sha256=${sha}"
 }
 
@@ -1640,13 +2079,19 @@ engine_bringup_validate_patcher() {
   local upstream_file="$1"
   local py out rc=0
   local fail_transform="" fail_reason=""
+  local errexit_was_on=0
   py="$(engine_bringup_patcher_py)"
   [[ -f "$py" ]] || mm_die "BRINGUP_PATCHER_MISSING path=${py}"
   engine_bringup_require_nonempty "$upstream_file"
+  case $- in *e*) errexit_was_on=1 ;; esac
   set +e
   out="$(python3 "$py" --validate --upstream "$upstream_file" 2>&1)"
   rc=$?
-  set -e
+  if [[ "$errexit_was_on" -eq 1 ]]; then
+    set -e
+  else
+    set +e
+  fi
   printf '%s\n' "$out"
   if [[ "$rc" -ne 0 ]]; then
     fail_transform="$(printf '%s\n' "$out" | awk 'sub(/^BRINGUP_PATCH_COMPAT_FAIL_TRANSFORM=/, "") { print; exit }')"
@@ -1683,6 +2128,7 @@ engine_apply_local_bringup_patch() {
   local py out rc=0
   local markers=()
   local fail_transform="" fail_reason=""
+  local errexit_was_on=0
   py="$(engine_bringup_patcher_py)"
   saved_upstream="$(engine_phase2_work_upstream_path "$files_dir")"
   saved_upstream_sidecar="${saved_upstream}.sha1"
@@ -1720,10 +2166,15 @@ engine_apply_local_bringup_patch() {
   BRINGUP_UPSTREAM_SHA1="$(engine_bringup_sha1_of "$saved_upstream")"
   mm_info "BRINGUP_UPSTREAM_SHA1=${BRINGUP_UPSTREAM_SHA1}"
 
+  case $- in *e*) errexit_was_on=1 ;; esac
   set +e
   out="$(python3 "$py" --upstream "$saved_upstream" --output "$dest" 2>&1)"
   rc=$?
-  set -e
+  if [[ "$errexit_was_on" -eq 1 ]]; then
+    set -e
+  else
+    set +e
+  fi
   printf '%s\n' "$out"
   BRINGUP_PATCH_GENERATION="$(printf '%s\n' "$out" | awk -F= '$1=="BRINGUP_PATCH_GENERATION"{print $2; exit}')"
   BRINGUP_PATCHED_SHA1="$(printf '%s\n' "$out" | awk -F= '$1=="BRINGUP_PATCHED_SHA1"{print $2; exit}')"
@@ -1982,11 +2433,13 @@ engine_assess_phase2_final() {
   local release_id
   local current_gen published_gen published_patched published_upstream
   local inner_patched cache_dir cache_bringup cache_upstream
+  local sealed_bundle_sha prereq_seal_sha sidecar_sha
   local bringup_invalid_reason="" store_cache=0
   PHASE2_EXISTING_BUNDLE=ABSENT
   PHASE2_EXISTING_INVALID_REASON=""
   PHASE2_EXISTING_FINAL_INTEGRITY=""
   PHASE2_EXISTING_INTEGRITY_FAIL_REASON=""
+  PHASE2_EXISTING_SEAL_PRESENT=NO
   dp2_set_version "$ver"
   dest="$(engine_phase2_final_dir "$ver")"
   stable="$(dp2_stable_bundle_name)"
@@ -2011,6 +2464,15 @@ engine_assess_phase2_final() {
   if [[ ! -f "$envf" || -L "$envf" ]]; then
     engine_phase2_mark_existing INVALID release_env
     return 0
+  fi
+  # Presence of either release-seal field proves this final has entered the
+  # immutable validated-release lifecycle, even when the field itself is now
+  # malformed or its bound bytes are corrupt.  Keep this separate from
+  # engine_phase2_release_sealed(), which intentionally returns false when the
+  # seal is invalid; invalid seal metadata must never downgrade a sealed final
+  # into the legacy delete-and-rebuild path.
+  if grep -Eq '^(PHASE2_BUNDLE_SHA256|PHASE2_PREREQ_(REQUIRED|PACKAGE_COUNT|SHA256|BUILD|PUBLICATION|IDENTITY_SHA256))=' "$envf"; then
+    PHASE2_EXISTING_SEAL_PRESENT=YES
   fi
   if [[ ! -f "$bundle" || -L "$bundle" ]]; then
     engine_phase2_mark_existing INVALID bundle_missing_or_symlink
@@ -2045,6 +2507,66 @@ engine_assess_phase2_final() {
     release_id="$(grep -E '^PHASE2_R2_VALIDATED_RELEASE_ID=' "$envf" | head -1 | cut -d= -f2- || true)"
     mm_info "PHASE2_R2_RELEASE_IDENTITY=PASS release=${release_id}"
   fi
+
+  # A fully sealed field release is immutable. Once release.env binds both the
+  # exact heavy bundle digest and prerequisite identity, repository patch
+  # generation drift is not a reason to rewrite the same validated release.
+  # Integrity failures still fail closed.
+  sealed_bundle_sha="$(grep -E '^PHASE2_BUNDLE_SHA256=' "$envf" | head -1 | cut -d= -f2- | tr '[:upper:]' '[:lower:]' || true)"
+  prereq_seal_sha="$(grep -E '^PHASE2_PREREQ_IDENTITY_SHA256=' "$envf" | head -1 | cut -d= -f2- | tr '[:upper:]' '[:lower:]' || true)"
+  if [[ -n "$sealed_bundle_sha" && ! "$sealed_bundle_sha" =~ ^[0-9a-f]{64}$ ]]; then
+    engine_phase2_mark_existing INVALID release_bundle_sha_invalid
+    return 0
+  fi
+  if [[ -n "$prereq_seal_sha" && ! "$prereq_seal_sha" =~ ^[0-9a-f]{64}$ ]]; then
+    engine_phase2_mark_existing INVALID release_prereq_identity_invalid
+    return 0
+  fi
+  if [[ "$sealed_bundle_sha" =~ ^[0-9a-f]{64}$ && "$prereq_seal_sha" =~ ^[0-9a-f]{64}$ ]]; then
+    sidecar_sha="$(dp2_read_hash_field "$sidecar" 2>/dev/null | tr '[:upper:]' '[:lower:]')"
+    if [[ "$sidecar_sha" != "$sealed_bundle_sha" ]]; then
+      engine_phase2_mark_existing INVALID release_bundle_sha_mismatch
+      return 0
+    fi
+    if ! engine_phase2_verify_existing_final_integrity \
+      "$ver" "$bundle" "$sidecar" "$envf" 1
+    then
+      engine_phase2_mark_existing INVALID \
+        "${PHASE2_EXISTING_INTEGRITY_FAIL_REASON:-sha256}"
+      return 0
+    fi
+    current_gen="$(engine_current_bringup_patch_generation 2>/dev/null || true)"
+    published_gen="$(grep -E '^BRINGUP_PATCH_GENERATION=' "$envf" | head -1 | cut -d= -f2- || true)"
+    if [[ -n "$current_gen" && -n "$published_gen" && "${current_gen,,}" != "${published_gen,,}" ]]; then
+      mm_info "PHASE2_SEALED_RELEASE_PATCH_DRIFT=IGNORED published=${published_gen} current=${current_gen}"
+    fi
+    mm_info "PHASE2_RELEASE_SEAL=VALID bundle_sha256=${sealed_bundle_sha} prereq_identity_sha256=${prereq_seal_sha}"
+    mm_info "VALIDATED_RELEASE_HEAVY_IMMUTABLE=YES"
+    engine_phase2_mark_existing VALID
+    return 0
+  fi
+
+  # Previous releases sealed by prerequisite identity before the bundle digest
+  # field existed are migrated metadata-only. Verify their exact heavy bytes and
+  # inner payloads, then REUSE; the reuse path adds PHASE2_BUNDLE_SHA256 without
+  # rebuilding the bundle.
+  if [[ "$prereq_seal_sha" =~ ^[0-9a-f]{64}$ && -z "$sealed_bundle_sha" ]]; then
+    if ! engine_phase2_verify_existing_final_integrity \
+      "$ver" "$bundle" "$sidecar" "$envf" 1 \
+      || ! engine_phase2_verify_inner_payloads_in_bundle "$bundle" "$ver"
+    then
+      engine_phase2_mark_existing INVALID \
+        "${PHASE2_EXISTING_INTEGRITY_FAIL_REASON:-legacy_seal_integrity}"
+      return 0
+    fi
+    mm_info "PHASE2_RELEASE_SEAL_UPGRADE_REQUIRED=YES action=metadata_only"
+    mm_info "VALIDATED_RELEASE_HEAVY_IMMUTABLE=YES"
+    engine_phase2_mark_existing VALID
+    return 0
+  fi
+
+  # Unsealed legacy release compatibility: patch-generation metadata may still
+  # determine whether a one-time rebuild is required before the release is sealed.
   # Reuse identity is (upstream SHA, patch-generation, inner patched SHA).
   # The frozen vendor full copy is not an authority for reuse.
   current_gen="$(engine_current_bringup_patch_generation 2>/dev/null || true)"
@@ -2153,6 +2675,7 @@ engine_disable_http_and_readiness() {
 # touch the host nginx.
 engine_quiesce_live_http_publication() {
   local sc rc dist
+  engine_assert_production_service_overrides_safe || return 1
   if [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" && -z "${MM_SYSTEMCTL_BIN:-}" ]]; then
     dist="$(mm_status_get HTTP_DISTRIBUTION 2>/dev/null || true)"
     if [[ "$dist" != "ENABLED" && "${MM_HTTP_FORCE_QUIESCE:-0}" != "1" ]]; then
@@ -2208,6 +2731,87 @@ engine_publication_txn_pid_alive() {
   local pid="$1"
   [[ "$pid" =~ ^[0-9]+$ ]] || return 1
   [[ -d "/proc/${pid}" ]] || return 1
+  return 0
+}
+
+engine_phase2_prereq_dir_identity_sha() {
+  local dir="$1"
+  local identity="${dir}/phase2-ubuntu-prerequisites.identity"
+  [[ -f "$identity" && ! -L "$identity" ]] || return 1
+  sha256sum "$identity" 2>/dev/null | awk '{print tolower($1)}'
+}
+
+# Recover the nested prerequisite publication transaction created by
+# extras.new.<pid>. After RENAME_EXCHANGE the candidate path contains the
+# previous known-good generation while live extras contains the new generation.
+# release.env is the durable commit record: whichever directory matches its
+# sealed prerequisite identity is the generation that must remain live.
+engine_recover_phase2_prereq_transactions() {
+  local ver="${1:-${TARGET_DP_VERSION:-${PHASE2_TARGET_VERSION:-6.6.0}}}"
+  local parent="${MM_DP_PHASE2_ROOT}/${ver}" extras release_env seal=""
+  local cand base pid live_sha cand_sha swap_helper swap_out swap_rc found=NO
+  extras="${parent}/extras"
+  release_env="${parent}/release.env"
+  swap_helper="${MM_PROJECT_ROOT}/scripts/lib/atomic_dir_swap.py"
+  [[ -d "$parent" ]] || return 0
+  if [[ -f "$release_env" ]]; then
+    seal="$(awk -F= '$1=="PHASE2_PREREQ_IDENTITY_SHA256"{print tolower($2); exit}' "$release_env")"
+  fi
+  while IFS= read -r -d '' cand; do
+    found=YES
+    base="$(basename "$cand")"
+    pid="${base#extras.new.}"
+    if engine_publication_txn_pid_alive "$pid"; then
+      mm_info "PHASE2_PREREQ_STALE_TRANSACTION_FOUND=YES"
+      mm_info "PHASE2_PREREQ_STALE_TRANSACTION_ACTION=IGNORE_ACTIVE path=${cand}"
+      continue
+    fi
+    live_sha="$(engine_phase2_prereq_dir_identity_sha "$extras" 2>/dev/null || true)"
+    cand_sha="$(engine_phase2_prereq_dir_identity_sha "$cand" 2>/dev/null || true)"
+    if [[ ! "$seal" =~ ^[0-9a-f]{64}$ ]]; then
+      mm_error "PHASE2_PREREQ_TRANSACTION_RECOVERY=FAIL reason=sealed_identity_unavailable path=${cand}"
+      return 1
+    fi
+    if [[ "$live_sha" == "$seal" ]]; then
+      rm -rf "$cand" || return 1
+      mm_info "PHASE2_PREREQ_STALE_TRANSACTION_ACTION=DELETE path=${cand} reason=live_matches_release_seal"
+      continue
+    fi
+    if [[ "$cand_sha" != "$seal" ]]; then
+      mm_error "PHASE2_PREREQ_TRANSACTION_RECOVERY=FAIL reason=no_generation_matches_release_seal path=${cand}"
+      return 1
+    fi
+    if [[ -d "$extras" ]]; then
+      [[ -f "$swap_helper" ]] || {
+        mm_error "PHASE2_PREREQ_TRANSACTION_RECOVERY=FAIL reason=swap_helper_missing"
+        return 1
+      }
+      if swap_out="$(python3 "$swap_helper" \
+        --stage-dir "$cand" \
+        --live-dir "$extras" \
+        --require-exchange 2>&1)"; then
+        swap_rc=0
+      else
+        swap_rc=$?
+      fi
+      if [[ "$swap_rc" -ne 0 ]]; then
+        mm_error "PHASE2_PREREQ_TRANSACTION_RECOVERY=FAIL reason=rollback_exchange"
+        printf '%s\n' "$swap_out" >&2
+        return 1
+      fi
+    else
+      mv -f "$cand" "$extras" || return 1
+    fi
+    live_sha="$(engine_phase2_prereq_dir_identity_sha "$extras" 2>/dev/null || true)"
+    if [[ "$live_sha" != "$seal" ]]; then
+      mm_error "PHASE2_PREREQ_TRANSACTION_RECOVERY=FAIL reason=restored_identity_mismatch"
+      return 1
+    fi
+    mm_warn "PHASE2_PREREQ_TRANSACTION_RECOVERY=PASS previous_known_good_restored=YES"
+  done < <(find "$parent" -maxdepth 1 -type d -name 'extras.new.*' -print0 2>/dev/null)
+  if [[ "$found" == "NO" ]]; then
+    mm_info "PHASE2_PREREQ_STALE_TRANSACTION_FOUND=NO"
+  fi
   return 0
 }
 
@@ -2299,6 +2903,11 @@ engine_recover_phase2_publication_transactions() {
     mm_info "PHASE2_STALE_TRANSACTION_FOUND=NO"
     return 0
   }
+  # Prerequisite publication uses a nested extras.new.<pid> transaction. Recover
+  # it from the durable release.env seal before considering the top-level bundle
+  # transaction so a crash cannot leave new live extras with the old seal.
+  engine_recover_phase2_prereq_transactions "$ver" \
+    || mm_die "PHASE2_PREREQ_TRANSACTION_RECOVERY=FAIL"
   # Drop abandoned .old.* first (never a publish target in current workflow).
   while IFS= read -r -d '' cand; do
     base="$(basename "$cand")"
@@ -2489,7 +3098,7 @@ engine_place_dp_phase2_final() {
   local dest_tmp="${dest}.new.$$"
   local list_count stable actual work_upstream
   local expected_input_bytes=0 f sz publish_start publish_elapsed
-  local uvp_sha1 images_sha256
+  local uvp_sha1 images_sha256 bundle_sha256
   rm -rf "$dest_tmp"
   # Stray .old from older builds — never used as rollback in this workflow.
   find "${MM_DP_PHASE2_ROOT}" -maxdepth 1 -name "${ver}.old.*" -exec rm -rf {} + 2>/dev/null || true
@@ -2524,14 +3133,27 @@ engine_place_dp_phase2_final() {
     "The program is still running normally." \
     "Please wait and do not close this terminal."
   # Bundle is written directly as ${dest_tmp}/${stable} (no intermediate copy).
+  # Canonicalize tar metadata so identical verified input bytes produce the same
+  # outer bundle SHA256 across hosts, source-tree mtimes, ownership, and umask.
+  # File order is the fixed DP_PHASE2_REQUIRED_FILES array; all members are
+  # regular files and are intentionally normalized to mode 0644 in the archive.
   if ! mm_run_with_file_progress \
     "PHASE2_BUNDLE_CREATE" \
     "bundle=${stable} expected_input_bytes=${expected_input_bytes} destination=${dest_tmp}/${stable}" \
     "${dest_tmp}/${stable}" \
     "$expected_input_bytes" \
     "Still creating the Phase 2 deployment bundle..." \
-    -- bash -c 'cd "$1" || exit 1; tar -cf "$2" "${@:3}"' \
-       _ "$files_src" "${dest_tmp}/${stable}" "${DP_PHASE2_REQUIRED_FILES[@]}"
+    -- tar \
+       --format=gnu \
+       --sort=name \
+       --mtime=@0 \
+       --owner=0 \
+       --group=0 \
+       --numeric-owner \
+       --mode=0644 \
+       -cf "${dest_tmp}/${stable}" \
+       -C "$files_src" \
+       "${DP_PHASE2_REQUIRED_FILES[@]}"
   then
     rm -rf "$dest_tmp"
     mm_die "DP_PHASE2_BUNDLE_BUILD=FAIL"
@@ -2550,8 +3172,12 @@ engine_place_dp_phase2_final() {
     rm -rf "$dest_tmp"
     mm_die "DP_PHASE2_BUNDLE_SHA256_WRITE=FAIL"
   fi
-  # Sidecar was just produced from this exact .new file; skip an immediate
-  # second full read. Final published bytes are verified after atomic rename.
+  # Sidecar was just produced from this exact .new file; capture that exact
+  # digest into release.env. The final published bytes are verified after atomic
+  # rename before this release can be treated as reusable/sealed.
+  bundle_sha256="$(dp2_read_hash_field "${dest_tmp}/${stable}.sha256" | tr '[:upper:]' '[:lower:]')"
+  dp2_validate_sha256_hex "$bundle_sha256" \
+    || { rm -rf "$dest_tmp"; mm_die "DP_PHASE2_BUNDLE_SHA256_FIELD=FAIL"; }
 
   # Validate generated patched bringup inside the file set that was just tarred.
   # Do not require equality with the repository vendor full copy.
@@ -2592,6 +3218,7 @@ DP_PHASE2_VERSION=${ver}
 CREATED_AT=${created_at}
 FILE_COUNT=${DP_PHASE2_FILE_COUNT}
 STABLE_BUNDLE_NAME=${stable}
+PHASE2_BUNDLE_SHA256=${bundle_sha256}
 IMAGE_LIST_COUNT=${list_count}
 $(phase2_emit_r2_release_provenance)
 VERIFICATION_RESULT=PASS
@@ -2710,8 +3337,29 @@ engine_record_phase2_prereq_release_identity() {
   local envf="${MM_DP_PHASE2_ROOT}/${ver}/release.env"
   local state="${MM_DP_PHASE2_ROOT}/${ver}/extras/phase2-ubuntu-prerequisites.state"
   local identity="${MM_DP_PHASE2_ROOT}/${ver}/extras/phase2-ubuntu-prerequisites.identity"
-  local tmp required count sha build publication id_sha
-  [[ -n "$ver" && -f "$envf" && -f "$state" ]] || return 0
+  local tmp required count sha build publication id_sha stable bundle sidecar bundle_sha sealed_bundle_sha
+  [[ -n "$ver" && -f "$envf" && -f "$state" ]] || {
+    mm_error "PHASE2_RELEASE_SEAL=FAIL reason=release_or_state_missing"
+    return 1
+  }
+  dp2_set_version "$ver"
+  stable="$(dp2_stable_bundle_name)"
+  bundle="${MM_DP_PHASE2_ROOT}/${ver}/${stable}"
+  sidecar="${bundle}.sha256"
+  [[ -f "$bundle" && -f "$sidecar" ]] || {
+    mm_error "PHASE2_RELEASE_SEAL=FAIL reason=bundle_or_sidecar_missing"
+    return 1
+  }
+  bundle_sha="$(dp2_read_hash_field "$sidecar" 2>/dev/null | tr '[:upper:]' '[:lower:]')"
+  if ! dp2_validate_sha256_hex "$bundle_sha"; then
+    mm_error "PHASE2_RELEASE_SEAL=FAIL reason=bundle_sha_invalid"
+    return 1
+  fi
+  sealed_bundle_sha="$(awk -F= '$1=="PHASE2_BUNDLE_SHA256"{print $2; exit}' "$envf" | tr '[:upper:]' '[:lower:]')"
+  if [[ -n "$sealed_bundle_sha" && "$sealed_bundle_sha" != "$bundle_sha" ]]; then
+    mm_error "PHASE2_RELEASE_SEAL=FAIL reason=bundle_sha_drift"
+    return 1
+  fi
   required="$(awk -F= '$1=="PHASE2_PREREQ_REQUIRED"{print $2; exit}' "$state")"
   count="$(awk -F= '$1=="PHASE2_PREREQ_PACKAGE_COUNT"{print $2; exit}' "$state")"
   sha="$(awk -F= '$1=="PHASE2_PREREQ_SHA256"{print $2; exit}' "$state")"
@@ -2721,9 +3369,14 @@ engine_record_phase2_prereq_release_identity() {
   if [[ -f "$identity" ]]; then
     id_sha="$(sha256sum "$identity" | awk '{print $1}')"
   fi
+  if [[ ! "$id_sha" =~ ^[0-9a-fA-F]{64}$ ]]; then
+    mm_error "PHASE2_RELEASE_SEAL=FAIL reason=prereq_identity_sha_invalid"
+    return 1
+  fi
   tmp="$(mktemp "${envf}.prereq.XXXXXX")"
-  grep -vE '^PHASE2_PREREQ_(REQUIRED|PACKAGE_COUNT|SHA256|BUILD|PUBLICATION|IDENTITY_SHA256)=' "$envf" >"$tmp" || true
+  grep -vE '^(PHASE2_BUNDLE_SHA256|PHASE2_PREREQ_(REQUIRED|PACKAGE_COUNT|SHA256|BUILD|PUBLICATION|IDENTITY_SHA256))=' "$envf" >"$tmp" || true
   {
+    printf 'PHASE2_BUNDLE_SHA256=%s\n' "$bundle_sha"
     printf 'PHASE2_PREREQ_REQUIRED=%s\n' "$required"
     printf 'PHASE2_PREREQ_PACKAGE_COUNT=%s\n' "$count"
     printf 'PHASE2_PREREQ_SHA256=%s\n' "$sha"
@@ -2736,9 +3389,11 @@ engine_record_phase2_prereq_release_identity() {
   then
     mv -f "$tmp" "$envf"
     chmod 0644 "$envf" 2>/dev/null || true
+    mm_info "PHASE2_RELEASE_SEAL=PASS bundle_sha256=${bundle_sha} prereq_identity_sha256=${id_sha}"
   else
     rm -f "$tmp"
-    mm_die "PHASE2_PREREQ=FAIL reason=release_identity_state"
+    mm_error "PHASE2_RELEASE_SEAL=FAIL reason=release_identity_state"
+    return 1
   fi
 }
 
@@ -2753,16 +3408,38 @@ engine_validate_http_layout() {
   bundle="${dp}/${stable}"
   sidecar="${dp}/${stable}.sha256"
 
+  if [[ -d "$dp" ]] \
+    && find "$dp" -maxdepth 1 -type d -name 'extras.new.*' -print -quit 2>/dev/null | grep -q .; then
+    mm_die "HTTP_LAYOUT=FAIL uncommitted_phase2_prereq_transaction"
+  fi
+
   if ! mm_is_phase2_only; then
     [[ -d "${sel}/ubuntu" || -L "${sel}/ubuntu" ]] || mm_die "HTTP_LAYOUT=FAIL missing /ubuntu tree"
     [[ -d "${sel}/shared/offline" ]] || mm_die "HTTP_LAYOUT=FAIL missing /offline tree"
   fi
-  [[ -d "${MM_CLIENT_ROOT}" ]] || mkdir -p "${MM_CLIENT_ROOT}"
+  [[ -d "${MM_CLIENT_ROOT}" ]] || mm_die "HTTP_LAYOUT=FAIL missing /client tree"
   [[ -f "${dp}/release.env" ]] || mm_die "HTTP_LAYOUT=FAIL missing release.env"
   [[ -f "$bundle" ]] || mm_die "HTTP_LAYOUT=FAIL missing ${stable}"
   [[ -f "$sidecar" ]] || mm_die "HTTP_LAYOUT=FAIL missing ${stable}.sha256"
   engine_validate_phase2_prereq_http_layout "$dp" \
     || mm_die "HTTP_LAYOUT=FAIL phase2_prereq"
+  engine_phase2_release_seal_matches_live "$ver" \
+    || mm_die "HTTP_LAYOUT=FAIL phase2_release_seal"
+  # Readiness must validate the complete published client unit, including each
+  # wrapper checksum sidecar. Trust anchors alone are insufficient because a
+  # wrapper can be mutated while retaining stale B/P/H literals.
+  if mm_is_phase2_only; then
+    mm_client_files_ready_phase2 "$MM_CLIENT_ROOT" \
+      || mm_die "HTTP_LAYOUT=FAIL client_integrity"
+  else
+    mm_client_files_ready "$MM_CLIENT_ROOT" \
+      || mm_die "HTTP_LAYOUT=FAIL client_integrity"
+  fi
+  if ! mm_phase2_wrapper_trust_anchors_match "$MM_CLIENT_ROOT" "$MM_DP_PHASE2_ROOT" "$ver"; then
+    mm_error "PHASE2_WRAPPER_TRUST_BINDING=FAIL"
+    mm_die "HTTP_LAYOUT=FAIL phase2_wrapper_trust_binding"
+  fi
+  mm_info "PHASE2_WRAPPER_TRUST_BINDING=PASS"
 
   # Full SHA256 only when needed. Menu status collection must set MM_SKIP_BUNDLE_SHA256=1.
   # Within one Enable HTTP run, verify once then reuse via MM_BUNDLE_SHA256_DONE_FP.
@@ -2846,7 +3523,17 @@ engine_http_smoke_urls() {
     "${base}/client/stage-dp-phase2.sh"
     "${base}/client/stage-dp-phase2.sh.sha256"
     "${base}/client/upgrade-phase2.sh"
-    "${base}/client/public-keyring.gpg"
+    "${base}/client/upgrade-phase2-same-version-recovery.sh"
+    "${base}/client/phase2-helper-generation.manifest"
+    "${base}/client/bringup_py3_dp_lifecycle.sh"
+    "${base}/client/lib/dp-offline-source-product-version.sh"
+    "${base}/client/lib/dp-phase2-operation-progress.sh"
+    "${base}/client/lib/dp-phase2-bringup-lifecycle.sh"
+    "${base}/client/lib/dp-phase2-ubuntu-prerequisites.sh"
+    "${base}/client/lib/dp-phase2-time-readiness.sh"
+    "${base}/client/lib/dp-phase2-staging-contract.sh"
+    "${base}/client/lib/dp-phase2-post-bringup-migration.sh"
+    "${base}/client/lib/dp-phase2-cluster-validation.sh"
     "${base}/dp-phase2/${ver}/release.env"
     "${base}/dp-phase2/${ver}/${stable}.sha256"
   )
@@ -2866,6 +3553,7 @@ engine_http_smoke_urls() {
       "${base}/client/upgrade-focal-to-jammy.sh"
       "${base}/client/upgrade-jammy-to-noble.sh"
       "${base}/client/public.gpg"
+      "${base}/client/public-keyring.gpg"
     )
   fi
   local extras_state="${MM_DP_PHASE2_ROOT}/${ver}/extras/phase2-ubuntu-prerequisites.state"
@@ -2970,11 +3658,63 @@ engine_nginx_error_log_tail() {
   fi
 }
 
+engine_http_phase2_trust_binding() {
+  local base="${1%/}" ver="$2"
+  local tmp wrapper recovery manifest identity sidecar
+  local want_h want_b want_p got_h got_b got_p f
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/phase2-http-trust.XXXXXX")"
+  wrapper="${tmp}/upgrade-phase2.sh"
+  recovery="${tmp}/upgrade-phase2-same-version-recovery.sh"
+  manifest="${tmp}/phase2-helper-generation.manifest"
+  identity="${tmp}/phase2-ubuntu-prerequisites.identity"
+  sidecar="${tmp}/dp-bundle.sha256"
+
+  if ! curl -fsSLo "$wrapper" "${base}/client/upgrade-phase2.sh" \
+    || ! curl -fsSLo "$recovery" "${base}/client/upgrade-phase2-same-version-recovery.sh" \
+    || ! curl -fsSLo "$manifest" "${base}/client/phase2-helper-generation.manifest" \
+    || ! curl -fsSLo "$identity" "${base}/dp-phase2/${ver}/extras/phase2-ubuntu-prerequisites.identity" \
+    || ! curl -fsSLo "$sidecar" "${base}/dp-phase2/${ver}/dp_bundle_${ver}-current.tar.sha256"
+  then
+    rm -rf "$tmp"
+    mm_error "HTTP_PHASE2_TRUST_BINDING=FAIL reason=fetch"
+    return 1
+  fi
+
+  want_h="$(sha256sum "$manifest" | awk '{print tolower($1)}')"
+  want_b="$(awk 'NF {print tolower($1); exit}' "$sidecar")"
+  want_p="$(sha256sum "$identity" | awk '{print tolower($1)}')"
+  [[ "$want_h" =~ ^[0-9a-f]{64}$ && "$want_b" =~ ^[0-9a-f]{64}$ && "$want_p" =~ ^[0-9a-f]{64}$ ]] || {
+    rm -rf "$tmp"
+    mm_error "HTTP_PHASE2_TRUST_BINDING=FAIL reason=published_digest_invalid"
+    return 1
+  }
+
+  for f in "$wrapper" "$recovery"; do
+    got_h="$(mm_phase2_wrapper_anchor_value "$f" H 2>/dev/null || true)"
+    got_b="$(mm_phase2_wrapper_anchor_value "$f" B 2>/dev/null || true)"
+    got_p="$(mm_phase2_wrapper_anchor_value "$f" P 2>/dev/null || true)"
+    if [[ "$got_h" != "$want_h" || "$got_b" != "$want_b" || "$got_p" != "$want_p" ]]; then
+      rm -rf "$tmp"
+      mm_error "HTTP_PHASE2_TRUST_BINDING=FAIL reason=anchor_mismatch wrapper=$(basename "$f")"
+      return 1
+    fi
+  done
+  rm -rf "$tmp"
+  mm_info "HTTP_PHASE2_TRUST_BINDING=PASS base=${base}"
+  return 0
+}
+
+
 engine_http_local_smoke() {
   local ver="${1:-${TARGET_DP_VERSION}}"
   local stable="${2:-}"
   local base u code
   [[ -n "$stable" ]] || stable="$(dp2_stable_bundle_name)"
+  if [[ "${MM_HERMETIC_TEST_MODE:-0}" != "1" \
+    && "${MM_VERIFY_HTTP_BASE:-http://127.0.0.1}" != "http://127.0.0.1" ]]; then
+    mm_error "MM_VERIFY_HTTP_BASE=FAIL reason=production_forbidden"
+    return 1
+  fi
   base="${MM_VERIFY_HTTP_BASE:-http://127.0.0.1}"
   base="${base%/}"
   mm_info "HTTP_LOCAL_SMOKE_START base=${base}"
@@ -3001,6 +3741,11 @@ engine_http_local_smoke() {
     fi
     mm_info "HTTP_LOCAL_NEGATIVE url=${u} code=${code}"
   done < <(engine_http_negative_smoke_urls "$base" "$ver")
+  if ! engine_http_phase2_trust_binding "$base" "$ver"; then
+    mm_error "HTTP_LOCAL_SMOKE=FAIL"
+    mm_error "HTTP_FAILURE_CLASS=PHASE2_TRUST_BINDING"
+    return 1
+  fi
   mm_ok "HTTP_LOCAL_SMOKE=PASS"
   return 0
 }
@@ -3010,6 +3755,11 @@ engine_http_advertised_smoke() {
   local stable="${2:-}"
   local base u code configured
   [[ -n "$stable" ]] || stable="$(dp2_stable_bundle_name)"
+  if [[ "${MM_HERMETIC_TEST_MODE:-0}" != "1" \
+    && -n "${MM_VERIFY_ADVERTISED_HTTP_BASE:-}" ]]; then
+    mm_error "MM_VERIFY_ADVERTISED_HTTP_BASE=FAIL reason=production_forbidden"
+    return 1
+  fi
 
   # Prefer operator-confirmed Mirror Server IP; fall back to MIRROR_HTTP_URL.
   configured="${MIRROR_SERVER_IP:-}"
@@ -3064,12 +3814,23 @@ engine_http_advertised_smoke() {
     fi
     mm_info "HTTP_ADVERTISED_NEGATIVE url=${u} code=${code}"
   done < <(engine_http_negative_smoke_urls "$base" "$ver")
+  if ! engine_http_phase2_trust_binding "$base" "$ver"; then
+    mm_error "HTTP_ADVERTISED_SMOKE=FAIL"
+    mm_error "HTTP_FAILURE_CLASS=PHASE2_TRUST_BINDING"
+    return 1
+  fi
   mm_ok "HTTP_ADVERTISED_SMOKE=PASS"
   return 0
 }
 
 engine_cleanup_temps() {
   local ver="${TARGET_DP_VERSION:-}"
+  if [[ -n "$ver" ]]; then
+    engine_recover_phase2_prereq_transactions "$ver" || {
+      mm_error "TEMP_CLEANUP=FAIL reason=phase2_prereq_transaction"
+      return 1
+    }
+  fi
   r2_cleanup_package || true
   engine_cleanup_phase2_sources "$ver"
   rm -rf "${MM_CACHE_ROOT}/os-core-extract" 2>/dev/null || true
@@ -3079,6 +3840,82 @@ engine_cleanup_temps() {
   find "${MM_DP_PHASE2_ROOT}" -maxdepth 1 \( -name '*.new.*' -o -name '*.old.*' \) \
     -exec rm -rf {} + 2>/dev/null || true
   mm_ok "TEMP_CLEANUP=PASS"
+}
+
+# Authoritative live gate shared by GUI Menu 4 and non-interactive
+# verify-readiness. Production callers cannot suppress HTTP validation or force
+# the large-bundle checksum skip. The checksum may be skipped only when the
+# current artifact fingerprint already matches the validated Download receipt.
+engine_validate_upgrade_readiness_live() {
+  local prev_skip_http="${MM_SKIP_HTTP_VALIDATE:-0}"
+  local prev_skip_bundle="${MM_SKIP_BUNDLE_SHA256:-0}"
+  local prev_op="${MM_SHA256_OPERATION:-}"
+  local http_rc=0
+  MM_READINESS_VALIDATED_GENERATION_ID=""
+
+  if ! mm_http_distribution_enabled; then
+    mm_status_set UPGRADE_READINESS FAIL
+    mm_status_set READINESS_RESULT FAIL
+    mm_error "UPGRADE_READINESS=FAIL reason=http_distribution_not_enabled"
+    return 1
+  fi
+
+  if [[ "${MM_HERMETIC_TEST_MODE:-0}" != "1" ]]; then
+    if [[ "$prev_skip_http" == "1" ]]; then
+      mm_status_set UPGRADE_READINESS FAIL
+      mm_status_set READINESS_RESULT FAIL
+      mm_error "MM_SKIP_HTTP_VALIDATE=FAIL reason=production_forbidden"
+      return 1
+    fi
+    # Never accept caller-supplied HTTP/checksum skips in production.
+    MM_SKIP_HTTP_VALIDATE=0
+    MM_SKIP_BUNDLE_SHA256=0
+  fi
+
+  MM_SHA256_OPERATION=verify-readiness
+  # A device/inode/size/mtime fingerprint proves that the expected file object
+  # is still present, but it is not cryptographic evidence that its bytes are
+  # unchanged. A same-size in-place mutation can preserve/restore every stat
+  # field. Production Menu 4 therefore always re-hashes the sealed Phase 2
+  # bundle before minting UPGRADE_READINESS=PASS. The existing checksum-progress
+  # UX keeps this long read observable on cold/restored EBS volumes.
+  if [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" && "$prev_skip_bundle" == "1" ]]; then
+    MM_SKIP_BUNDLE_SHA256=1
+    mm_info "READINESS_BUNDLE_SHA256_MODE=HERMETIC_SKIP"
+  else
+    MM_SKIP_BUNDLE_SHA256=0
+    mm_info "READINESS_BUNDLE_SHA256_MODE=FULL_HASH_CRYPTOGRAPHIC_REVALIDATION"
+  fi
+
+  dp2_set_version "${TARGET_DP_VERSION}"
+  # Contain mm_die/exit from validation in a subshell and preserve the caller's
+  # shell-option state without global set +/-e toggles.
+  if ( engine_validate_http_layout ); then
+    http_rc=0
+  else
+    http_rc=$?
+  fi
+  MM_SKIP_HTTP_VALIDATE="$prev_skip_http"
+  MM_SKIP_BUNDLE_SHA256="$prev_skip_bundle"
+  MM_SHA256_OPERATION="$prev_op"
+
+  if [[ "$http_rc" -ne 0 ]]; then
+    mm_status_set UPGRADE_READINESS FAIL
+    mm_status_set READINESS_RESULT FAIL
+    MM_READINESS_VALIDATED_GENERATION_ID=""
+    mm_error "UPGRADE_READINESS=FAIL reason=live_http_validation"
+    return "$http_rc"
+  fi
+  MM_READINESS_VALIDATED_GENERATION_ID="$(mm_wf_get HTTP_PUBLICATION_GENERATION_ID 2>/dev/null || true)"
+  [[ -n "$MM_READINESS_VALIDATED_GENERATION_ID" ]] || {
+    mm_status_set UPGRADE_READINESS FAIL
+    mm_status_set READINESS_RESULT FAIL
+    mm_error "UPGRADE_READINESS=FAIL reason=missing_validated_publication_generation"
+    return 1
+  }
+  mm_info "READINESS_VALIDATED_GENERATION_ID=${MM_READINESS_VALIDATED_GENERATION_ID}"
+  mm_ok "UPGRADE_READINESS_LIVE_GATE=PASS"
+  return 0
 }
 
 engine_compute_readiness() {
@@ -3135,9 +3972,28 @@ engine_compute_readiness() {
   mm_status_set TARGET_DP_VERSION "${TARGET_DP_VERSION}"
   mm_status_set PHASE2_TARGET_VERSION "${PHASE2_TARGET_VERSION}"
   mm_status_set PREPARATION_MODE "${PREPARATION_MODE}"
+
+  # Compare-and-set guard in addition to the publication lock: the generation
+  # that passed live validation must still be the generation being receipted.
+  # This prevents a stale PASS even if a caller invokes the helpers without the
+  # normal Menu 4 transaction lock.
+  if [[ "$all" == "PASS" && -n "${MM_READINESS_VALIDATED_GENERATION_ID:-}" ]]; then
+    local current_pub_gen
+    current_pub_gen="$(mm_wf_get HTTP_PUBLICATION_GENERATION_ID 2>/dev/null || true)"
+    if [[ -z "$current_pub_gen" || "$current_pub_gen" != "$MM_READINESS_VALIDATED_GENERATION_ID" ]]; then
+      mm_error "UPGRADE_READINESS=FAIL reason=publication_generation_changed validated=${MM_READINESS_VALIDATED_GENERATION_ID} current=${current_pub_gen:-missing}"
+      all=FAIL
+    fi
+  fi
+
   mm_status_set UPGRADE_READINESS "$all"
   if [[ "$all" == "PASS" ]]; then
-    mm_record_readiness_validated
+    if ! mm_record_readiness_validated; then
+      all=FAIL
+      mm_status_set UPGRADE_READINESS FAIL
+      mm_status_set READINESS_RESULT FAIL
+      mm_error "UPGRADE_READINESS=FAIL reason=readiness_receipt"
+    fi
   else
     mm_status_set READINESS_RESULT FAIL
   fi
@@ -3147,13 +4003,13 @@ engine_compute_readiness() {
 
 engine_write_install_report() {
   local result="${1:-PASS}"
-  mm_state_set INSTALL_RESULT "$result"
-  mm_state_set FINISHED_AT "$(mm_ts)"
-  mm_state_set FILES_CHANGED "${MM_FILES_CHANGED}"
-  mm_status_set LAST_EXECUTION_RESULT "$result"
-  mm_status_set LOG_PATH "${MM_LOG_FILE:-}"
+  mm_state_set INSTALL_RESULT "$result" || return 1
+  mm_state_set FINISHED_AT "$(mm_ts)" || return 1
+  mm_state_set FILES_CHANGED "${MM_FILES_CHANGED}" || return 1
+  mm_status_set LAST_EXECUTION_RESULT "$result" || return 1
+  mm_status_set LOG_PATH "${MM_LOG_FILE:-}" || return 1
   if [[ -n "${MM_STATE_DIR:-}" ]]; then
-    cp -f "${MM_STATE_DIR}/state.env" "${MM_STATE_DIR}/report.env" 2>/dev/null || true
+    cp -f "${MM_STATE_DIR}/state.env" "${MM_STATE_DIR}/report.env" 2>/dev/null || return 1
     mm_info "REPORT_PATH=${MM_STATE_DIR}/report.env"
   fi
   printf 'INSTALL_RESULT=%s\n' "$result"
@@ -3166,10 +4022,42 @@ engine_download_and_prepare() {
   mm_load_gui_config
   mm_normalize_preparation_mode
   mm_force_phase2_target
+  engine_resolve_paths
+
+  # Dry-run is strictly read-only. Do not create run/status/workflow state,
+  # acquire publication locks, quiesce nginx/readiness, or mutate artifacts.
+  if [[ "${MM_DRY_RUN:-0}" == "1" ]]; then
+    if ! mm_config_base_ready; then
+      mm_error "CONFIGURATION_READY=FAIL"
+      return 1
+    fi
+    if ! mm_require_configured_mirror_server_ip; then
+      mm_error "MIRROR_SERVER_IP_REQUIRED=YES"
+      return 1
+    fi
+    mm_validate_dp_version "$TARGET_DP_VERSION"
+    [[ "$TARGET_DP_VERSION" == "$PHASE2_TARGET_VERSION" ]] || {
+      mm_error "PHASE2_TARGET=FAIL expected=${PHASE2_TARGET_VERSION} got=${TARGET_DP_VERSION}"
+      return 1
+    }
+    dp2_set_version "$TARGET_DP_VERSION"
+    if mm_is_phase2_only; then
+      mm_info "DRY_RUN=YES operation=download-and-prepare mode=PHASE2_ONLY"
+      mm_info "DRY_RUN_OS_CORE=NOT_REQUIRED"
+    else
+      mm_info "DRY_RUN=YES operation=download-and-prepare mode=FULL"
+      mm_info "DRY_RUN_OS_CORE_URL=${OS_CORE_R2_URL:-${OS_CORE_R2_URL_CONSTANT:-}}"
+    fi
+    mm_info "DRY_RUN_MUTATION=SKIPPED"
+    mm_info "DRY_RUN_HTTP_QUIESCE=NO"
+    mm_info "DRY_RUN_WORKFLOW_RECEIPT_WRITTEN=NO"
+    return 0
+  fi
+
   if declare -F mm_wf_normalize_fixed_phase2_target >/dev/null 2>&1; then
     mm_wf_normalize_fixed_phase2_target || true
   fi
-  engine_resolve_paths
+
   mm_state_init
   mm_state_set PREPARATION_MODE "${PREPARATION_MODE}"
   mm_state_set PHASE2_TARGET_VERSION "${PHASE2_TARGET_VERSION}"
@@ -3264,9 +4152,25 @@ engine_download_and_prepare() {
       ACPS_REDOWNLOAD_AVOIDED=NO
       ;;
     INVALID)
+      mm_info "PHASE2_EXISTING_INVALID_REASON=${PHASE2_EXISTING_INVALID_REASON:-}"
+      if [[ "${PHASE2_EXISTING_SEAL_PRESENT:-NO}" == "YES" ]]; then
+        # A release that has ever carried a seal is immutable in the field.
+        # Corruption/mismatch is an operator-visible hard failure, not an
+        # invitation to delete the validated final and acquire replacement
+        # bytes.  Quiesce HTTP/readiness for safety, but leave heavy artifacts
+        # untouched so recovery requires an explicit new validated release.
+        PHASE2_BUNDLE_ACTION=FAIL_CLOSED
+        PHASE2_REBUILD_REQUIRED=NO
+        PHASE2_REBUILD_SOURCE=NONE
+        ACPS_DOWNLOAD_REQUIRED=NO
+        ACPS_REDOWNLOAD_AVOIDED=YES
+        mm_error "PHASE2_SEALED_RELEASE_INVALID=YES reason=${PHASE2_EXISTING_INVALID_REASON:-unknown}"
+        mm_error "PHASE2_SEALED_RELEASE_MUTATION=BLOCKED"
+        engine_disable_http_and_readiness || mm_die "HTTP_QUIESCE=FAIL"
+        mm_die "PHASE2_BUNDLE=FAIL reason=sealed_release_invalid:${PHASE2_EXISTING_INVALID_REASON:-unknown}"
+      fi
       PHASE2_BUNDLE_ACTION=REBUILD
       PHASE2_REBUILD_REQUIRED=YES
-      mm_info "PHASE2_EXISTING_INVALID_REASON=${PHASE2_EXISTING_INVALID_REASON:-}"
       engine_disable_http_and_readiness || mm_die "HTTP_QUIESCE=FAIL"
       if engine_phase2_existing_final_reusable; then
         # Keep the verified final until payloads are extracted. Do not claim
@@ -3406,13 +4310,6 @@ engine_download_and_prepare() {
   fi
   engine_verify_disk_space
 
-  if [[ "${MM_DRY_RUN}" == "1" ]]; then
-    mm_info "DRY_RUN=YES"
-    engine_write_install_report PASS
-    printf 'DRY_RUN=YES\nFILES_CHANGED=NO\n'
-    return 0
-  fi
-
   if ! mm_is_phase2_only; then
     if [[ "${OS_CORE_ACTION:-}" == "REUSE_VERIFIED" ]]; then
       mm_info "OS_MATERIALIZE_REQUIRED=NO"
@@ -3428,8 +4325,33 @@ engine_download_and_prepare() {
 
   if [[ "${PHASE2_BUNDLE_ACTION}" == "REUSE" ]]; then
     engine_mark_phase2_reused "$TARGET_DP_VERSION"
-    engine_prepare_phase2_ubuntu_prerequisites
-    engine_cleanup_temps
+    if engine_phase2_prereq_reuse_verified; then
+      mm_info "PHASE2_PREREQ_ACTION=REUSE_VERIFIED"
+      mm_info "VALIDATED_RELEASE_PREREQ_IMMUTABLE=YES"
+      if ! engine_phase2_release_sealed "$TARGET_DP_VERSION"; then
+        mm_info "PHASE2_RELEASE_SEAL_UPGRADE=START action=metadata_only"
+        engine_record_phase2_prereq_release_identity \
+          || mm_die "PHASE2_PREREQ=FAIL reason=release_seal_upgrade"
+        engine_phase2_release_sealed "$TARGET_DP_VERSION" \
+          || mm_die "PHASE2_PREREQ=FAIL reason=release_seal_verify"
+        mm_info "PHASE2_RELEASE_SEAL_UPGRADE=PASS heavy_bundle_rebuilt=NO"
+      fi
+      mm_ok "PHASE2_PREREQ=REUSED_VERIFIED"
+    elif engine_phase2_prereq_release_sealed; then
+      # A previously sealed/validated release must never heal itself by
+      # replacing bytes in the field. Treat any missing/mismatched prerequisite
+      # as release corruption and stop before changing the known-good identity.
+      mm_error "PHASE2_PREREQ_ACTION=FAIL_CLOSED reason=sealed_prerequisite_invalid"
+      mm_error "VALIDATED_RELEASE_PREREQ_IMMUTABLE=YES"
+      mm_die "PHASE2_PREREQ=FAIL reason=sealed_prerequisite_invalid"
+    else
+      # Legacy/incomplete preparation may have a valid Phase 2 bundle but no
+      # sealed prerequisite receipt yet. Build once through the candidate+swap
+      # path, then engine_record_phase2_prereq_release_identity seals it.
+      mm_info "PHASE2_PREREQ_ACTION=BUILD_UNSEALED_INITIAL"
+      engine_prepare_phase2_ubuntu_prerequisites
+    fi
+    engine_cleanup_temps || mm_die "TEMP_CLEANUP=FAIL"
     mm_state_set HTTP_DISTRIBUTION_READY NO
     mm_status_set HTTP_DISTRIBUTION DISABLED
     mm_info "VERIFY_OR_REBUILD_CURRENT_CLIENT_SET=START"
@@ -3439,8 +4361,8 @@ engine_download_and_prepare() {
       mm_die "DOWNLOAD_AND_PREPARE=FAIL_CLIENT_SET_FINALIZATION"
     fi
     mm_info "CLIENT_FILES_READY_REQUIRED_AFTER_PREPARE=YES"
-    mm_record_download_validated
-    engine_write_install_report PASS
+    mm_record_download_validated || mm_die "DOWNLOAD_AND_PREPARE=FAIL reason=download_receipt"
+    engine_write_install_report PASS || mm_die "DOWNLOAD_AND_PREPARE=FAIL reason=install_report_receipt"
     mm_ok "DOWNLOAD_AND_PREPARE=PASS mode=${PREPARATION_MODE} phase2=REUSE"
     return 0
   fi
@@ -3487,7 +4409,7 @@ engine_download_and_prepare() {
     engine_prepare_phase2_ubuntu_prerequisites "$work"
   fi
 
-  engine_cleanup_temps
+  engine_cleanup_temps || mm_die "TEMP_CLEANUP=FAIL"
 
   mm_state_set HTTP_DISTRIBUTION_READY NO
   mm_status_set HTTP_DISTRIBUTION DISABLED
@@ -3498,8 +4420,8 @@ engine_download_and_prepare() {
     mm_die "DOWNLOAD_AND_PREPARE=FAIL_CLIENT_SET_FINALIZATION"
   fi
   mm_info "CLIENT_FILES_READY_REQUIRED_AFTER_PREPARE=YES"
-  mm_record_download_validated
-  engine_write_install_report PASS
+  mm_record_download_validated || mm_die "DOWNLOAD_AND_PREPARE=FAIL reason=download_receipt"
+  engine_write_install_report PASS || mm_die "DOWNLOAD_AND_PREPARE=FAIL reason=install_report_receipt"
   mm_ok "DOWNLOAD_AND_PREPARE=PASS mode=${PREPARATION_MODE} phase2=${PHASE2_BUNDLE_ACTION}"
 }
 
@@ -3534,7 +4456,46 @@ engine_render_nginx_site() {
 engine_nginx_bin() { printf '%s\n' "${MM_NGINX_BIN:-nginx}"; }
 engine_systemctl_bin() { printf '%s\n' "${MM_SYSTEMCTL_BIN:-systemctl}"; }
 
+engine_assert_production_service_overrides_safe() {
+  local name value
+  [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" ]] && return 0
+  for name in MM_NGINX_BIN MM_SYSTEMCTL_BIN MM_NGINX_SITE_AVAIL MM_NGINX_SITE_ENABLED; do
+    value="${!name:-}"
+    if [[ -n "$value" ]]; then
+      mm_error "${name}=FAIL reason=production_forbidden"
+      return 1
+    fi
+  done
+  return 0
+}
+
 engine_enable_http_distribution() {
+  # Dry-run is strictly read-only. It must never mint HTTP/workflow PASS state,
+  # publish clients, normalize permissions, or touch nginx/service state.
+  if [[ "${MM_DRY_RUN:-0}" == "1" ]]; then
+    mm_load_gui_config
+    engine_resolve_paths
+    mm_force_phase2_target
+    mm_info "DRY_RUN=YES operation=enable-http"
+    mm_info "HTTP_DISTRIBUTION_MUTATION=SKIPPED"
+    mm_info "HTTP_WORKFLOW_RECEIPT_WRITTEN=NO"
+    return 0
+  fi
+
+  engine_assert_production_service_overrides_safe \
+    || mm_die "HTTP_DISTRIBUTION=FAIL reason=production_service_override"
+
+  # Test escape hatches may weaken authoritative HTTP/integrity checks only in
+  # explicit hermetic mode. Environment injection must not bypass field gates.
+  if [[ "${MM_HERMETIC_TEST_MODE:-0}" != "1" ]]; then
+    [[ "${MM_SKIP_NGINX_APPLY:-0}" != "1" ]] \
+      || mm_die "MM_SKIP_NGINX_APPLY=FAIL reason=production_forbidden"
+    [[ "${MM_SKIP_HTTP_VALIDATE:-0}" != "1" ]] \
+      || mm_die "MM_SKIP_HTTP_VALIDATE=FAIL reason=production_forbidden"
+    [[ "${MM_SKIP_BUNDLE_SHA256:-0}" != "1" ]] \
+      || mm_die "MM_SKIP_BUNDLE_SHA256=FAIL reason=production_forbidden"
+  fi
+
   # Serialize with Menu 2 / legacy sync / other publication mutators.
   # Skip when this process already holds the per-operation install lock.
   if [[ "${MM_LOCK_HELD:-0}" != "1" ]]; then
@@ -3568,28 +4529,25 @@ engine_enable_http_distribution() {
   # First check is silent (on-disk presence only) to avoid duplicate CLIENT_FILES_READY logs.
   local clients_on_disk=0
   if mm_is_phase2_only; then
-    mm_client_files_ready_phase2 "${MM_CLIENT_ROOT}" && clients_on_disk=1
-    if [[ "$clients_on_disk" -ne 1 ]]; then
-      mm_info "OS_HOP_CLIENT_FILES_REQUIRED=NO"
-      mm_info "CLIENT_FILES_ON_DISK_READY=NO"
-      engine_ensure_phase2_helpers || true
+    # Endpoint-only changes never require Menu 2 or heavy artifact mutation.
+    # Re-publish the small Phase 2 helper/wrapper generation from local source
+    # when its endpoint metadata is stale, then rebind the workflow receipt.
+    if ! engine_ensure_phase2_helpers; then
+      mm_die "HTTP_DISTRIBUTION=FAIL phase2-only client publication"
     fi
-    # Align Enable HTTP with Download-and-Prepare: bind or rebuild a coherent
-    # PHASE2_ONLY generation when selective READY makes rebuild possible.
-    engine_assess_client_set_for_finalize
-    mm_info "CLIENT_SET_STATE=${CLIENT_SET_STATE}"
-    mm_info "CLIENT_SET_ACTION=${CLIENT_SET_ACTION}"
-    if [[ "$CLIENT_SET_ACTION" == "REUSE_CURRENT" || "$CLIENT_SET_ACTION" == "REUSE_VERIFIED" ]]; then
-      clients_on_disk=1
-      engine_bind_reused_client_set_workflow \
-        || mm_die "HTTP_DISTRIBUTION=FAIL client workflow binding"
-    elif [[ -f "${MM_SELECTIVE_ROOT}/state/READY" ]]; then
-      mm_info "CLIENT_FILES_ON_DISK_READY=STALE_OR_MISSING — rebuilding PHASE2_ONLY current source"
-      engine_rebuild_publish_local_client_set 1 \
-        || mm_die "HTTP_DISTRIBUTION=FAIL client rebuild"
-      engine_ensure_phase2_helpers || true
-      clients_on_disk=1
+    if ! mm_client_files_ready_phase2 "${MM_CLIENT_ROOT}"; then
+      engine_phase2_helpers_txn_rollback >/dev/null 2>&1 || true
+      mm_die "HTTP_DISTRIBUTION=FAIL phase2-only client readiness"
     fi
+    if ! engine_bind_reused_client_set_workflow; then
+      engine_phase2_helpers_txn_rollback >/dev/null 2>&1 || true
+      mm_die "HTTP_DISTRIBUTION=FAIL phase2-only workflow binding"
+    fi
+    engine_phase2_helpers_txn_commit \
+      || { engine_phase2_helpers_txn_rollback >/dev/null 2>&1 || true; mm_die "HTTP_DISTRIBUTION=FAIL phase2-only publication commit"; }
+    clients_on_disk=1
+    mm_info "PHASE2_ONLY_CLIENT_SET_ACTION=REUSE_OR_ATOMIC_REPUBLISH"
+    mm_info "HEAVY_ARTIFACT_DOWNLOAD_REQUIRED=NO"
   else
     # Keep Enable HTTP aligned with Download-and-Prepare: verify-only fixtures
     # ship complete on-disk clients without selective hop trees for a rebuild.
@@ -3676,22 +4634,13 @@ engine_enable_http_distribution() {
   MM_SKIP_HTTP_VALIDATE="$prev_skip"
   MM_HTTP_VALIDATE_DEFER="$prev_defer"
 
-  if [[ "${MM_DRY_RUN}" == "1" ]]; then
-    mm_info "DRY_RUN skip nginx enable"
-    mm_status_set HTTP_DISTRIBUTION ENABLED
-    mm_state_set HTTP_DISTRIBUTION_READY YES
-    mm_record_http_validated
-    mm_ok "HTTP_DISTRIBUTION=ENABLED (dry-run)"
-    return 0
-  fi
-
   # Unit-test hook: layout already validated; skip writing /etc/nginx (see bootstrap tests for full path).
   if [[ "${MM_SKIP_NGINX_APPLY:-0}" == "1" ]]; then
     mm_warn "NGINX_APPLY=SKIPPED_TEST"
-    mm_status_set HTTP_DISTRIBUTION ENABLED
-    mm_state_set HTTP_DISTRIBUTION_READY YES
-    mm_status_set HTTP_CONFIGURATION_READY PASS
-    mm_record_http_validated
+    mm_state_set HTTP_DISTRIBUTION_READY YES \
+      || mm_die "HTTP_DISTRIBUTION=FAIL reason=http_state_receipt"
+    mm_record_http_validated \
+      || mm_die "HTTP_DISTRIBUTION=FAIL reason=http_receipt"
     mm_ok "HTTP_DISTRIBUTION=ENABLED"
     return 0
   fi
@@ -3874,11 +4823,14 @@ engine_enable_http_distribution() {
     mm_info "HTTP_VALIDATION=DEFERRED reason=skip_http_validate"
   fi
 
-  mm_status_set HTTP_DISTRIBUTION ENABLED
-  mm_state_set HTTP_DISTRIBUTION_READY YES
-  mm_status_set HTTP_CONFIGURATION_READY PASS
-  mm_status_set HTTP_ENABLE_RESULT PASS
-  mm_record_http_validated
+  mm_state_set HTTP_DISTRIBUTION_READY YES || {
+    restore_nginx
+    mm_die "HTTP_DISTRIBUTION=FAIL reason=http_state_receipt"
+  }
+  if ! mm_record_http_validated; then
+    restore_nginx
+    mm_die "HTTP_DISTRIBUTION=FAIL reason=http_receipt"
+  fi
   mm_info "CLIENT_HTTP_READY=PASS"
   mm_ok "HTTP_DISTRIBUTION=ENABLED"
 }

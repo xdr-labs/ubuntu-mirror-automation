@@ -34,7 +34,58 @@ printf 'HTTP_DISTRIBUTION=ENABLED\nUPGRADE_READINESS=PASS\n' >"$MM_STATUS_FILE"
 # shellcheck source=/dev/null
 source "${ROOT}/scripts/lib/mirror_manager_common.sh"
 # shellcheck source=/dev/null
+source "${ROOT}/scripts/lib/dp-phase2-common.sh"
+# shellcheck source=/dev/null
 source "${ROOT}/scripts/lib/mirror_install_engine.sh"
+
+# --- P1-C0: only a release.env identity seal permits immutable prerequisite reuse ---
+ORIG_DP_PHASE2_ROOT="$MM_DP_PHASE2_ROOT"
+export MM_DP_PHASE2_ROOT="$TMP/prereq-seal/dp-phase2"
+export TARGET_DP_VERSION=6.6.0
+export PHASE2_TARGET_VERSION=6.6.0
+EXTRAS="${MM_DP_PHASE2_ROOT}/6.6.0/extras"
+mkdir -p "$EXTRAS"
+cat >"${EXTRAS}/phase2-ubuntu-prerequisites.state" <<'EOF'
+TARGET_DP_VERSION=6.6.0
+PHASE2_PREREQ_REQUIRED=NO
+PHASE2_PREREQ_PACKAGE_COUNT=0
+PHASE2_PREREQ_BUILD=PASS
+PHASE2_PREREQ_PUBLICATION=PASS
+PHASE2_PREREQ_ARTIFACT=phase2-ubuntu-prerequisites.tar.gz
+PHASE2_PREREQ_SHA256=
+EOF
+# shellcheck source=lib/phase2_prereq_identity_fixture.sh
+source "${ROOT}/tests/lib/phase2_prereq_identity_fixture.sh"
+phase2_prereq_write_identity_for_extras "$EXTRAS" >/dev/null
+printf 'TARGET_DP_VERSION=6.6.0\n' >"${MM_DP_PHASE2_ROOT}/6.6.0/release.env"
+printf 'fixture-bundle\n' >"${MM_DP_PHASE2_ROOT}/6.6.0/dp_bundle_6.6.0-current.tar"
+(
+  cd "${MM_DP_PHASE2_ROOT}/6.6.0"
+  sha256sum dp_bundle_6.6.0-current.tar >dp_bundle_6.6.0-current.tar.sha256
+)
+if engine_phase2_prereq_reuse_verified; then
+  fail "P1-C0 unsealed prerequisite incorrectly reusable"
+else
+  pass "P1-C0 legacy/unsealed prerequisite requires one-time build+seal"
+fi
+engine_record_phase2_prereq_release_identity
+if engine_phase2_prereq_release_sealed && engine_phase2_prereq_reuse_verified; then
+  pass "P1-C0 exact sealed prerequisite is reusable"
+else
+  fail "P1-C0 exact sealed prerequisite not reusable"
+fi
+cp -a "${EXTRAS}/phase2-ubuntu-prerequisites.identity" "$TMP/prereq.identity.good"
+printf 'tamper\n' >>"${EXTRAS}/phase2-ubuntu-prerequisites.identity"
+if engine_phase2_prereq_reuse_verified; then
+  fail "P1-C0 sealed prerequisite corruption accepted"
+else
+  pass "P1-C0 sealed prerequisite corruption rejected"
+fi
+engine_phase2_prereq_release_sealed \
+  && pass "P1-C0 release remains sealed after corruption" \
+  || fail "P1-C0 release seal unexpectedly disappeared"
+mv -f "$TMP/prereq.identity.good" "${EXTRAS}/phase2-ubuntu-prerequisites.identity"
+export MM_DP_PHASE2_ROOT="$ORIG_DP_PHASE2_ROOT"
 
 # --- P1-A: nginx stop failure must not be reported as success or rewrite gates ---
 cat >"$TMP/systemctl-stop-fails" <<'EOS'
@@ -104,7 +155,7 @@ grep -q 'is-active' "$SYSTEMCTL_LOG" && pass "P1-B systemctl consulted despite D
 grep -q '^stop nginx$' "$SYSTEMCTL_LOG" && pass "P1-B nginx stop issued" || fail "P1-B stop missing"
 [[ -f "$SYSTEMCTL_STOPPED_FLAG" ]] && pass "P1-B stop observed" || fail "P1-B stop flag missing"
 
-# --- P1-C: Menu 2 REUSE quiesces before prerequisite/client mutation ---
+# --- P1-C: Menu 2 REUSE preserves verified prerequisite bytes ---
 python3 - "$ROOT" <<'PY' && pass "P1-C quiesce precedes REUSE mutation in prepare" || fail "P1-C ordering"
 import sys
 from pathlib import Path
@@ -115,9 +166,9 @@ end = body.find("\nengine_render_nginx_site()")
 body = body[:end]
 gate = body.find("engine_disable_http_and_readiness")
 reuse = body.find('PHASE2_BUNDLE_ACTION}" == "REUSE"')
-prereq = body.find("engine_prepare_phase2_ubuntu_prerequisites")
-assert gate > 0 and reuse > 0 and prereq > 0
-assert gate < reuse < prereq, (gate, reuse, prereq)
+reuse_guard = body.find("engine_phase2_prereq_reuse_verified", reuse)
+assert gate > 0 and reuse > 0 and reuse_guard > 0
+assert gate < reuse < reuse_guard, (gate, reuse, reuse_guard)
 PY
 
 unset MM_SYSTEMCTL_BIN
@@ -135,9 +186,11 @@ mm_check_client_build_prerequisites_ready() { return 0; }
 engine_assess_phase2_final() { PHASE2_EXISTING_BUNDLE=VALID; }
 engine_verify_disk_space() { return 0; }
 engine_mark_phase2_reused() { echo MARK >>"$ORDER"; }
-engine_prepare_phase2_ubuntu_prerequisites() {
-  printf 'PREREQ quiesced=%s\n' "$(mm_status_get HTTP_PUBLICATION_QUIESCED)" >>"$ORDER"
-}
+engine_phase2_prereq_reuse_verified() { echo PREREQ_REUSE >>"$ORDER"; return 0; }
+# P1-C isolates REUSE-vs-mutation ordering; sealing itself is exercised by
+# P1-C0 above, so model an already sealed release here.
+engine_phase2_release_sealed() { return 0; }
+engine_prepare_phase2_ubuntu_prerequisites() { echo PREREQ_MUTATION >>"$ORDER"; return 99; }
 engine_cleanup_temps() { return 0; }
 mm_record_artifacts_prepared() { return 0; }
 engine_finalize_local_client_set() { echo FINALIZE >>"$ORDER"; return 0; }
@@ -158,9 +211,14 @@ set -e
 set -u
 [[ "$RRC" -eq 0 ]] && pass "P1-C REUSE prepare returned 0" || { fail "P1-C REUSE rc=${RRC}"; tail -40 "$TMP/reuse.err" >&2; }
 grep -q 'nginx-stop' "$MM_HTTP_QUIESCE_LOG" && pass "P1-C quiesce recorded during REUSE" || fail "P1-C no quiesce"
-grep -q 'PREREQ quiesced=YES' "$ORDER" \
-  && pass "P1-C prerequisite mutation saw publication already quiesced" \
-  || fail "P1-C prerequisite ran before quiesce: $(cat "$ORDER" 2>/dev/null || true)"
+grep -q '^PREREQ_REUSE$' "$ORDER" \
+  && pass "P1-C verified prerequisite reused" \
+  || fail "P1-C reuse gate missing: $(cat "$ORDER" 2>/dev/null || true)"
+if grep -q '^PREREQ_MUTATION$' "$ORDER"; then
+  fail "P1-C REUSE path mutated prerequisite"
+else
+  pass "P1-C REUSE path does not rebuild prerequisite"
+fi
 
 # --- P1-D: unwritable status directory must not return success; lock is released ---
 RODIR="$TMP/status-ro"
@@ -435,6 +493,52 @@ set -e
   && pass "inherited publication lock fd is accepted" \
   || fail "inherited fd rejected rc=${INHERIT_RC} out=${inherit_out}"
 publication_lock_release
+
+# --- P1-H: nested prerequisite crash transaction recovers from release seal ---
+ORIG_DP_PHASE2_ROOT="$MM_DP_PHASE2_ROOT"
+export MM_DP_PHASE2_ROOT="$TMP/prereq-crash/dp-phase2"
+export TARGET_DP_VERSION=6.6.0 PHASE2_TARGET_VERSION=6.6.0 PREPARATION_MODE=PHASE2_ONLY
+PARENT="${MM_DP_PHASE2_ROOT}/6.6.0"
+LIVE="${PARENT}/extras"
+CAND="${PARENT}/extras.new.999999"
+mkdir -p "$LIVE" "$CAND"
+printf 'NEW_AFTER_EXCHANGE\n' >"${LIVE}/phase2-ubuntu-prerequisites.identity"
+printf 'OLD_KNOWN_GOOD\n' >"${CAND}/phase2-ubuntu-prerequisites.identity"
+SEALED_OLD="$(sha256sum "${CAND}/phase2-ubuntu-prerequisites.identity" | awk '{print $1}')"
+printf 'PHASE2_PREREQ_IDENTITY_SHA256=%s\n' "$SEALED_OLD" >"${PARENT}/release.env"
+if mm_temps_present; then
+  pass "P1-H nested extras.new transaction invalidates completion"
+else
+  fail "P1-H nested extras.new transaction was not detected"
+fi
+set +e
+RECOVER_OUT="$(engine_recover_phase2_prereq_transactions 6.6.0 2>&1)"
+RECOVER_RC=$?
+set -e
+LIVE_SHA="$(sha256sum "${LIVE}/phase2-ubuntu-prerequisites.identity" | awk '{print $1}')"
+if [[ "$RECOVER_RC" -eq 0 && "$LIVE_SHA" == "$SEALED_OLD" && ! -e "$CAND" ]] \
+  && printf '%s\n' "$RECOVER_OUT" | grep -q 'PHASE2_PREREQ_TRANSACTION_RECOVERY=PASS'; then
+  pass "P1-H crash recovery restores release-sealed prerequisite generation"
+else
+  fail "P1-H recovery rc=${RECOVER_RC} live=${LIVE_SHA} seal=${SEALED_OLD} candidate=$([[ -e "$CAND" ]] && echo present || echo absent)"
+fi
+
+# HTTP/readiness must reject any uncommitted nested prerequisite transaction,
+# including one created by a still-active/unknown operation.
+mkdir -p "${PARENT}/extras.new.999998"
+printf 'residue\n' >"${PARENT}/extras.new.999998/phase2-ubuntu-prerequisites.identity"
+set +e
+HTTP_RESIDUE_OUT="$( (engine_validate_http_layout) 2>&1 )"
+HTTP_RESIDUE_RC=$?
+set -e
+if [[ "$HTTP_RESIDUE_RC" -ne 0 ]] \
+  && printf '%s\n' "$HTTP_RESIDUE_OUT" | grep -q 'uncommitted_phase2_prereq_transaction'; then
+  pass "P1-H HTTP readiness rejects nested prerequisite transaction residue"
+else
+  fail "P1-H HTTP readiness accepted residue rc=${HTTP_RESIDUE_RC} out=${HTTP_RESIDUE_OUT}"
+fi
+rm -rf "${PARENT}/extras.new.999998"
+export MM_DP_PHASE2_ROOT="$ORIG_DP_PHASE2_ROOT"
 
 if [[ "$FAIL" -ne 0 ]]; then
   exit 1

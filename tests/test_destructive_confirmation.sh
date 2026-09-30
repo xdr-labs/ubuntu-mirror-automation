@@ -82,6 +82,16 @@ for entry in "${HOPS[@]}"; do
   else
     fail "builder ${hop}: phrase/helper inject"
   fi
+
+  # Hermetic fake confirmation must be non-interactive. An explicitly supplied
+  # wrong value is rejected deterministically instead of falling through to read(1).
+  if grep -Fq '[[ -n "$TEST_ROOT" && -n "${DP_OFFLINE_FAKE_CONFIRM+x}" ]]' "$tin" \
+    && grep -Fq '[[ "${DP_OFFLINE_FAKE_CONFIRM}" == "$PIN_CONFIRM_PHRASE" ]] && return 0' "$tin" \
+    && grep -A3 -F '[[ -n "$TEST_ROOT" && -n "${DP_OFFLINE_FAKE_CONFIRM+x}" ]]' "$tin" | grep -Fq 'return 1'; then
+    pass "template ${hop}: hermetic fake confirmation rejects mismatch without read"
+  else
+    fail "template ${hop}: hermetic fake confirmation may fall through to interactive read"
+  fi
 done
 
 # ---------------------------------------------------------------------------

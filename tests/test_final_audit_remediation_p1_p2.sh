@@ -253,6 +253,30 @@ fi
 # ---------- Phase2-only atomic publication preserves previous ----------
 # shellcheck source=/dev/null
 source "${ROOT}/scripts/lib/mirror_install_engine.sh"
+
+# Library functions must preserve the caller's global errexit state. Menu 2/GUI
+# can invoke preparation while running under set +e, so a helper must not force
+# set -e on return. The atomic-swap rc is captured through an if-condition.
+prereq_fn="$(awk '/^engine_prepare_phase2_ubuntu_prerequisites\(\)/,/^}/' \
+  "${ROOT}/scripts/lib/mirror_install_engine.sh")"
+if ! grep -qE '^[[:space:]]*set[[:space:]]+[+-]e([[:space:]]|$)' <<<"$prereq_fn" \
+   && grep -q 'if swap_out=' <<<"$prereq_fn" \
+   && grep -q -- '--require-exchange' <<<"$prereq_fn"; then
+  pass "prerequisite atomic publish preserves caller errexit state"
+else
+  fail "prerequisite atomic publish toggles global errexit or misses guarded exchange"
+fi
+
+helper_fn="$(awk '/^engine_ensure_phase2_helpers\(\)/,/^}/' \
+  "${ROOT}/scripts/lib/mirror_install_engine.sh")"
+if ! grep -qE '^[[:space:]]*set[[:space:]]+[+-]e([[:space:]]|$)' <<<"$helper_fn" \
+   && grep -q 'if swap_out=' <<<"$helper_fn" \
+   && grep -q -- '--require-exchange' <<<"$helper_fn"; then
+  pass "phase2 helper atomic publish preserves caller errexit and no-gap exchange"
+else
+  fail "phase2 helper publish toggles global errexit or permits non-atomic live gap"
+fi
+
 export MM_CLIENT_ROOT="${TMP}/client-live"
 export MIRROR_HTTP_URL="http://192.0.2.10"
 mkdir -p "$MM_CLIENT_ROOT"
@@ -283,6 +307,21 @@ live_before="$(find "$MM_CLIENT_ROOT" -type f | sort | sha256sum)"
 export MM_HERMETIC_TEST_MODE=1
 export MM_PHASE2_HELPERS_FORCE_REPUBLISH=1
 export MM_PHASE2_HELPERS_FAKE_SWAP_FAIL=1
+# Require a true no-gap RENAME_EXCHANGE for immutable live publications.
+STAGE_EXCHANGE="${TMP}/helpers-stage-exchange"
+LIVE_EXCHANGE="${TMP}/helpers-live-exchange"
+mkdir -p "$STAGE_EXCHANGE" "$LIVE_EXCHANGE"
+printf 'GEN=NEW\n' >"${STAGE_EXCHANGE}/marker"
+printf 'GEN=OLD\n' >"${LIVE_EXCHANGE}/marker"
+exchange_out="$(python3 "${ROOT}/scripts/lib/atomic_dir_swap.py" \
+  --stage-dir "$STAGE_EXCHANGE" --live-dir "$LIVE_EXCHANGE" --require-exchange 2>&1)"
+if grep -q 'CLIENT_SET_ATOMIC_SWAP_METHOD=renameat2_RENAME_EXCHANGE' <<<"$exchange_out" \
+   && grep -q 'GEN=NEW' "${LIVE_EXCHANGE}/marker"; then
+  pass "atomic_dir_swap require-exchange publishes with no live-path gap"
+else
+  fail "require-exchange did not use RENAME_EXCHANGE: ${exchange_out}"
+fi
+
 # Also exercise atomic_dir_swap inject independently
 STAGE_FAIL="${TMP}/helpers-stage"
 LIVE_OK="${TMP}/helpers-live"

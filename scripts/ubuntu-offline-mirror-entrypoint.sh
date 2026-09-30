@@ -9,6 +9,36 @@ UOM_RUNTIME_ROOT="${UOM_RUNTIME_ROOT:-/usr/local/lib/ubuntu-mirror}"
 UOM_CORE_ENTRY="${UOM_CORE_ENTRY:-${UOM_RUNTIME_ROOT}/scripts/ubuntu-offline-mirror.sh}"
 UOM_MANAGER_ENTRY="${UOM_MANAGER_ENTRY:-${UOM_RUNTIME_ROOT}/scripts/install-dp-upgrade-mirror.sh}"
 
+uom_public_help() {
+  cat <<EOF
+Usage: ubuntu-offline-mirror <command>
+
+DP Ubuntu Upgrade Mirror Manager — production public CLI
+
+Commands:
+  mirror-manager          Interactive authoritative workflow
+  enable-http             Enable/validate HTTP publication
+  verify-readiness        Validate live publication and readiness
+  diagnose-mirror-runtime Read-only runtime/artifact/HTTP diagnosis
+  help                    Show this help
+
+Production mutations outside Mirror Manager are disabled.
+Legacy selective/build/migrate/sync commands are retained only for hermetic regression tests.
+EOF
+}
+
+uom_legacy_command_allowed() {
+  [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" && "${UOM_ALLOW_LEGACY_MUTATION:-0}" == "1" ]]
+}
+
+uom_exec_core() {
+  [[ -x "$UOM_CORE_ENTRY" || -f "$UOM_CORE_ENTRY" ]] || {
+    printf 'ERROR: Core runtime entrypoint is missing: %s\n' "$UOM_CORE_ENTRY" >&2
+    exit 1
+  }
+  exec bash "$UOM_CORE_ENTRY" "$@"
+}
+
 uom_format_menu7_file() {
   local input="$1" output="$2"
   [[ -f "$input" ]] || {
@@ -353,7 +383,8 @@ uom_run_mirror_manager() {
 }
 
 uom_main() {
-  case "${1:-mirror-manager}" in
+  local cmd="${1:-mirror-manager}"
+  case "$cmd" in
     --format-menu7)
       [[ $# -eq 3 ]] || {
         printf 'Usage: %s --format-menu7 INPUT OUTPUT\n' "$0" >&2
@@ -361,15 +392,24 @@ uom_main() {
       }
       uom_format_menu7_file "$2" "$3"
       ;;
+    -h|--help|help)
+      uom_public_help
+      ;;
     mirror-manager|install-menu)
       uom_run_mirror_manager "$@"
       ;;
+    enable-http|verify-readiness|diagnose-mirror-runtime)
+      uom_exec_core "$@"
+      ;;
     *)
-      [[ -x "$UOM_CORE_ENTRY" || -f "$UOM_CORE_ENTRY" ]] || {
-        printf 'ERROR: Core runtime entrypoint is missing: %s\n' "$UOM_CORE_ENTRY" >&2
-        exit 1
-      }
-      exec bash "$UOM_CORE_ENTRY" "$@"
+      if uom_legacy_command_allowed; then
+        printf 'LEGACY_PUBLIC_COMMAND_TEST_MODE=YES command=%s\n' "$cmd" >&2
+        uom_exec_core "$@"
+      fi
+      printf 'LEGACY_PUBLIC_COMMAND_DISABLED=YES command=%s\n' "$cmd" >&2
+      printf 'Use: sudo ubuntu-offline-mirror mirror-manager\n' >&2
+      printf 'For read-only diagnosis: sudo ubuntu-offline-mirror diagnose-mirror-runtime\n' >&2
+      exit 2
       ;;
   esac
 }

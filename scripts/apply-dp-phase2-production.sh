@@ -1,21 +1,24 @@
 #!/usr/bin/env bash
-# One-shot production apply for DP Phase 2 6.6.0 on the mirror server.
-# Requires root. Preserves selective READY / current. Does NOT run DP bringup.
+# RETIRED maintenance utility for the historical Phase 2 current/ layout.
 #
-# Recommended interactive invocation (does NOT exit the SSH login shell):
-#   cd /home/aella/ubuntu-mirror-automation && {
-#     sudo bash scripts/apply-dp-phase2-production.sh
-#     rc=$?
-#     printf '\nAPPLY_DP_PHASE2_EXIT_CODE=%s\n' "$rc"
-#   }
+# Production use is intentionally disabled. The authoritative field control
+# plane is:
+#   sudo ubuntu-offline-mirror mirror-manager
+# followed by Menu 2 -> 3 -> 4 -> 7.
 #
-# Do NOT wrap this script with a trailing `exit "$rc"` in an interactive SSH
-# session — that exits the login shell. This script never kills SSH / $PPID.
-#
-# Usage:
-#   sudo bash /home/aella/ubuntu-mirror-automation/scripts/apply-dp-phase2-production.sh
+# This file remains only for hermetic regression coverage of old metadata/layout
+# behavior. Running it requires BOTH MM_HERMETIC_TEST_MODE=1 and
+# ALLOW_LEGACY_PHASE2_MAINTENANCE=1.
 set -euo pipefail
 set +x
+
+if [[ "${MM_HERMETIC_TEST_MODE:-0}" != "1" \
+  || "${ALLOW_LEGACY_PHASE2_MAINTENANCE:-0}" != "1" ]]; then
+  echo "LEGACY_PHASE2_MAINTENANCE_DISABLED=YES utility=$(basename "$0")" >&2
+  echo "This legacy current/-layout apply path is not a production control plane." >&2
+  echo "Use: sudo ubuntu-offline-mirror mirror-manager" >&2
+  exit 2
+fi
 
 [[ "${EUID}" -eq 0 ]] || { echo "must run as root" >&2; exit 1; }
 

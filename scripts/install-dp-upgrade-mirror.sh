@@ -628,10 +628,23 @@ Re-enter a usable IPv4 present on this host."
           continue
         fi
         MIRROR_HTTP_URL="$(mirror_base_url_from_ipv4 "${MIRROR_SERVER_IP}")"
+        # Acquire the shared publication/configuration lock explicitly here so
+        # contention can return to the GUI without wrapping the save function in
+        # a negated conditional, which would disable Bash errexit inside it.
+        if ! publication_lock_acquire; then
+          mm_whiptail_msg "Configuration" \
+            "CONFIGURATION_SAVED=NO
+BLOCK_REASON=PUBLICATION_LOCK_BUSY
+
+Another Configuration / Download / Enable HTTP / Menu 7 transaction is active.
+Wait for it to finish, then Save Configuration again."
+          continue
+        fi
         mm_save_gui_config_full
         mm_record_config_validated
         mm_status_set PREPARATION_MODE "${PREPARATION_MODE}"
         mm_status_set PHASE2_TARGET_VERSION "${PHASE2_TARGET_VERSION}"
+        publication_lock_release
         local save_msg
         if declare -F mm_wf_operator_save_message >/dev/null 2>&1; then
           save_msg="$(mm_wf_operator_save_message)"
@@ -899,8 +912,33 @@ gui_verify_readiness() {
   load_mirror_defaults
   mm_load_gui_config
   engine_resolve_paths
-  local tmp http_rc=0 ready_line="" backend_rc=0
+  local tmp http_rc=0 ready_line="" backend_rc=0 readiness_publication_lock_acquired=0
   tmp="$(mktemp)"
+  # Menu 4 must validate and persist its readiness receipt against one atomic
+  # publication generation. Serialize the whole validate -> receipt sequence
+  # with the same lock used by Configuration/Menu 2/Menu 3/Menu 7.
+  if ! _publication_lock_fd_holds_ours "${PUBLICATION_LOCK_FD:-}"; then
+    if ! publication_lock_acquire; then
+      cat >"$tmp" <<EOF
+UPGRADE_READINESS=FAIL
+
+Publication is currently being changed by another operation.
+Wait for it to finish, then run Verify Upgrade Readiness again.
+EOF
+      mm_status_set UPGRADE_READINESS FAIL
+      mm_status_set READINESS_RESULT FAIL
+      mm_whiptail_textbox "Verify Upgrade Readiness" "$tmp" || true
+      rm -f "$tmp"
+      return 0
+    fi
+    readiness_publication_lock_acquired=1
+  fi
+  # Re-read configuration only after locking so validation and receipt use the
+  # same endpoint/publication identity.
+  mm_load_gui_config
+  mm_normalize_preparation_mode
+  mm_force_phase2_target
+  engine_resolve_paths
   if ! mm_http_distribution_enabled; then
     cat >"$tmp" <<EOF
 UPGRADE_READINESS=FAIL
@@ -914,6 +952,9 @@ before verifying upgrade readiness.
 EOF
     mm_status_set UPGRADE_READINESS FAIL
     mm_status_set READINESS_RESULT FAIL
+    if [[ "$readiness_publication_lock_acquired" -eq 1 ]]; then
+      publication_lock_release
+    fi
     mm_whiptail_textbox "Verify Upgrade Readiness" "$tmp" || true
     rm -f "$tmp"
     return 0
@@ -939,16 +980,14 @@ Do not interrupt or close this terminal.
 
 EOF
   export MM_LIVE_PROGRESS=1
-  export MM_SHA256_OPERATION=verify-readiness
-  set +e
-  # Prefer fingerprint skip when artifacts match last Download verify.
-  if mm_download_completed; then
-    export MM_SKIP_BUNDLE_SHA256=1
+  # GUI and CLI share one authoritative live readiness gate. It decides
+  # whether the prior Download fingerprint permits bundle-hash reuse and always
+  # performs live HTTP validation in production.
+  if engine_validate_upgrade_readiness_live >>"$tmp" 2>&1; then
+    http_rc=0
+  else
+    http_rc=$?
   fi
-  ( engine_validate_http_layout ) >>"$tmp" 2>&1
-  http_rc=$?
-  unset MM_SKIP_BUNDLE_SHA256
-  set -e
   if [[ "$http_rc" -eq 0 ]]; then
     printf 'HTTP URL checks: PASS\n' >>"$tmp"
   else
@@ -957,20 +996,25 @@ EOF
     mm_status_set READINESS_RESULT FAIL
     printf 'UPGRADE_READINESS=FAIL\n' >>"$tmp"
     unset MM_LIVE_PROGRESS
-    unset MM_SHA256_OPERATION
+    if [[ "$readiness_publication_lock_acquired" -eq 1 ]]; then
+      publication_lock_release
+    fi
     printf '\nPress Enter to return to the menu...\n'
     read -r _ || true
     mm_whiptail_textbox "Verify Upgrade Readiness" "$tmp" || true
     rm -f "$tmp"
     return 0
   fi
-  set +e
-  ready_line="$(engine_compute_readiness 2>>"$tmp")"
-  backend_rc=$?
-  set -e
+  if ready_line="$(engine_compute_readiness 2>>"$tmp")"; then
+    backend_rc=0
+  else
+    backend_rc=$?
+  fi
   printf '%s\n' "$ready_line" >>"$tmp"
   unset MM_LIVE_PROGRESS
-  unset MM_SHA256_OPERATION
+  if [[ "$readiness_publication_lock_acquired" -eq 1 ]]; then
+    publication_lock_release
+  fi
   printf '\n------------------------------------------------------------\n'
   if [[ "$backend_rc" -eq 0 ]]; then
     printf 'Verify Upgrade Readiness finished: PASS\n'
@@ -1324,10 +1368,12 @@ gui_build_client_commands() {
     snap_line="Create a full snapshot of the DP."
   fi
   stage_cmd="$(gui_phase2_stage_command_line "$mirror" "$ver")" || return 1
-  hop2="$(gui_client_hop_command_line "$mirror" "dp-offline-upgrade-xenial-to-bionic.sh")" || return 1
-  hop3="$(gui_client_hop_command_line "$mirror" "dp-offline-upgrade-bionic-to-focal.sh")" || return 1
-  hop4="$(gui_client_hop_command_line "$mirror" "dp-offline-upgrade-focal-to-jammy.sh")" || return 1
-  hop5="$(gui_client_hop_command_line "$mirror" "dp-offline-upgrade-jammy-to-noble.sh")" || return 1
+  if ! mm_is_phase2_only; then
+    hop2="$(gui_client_hop_command_line "$mirror" "dp-offline-upgrade-xenial-to-bionic.sh")" || return 1
+    hop3="$(gui_client_hop_command_line "$mirror" "dp-offline-upgrade-bionic-to-focal.sh")" || return 1
+    hop4="$(gui_client_hop_command_line "$mirror" "dp-offline-upgrade-focal-to-jammy.sh")" || return 1
+    hop5="$(gui_client_hop_command_line "$mirror" "dp-offline-upgrade-jammy-to-noble.sh")" || return 1
+  fi
   if [[ "$topology" == "cluster" ]]; then
     if [[ -z "$dl_worker_ips" && -z "$da_worker_ips" ]]; then
       echo "CLUSTER_WORKER_IPS_REQUIRED=YES" >&2
@@ -1741,6 +1787,7 @@ gui_client_instructions() {
   local ver="${PHASE2_TARGET_VERSION}"
   local mirror topology dl_worker_ips="" da_worker_ips="" out_file tmp title ready_gen
   local block_msg
+  local menu7_publication_lock_acquired=0
 
   # Lightweight readiness preflight — never show commands when blocked.
   if ! mm_wf_commands_preflight; then
@@ -1759,6 +1806,39 @@ Typical next steps:
     return 0
   fi
 
+  # Menu 7 shares the authoritative publication lock with Configuration,
+  # Menu 2, and Menu 3. The first preflight above is only a cheap early reject;
+  # after lock acquisition we reload configuration and re-run preflight so a
+  # concurrent mutation cannot create a stale command between check and publish.
+  if ! _publication_lock_fd_holds_ours "${PUBLICATION_LOCK_FD:-}"; then
+    if ! publication_lock_acquire; then
+      mm_whiptail_msg "DP Client Upgrade Commands — Blocked" \
+        "DP_CLIENT_COMMANDS_AVAILABLE=NO
+BLOCK_REASON=PUBLICATION_LOCK_BUSY
+REQUIRED_ACTION=Wait for Configuration / Download / Enable HTTP to finish, then reopen Menu 7."
+      return 0
+    fi
+    menu7_publication_lock_acquired=1
+  fi
+
+  mm_load_gui_config
+  mm_normalize_preparation_mode
+  mm_force_phase2_target
+  engine_resolve_paths
+  if ! mm_wf_commands_preflight; then
+    block_msg="DP_CLIENT_COMMANDS_AVAILABLE=NO
+BLOCK_REASON=${MM_WF_BLOCK_REASON:-UNKNOWN}
+REQUIRED_ACTION=${MM_WF_REQUIRED_ACTION:-Verify Upgrade Readiness}
+
+Menu 7 revalidated readiness after acquiring the publication lock.
+The configuration/publication generation changed before command publication."
+    if [[ "$menu7_publication_lock_acquired" -eq 1 ]]; then
+      publication_lock_release
+    fi
+    mm_whiptail_msg "DP Client Upgrade Commands — Blocked" "$block_msg"
+    return 0
+  fi
+
   out_file="$(mm_client_commands_file)"
   if mm_is_phase2_only; then
     title="DP Phase 2 Upgrade Commands"
@@ -1766,13 +1846,15 @@ Typical next steps:
     title="DP Client Upgrade Commands"
   fi
 
-  # Fast path: when Menu 4 already verified this generation and the published
-  # command file is current, view it read-only. Do NOT re-run HTTP smoke or
-  # rebuild/sign commands merely because the operator opened Menu 7.
+  # Fast path: verify the cached command against one lock-consistent snapshot,
+  # then release before opening the viewer. Viewing is read-only.
   if ! mm_client_commands_stale \
     && [[ -f "$out_file" && -s "$out_file" ]] \
     && mm_menu7_command_file_generation_current; then
     export MENU7_CACHED_OPEN_PATH=PASS
+    if [[ "$menu7_publication_lock_acquired" -eq 1 ]]; then
+      publication_lock_release
+    fi
     mm_menu7_textbox "$title" "$out_file" || true
     return 0
   fi
@@ -1784,6 +1866,9 @@ Typical next steps:
     if declare -F engine_http_local_smoke >/dev/null 2>&1; then
       if [[ "${MM_SKIP_HTTP_VALIDATE:-0}" != "1" ]] \
         && ! engine_http_local_smoke >/dev/null 2>&1; then
+        if [[ "$menu7_publication_lock_acquired" -eq 1 ]]; then
+          publication_lock_release
+        fi
         mm_whiptail_msg "DP Client Upgrade Commands — Blocked" \
           "DP_CLIENT_COMMANDS_AVAILABLE=NO
 BLOCK_REASON=LOCAL_HTTP_SMOKE_FAIL
@@ -1794,6 +1879,9 @@ REQUIRED_ACTION=Enable HTTP Distribution"
     if declare -F engine_http_advertised_smoke >/dev/null 2>&1; then
       if [[ "${MM_SKIP_HTTP_VALIDATE:-0}" != "1" ]] \
         && ! engine_http_advertised_smoke >/dev/null 2>&1; then
+        if [[ "$menu7_publication_lock_acquired" -eq 1 ]]; then
+          publication_lock_release
+        fi
         mm_whiptail_msg "DP Client Upgrade Commands — Blocked" \
           "DP_CLIENT_COMMANDS_AVAILABLE=NO
 BLOCK_REASON=ADVERTISED_HTTP_SMOKE_FAIL
@@ -1804,6 +1892,9 @@ REQUIRED_ACTION=Enable HTTP Distribution"
   fi
 
   mirror="$(mm_client_mirror_url)" || {
+    if [[ "$menu7_publication_lock_acquired" -eq 1 ]]; then
+      publication_lock_release
+    fi
     mm_whiptail_msg "DP Client Upgrade Commands" \
       "DP_CLIENT_COMMANDS_AVAILABLE=NO
 BLOCK_REASON=MIRROR_URL_UNRESOLVED
@@ -1831,6 +1922,9 @@ New commands will be generated for: $(mm_preparation_mode_label)"
   da_worker_ips="${DA_WORKER_IPS:-}"
   if [[ -n "$dl_worker_ips" ]]; then
     dl_worker_ips="$(mm_validate_worker_ips "$dl_worker_ips")" || {
+      if [[ "$menu7_publication_lock_acquired" -eq 1 ]]; then
+        publication_lock_release
+      fi
       mm_whiptail_msg "Invalid DL Worker IPs" \
         "Fix DL Worker IP addresses in Configuration, save, then reopen Menu 7."
       return 0
@@ -1838,6 +1932,9 @@ New commands will be generated for: $(mm_preparation_mode_label)"
   fi
   if [[ -n "$da_worker_ips" ]]; then
     da_worker_ips="$(mm_validate_worker_ips "$da_worker_ips")" || {
+      if [[ "$menu7_publication_lock_acquired" -eq 1 ]]; then
+        publication_lock_release
+      fi
       mm_whiptail_msg "Invalid DA Worker IPs" \
         "Fix DA Worker IP addresses in Configuration, save, then reopen Menu 7."
       return 0
@@ -1846,6 +1943,9 @@ New commands will be generated for: $(mm_preparation_mode_label)"
   if [[ -n "${dl_worker_ips}${da_worker_ips}" ]]; then
     topology="cluster"
     if ! mm_validate_worker_ssh_password "${WORKER_SSH_PASSWORD:-}" "${dl_worker_ips}${da_worker_ips}"; then
+      if [[ "$menu7_publication_lock_acquired" -eq 1 ]]; then
+        publication_lock_release
+      fi
       mm_whiptail_msg "Worker SSH Password required" \
         "Set Worker SSH Password (aella) in Configuration before generating cluster Phase 2 commands."
       return 0
@@ -1861,6 +1961,9 @@ New commands will be generated for: $(mm_preparation_mode_label)"
   if ! mm_wf_atomic_publish_command_file "$tmp" "$out_file" "${PREPARATION_MODE}" "$ready_gen"; then
     # Candidate never replaces live; delete after validation evidence is logged.
     rm -f "$tmp"
+    if [[ "$menu7_publication_lock_acquired" -eq 1 ]]; then
+      publication_lock_release
+    fi
     mm_whiptail_msg "DP Client Upgrade Commands" \
       "COMMAND_FILE_BUILD=FAIL
 
@@ -1872,6 +1975,9 @@ Required action: Regenerate Full-mode artifacts / Verify Upgrade Readiness"
   fi
   # Successful publish moves tmp into place; rm is a no-op if already gone.
   rm -f "$tmp"
+  if [[ "$menu7_publication_lock_acquired" -eq 1 ]]; then
+    publication_lock_release
+  fi
   # Show the full step list in one scrollable viewer — no secondary menu,
   # no less pager, no terminal reprint after GUI close.
   mm_menu7_textbox "$title" "$out_file" || true
@@ -1958,7 +2064,71 @@ cmd_verify_readiness() {
   load_mirror_defaults
   mm_load_gui_config
   engine_resolve_paths
-  engine_compute_readiness
+
+  if [[ "${MM_DRY_RUN:-0}" == "1" ]]; then
+    local sandbox real_wf rc=0
+    sandbox="$(mktemp -d "${TMPDIR:-/tmp}/mirror-readiness-dry.XXXXXX")"
+    real_wf="$(mm_wf_file)"
+    if [[ -f "${MM_STATUS_FILE}" ]]; then
+      cp -a "${MM_STATUS_FILE}" "${sandbox}/status"
+    else
+      : >"${sandbox}/status"
+      chmod 0600 "${sandbox}/status" 2>/dev/null || true
+    fi
+    if [[ -f "$real_wf" ]]; then
+      cp -a "$real_wf" "${sandbox}/workflow"
+    else
+      : >"${sandbox}/workflow"
+      chmod 0600 "${sandbox}/workflow" 2>/dev/null || true
+    fi
+    (
+      MM_STATUS_FILE="${sandbox}/status"
+      MM_WORKFLOW_FILE="${sandbox}/workflow"
+      MM_STATE_ROOT="${sandbox}/runs"
+      MM_STATE_DIR=""
+      MM_LOG_FILE=""
+      export MM_STATUS_FILE MM_WORKFLOW_FILE MM_STATE_ROOT MM_STATE_DIR MM_LOG_FILE
+      if ! engine_validate_upgrade_readiness_live; then
+        printf 'UPGRADE_READINESS=FAIL\n'
+        exit 1
+      fi
+      engine_compute_readiness
+    ) || rc=$?
+    rm -rf "$sandbox"
+    printf 'DRY_RUN=YES operation=verify-readiness\n'
+    printf 'DRY_RUN_WORKFLOW_RECEIPT_WRITTEN=NO\n'
+    return "$rc"
+  fi
+
+  local readiness_publication_lock_acquired=0 readiness_rc=0
+  if ! _publication_lock_fd_holds_ours "${PUBLICATION_LOCK_FD:-}"; then
+    if ! publication_lock_acquire; then
+      mm_status_set UPGRADE_READINESS FAIL
+      mm_status_set READINESS_RESULT FAIL
+      printf 'UPGRADE_READINESS=FAIL\n'
+      printf 'READINESS_REASON=publication_lock_busy\n'
+      return 1
+    fi
+    readiness_publication_lock_acquired=1
+  fi
+  mm_load_gui_config
+  mm_normalize_preparation_mode
+  mm_force_phase2_target
+  engine_resolve_paths
+  if engine_validate_upgrade_readiness_live; then
+    if engine_compute_readiness; then
+      readiness_rc=0
+    else
+      readiness_rc=$?
+    fi
+  else
+    readiness_rc=$?
+    printf 'UPGRADE_READINESS=FAIL\n'
+  fi
+  if [[ "$readiness_publication_lock_acquired" -eq 1 ]]; then
+    publication_lock_release
+  fi
+  return "$readiness_rc"
 }
 
 cmd_diagnose_mirror_runtime() {
@@ -2008,6 +2178,7 @@ main() {
         MM_SELECTIVE_ROOT="${MM_MIRROR_ROOT}/selective"
         MM_DP_PHASE2_ROOT="${MM_MIRROR_ROOT}/dp-phase2"
         MM_CLIENT_ROOT="${MM_MIRROR_ROOT}/client"
+        MM_CACHE_ROOT="${MM_MIRROR_ROOT}/.install-cache"
         shift 2
         ;;
       --dry-run) MM_DRY_RUN=1; shift ;;
@@ -2015,6 +2186,9 @@ main() {
       *) mm_die "Unknown argument: $1" ;;
     esac
   done
+  if [[ "${MM_DRY_RUN:-0}" == "1" && ( "$cmd" == "mirror-manager" || "$cmd" == "install-menu" ) ]]; then
+    mm_die "DRY_RUN_INTERACTIVE_UNSUPPORTED=YES use=download-and-prepare|enable-http|verify-readiness|diagnose-mirror-runtime"
+  fi
   case "$cmd" in
     mirror-manager|install-menu) cmd_mirror_manager ;;
     download-and-prepare) cmd_download_and_prepare ;;

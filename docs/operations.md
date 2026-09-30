@@ -270,26 +270,32 @@ Staging never executes `bringup_py3_dp_after_os_upgrade.sh`. Do not run bringup 
 helper when auto-detection fails; Mirror Manager generated commands do not
 include it.
 
-**Mirror apply (SSH-safe interactive wrapper)**
+**Mirror Server production workflow**
 
-`scripts/apply-dp-phase2-production.sh` never kills SSH. A trailing `exit "$rc"` in an interactive login shell **will** close the SSH session — that is wrapper misuse, not script behavior.
+Use the installed Mirror Manager as the only production control plane:
 
 ```bash
-cd /home/aella/ubuntu-mirror-automation && {
-  sudo bash scripts/apply-dp-phase2-production.sh
-  rc=$?
-  printf '\nAPPLY_DP_PHASE2_EXIT_CODE=%s\n' "$rc"
-}
+sudo ubuntu-offline-mirror mirror-manager
 ```
 
-Generic sync entrypoint: `sudo bash scripts/download-dp-phase2.sh --version 6.6.0 sync`
+Then use the GUI workflow in order:
 
-Compatibility: `sudo bash scripts/download-dp-phase2-6.6.0.sh sync`
+1. Configuration
+2. Download and Prepare Upgrade Files
+3. Enable HTTP Distribution
+4. Verify Upgrade Readiness
+7. Show DP Client Upgrade Commands
+
+Do **not** run the old `apply-dp-phase2-production.sh`, `deploy-dp-phase2-helpers-only.sh`, `update-dp-phase2-release-env-atomic.sh`, or direct `download-dp-phase2.sh ... sync` paths in production. They describe the retired `current/` publication model and are hard-disabled outside explicit hermetic regression tests.
+
+For an AMI/site move where only the Mirror Server IP/HTTP endpoint changes and the sealed release is still valid, do not rerun Menu 2. Run Menu 3 → 4 → 7; the heavy OS Core and Phase 2 generations remain unchanged.
 
 ### Xenial → Bionic hop client (`UPGRADE_MODE=OS_ONLY_PHASE1`)
 
+> Developer/compatibility reference only. Field operators must use Menu 7 commands from the authoritative Mirror Manager generation. Do not manually rebuild or deploy hop clients on a production Mirror Server.
+
 ```bash
-# On mirror host (after READY): render pinned single-file client script
+# Development/test only: render a pinned single-file client script
 sudo ./scripts/ubuntu-offline-mirror.sh build-client-xenial-to-bionic \
   --mirror-base http://192.0.2.10
 
@@ -318,7 +324,7 @@ Deliverable: `artifacts/client/dp-offline-upgrade-xenial-to-bionic.sh`
 
 ### Bionic → Focal hop client (`UPGRADE_MODE=OS_ONLY_PHASE1`)
 
-See [operations-bionic-to-focal.md](operations-bionic-to-focal.md) for the full procedure.
+See [operations-bionic-to-focal.md](operations-bionic-to-focal.md) for protocol details. The commands below are development/test references; production field execution comes from Menu 7.
 
 ```bash
 sudo ./scripts/ubuntu-offline-mirror.sh build-client-bionic-to-focal \
@@ -336,14 +342,14 @@ sudo ./scripts/deploy-client-bionic-to-focal-atomic.sh
 
 | Symptom | Action |
 |---------|--------|
-| Sync fails: root filesystem | Mount data disk at `/var/spool/apt-mirror` or set `ALLOW_ROOT_FS_MIRROR` only as last resort |
-| Sync fails: free space | Expand data volume; do **not** delete mirror blindly |
-| GPG upgrader failure | Re-run sync; check keyring `/usr/share/keyrings/ubuntu-archive-keyring.gpg` |
-| `READY` missing after sync | Read `/var/log/ubuntu-offline-mirror.log`; fix failing check; re-run `verify`/`sync` |
-| nginx 404 on `/ubuntu/` or `/hops/` after publish | Confirm `root` is `selective/current` (not `mirror`); run `migrate-nginx-selective`; `nginx -t`; reload |
-| `SELECTIVE_NGINX_EFFECTIVE_ROOT_MISMATCH` | Runtime site still legacy; run `migrate-nginx-selective` then retry `publish-selective` |
-| Concurrent sync | Wait; lock file `/run/ubuntu-offline-mirror.lock` |
-| Need full-tree hashes | `sudo ubuntu-offline-mirror sha256-all` (expensive; optional) |
+| Download/Prepare blocked by root filesystem policy | Use the intended mirror volume rooted at `/var/spool/apt-mirror`; do not bypass path-safety guards casually |
+| Download/Prepare fails: free space | Expand the data volume or clean only confirmed stale test/cache artifacts; do **not** delete live mirror generations blindly |
+| GPG / upgrader verification failure | Treat as integrity failure; inspect the Mirror Manager log and pinned keyring evidence, then rerun Menu 2 after the cause is fixed |
+| Selective `READY` missing or invalid | Rerun Menu 2. Do not hand-create `READY` or invoke legacy selective publishers |
+| nginx/HTTP 404 after publication | Run Menu 3 again. It regenerates/validates the current publication and performs local + advertised smoke checks |
+| HTTP previously worked but nginx is now down | Run Menu 3, then Menu 4. CLI `verify-readiness` also executes the same live HTTP gate |
+| Readiness stale after Mirror IP/endpoint change | Keep the sealed heavy generation; run Menu 3 → 4 → 7. Do not rerun Menu 2 for endpoint-only changes |
+| Publication lock busy | Wait for the current Mirror Manager operation to finish; inspect the shared publication lock metadata rather than deleting the lock file blindly |
 
 Do **not** automatically format disks, wipe the mirror, or run host `apt upgrade` as part of recovery.
 

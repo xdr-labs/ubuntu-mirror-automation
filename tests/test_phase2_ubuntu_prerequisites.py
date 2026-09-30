@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import unittest
 from collections import OrderedDict
 
@@ -361,6 +362,49 @@ class Phase2ClosureIncidentTests(unittest.TestCase):
         self.assertIn('python3-colorama', order)
         self.assertIn('python3-click', order)
         self.assertLess(order.index('python3-colorama'), order.index('python3-click'))
+
+        # Rebuilding identical semantic inputs must preserve byte identity.
+        first_artifact_sha = p2p.sha256_file(art)
+        first_identity_sha = p2p.sha256_file(
+            os.path.join(dest, p2p.IDENTITY_NAME)
+        )
+        time.sleep(1.1)
+        rc2 = p2p.run_build(build_args(
+            source=tarball,
+            ubuntu_root=self.ubuntu,
+            dest=dest,
+        ))
+        self.assertEqual(rc2, 0)
+        self.assertEqual(p2p.sha256_file(art), first_artifact_sha)
+        self.assertEqual(
+            p2p.sha256_file(os.path.join(dest, p2p.IDENTITY_NAME)),
+            first_identity_sha,
+        )
+
+        # Host-local absolute paths must not enter the release identity.
+        alt_ubuntu = os.path.join(self.tmp, 'ubuntu-relocated')
+        shutil.copytree(self.ubuntu, alt_ubuntu)
+        alt_dest = os.path.join(self.tmp, 'extras-relocated')
+        rc3 = p2p.run_build(build_args(
+            source=tarball,
+            ubuntu_root=alt_ubuntu,
+            dest=alt_dest,
+        ))
+        self.assertEqual(rc3, 0)
+        self.assertEqual(
+            p2p.sha256_file(os.path.join(alt_dest, p2p.ARTIFACT_NAME)),
+            first_artifact_sha,
+        )
+        self.assertEqual(
+            p2p.sha256_file(os.path.join(alt_dest, p2p.IDENTITY_NAME)),
+            first_identity_sha,
+        )
+        with open(os.path.join(alt_dest, p2p.MANIFEST_NAME)) as fh:
+            published_manifest = json.load(fh)
+        for rec in published_manifest.get('packages') or []:
+            self.assertNotIn('deb_path', rec)
+            self.assertNotIn('local_verify', rec)
+            self.assertNotIn('url', rec)
 
 
 class TransactionSafetyTests(unittest.TestCase):

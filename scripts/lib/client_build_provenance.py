@@ -20,9 +20,9 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 
-# Schema 2: file digest uses authoritative install modes from runtime_manifest
-# (0644/0755), not host umask / checkout group-write bits.
-CLIENT_PROVENANCE_SCHEMA_VERSION = "2"
+# Schema 3: schema 2 install-mode identity plus explicit Phase 2 release-anchor
+# metadata verification (bundle/prerequisite/helper/recovery wrapper binding).
+CLIENT_PROVENANCE_SCHEMA_VERSION = "3"
 COMMAND_BLOCK_VERSION = "SUBSHELL_V2"
 LAUNCHER_SCHEMA_VERSION = "3"
 # Must match um_runtime_install_tree executable entrypoints in
@@ -141,6 +141,16 @@ def _sha_file(path):
         for chunk in iter(lambda: fh.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _wrapper_anchor_value(text, key):
+    matches = re.findall(
+        r"(?m)^%s='([0-9A-Fa-f]{64})'$" % re.escape(key),
+        text or "",
+    )
+    if len(matches) != 1:
+        raise RuntimeError("CLIENT_WRAPPER_PHASE2_%s_PIN_INVALID" % key)
+    return matches[0].lower()
 
 
 def authoritative_install_mode(relpath):
@@ -819,6 +829,44 @@ def verify_client_set_integrity(
         raise RuntimeError("CLIENT_WRAPPER_PHASE2_RECOVERY_GATE_MISSING")
     if "--same-version-recovery" not in recovery_text:
         raise RuntimeError("CLIENT_WRAPPER_PHASE2_RECOVERY_FLAG_MISSING")
+
+    ver_match = re.search(r"(?m)^VER='([0-9]+\.[0-9]+\.[0-9]+)'$", phase2_text)
+    if not ver_match:
+        raise RuntimeError("CLIENT_WRAPPER_PHASE2_VERSION_PIN_MISSING")
+    phase2_ver = ver_match.group(1)
+    phase2_root = os.environ.get("MM_DP_PHASE2_ROOT") or os.path.join(
+        os.path.dirname(os.path.abspath(root)), "dp-phase2"
+    )
+    bundle_sidecar = os.path.join(
+        phase2_root, phase2_ver,
+        "dp_bundle_%s-current.tar.sha256" % phase2_ver,
+    )
+    prereq_identity = os.path.join(
+        phase2_root, phase2_ver, "extras",
+        "phase2-ubuntu-prerequisites.identity",
+    )
+    if not os.path.isfile(bundle_sidecar):
+        raise RuntimeError("CLIENT_WRAPPER_PHASE2_BUNDLE_SIDECAR_MISSING")
+    if not os.path.isfile(prereq_identity):
+        raise RuntimeError("CLIENT_WRAPPER_PHASE2_PREREQ_IDENTITY_MISSING")
+    with open(bundle_sidecar, "r", encoding="utf-8", errors="strict") as fh:
+        bundle_fields = fh.read().split()
+    if not bundle_fields or not re.match(r"^[0-9A-Fa-f]{64}$", bundle_fields[0]):
+        raise RuntimeError("CLIENT_WRAPPER_PHASE2_BUNDLE_SIDECAR_INVALID")
+    expected_bundle = bundle_fields[0].lower()
+    expected_prereq = _sha_file(prereq_identity).lower()
+    expected_helper = gen_sha.lower()
+    for label, wrapper_text in (
+        ("NORMAL", phase2_text),
+        ("RECOVERY", recovery_text),
+    ):
+        if _wrapper_anchor_value(wrapper_text, "H") != expected_helper:
+            raise RuntimeError("CLIENT_WRAPPER_PHASE2_%s_HELPER_PIN_MISMATCH" % label)
+        if _wrapper_anchor_value(wrapper_text, "B") != expected_bundle:
+            raise RuntimeError("CLIENT_WRAPPER_PHASE2_%s_BUNDLE_PIN_MISMATCH" % label)
+        if _wrapper_anchor_value(wrapper_text, "P") != expected_prereq:
+            raise RuntimeError("CLIENT_WRAPPER_PHASE2_%s_PREREQ_PIN_MISMATCH" % label)
+
     if "--mirror-url" not in phase2_text:
         raise RuntimeError("CLIENT_WRAPPER_PHASE2_MIRROR_URL_FLAG_MISSING")
     if expected_mirror and expected_mirror.rstrip("/") not in phase2_text:
@@ -829,6 +877,20 @@ def verify_client_set_integrity(
         raise RuntimeError("CLIENT_WRAPPER_PHASE2_METADATA_MISSING")
     if disk_meta["CLIENT_WRAPPER_PHASE2_SHA256"].lower() != _sha_file(phase2_wrapper):
         raise RuntimeError("CLIENT_WRAPPER_PHASE2_METADATA_SHA_MISMATCH")
+    if "CLIENT_WRAPPER_PHASE2_RECOVERY_SHA256" not in disk_meta:
+        raise RuntimeError("CLIENT_WRAPPER_PHASE2_RECOVERY_METADATA_MISSING")
+    if disk_meta["CLIENT_WRAPPER_PHASE2_RECOVERY_SHA256"].lower() != _sha_file(recovery_wrapper):
+        raise RuntimeError("CLIENT_WRAPPER_PHASE2_RECOVERY_METADATA_SHA_MISMATCH")
+
+    release_meta = {
+        "CLIENT_PHASE2_HELPER_GENERATION_SHA256": expected_helper,
+        "CLIENT_PHASE2_BUNDLE_SHA256": expected_bundle,
+        "CLIENT_PHASE2_PREREQ_IDENTITY_SHA256": expected_prereq,
+    }
+    for key, expected in release_meta.items():
+        got = (disk_meta.get(key) or "").strip().lower()
+        if got != expected:
+            raise RuntimeError("%s_MISMATCH" % key)
     return current
 
 

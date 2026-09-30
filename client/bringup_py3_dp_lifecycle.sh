@@ -27,7 +27,6 @@ if [[ ! -f "${LIB_DIR}/dp-phase2-bringup-lifecycle.sh" ]]; then
   # stage installs libs under /opt or beside wrapper
   for cand in \
     /opt/aelladata/os-upgrade/offline/phase2-bringup/lib \
-    /home/aella/ubuntu-mirror-automation/client/lib \
     "${SCRIPT_DIR}/../lib"
   do
     if [[ -f "${cand}/dp-phase2-bringup-lifecycle.sh" ]]; then
@@ -42,6 +41,14 @@ source "${LIB_DIR}/dp-phase2-bringup-lifecycle.sh"
 if [[ -f "${LIB_DIR}/dp-phase2-time-readiness.sh" ]]; then
   # shellcheck source=/dev/null
   source "${LIB_DIR}/dp-phase2-time-readiness.sh"
+fi
+# The staging gate needs prerequisite discovery both inside its validator and
+# afterward when it verifies the persisted prerequisite identity. Source this
+# in the parent lifecycle shell; sourcing it only from a command-substitution
+# validator loses the helper functions when that subshell exits.
+if [[ -f "${LIB_DIR}/dp-phase2-ubuntu-prerequisites.sh" ]]; then
+  # shellcheck source=/dev/null
+  source "${LIB_DIR}/dp-phase2-ubuntu-prerequisites.sh"
 fi
 if [[ -f "${LIB_DIR}/dp-phase2-staging-contract.sh" ]]; then
   # shellcheck source=/dev/null

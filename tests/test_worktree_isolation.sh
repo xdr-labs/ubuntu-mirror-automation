@@ -159,9 +159,10 @@ fi
 orphans="$(ps -eo args= | grep -E 'fixture-dp-offline-upgrade|worktree-isolation-child' | grep -v grep || true)"
 [[ -z "${orphans// }" ]] && pass "no related fixture processes" || fail "orphan processes: ${orphans}"
 
-python3 - <<'PY' && pass "builders gate client refresh on production output dir" || fail "builder gate missing"
+python3 - "${ROOT}/scripts/lib" <<'PY' && pass "builders gate client refresh on production output dir" || fail "builder gate missing"
 from pathlib import Path
-root = Path("/home/aella/ubuntu-mirror-automation/scripts/lib")
+import sys
+root = Path(sys.argv[1])
 for name in (
     "build_client_xenial_to_bionic.py",
     "build_client_bionic_to_focal.py",

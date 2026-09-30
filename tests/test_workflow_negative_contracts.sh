@@ -294,6 +294,74 @@ set -e
 expect "H sidecar/manifest mismatch fails command" test "$H_RC" -ne 0
 expect "H mismatch causes zero executions" test "$(wc -l <"$RUNS")" = 0
 
+
+# I. Even current generation receipts must not open Menu 7 when live HTTP/nginx is down.
+if (
+  PREPARATION_MODE=FULL
+  MIRROR_SERVER_IP=192.0.2.10
+  mm_wf_readiness_identity_matches() { return 0; }
+  mm_wf_state() { printf 'READINESS_VERIFIED\n'; }
+  mm_wf_get() {
+    case "$1" in
+      READINESS_VERIFIED_GENERATION_ID|HTTP_PUBLICATION_GENERATION_ID|CLIENT_SET_GENERATION_ID) printf 'live-gen-1\n' ;;
+      CLIENT_SIGNING_FINGERPRINT) printf 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n' ;;
+      WORKFLOW_STATE) printf 'READINESS_VERIFIED\n' ;;
+      *) printf 'fixture\n' ;;
+    esac
+  }
+  mm_status_get() {
+    case "$1" in
+      HTTP_DISTRIBUTION) printf 'ENABLED\n' ;;
+      UPGRADE_READINESS) printf 'PASS\n' ;;
+      *) printf 'PASS\n' ;;
+    esac
+  }
+  mm_wf_selective_generation_current() { return 0; }
+  mm_client_set_current_source() { return 0; }
+  mm_client_launchers_ready() { return 0; }
+  mm_http_completed() { return 1; }
+  if mm_wf_commands_preflight; then
+    exit 10
+  fi
+  [[ "$MM_WF_BLOCK_REASON" == "HTTP_LIVE_VALIDATION_FAIL" ]]
+); then
+  pass "I Menu 7 blocks when live HTTP/nginx validation fails"
+else
+  fail "I Menu 7 did not enforce live HTTP/nginx state"
+fi
+
+# J. The same current-generation fixture passes once live HTTP is healthy.
+if (
+  PREPARATION_MODE=FULL
+  MIRROR_SERVER_IP=192.0.2.10
+  mm_wf_readiness_identity_matches() { return 0; }
+  mm_wf_state() { printf 'READINESS_VERIFIED\n'; }
+  mm_wf_get() {
+    case "$1" in
+      READINESS_VERIFIED_GENERATION_ID|HTTP_PUBLICATION_GENERATION_ID|CLIENT_SET_GENERATION_ID) printf 'live-gen-1\n' ;;
+      CLIENT_SIGNING_FINGERPRINT) printf 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n' ;;
+      WORKFLOW_STATE) printf 'READINESS_VERIFIED\n' ;;
+      *) printf 'fixture\n' ;;
+    esac
+  }
+  mm_status_get() {
+    case "$1" in
+      HTTP_DISTRIBUTION) printf 'ENABLED\n' ;;
+      UPGRADE_READINESS) printf 'PASS\n' ;;
+      *) printf 'PASS\n' ;;
+    esac
+  }
+  mm_wf_selective_generation_current() { return 0; }
+  mm_client_set_current_source() { return 0; }
+  mm_client_launchers_ready() { return 0; }
+  mm_http_completed() { return 0; }
+  mm_wf_commands_preflight
+); then
+  pass "J Menu 7 opens when generation and live HTTP/nginx are current"
+else
+  fail "J Menu 7 rejected healthy live publication"
+fi
+
 if [[ "$FAIL" -ne 0 ]]; then
   printf 'WORKFLOW_NEGATIVE_CONTRACTS=FAIL\n'
   exit 1

@@ -827,12 +827,13 @@ printf 'systemd\nudev\n' >"$fx2/tmp/held-packages.txt"
 cp -a "$fx2/tmp/held-packages.txt" "$fx2/tmp/held-packages.before"
 set +e
 DP_OFFLINE_TEST_ROOT="$fx2" DP_OFFLINE_FAKE_CONFIRM=nope \
-  bash "$STUB" --mirror-base http://127.0.0.1:9 >"$fx2/out-reject.txt" 2>&1
+  bash "$STUB" --mirror-base http://127.0.0.1:9 </dev/null >"$fx2/out-reject.txt" 2>&1
 rc=$?
 set -e
 if [[ "$rc" -ne 0 ]] \
    && cmp -s "$fx2/tmp/held-packages.before" "$fx2/tmp/held-packages.txt" \
-   && ! grep -q 'CRITICAL_OS_UNHOLD_BEGIN' "$fx2/out-reject.txt"; then
+   && ! grep -q 'CRITICAL_OS_UNHOLD_BEGIN' "$fx2/out-reject.txt" \
+   && ! grep -q 'Confirmation> ' "$fx2/out-reject.txt"; then
   pass "confirmation reject → holds unchanged"
 else
   fail "confirmation reject mutated holds or unhold ran (rc=${rc})"
@@ -1848,7 +1849,7 @@ EOF
   set +e
   DP_OFFLINE_TEST_ROOT="$fake" DP_OFFLINE_FAKE_DP_VERSION=6.2.0 DP_OFFLINE_FAKE_ROLE=AIO \
     DP_OFFLINE_FAKE_CONFIRM=nope \
-    bash "$BUILT" --mirror-base "$MIRROR_BASE" >"$fake/out-badconfirm.txt" 2>&1
+    bash "$BUILT" --mirror-base "$MIRROR_BASE" </dev/null >"$fake/out-badconfirm.txt" 2>&1
   rc=$?
   set -e
   [[ "$rc" -ne 0 ]] && pass "bad confirmation rejected" || fail "bad confirmation accepted"
@@ -1930,7 +1931,7 @@ EOF
     set +e
     DP_OFFLINE_TEST_ROOT="$fake" DP_OFFLINE_FAKE_DP_VERSION=6.2.0 DP_OFFLINE_FAKE_ROLE=AIO \
       DP_OFFLINE_FAKE_MIRROR_TRUST=1 DP_OFFLINE_FAKE_CONFIRM=nope \
-      bash "$BUILT" --mirror-base "$MIRROR_BASE" >"$fake/out-resume-reject.txt" 2>&1
+      bash "$BUILT" --mirror-base "$MIRROR_BASE" </dev/null >"$fake/out-resume-reject.txt" 2>&1
     rc=$?
     set -e
     if [[ "$rc" -ne 0 ]] && grep -qE 'confirmation rejected|Confirmation|RESUME_SAFETY_VALIDATION=PASS|READY_FOR_RESUME' "$fake/out-resume-reject.txt"; then
@@ -5707,7 +5708,7 @@ grep -q 'repair_dangling_previous_source_gate_hook()' "$SCRIPT_IN" \
   && pass "repair_dangling_previous_source_gate_hook present" || fail "repair helper missing"
 grep -q 'ensure_source_gate_safe_for_preflight()' "$SCRIPT_IN" \
   && pass "ensure_source_gate_safe_for_preflight present" || fail "ensure helper missing"
-APT_HELPER="/home/aella/ubuntu-mirror-automation/client/lib/dp-offline-apt-preflight-sandbox.sh"
+APT_HELPER="${ROOT}/client/lib/dp-offline-apt-preflight-sandbox.sh"
 grep -q 'persist_temp_apt_failure_evidence()' "$APT_HELPER" \
   && grep -q '@@APT_PREFLIGHT_SANDBOX_HELPER@@' "$SCRIPT_IN_RAW" \
   && pass "persist_temp_apt_failure_evidence present" || fail "persist apt evidence missing"
@@ -6018,9 +6019,10 @@ else
 fi
 
 # 17.AJ install ordering: hook after binaries (static)
-if python3 - <<'PY'
+if python3 - "${ROOT}/client/dp-offline-upgrade-focal-to-jammy.sh.in" <<'PY'
 from pathlib import Path
-text = Path("/home/aella/ubuntu-mirror-automation/client/dp-offline-upgrade-focal-to-jammy.sh.in").read_text(encoding="utf-8")
+import sys
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
 start = text.index("install_effective_source_gate() {")
 end = text.index("\nremove_distupgrade_temp_overrides()", start)
 body = text[start:end]
@@ -6049,7 +6051,7 @@ grep -q 'retire-incomplete.txt\|SOURCE_GATE_RETIRE_COMPLETE' "$SCRIPT_IN" \
   || fail "17.AL retire interruption markers missing"
 
 # 17.AM temporary apt update isolation
-APT_HELPER="/home/aella/ubuntu-mirror-automation/client/lib/dp-offline-apt-preflight-sandbox.sh"
+APT_HELPER="${ROOT}/client/lib/dp-offline-apt-preflight-sandbox.sh"
 grep -q 'Dir::Etc::Parts' "$APT_HELPER" \
   && grep -q 'Dir::Etc::sourceparts' "$APT_HELPER" \
   && grep -q 'build_temp_apt_conf_parts_without_stellar_gate' "$SCRIPT_IN" \
@@ -6063,7 +6065,7 @@ grep -q 'exclude only the Stellar source-gate\|excluding only the Stellar source
   || fail "17.AN non-Stellar preservation missing"
 
 # 17.AO apt authentication fail-closed + _apt sandbox gates (shared helper)
-APT_HELPER="/home/aella/ubuntu-mirror-automation/client/lib/dp-offline-apt-preflight-sandbox.sh"
+APT_HELPER="${ROOT}/client/lib/dp-offline-apt-preflight-sandbox.sh"
 grep -q 'run_temporary_local_apt_authentication_preflight' "$SCRIPT_IN" \
   && grep -q 'APT_SANDBOX_TRAVERSAL' "$APT_HELPER" \
   && grep -q 'APT_REPOSITORY_AUTHENTICATION=PASS' "$APT_HELPER" \

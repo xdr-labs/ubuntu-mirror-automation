@@ -380,4 +380,12 @@ EOF
   # shellcheck source=phase2_prereq_identity_fixture.sh
   source "${repo_root}/tests/lib/phase2_prereq_identity_fixture.sh"
   phase2_prereq_write_identity_for_extras "$extras" >/dev/null
+  # Production-shaped validated release seal: endpoint/readiness paths require
+  # release.env to bind the exact bundle sidecar and prerequisite identity.
+  {
+    printf 'PHASE2_BUNDLE_SHA256=%s\n' \
+      "$(awk 'NF {print $1; exit}' "${tar}.sha256")"
+    printf 'PHASE2_PREREQ_IDENTITY_SHA256=%s\n' \
+      "$(sha256sum "${extras}/phase2-ubuntu-prerequisites.identity" | awk '{print $1}')"
+  } >>"${dir}/release.env"
 }

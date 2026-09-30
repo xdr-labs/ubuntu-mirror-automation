@@ -358,10 +358,22 @@ echo "[test_run_apt_mirror_stdbuf]"
 grep -q 'stdbuf' "${ROOT}/scripts/ubuntu-offline-mirror.sh" && pass "stdbuf line buffering" || fail "stdbuf missing"
 
 # ---------------------------------------------------------------------------
-echo "[test_pause_resume_commands]"
-bash "${ROOT}/scripts/mirrorctl" --help 2>/dev/null | grep -q pause && pass "pause in help" || fail "pause missing"
-grep -q 'SIGSTOP' "${ROOT}/scripts/mirrorctl" && pass "SIGSTOP pause" || fail "no SIGSTOP"
-grep -q 'SIGCONT' "${ROOT}/scripts/mirrorctl" && pass "SIGCONT resume" || fail "no SIGCONT"
+echo "[test_legacy_control_plane_read_only]"
+grep -q 'MIRRORCTL_MUTATION_DISABLED=YES' "${ROOT}/scripts/mirrorctl" \
+  && grep -q 'mirrorctl_enforce_control_plane "$cmd"' "${ROOT}/scripts/mirrorctl" \
+  && pass "mirrorctl production mutations hard-disabled" \
+  || fail "mirrorctl mutation guard missing"
+grep -q 'MM_HERMETIC_TEST_MODE.*MIRRORCTL_ALLOW_LEGACY_MUTATION' "${ROOT}/scripts/mirrorctl" \
+  && pass "mirrorctl legacy mutation requires dual-hermetic gate" \
+  || fail "mirrorctl dual-hermetic legacy gate missing"
+grep -q 'PAUSE_SUPPORTED=0' "${ROOT}/scripts/mirror-dashboard.sh" \
+  && grep -q 'MIRRORCTL_ALLOW_LEGACY_MUTATION' "${ROOT}/scripts/mirror-dashboard.sh" \
+  && pass "dashboard is read-only by default" \
+  || fail "dashboard pause/resume not production-disabled"
+grep -q 'SIGSTOP' "${ROOT}/scripts/mirror-dashboard.sh" \
+  && grep -q 'SIGCONT' "${ROOT}/scripts/mirror-dashboard.sh" \
+  && pass "legacy pause/resume implementation retained behind hermetic gate" \
+  || fail "dashboard legacy pause/resume implementation unexpectedly missing"
 
 # ---------------------------------------------------------------------------
 echo "[test_dry_run_non_tty_messaging]"

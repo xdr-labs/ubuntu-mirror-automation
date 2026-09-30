@@ -130,6 +130,7 @@ TARGET_DP_VERSION=""
 PHASE2_ARTIFACT_VERSION=""
 EXPECTED_BUNDLE_SHA256=""
 EXPECTED_PREREQ_IDENTITY_SHA256=""
+PHASE2_HELPER_GENERATION_SHA256=""
 SOURCE_DP_VERSION=""
 SOURCE_DP_VERSION_RAW=""
 SOURCE_DP_VERSION_ORIGIN=""
@@ -177,6 +178,9 @@ BRINGUP_VENDOR_COMPAT=""
 RUN_ID=""
 STAGE_ROOT=""
 NEW_ART=""
+ARTIFACT_BACKUP=""
+ARTIFACT_PROMOTED=0
+ARTIFACT_COMMITTED=0
 CACHE_DIR=""
 LOCK_FD=""
 LOCK_HELD=0
@@ -221,8 +225,132 @@ die() {
   exit 1
 }
 
+recover_interrupted_artifact_transaction() {
+  local parent base contract result failed backup
+  local backups=()
+  parent="$(dirname "$ARTIFACT_DIR")"
+  base="$(basename "$ARTIFACT_DIR")"
+  [[ -d "$parent" ]] || return 0
+  mapfile -t backups < <(find "$parent" -maxdepth 1 -mindepth 1 -type d -name "${base}.bak.*" -print | sort)
+  [[ "${#backups[@]}" -gt 0 ]] || return 0
+  if [[ "${#backups[@]}" -ne 1 ]]; then
+    log "ARTIFACT_CRASH_RECOVERY=FAIL reason=ambiguous_backups count=${#backups[@]}"
+    printf '%s\n' "${backups[@]}" >&2
+    return 1
+  fi
+  backup="${backups[0]}"
+  contract="$(dp_phase2_staging_contract_env_path 2>/dev/null || true)"
+  result=""
+  if [[ -n "$contract" && -f "$contract" ]]; then
+    result="$(dp_phase2_staging_contract_read_value "$contract" PHASE2_STAGE_RESULT 2>/dev/null || true)"
+  fi
+  if [[ "$result" == "PASS" ]] \
+    && dp_phase2_bringup_staging_gate "${TARGET_DP_VERSION:-}" >/dev/null 2>&1; then
+    rm -rf "$backup" || {
+      log "ARTIFACT_CRASH_RECOVERY=FAIL reason=stale_backup_cleanup path=${backup}"
+      return 1
+    }
+    log "ARTIFACT_CRASH_RECOVERY=PASS action=remove_committed_stale_backup"
+    return 0
+  fi
+
+  failed="${ARTIFACT_DIR}.failed.recovery.${RUN_ID:-$$}.$$"
+  rm -rf "$failed" 2>/dev/null || true
+  if [[ -e "$ARTIFACT_DIR" ]]; then
+    mv -f "$ARTIFACT_DIR" "$failed" || {
+      log "ARTIFACT_CRASH_RECOVERY=FAIL reason=move_uncommitted_live_aside"
+      return 1
+    }
+  fi
+  if mv -f "$backup" "$ARTIFACT_DIR"; then
+    rm -rf "$failed" 2>/dev/null || true
+    log "ARTIFACT_CRASH_RECOVERY=PASS action=restore_previous"
+    return 0
+  fi
+  if [[ -e "$failed" && ! -e "$ARTIFACT_DIR" ]]; then
+    mv -f "$failed" "$ARTIFACT_DIR" 2>/dev/null || true
+  fi
+  log "ARTIFACT_CRASH_RECOVERY=FAIL reason=restore_previous_failed backup=${backup}"
+  return 1
+}
+rollback_promoted_artifact_tree() {
+  local failed=""
+  [[ "${ARTIFACT_PROMOTED:-0}" == "1" && "${ARTIFACT_COMMITTED:-0}" != "1" ]] || return 0
+
+  if [[ -n "${ARTIFACT_BACKUP:-}" && -d "$ARTIFACT_BACKUP" ]]; then
+    case "$ARTIFACT_BACKUP" in
+      "$ARTIFACT_DIR".bak.*) ;;
+      *)
+        log "ARTIFACT_ROLLBACK=FAIL reason=unexpected_backup_path path=${ARTIFACT_BACKUP}"
+        return 1
+        ;;
+    esac
+    failed="${ARTIFACT_DIR}.failed.${RUN_ID:-$$}.$$"
+    rm -rf "$failed" 2>/dev/null || true
+    if [[ -e "$ARTIFACT_DIR" ]]; then
+      mv -f "$ARTIFACT_DIR" "$failed" || {
+        log "ARTIFACT_ROLLBACK=FAIL reason=move_failed_live_aside"
+        return 1
+      }
+    fi
+    if mv -f "$ARTIFACT_BACKUP" "$ARTIFACT_DIR"; then
+      rm -rf "$failed" 2>/dev/null || true
+      log "ARTIFACT_ROLLBACK=PASS previous_restored=YES"
+      ARTIFACT_BACKUP=""
+      ARTIFACT_PROMOTED=0
+      return 0
+    fi
+    if [[ -e "$failed" && ! -e "$ARTIFACT_DIR" ]]; then
+      mv -f "$failed" "$ARTIFACT_DIR" 2>/dev/null || true
+    fi
+    log "ARTIFACT_ROLLBACK=FAIL reason=restore_previous_failed backup=${ARTIFACT_BACKUP}"
+    return 1
+  fi
+
+  # First publication had no previous artifact tree. A failed staging run must
+  # not leave its promoted-but-uncommitted tree as consumable state.
+  if [[ -e "$ARTIFACT_DIR" ]]; then
+    rm -rf "$ARTIFACT_DIR" || {
+      log "ARTIFACT_ROLLBACK=FAIL reason=remove_uncommitted_first_publish"
+      return 1
+    }
+  fi
+  log "ARTIFACT_ROLLBACK=PASS previous_restored=NO live_removed=YES"
+  ARTIFACT_PROMOTED=0
+  return 0
+}
+
+commit_promoted_artifact_tree() {
+  local previous="${ARTIFACT_BACKUP:-}"
+  # The authoritative staging PASS is durable when this is called. From this
+  # point the new artifact tree is committed; cleanup must never roll it back.
+  ARTIFACT_COMMITTED=1
+  ARTIFACT_BACKUP=""
+  if [[ -n "$previous" && -e "$previous" ]]; then
+    case "$previous" in
+      "$ARTIFACT_DIR".bak.*) ;;
+      *)
+        log "ARTIFACT_BACKUP_CLEANUP=WARN reason=unexpected_path path=${previous}"
+        log "ARTIFACT_COMMIT=PASS previous_cleanup=DEFERRED"
+        return 0
+        ;;
+    esac
+    if ! rm -rf "$previous"; then
+      log "ARTIFACT_BACKUP_CLEANUP=WARN reason=remove_failed path=${previous}"
+      log "ARTIFACT_COMMIT=PASS previous_cleanup=DEFERRED"
+      return 0
+    fi
+  fi
+  log "ARTIFACT_COMMIT=PASS previous_cleanup=PASS"
+  return 0
+}
+
 cleanup() {
   local rc=$?
+  local rollback_rc=0
+  if [[ "${ARTIFACT_PROMOTED:-0}" == "1" && "${ARTIFACT_COMMITTED:-0}" != "1" ]]; then
+    rollback_promoted_artifact_tree || rollback_rc=$?
+  fi
   if [[ "$LOCK_HELD" -eq 1 && -n "$LOCK_FD" ]]; then
     flock -u "$LOCK_FD" 2>/dev/null || true
     eval "exec ${LOCK_FD}>&-" 2>/dev/null || true
@@ -239,6 +367,9 @@ cleanup() {
   if [[ -n "$BRINGUP_HOLD" && -d "$BRINGUP_HOLD" ]]; then
     rm -rf "$BRINGUP_HOLD" 2>/dev/null || true
     BRINGUP_HOLD=""
+  fi
+  if [[ "$rollback_rc" -ne 0 && "$rc" -eq 0 ]]; then
+    rc="$rollback_rc"
   fi
   return "$rc"
 }
@@ -1417,7 +1548,7 @@ install_bringup_lifecycle_wrapper() {
   PHASE2_STAGE_PHASE="PUBLISH_BRINGUP_CONTROLLER"
   log "PHASE2_STAGE_PHASE=${PHASE2_STAGE_PHASE}"
   BRINGUP_INSTALL_ATTEMPTED="YES"
-  local wrapper_src vendor_src lib_dest vendor_dir
+  local wrapper_src vendor_src lib_dest vendor_dir helper_manifest_dest helper_manifest_sha
   vendor_dir="${BRINGUP_HOLD:-${STAGE_ROOT}}"
   [[ -n "$vendor_dir" && -d "$vendor_dir" ]] \
     || die "bringup vendor hold missing; cannot publish controller"
@@ -1440,8 +1571,18 @@ install_bringup_lifecycle_wrapper() {
   install -o root -g root -m 0755 "$wrapper_src" "$BRINGUP_SCRIPT"
   # Install lifecycle libs beside offline evidence for worker re-exec
   lib_dest="/opt/aelladata/os-upgrade/offline/phase2-bringup/lib"
-  mkdir -p "$lib_dest"
+  if declare -F p2b_dir >/dev/null 2>&1; then
+    helper_manifest_dest="$(p2b_dir)/${PHASE2_HELPER_GENERATION_MANIFEST_NAME}"
+  else
+    helper_manifest_dest="/opt/aelladata/os-upgrade/offline/phase2-bringup/${PHASE2_HELPER_GENERATION_MANIFEST_NAME}"
+  fi
+  mkdir -p "$lib_dest" "$(dirname "$helper_manifest_dest")"
   chmod 0700 "$(dirname "$lib_dest")" "$lib_dest" 2>/dev/null || true
+  install -o root -g root -m 0600 \
+    "${SCRIPT_DIR}/${PHASE2_HELPER_GENERATION_MANIFEST_NAME}" "$helper_manifest_dest"
+  helper_manifest_sha="$(sha256sum "$helper_manifest_dest" | awk '{print tolower($1)}')"
+  [[ "$helper_manifest_sha" == "$PHASE2_HELPER_GENERATION_SHA256" ]] \
+    || die "PHASE2_HELPER_GENERATION=FAIL reason=installed_manifest_sha_mismatch"
   install -o root -g root -m 0600 \
     "${_STAGE_LIB_DIR}/dp-phase2-bringup-lifecycle.sh" \
     "${lib_dest}/dp-phase2-bringup-lifecycle.sh"
@@ -1518,12 +1659,24 @@ stage_main() {
 
   require_root
   require_noble
+  PHASE2_HELPER_GENERATION_SHA256="$(sha256sum "${SCRIPT_DIR}/${PHASE2_HELPER_GENERATION_MANIFEST_NAME}" | awk '{print tolower($1)}')"
+  [[ "$PHASE2_HELPER_GENERATION_SHA256" =~ ^[0-9a-f]{64}$ ]] \
+    || die "PHASE2_HELPER_GENERATION=FAIL reason=manifest_sha_invalid"
   # Prove TARGET is not shadowed by os-release VERSION
   local os_version_field
   os_version_field="$(os_release_field VERSION)"
   [[ "$TARGET_DP_VERSION" != "$os_version_field" ]] || true
   [[ "$TARGET_DP_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
     || die "TARGET_DP_VERSION corrupted after OS checks: ${TARGET_DP_VERSION}"
+
+  # Acquire the staging lock before recovering any interrupted artifact
+  # transaction. Recovery runs before disk-space gates so a stale previous
+  # generation cannot strand tens of GiB and block a safe retry.
+  RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+  CACHE_DIR="/opt/aelladata/.dp-phase2-cache/${TARGET_DP_VERSION}"
+  acquire_stage_lock
+  recover_interrupted_artifact_transaction \
+    || die "Phase 2 artifact crash recovery failed; inspect retained .bak trees before retry"
 
   require_space
   resolve_aella_ownership
@@ -1532,13 +1685,10 @@ stage_main() {
   require_no_active_os_upgrade
 
   # Source version MUST resolve before any bundle/cache/artifact mutation.
-  RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
   resolve_source_dp_version
   evaluate_version_compatibility
   load_release_env_from_mirror
 
-  CACHE_DIR="/opt/aelladata/.dp-phase2-cache/${TARGET_DP_VERSION}"
-  acquire_stage_lock
   ensure_verified_bundle
   require_phase2_dynamic_space
 
@@ -1621,6 +1771,9 @@ ${f}"
   if [[ ! -e "$ARTIFACT_DIR" ]]; then
     mv -f "$NEW_ART" "$ARTIFACT_DIR"
     NEW_ART=""
+    ARTIFACT_PROMOTED=1
+    ARTIFACT_BACKUP=""
+    log "ARTIFACT_PROMOTION=PASS previous=NONE"
   else
     if [[ -d "$ARTIFACT_DIR" ]]; then
       local old_h new_h
@@ -1641,9 +1794,21 @@ ${f}"
           die "backup path already exists: ${bak}"
         fi
         mv -f "$ARTIFACT_DIR" "$bak"
-        mv -f "$NEW_ART" "$ARTIFACT_DIR"
+        ARTIFACT_BACKUP="$bak"
+        ARTIFACT_PROMOTED=1
+        if ! mv -f "$NEW_ART" "$ARTIFACT_DIR"; then
+          if mv -f "$bak" "$ARTIFACT_DIR" 2>/dev/null; then
+            ARTIFACT_BACKUP=""
+            ARTIFACT_PROMOTED=0
+            log "ARTIFACT_PROMOTION_ROLLBACK=PASS previous_restored=YES"
+          else
+            log "ARTIFACT_PROMOTION_ROLLBACK=FAIL backup=${bak}"
+          fi
+          die "artifact promotion failed; previous tree restore attempted"
+        fi
         NEW_ART=""
         log "ARTIFACT_BACKUP=${bak}"
+        log "ARTIFACT_PROMOTION=PASS previous_retained=YES"
       fi
     else
       die "${ARTIFACT_DIR} exists and is not a directory"
@@ -1723,12 +1888,22 @@ ${f}"
     fi
     log "WARNING: POST_BRINGUP_MIGRATION_PERSIST=FAIL decision=${mig} (non-required; continuing)"
   fi
-  if ! dp_phase2_persist_staging_contract "$TARGET_DP_VERSION"; then
+  local artifact_tree_sha
+  artifact_tree_sha="$(artifact_manifest_hash "$ARTIFACT_DIR" 2>/dev/null || true)"
+  [[ "$artifact_tree_sha" =~ ^[0-9a-fA-F]{64}$ ]] \
+    || die "PHASE2_ARTIFACT_TREE_IDENTITY=FAIL"
+  if ! dp_phase2_persist_staging_contract \
+    "$TARGET_DP_VERSION" \
+    "$EXPECTED_BUNDLE_SHA256" \
+    "$EXPECTED_PREREQ_IDENTITY_SHA256" \
+    "$PHASE2_HELPER_GENERATION_SHA256" \
+    "$artifact_tree_sha"; then
     PHASE2_STAGE_RESULT="FAIL"
     ARTIFACT_STAGING_RESULT="FAIL"
     retract_live_bringup_controller "staging_contract_persist_fail"
     die "authoritative Phase 2 staging contract could not be persisted"
   fi
+  commit_promoted_artifact_tree
   emit_final_report
 }
 

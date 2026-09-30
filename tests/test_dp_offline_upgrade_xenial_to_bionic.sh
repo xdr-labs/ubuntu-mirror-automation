@@ -864,12 +864,13 @@ printf 'systemd\nudev\n' >"$fx2/tmp/held-packages.txt"
 cp -a "$fx2/tmp/held-packages.txt" "$fx2/tmp/held-packages.before"
 set +e
 DP_OFFLINE_TEST_ROOT="$fx2" DP_OFFLINE_FAKE_CONFIRM=nope \
-  bash "$STUB" --mirror-base http://127.0.0.1:9 >"$fx2/out-reject.txt" 2>&1
+  bash "$STUB" --mirror-base http://127.0.0.1:9 </dev/null >"$fx2/out-reject.txt" 2>&1
 rc=$?
 set -e
 if [[ "$rc" -ne 0 ]] \
    && cmp -s "$fx2/tmp/held-packages.before" "$fx2/tmp/held-packages.txt" \
-   && ! grep -q 'CRITICAL_OS_UNHOLD_BEGIN' "$fx2/out-reject.txt"; then
+   && ! grep -q 'CRITICAL_OS_UNHOLD_BEGIN' "$fx2/out-reject.txt" \
+   && ! grep -q 'Confirmation> ' "$fx2/out-reject.txt"; then
   pass "confirmation reject → holds unchanged"
 else
   fail "confirmation reject mutated holds or unhold ran (rc=${rc})"
@@ -2080,7 +2081,7 @@ EOF
   set +e
   DP_OFFLINE_TEST_ROOT="$fake" DP_OFFLINE_FAKE_DP_VERSION=6.2.0 DP_OFFLINE_FAKE_ROLE=AIO \
     DP_OFFLINE_FAKE_CONFIRM=nope \
-    bash "$BUILT" --mirror-base "$MIRROR_BASE" >"$fake/out-badconfirm.txt" 2>&1
+    bash "$BUILT" --mirror-base "$MIRROR_BASE" </dev/null >"$fake/out-badconfirm.txt" 2>&1
   rc=$?
   set -e
   [[ "$rc" -ne 0 ]] && pass "bad confirmation rejected" || fail "bad confirmation accepted"
@@ -2162,7 +2163,7 @@ EOF
     set +e
     DP_OFFLINE_TEST_ROOT="$fake" DP_OFFLINE_FAKE_DP_VERSION=6.2.0 DP_OFFLINE_FAKE_ROLE=AIO \
       DP_OFFLINE_FAKE_MIRROR_TRUST=1 DP_OFFLINE_FAKE_CONFIRM=nope \
-      bash "$BUILT" --mirror-base "$MIRROR_BASE" >"$fake/out-resume-reject.txt" 2>&1
+      bash "$BUILT" --mirror-base "$MIRROR_BASE" </dev/null >"$fake/out-resume-reject.txt" 2>&1
     rc=$?
     set -e
     if [[ "$rc" -ne 0 ]] && grep -qE 'confirmation rejected|Confirmation|RESUME_SAFETY_VALIDATION=PASS|READY_FOR_RESUME' "$fake/out-resume-reject.txt"; then
@@ -2284,7 +2285,7 @@ grep -q 'HTTP_META_RELEASE=NOT_PUBLISHED' "$SCRIPT_IN" \
   && pass "optional meta-release 404 INFO marker" || fail "meta-release INFO marker missing"
 grep -q 'META_RELEASE_SOURCE=EMBEDDED_SIGNED_COPY' "$SCRIPT_IN" \
   && pass "embedded signed meta-release source marker" || fail "embedded meta source missing"
-grep -q 'APT_REPOSITORY_AUTHENTICATION=PASS' "/home/aella/ubuntu-mirror-automation/client/lib/dp-offline-apt-preflight-sandbox.sh" \
+grep -q 'APT_REPOSITORY_AUTHENTICATION=PASS' "${ROOT}/client/lib/dp-offline-apt-preflight-sandbox.sh" \
   && grep -q 'run_temporary_local_apt_authentication_preflight' "$SCRIPT_IN" \
   && pass "APT repository authentication log marker" || fail "APT auth log marker missing"
 grep -q 'LOGIN_SHELL_AUTOMATION=PASS' "$SCRIPT_IN" \

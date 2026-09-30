@@ -49,6 +49,7 @@ run_publisher() {
   local ver="${2:-6.6.0}"
   shift 2 || true
   MM_HERMETIC_TEST_MODE=1 \
+    ALLOW_LEGACY_PHASE2_MAINTENANCE=1 \
     DP_PHASE2_SKIP_ROOT_CHECK=1 \
     DP_PHASE2_ROOT="$root" \
     READY_PATH="${root}/ready-state/READY" \
@@ -62,6 +63,18 @@ bash -n "$HELPERS_ONLY" && pass "helpers-only bash -n" || fail "helpers-only bas
 bash -n "${ROOT}/scripts/deploy-stage-dp-phase2-client-atomic.sh" && pass "deploy-helpers bash -n" || fail "deploy-helpers bash -n"
 bash -n "$HELPER" && pass "canonical helper bash -n" || fail "canonical helper bash -n"
 bash -n "${ROOT}/client/stage-dp-phase2-6.6.0.sh" && pass "compat helper bash -n" || fail "compat helper bash -n"
+
+for legacy in "$PUBLISHER" "$HELPERS_ONLY" "${ROOT}/scripts/apply-dp-phase2-production.sh"; do
+  set +e
+  legacy_out="$(MM_HERMETIC_TEST_MODE=0 ALLOW_LEGACY_PHASE2_MAINTENANCE=0 bash "$legacy" 2>&1)"
+  legacy_rc=$?
+  set -e
+  if [[ "$legacy_rc" -ne 0 ]] && echo "$legacy_out" | grep -q 'LEGACY_PHASE2_MAINTENANCE_DISABLED=YES'; then
+    pass "legacy Phase 2 maintenance blocked in production: $(basename "$legacy")"
+  else
+    fail "legacy Phase 2 maintenance not blocked: $(basename "$legacy") rc=${legacy_rc}"
+  fi
+done
 
 # Ambiguous VERSION= must not remain in publisher
 if grep -nE '^VERSION=' "$PUBLISHER"; then

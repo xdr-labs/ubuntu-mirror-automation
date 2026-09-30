@@ -42,13 +42,19 @@ lxd_validate_inventory_timeouts() {
 
 lxd_unit_is_active() {
   local unit="$1"
-  [[ -n "${TEST_ROOT:-}" && -f "$(hostpath "/tmp/lxd-unit-active-${unit}")" ]] && return 0
+  if [[ -n "${TEST_ROOT:-}" ]]; then
+    [[ -f "$(hostpath "/tmp/lxd-unit-active-${unit}")" ]]
+    return $?
+  fi
   "$SYSTEMCTL_BIN" is-active --quiet "$unit" >/dev/null 2>&1
 }
 
 lxd_unit_is_enabled() {
   local unit="$1"
-  [[ -n "${TEST_ROOT:-}" && -f "$(hostpath "/tmp/lxd-unit-enabled-${unit}")" ]] && return 0
+  if [[ -n "${TEST_ROOT:-}" ]]; then
+    [[ -f "$(hostpath "/tmp/lxd-unit-enabled-${unit}")" ]]
+    return $?
+  fi
   "$SYSTEMCTL_BIN" is-enabled --quiet "$unit" >/dev/null 2>&1
 }
 
@@ -101,18 +107,19 @@ lxd_start_runtime_for_inventory() {
   fi
   cold=YES
   log INFO "LXD_COLD_START_DETECTED=YES"
-  set +e
-  if [[ "$_LXD_SOCKET_INITIAL_ACTIVE" -eq 0 ]]; then
-    "$bin" start lxd.socket >/dev/null 2>&1
-  fi
-  "$bin" start lxd.service >/dev/null 2>&1
-  rc=$?
-  set -e
   if [[ -n "${TEST_ROOT:-}" ]]; then
     mkdir -p "$(hostpath /tmp)"
     : >"$(hostpath /tmp/lxd-unit-active-lxd.service)"
     : >"$(hostpath /tmp/lxd-unit-active-lxd.socket)"
     rc=0
+  else
+    set +e
+    if [[ "$_LXD_SOCKET_INITIAL_ACTIVE" -eq 0 ]]; then
+      "$bin" start lxd.socket >/dev/null 2>&1
+    fi
+    "$bin" start lxd.service >/dev/null 2>&1
+    rc=$?
+    set -e
   fi
   if [[ "$rc" -eq 0 ]]; then
     _LXD_RUNTIME_STARTED_BY_US=1
@@ -124,15 +131,16 @@ lxd_restore_runtime_state() {
   local evid="${1:-}"
   local bin="${SYSTEMCTL_BIN:-systemctl}"
   if [[ "$_LXD_RUNTIME_STARTED_BY_US" -eq 1 && "$_LXD_SERVICE_INITIAL_ACTIVE" -eq 0 ]]; then
-    set +e
-    "$bin" stop lxd.service >/dev/null 2>&1
-    if [[ "$_LXD_SOCKET_INITIAL_ACTIVE" -eq 0 ]]; then
-      "$bin" stop lxd.socket >/dev/null 2>&1
-    fi
-    set -e
     if [[ -n "${TEST_ROOT:-}" ]]; then
       rm -f "$(hostpath /tmp/lxd-unit-active-lxd.service)" \
         "$(hostpath /tmp/lxd-unit-active-lxd.socket)" 2>/dev/null || true
+    else
+      set +e
+      "$bin" stop lxd.service >/dev/null 2>&1
+      if [[ "$_LXD_SOCKET_INITIAL_ACTIVE" -eq 0 ]]; then
+        "$bin" stop lxd.socket >/dev/null 2>&1
+      fi
+      set -e
     fi
     log INFO "LXD_RUNTIME_RESTORE=INACTIVE"
   fi

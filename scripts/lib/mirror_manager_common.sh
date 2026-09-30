@@ -383,9 +383,9 @@ mm_run_id() { date -u +%Y%m%dT%H%M%SZ; }
 
 mm_redact() {
   sed -E \
-    -e 's/(ACPS_PASSWORD|ACPS_PASS|ACPS_TOKEN|PASSWORD|TOKEN|PASSWD|WORKER_SSH_PASSWORD)=[^[:space:]]+/\1=***/Ig' \
-    -e 's/(--worker-password-file(=|[[:space:]]+))([^[:space:]]+)/\1***/g' \
-    -e 's/(--worker-password(=|[[:space:]]+))([^[:space:]]+)/\1***/g' \
+    -e 's/(ACPS_PASSWORD|ACPS_PASS|ACPS_TOKEN|PASSWORD|TOKEN|PASSWD|WORKER_SSH_PASSWORD)=.*/\1=***/Ig' \
+    -e 's/(--worker-password-file(=|[[:space:]]+)).*/\1***/g' \
+    -e 's/(--worker-password(=|[[:space:]]+)).*/\1***/g' \
     -e 's/(-u[[:space:]]+)[^[:space:]]+/\1***/g' \
     -e 's#(://[^:/@]+:)[^@/]+@#\1***@#g' \
     -e 's/Authorization:[[:space:]]*Basic[[:space:]]+[^[:space:]]+/Authorization: Basic ***/Ig' \
@@ -518,6 +518,7 @@ mm_bg_with_heartbeat() {
 
   local start_ts hb_secs hb_pid="" cmd_pid="" rc=0 elapsed
   local out err last_hb_line="" hb_line
+  local caller_int_trap="" caller_term_trap=""
   MM_LONG_STEP_LAST_STDOUT=""
   MM_LONG_STEP_LAST_ELAPSED=0
   start_ts="$(date +%s)"
@@ -525,6 +526,8 @@ mm_bg_with_heartbeat() {
   out="$(mktemp)"
   err="$(mktemp)"
 
+  caller_int_trap="$(trap -p INT || true)"
+  caller_term_trap="$(trap -p TERM || true)"
   "$@" >"$out" 2>"$err" &
   cmd_pid=$!
 
@@ -562,7 +565,8 @@ mm_bg_with_heartbeat() {
     kill "$hb_pid" 2>/dev/null || true
     wait "$hb_pid" 2>/dev/null || true
   fi
-  trap - INT TERM
+  if [[ -n "$caller_int_trap" ]]; then eval "$caller_int_trap"; else trap - INT; fi
+  if [[ -n "$caller_term_trap" ]]; then eval "$caller_term_trap"; else trap - TERM; fi
 
   elapsed=$(( $(date +%s) - start_ts ))
   MM_LONG_STEP_LAST_ELAPSED="$elapsed"
@@ -615,12 +619,15 @@ mm_run_with_file_progress() {
 
   local start_ts hb_secs hb_pid="" cmd_pid="" rc=0 elapsed
   local err last_prog="" written pct written_h expected_h prog_line
+  local caller_int_trap="" caller_term_trap=""
   start_ts="$(date +%s)"
   hb_secs="$(mm_long_step_heartbeat_seconds)"
   err="$(mktemp)"
 
   mm_info "${event_prefix}_START ${fields}"
 
+  caller_int_trap="$(trap -p INT || true)"
+  caller_term_trap="$(trap -p TERM || true)"
   "$@" 2>"$err" &
   cmd_pid=$!
 
@@ -668,7 +675,8 @@ mm_run_with_file_progress() {
     kill "$hb_pid" 2>/dev/null || true
     wait "$hb_pid" 2>/dev/null || true
   fi
-  trap - INT TERM
+  if [[ -n "$caller_int_trap" ]]; then eval "$caller_int_trap"; else trap - INT; fi
+  if [[ -n "$caller_term_trap" ]]; then eval "$caller_term_trap"; else trap - TERM; fi
 
   elapsed=$(( $(date +%s) - start_ts ))
   if [[ "$rc" -eq 0 ]]; then
@@ -960,6 +968,7 @@ mm_load_gui_config() {
 mm_save_gui_config() {
   local save_mode="${1:-full}"
   local prev_mode="" cmd_file
+  local config_publication_lock_acquired=0
   local mem_worker_pass="${WORKER_SSH_PASSWORD-}"
   local mem_dl_worker_ips="${DL_WORKER_IPS-}"
   local mem_da_worker_ips="${DA_WORKER_IPS-}"
@@ -976,6 +985,17 @@ mm_save_gui_config() {
       return 1
       ;;
   esac
+
+  # Configuration changes alter publication/readiness/command identity. Serialize
+  # every save with the same publication lock used by Menu 2/Menu 3/Menu 7 so a
+  # command cannot be minted against an identity that changes mid-transaction.
+  if ! _publication_lock_fd_holds_ours "${PUBLICATION_LOCK_FD:-}"; then
+    if ! publication_lock_acquire; then
+      mm_error "CONFIGURATION_SAVE=FAIL reason=publication_lock_busy path=$(publication_lock_path)"
+      return 1
+    fi
+    config_publication_lock_acquired=1
+  fi
 
   if [[ -f "${MM_CONFIG_FILE}" ]]; then
     prev_mode="$(awk -F= '/^PREPARATION_MODE=/{print substr($0,index($0,"=")+1); exit}' "${MM_CONFIG_FILE}" 2>/dev/null || true)"
@@ -1072,6 +1092,9 @@ mm_save_gui_config() {
     mm_wf_mark_configured
   fi
   mm_ok "CONFIGURATION_SAVED=PASS path=${MM_CONFIG_FILE} mode=${PREPARATION_MODE} save=${save_mode}"
+  if [[ "$config_publication_lock_acquired" -eq 1 ]]; then
+    publication_lock_release
+  fi
 }
 
 # Authoritative full GUI Save (explicit empty clears).
@@ -1819,6 +1842,14 @@ mm_temps_present() {
       -print -quit 2>/dev/null | grep -q .; then
     return 0
   fi
+  # Prerequisite publication candidates live one level below the version root.
+  # They are part of an uncommitted transaction and must invalidate Download /
+  # readiness just like top-level .new/.old publication debris.
+  if [[ -d "${MM_DP_PHASE2_ROOT}" ]] \
+    && find "${MM_DP_PHASE2_ROOT}" -mindepth 2 -maxdepth 2 -type d -name 'extras.new.*' \
+      -print -quit 2>/dev/null | grep -q .; then
+    return 0
+  fi
   if [[ -d "${MM_CACHE_ROOT}" ]] \
     && find "${MM_CACHE_ROOT}" \( -name '*.part' -o -name '*.download' -o -name '*.new.*' \) \
       -type f -print -quit 2>/dev/null | grep -q .; then
@@ -1944,7 +1975,20 @@ mm_http_fetch_text() {
 }
 
 # Bind HTTP readiness to the published client-set generation, not HTTP 200 alone.
+mm_assert_production_http_test_overrides_safe() {
+  [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" ]] && return 0
+  if [[ "${MM_VERIFY_HTTP_BASE:-http://127.0.0.1}" != "http://127.0.0.1" ]]; then
+    return 1
+  fi
+  [[ -z "${MM_NGINX_BIN:-}" ]] || return 1
+  [[ -z "${MM_SYSTEMCTL_BIN:-}" ]] || return 1
+  [[ -z "${MM_NGINX_SITE_AVAIL:-}" ]] || return 1
+  [[ -z "${MM_NGINX_SITE_ENABLED:-}" ]] || return 1
+  return 0
+}
+
 mm_http_publication_identity_ok() {
+  mm_assert_production_http_test_overrides_safe || return 1
   local base="${MM_VERIFY_HTTP_BASE:-http://127.0.0.1}"
   local expected="" live_body="" live_gen="" live_sha="" local_sha=""
   expected="$(mm_status_get HTTP_PUBLICATION_GENERATION_ID 2>/dev/null || true)"
@@ -1969,8 +2013,12 @@ mm_http_publication_identity_ok() {
 }
 
 mm_http_required_urls_ok() {
+  mm_assert_production_http_test_overrides_safe || return 1
   local ver="${TARGET_DP_VERSION:-${PHASE2_TARGET_VERSION}}"
   local base="${MM_VERIFY_HTTP_BASE:-http://127.0.0.1}"
+  if [[ "${MM_HERMETIC_TEST_MODE:-0}" != "1" && "$base" != "http://127.0.0.1" ]]; then
+    return 1
+  fi
   local stable
   mm_phase2_paths
   stable="${MM_WF_PHASE2_STABLE}"
@@ -2013,10 +2061,20 @@ mm_http_required_urls_ok() {
 }
 
 mm_nginx_distribution_live() {
+  mm_assert_production_http_test_overrides_safe || return 1
   local nginx_bin systemctl_bin site_en
-  nginx_bin="${MM_NGINX_BIN:-nginx}"
-  systemctl_bin="${MM_SYSTEMCTL_BIN:-systemctl}"
-  site_en="${MM_NGINX_SITE_ENABLED:-/etc/nginx/sites-enabled/${MM_NGINX_SITE_NAME:-apt-mirror}}"
+  if [[ "${MM_HERMETIC_TEST_MODE:-0}" != "1" ]]; then
+    [[ -z "${MM_NGINX_BIN:-}" ]] || return 1
+    [[ -z "${MM_SYSTEMCTL_BIN:-}" ]] || return 1
+    [[ -z "${MM_NGINX_SITE_ENABLED:-}" ]] || return 1
+    nginx_bin="nginx"
+    systemctl_bin="systemctl"
+    site_en="/etc/nginx/sites-enabled/${MM_NGINX_SITE_NAME:-apt-mirror}"
+  else
+    nginx_bin="${MM_NGINX_BIN:-nginx}"
+    systemctl_bin="${MM_SYSTEMCTL_BIN:-systemctl}"
+    site_en="${MM_NGINX_SITE_ENABLED:-/etc/nginx/sites-enabled/${MM_NGINX_SITE_NAME:-apt-mirror}}"
+  fi
   command -v "$systemctl_bin" >/dev/null 2>&1 || return 1
   "$systemctl_bin" is-active --quiet nginx 2>/dev/null || return 1
   command -v "$nginx_bin" >/dev/null 2>&1 || return 1
@@ -2163,62 +2221,90 @@ mm_record_artifacts_prepared() {
   [[ -f "$sidecar" && -f "$release" ]] || return 1
   p2_gen="phase2:$(cat "$sidecar" "$release" | sha256sum | awk '{print $1}')"
   if declare -F mm_wf_mark_prepared >/dev/null 2>&1; then
-    mm_wf_mark_prepared "$os_gen" "$p2_gen"
+    mm_wf_mark_prepared "$os_gen" "$p2_gen" || {
+      mm_error "HEAVY_ARTIFACTS_PREPARED=FAIL reason=workflow_receipt"
+      return 1
+    }
   fi
   mm_info "HEAVY_ARTIFACTS_PREPARED=PASS OS_CORE_GENERATION_ID=${os_gen} PHASE2_GENERATION_ID=${p2_gen}"
 }
 
 mm_record_download_validated() {
-  local fp
+  local fp txn
   engine_resolve_paths 2>/dev/null || true
   mm_phase2_paths
   fp="$(mm_artifact_fingerprint)"
-  mm_status_set DOWNLOAD_PREPARE_RESULT PASS
-  mm_status_set DOWNLOAD_VALIDATED_AT "$(mm_ts)"
-  mm_status_set DOWNLOAD_ARTIFACT_FINGERPRINT "$fp"
-  mm_status_set PHASE2_BUNDLE_SIZE "$(mm_file_bytes "${MM_WF_PHASE2_BUNDLE}")"
-  mm_status_set PHASE2_BUNDLE_MTIME "$(stat -c '%Y' "${MM_WF_PHASE2_BUNDLE}" 2>/dev/null || echo 0)"
-  mm_status_set PHASE2_SIDECAR_MTIME "$(stat -c '%Y' "${MM_WF_PHASE2_SIDECAR}" 2>/dev/null || echo 0)"
-  # Changing artifacts invalidates readiness until Menu 4 re-runs.
-  mm_status_set READINESS_RESULT ""
-  mm_status_set READINESS_ARTIFACT_FINGERPRINT ""
-  mm_status_set UPGRADE_READINESS FAIL
+  txn="$(mm_wf_transition_snapshot)" || return 1
+  if ! mm_status_set DOWNLOAD_VALIDATED_AT "$(mm_ts)" \
+    || ! mm_status_set DOWNLOAD_ARTIFACT_FINGERPRINT "$fp" \
+    || ! mm_status_set PHASE2_BUNDLE_SIZE "$(mm_file_bytes "${MM_WF_PHASE2_BUNDLE}")" \
+    || ! mm_status_set PHASE2_BUNDLE_MTIME "$(stat -c '%Y' "${MM_WF_PHASE2_BUNDLE}" 2>/dev/null || echo 0)" \
+    || ! mm_status_set PHASE2_SIDECAR_MTIME "$(stat -c '%Y' "${MM_WF_PHASE2_SIDECAR}" 2>/dev/null || echo 0)" \
+    || ! mm_status_set READINESS_RESULT "" \
+    || ! mm_status_set READINESS_ARTIFACT_FINGERPRINT "" \
+    || ! mm_status_set UPGRADE_READINESS FAIL \
+    || ! mm_status_set DOWNLOAD_PREPARE_RESULT PASS; then
+    mm_wf_transition_rollback "$txn" >/dev/null 2>&1 || true
+    mm_wf_transition_cleanup "$txn"
+    mm_error "DOWNLOAD_RECEIPT=FAIL reason=status_persist"
+    return 1
+  fi
+  mm_wf_transition_cleanup "$txn"
   # Workflow PREPARED is recorded before client finalization. Do not
   # demote a freshly published/reused current client set back to PREPARED here.
 }
 
 mm_record_http_validated() {
+  local txn
+  txn="$(mm_wf_transition_snapshot)" || return 1
   # Persist authoritative workflow receipt BEFORE publishing PASS status.
   if declare -F mm_wf_mark_http_enabled >/dev/null 2>&1; then
     if ! mm_wf_mark_http_enabled; then
-      mm_status_set HTTP_ENABLE_RESULT FAIL
-      mm_status_set HTTP_DISTRIBUTION DISABLED
-      mm_status_set HTTP_CONFIGURATION_READY FAIL
+      mm_wf_transition_rollback "$txn" >/dev/null 2>&1 || true
+      mm_wf_transition_cleanup "$txn"
+      mm_status_set HTTP_ENABLE_RESULT FAIL >/dev/null 2>&1 || true
+      mm_status_set HTTP_DISTRIBUTION DISABLED >/dev/null 2>&1 || true
+      mm_status_set HTTP_CONFIGURATION_READY FAIL >/dev/null 2>&1 || true
       return 1
     fi
   fi
-  mm_status_set HTTP_ENABLE_RESULT PASS
-  mm_status_set HTTP_VALIDATED_AT "$(mm_ts)"
-  mm_status_set HTTP_DISTRIBUTION ENABLED
-  mm_status_set HTTP_CONFIGURATION_READY PASS
+  if ! mm_status_set HTTP_VALIDATED_AT "$(mm_ts)" \
+    || ! mm_status_set HTTP_DISTRIBUTION ENABLED \
+    || ! mm_status_set HTTP_CONFIGURATION_READY PASS \
+    || ! mm_status_set HTTP_ENABLE_RESULT PASS; then
+    mm_wf_transition_rollback "$txn" >/dev/null 2>&1 || true
+    mm_wf_transition_cleanup "$txn"
+    mm_error "HTTP_RECEIPT=FAIL reason=status_persist"
+    return 1
+  fi
+  mm_wf_transition_cleanup "$txn"
 }
 
 mm_record_readiness_validated() {
-  local fp
+  local fp txn
   fp="$(mm_artifact_fingerprint)"
+  txn="$(mm_wf_transition_snapshot)" || return 1
   # Persist authoritative workflow receipt BEFORE publishing PASS status.
   if declare -F mm_wf_mark_readiness_verified >/dev/null 2>&1; then
     if ! mm_wf_mark_readiness_verified; then
-      mm_status_set READINESS_RESULT FAIL
-      mm_status_set UPGRADE_READINESS FAIL
+      mm_wf_transition_rollback "$txn" >/dev/null 2>&1 || true
+      mm_wf_transition_cleanup "$txn"
+      mm_status_set READINESS_RESULT FAIL >/dev/null 2>&1 || true
+      mm_status_set UPGRADE_READINESS FAIL >/dev/null 2>&1 || true
       return 1
     fi
   fi
-  mm_status_set READINESS_RESULT PASS
-  mm_status_set READINESS_VALIDATED_AT "$(mm_ts)"
-  mm_status_set READINESS_ARTIFACT_FINGERPRINT "$fp"
-  mm_status_set READINESS_CONFIG_FINGERPRINT "$(mm_config_fingerprint)"
-  mm_status_set UPGRADE_READINESS PASS
+  if ! mm_status_set READINESS_VALIDATED_AT "$(mm_ts)" \
+    || ! mm_status_set READINESS_ARTIFACT_FINGERPRINT "$fp" \
+    || ! mm_status_set READINESS_CONFIG_FINGERPRINT "$(mm_config_fingerprint)" \
+    || ! mm_status_set READINESS_RESULT PASS \
+    || ! mm_status_set UPGRADE_READINESS PASS; then
+    mm_wf_transition_rollback "$txn" >/dev/null 2>&1 || true
+    mm_wf_transition_cleanup "$txn"
+    mm_error "READINESS_RECEIPT=FAIL reason=status_persist"
+    return 1
+  fi
+  mm_wf_transition_cleanup "$txn"
 }
 
 mm_state_init() {
@@ -2587,6 +2673,8 @@ MM_CLIENT_REQUIRED_FILES=(
   upgrade-jammy-to-noble.sh.sha256
   upgrade-phase2.sh
   upgrade-phase2.sh.sha256
+  upgrade-phase2-same-version-recovery.sh
+  upgrade-phase2-same-version-recovery.sh.sha256
   stage-dp-phase2.sh
   stage-dp-phase2.sh.sha256
   dp-client-command-runner.sh
@@ -2602,13 +2690,63 @@ MM_CLIENT_PHASE2_REQUIRED_FILES=(
   stage-dp-phase2.sh.sha256
   upgrade-phase2.sh
   upgrade-phase2.sh.sha256
+  upgrade-phase2-same-version-recovery.sh
+  upgrade-phase2-same-version-recovery.sh.sha256
   bringup_py3_dp_lifecycle.sh
   phase2-helper-generation.manifest
   lib/dp-offline-source-product-version.sh
   lib/dp-phase2-operation-progress.sh
   lib/dp-phase2-bringup-lifecycle.sh
   lib/dp-phase2-ubuntu-prerequisites.sh
+  lib/dp-phase2-time-readiness.sh
+  lib/dp-phase2-staging-contract.sh
+  lib/dp-phase2-post-bringup-migration.sh
+  lib/dp-phase2-cluster-validation.sh
 )
+
+mm_phase2_wrapper_anchor_value() {
+  local wrapper="$1" key="$2"
+  awk -F"'" -v k="${key}=" '
+    $1 == k { count++; value=$2 }
+    END {
+      if (count != 1 || value !~ /^[0-9A-Fa-f]{64}$/) exit 2
+      print tolower(value)
+    }
+  ' "$wrapper"
+}
+
+# Bind the published Phase 2 wrappers to the actual immutable release bytes.
+# Endpoint/client regeneration may change wrapper bytes, but B/P/H must always
+# match the bundle/identity/helper artifacts the DP will consume.
+mm_phase2_wrapper_trust_anchors_match() {
+  local root="${1:-${MM_CLIENT_ROOT:-}}"
+  local dp_root="${2:-${MM_DP_PHASE2_ROOT:-${MM_MIRROR_ROOT:-/var/spool/apt-mirror}/dp-phase2}}"
+  local ver="${3:-${TARGET_DP_VERSION:-${PHASE2_TARGET_VERSION:-6.6.0}}}"
+  local wrapper recovery manifest sidecar identity
+  local want_h want_b want_p got_h got_b got_p f
+
+  wrapper="${root}/upgrade-phase2.sh"
+  recovery="${root}/upgrade-phase2-same-version-recovery.sh"
+  manifest="${root}/phase2-helper-generation.manifest"
+  sidecar="${dp_root}/${ver}/dp_bundle_${ver}-current.tar.sha256"
+  identity="${dp_root}/${ver}/extras/phase2-ubuntu-prerequisites.identity"
+
+  [[ -f "$wrapper" && -f "$manifest" && -f "$sidecar" && -f "$identity" ]] || return 1
+  want_h="$(sha256sum "$manifest" | awk '{print tolower($1)}')" || return 1
+  want_b="$(awk 'NF {print tolower($1); exit}' "$sidecar")" || return 1
+  want_p="$(sha256sum "$identity" | awk '{print tolower($1)}')" || return 1
+  [[ "$want_h" =~ ^[0-9a-f]{64}$ && "$want_b" =~ ^[0-9a-f]{64}$ && "$want_p" =~ ^[0-9a-f]{64}$ ]] || return 1
+
+  for f in "$wrapper" "$recovery"; do
+    [[ -f "$f" ]] || return 1
+    got_h="$(mm_phase2_wrapper_anchor_value "$f" H)" || return 1
+    got_b="$(mm_phase2_wrapper_anchor_value "$f" B)" || return 1
+    got_p="$(mm_phase2_wrapper_anchor_value "$f" P)" || return 1
+    [[ "$got_h" == "$want_h" && "$got_b" == "$want_b" && "$got_p" == "$want_p" ]] || return 1
+  done
+  return 0
+}
+
 
 mm_client_files_ready_phase2() {
   local root="${1:-${MM_CLIENT_ROOT}}"
@@ -2629,7 +2767,10 @@ mm_client_files_ready_phase2() {
     >/dev/null 2>&1; then
     return 1
   fi
-  [[ -f "${root}/upgrade-phase2-same-version-recovery.sh" ]] || return 1
+  [[ -f "${root}/upgrade-phase2-same-version-recovery.sh" \
+    && -f "${root}/upgrade-phase2-same-version-recovery.sh.sha256" ]] || return 1
+  (cd "$root" && sha256sum -c upgrade-phase2-same-version-recovery.sh.sha256 >/dev/null 2>&1) || return 1
+  bash -n "${root}/upgrade-phase2-same-version-recovery.sh" || return 1
   grep -q 'CONFIRM_SAME_VERSION_RECOVERY=YES' \
     "${root}/upgrade-phase2-same-version-recovery.sh" || return 1
   if grep -qE 'curl[^|;]*\|[[:space:]]*(bash|sh)([[:space:]]|$)' "${root}/upgrade-phase2.sh"; then
@@ -2645,6 +2786,7 @@ mm_client_files_ready_phase2() {
   else
     (cd "$root" && sha256sum -c phase2-helper-generation.manifest >/dev/null 2>&1) || return 1
   fi
+  mm_phase2_wrapper_trust_anchors_match "$root" || return 1
   return 0
 }
 
@@ -2678,6 +2820,7 @@ mm_client_files_ready() {
   [[ -f "${root}/runner-manifest" && -f "${root}/runner-manifest.asc" ]] || return 1
   cmp -s "${root}/runner-manifest" "${root}/dp-client-command-runner.sh.sha256" || return 1
   mm_client_launchers_ready "$root" || return 1
+  mm_phase2_wrapper_trust_anchors_match "$root" || return 1
   return 0
 }
 
@@ -2741,6 +2884,10 @@ mm_client_launchers_ready() {
   [[ -f "${root}/upgrade-phase2.sh" && -f "${root}/upgrade-phase2.sh.sha256" ]] || return 1
   (cd "$root" && sha256sum -c upgrade-phase2.sh.sha256 >/dev/null 2>&1) || return 1
   bash -n "${root}/upgrade-phase2.sh" || return 1
+  [[ -f "${root}/upgrade-phase2-same-version-recovery.sh" \
+    && -f "${root}/upgrade-phase2-same-version-recovery.sh.sha256" ]] || return 1
+  (cd "$root" && sha256sum -c upgrade-phase2-same-version-recovery.sh.sha256 >/dev/null 2>&1) || return 1
+  bash -n "${root}/upgrade-phase2-same-version-recovery.sh" || return 1
   return 0
 }
 
@@ -2760,6 +2907,19 @@ mm_client_set_current_source() {
     expected_fpr="$(tr -d '[:space:]' <"${MM_CONFIG_DIR}/client-signing/fingerprint" | tr '[:lower:]' '[:upper:]')"
   elif [[ -n "${LOCAL_KEY_FINGERPRINT:-}" ]]; then
     expected_fpr="${LOCAL_KEY_FINGERPRINT}"
+  fi
+  # PHASE2_ONLY intentionally has no OS-hop launchers/signing identity. Its
+  # canonical source identity is the endpoint-bound helper/wrapper B/P/H unit,
+  # not the FULL client provenance schema's launcher contract.
+  if [[ "$mode" == "PHASE2_ONLY" ]]; then
+    local ver="${TARGET_DP_VERSION:-${PHASE2_TARGET_VERSION:-6.6.0}}"
+    if declare -F engine_phase2_only_metadata_current >/dev/null 2>&1 \
+      && engine_phase2_only_metadata_current "$root" "$mirror" "$ver"; then
+      printf 'CLIENT_SET_STATE=CURRENT_VERIFIED\nCLIENT_SET_ACTION=REUSE_CURRENT\nCLIENT_SET_REASON=phase2_only_exact_match\n'
+      return 0
+    fi
+    printf 'CLIENT_SET_STATE=STALE_BUILD_INPUT\nCLIENT_SET_ACTION=REBUILD_SIGN_PUBLISH\nCLIENT_SET_REASON=phase2_only_anchor_identity_mismatch\n' >&2
+    return 1
   fi
   case $- in *e*) errexit_was_on=1 ;; esac
   set +e

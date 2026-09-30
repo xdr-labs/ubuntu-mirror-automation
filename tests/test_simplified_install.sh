@@ -28,6 +28,35 @@ echo "$HELP" | grep -qE 'plan-selective|materialize-selective|publish-selective'
 echo "$HELP" | grep -q 'NOT do' || fail "help should state what installer does not do"
 pass "operator help surface"
 
+echo "[test_public_cli_legacy_mutation_block]"
+ENTRY="${ROOT}/scripts/ubuntu-offline-mirror-entrypoint.sh"
+PUB_HELP="$(bash "$ENTRY" --help)"
+echo "$PUB_HELP" | grep -q 'mirror-manager' || fail "public help missing mirror-manager"
+echo "$PUB_HELP" | grep -q 'diagnose-mirror-runtime' || fail "public help missing diagnose"
+echo "$PUB_HELP" | grep -qE '^[[:space:]]+(materialize-selective|publish-selective|migrate-nginx-selective)' \
+  && fail "public help exposes legacy mutator as normal command" || true
+set +e
+legacy_out="$(MM_HERMETIC_TEST_MODE=0 UOM_ALLOW_LEGACY_MUTATION=0 \
+  bash "$ENTRY" materialize-selective 2>&1)"
+legacy_rc=$?
+set -e
+[[ "$legacy_rc" -ne 0 ]] \
+  && echo "$legacy_out" | grep -q 'LEGACY_PUBLIC_COMMAND_DISABLED=YES command=materialize-selective' \
+  && pass "public legacy mutation blocked" \
+  || fail "public legacy mutation not blocked rc=${legacy_rc}"
+MOCK_CORE="$(mktemp)"
+cat >"$MOCK_CORE" <<'EOF'
+#!/usr/bin/env bash
+printf 'MOCK_CORE_ARGS=%s\n' "$*"
+EOF
+chmod 0755 "$MOCK_CORE"
+legacy_test_out="$(MM_HERMETIC_TEST_MODE=1 UOM_ALLOW_LEGACY_MUTATION=1 UOM_CORE_ENTRY="$MOCK_CORE" \
+  bash "$ENTRY" materialize-selective xenial-to-bionic 2>&1)"
+echo "$legacy_test_out" | grep -q 'MOCK_CORE_ARGS=materialize-selective xenial-to-bionic' \
+  && pass "dual-hermetic legacy delegation retained for regression tests" \
+  || fail "dual-hermetic legacy delegation failed"
+rm -f "$MOCK_CORE"
+
 echo "[test_dry_run_bootstrap]"
 set +e
 bash "${ROOT}/install.sh" --dry-run --no-gui >/tmp/um-dry.out 2>&1

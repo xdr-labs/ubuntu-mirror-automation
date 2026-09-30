@@ -57,22 +57,16 @@ phase2_helper_generation_sha256() {
 phase2_published_bundle_sha256() {
   local ver="${1:?version required}"
   local root="${MM_DP_PHASE2_ROOT:-}"
-  local sidecar candidate
+  local sidecar
   [[ "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
   [[ -n "$root" ]] || return 1
-  for sidecar in \
-    "${root}/${ver}/dp_bundle_${ver}-current.tar.sha256" \
-    "${root}/${ver}/current/dp_bundle_${ver}-current.tar.sha256"
-  do
-    [[ -f "$sidecar" ]] || continue
-    if declare -F dp2_read_hash_field >/dev/null 2>&1; then
-      dp2_read_hash_field "$sidecar"
-    else
-      awk 'NF {print $1; exit}' "$sidecar"
-    fi
-    return 0
-  done
-  return 1
+  sidecar="${root}/${ver}/dp_bundle_${ver}-current.tar.sha256"
+  [[ -f "$sidecar" ]] || return 1
+  if declare -F dp2_read_hash_field >/dev/null 2>&1; then
+    dp2_read_hash_field "$sidecar"
+  else
+    awk 'NF {print $1; exit}' "$sidecar"
+  fi
 }
 
 phase2_published_prereq_identity_sha256() {

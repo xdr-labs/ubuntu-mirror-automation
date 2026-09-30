@@ -73,6 +73,60 @@ mm_wf_new_generation_id() {
   printf '%s-%s\n' "$(date -u +%Y%m%dT%H%M%SZ)" "${RANDOM}$$"
 }
 
+# Snapshot workflow + status before authoritative cross-store transitions.
+# Callers already serialize these transitions with the publication lock; this
+# snapshot provides rollback if workflow succeeds but a required status receipt
+# cannot be persisted. It deliberately bypasses mm_status_set during rollback
+# so an injected/per-key writer failure cannot leave workflow/status split-brain.
+mm_wf_transition_snapshot() {
+  local dir wf status
+  dir="$(mktemp -d "${TMPDIR:-/tmp}/mirror-wf-txn.XXXXXX")" || return 1
+  wf="$(mm_wf_file)"
+  status="${MM_STATUS_FILE:-}"
+  if [[ -f "$wf" ]]; then
+    cp -a "$wf" "${dir}/workflow" || { rm -rf "$dir"; return 1; }
+  else
+    : >"${dir}/workflow.absent"
+  fi
+  if [[ -n "$status" && -f "$status" ]]; then
+    cp -a "$status" "${dir}/status" || { rm -rf "$dir"; return 1; }
+  else
+    : >"${dir}/status.absent"
+  fi
+  printf '%s\n' "$dir"
+}
+
+mm_wf_transition_rollback() {
+  local dir="$1" wf status rc=0
+  wf="$(mm_wf_file)"
+  status="${MM_STATUS_FILE:-}"
+  if [[ -f "${dir}/workflow" ]]; then
+    mm_wf_atomic_write_file "$wf" "${dir}/workflow" || rc=1
+  elif [[ -f "${dir}/workflow.absent" ]]; then
+    rm -f "$wf" || rc=1
+  fi
+  if [[ -n "$status" ]]; then
+    if declare -F mm_status_acquire_lock >/dev/null 2>&1 \
+      && mm_status_acquire_lock; then
+      if [[ -f "${dir}/status" ]]; then
+        cp -a "${dir}/status" "$status" || rc=1
+      elif [[ -f "${dir}/status.absent" ]]; then
+        rm -f "$status" || rc=1
+      fi
+      mm_status_release_lock
+    elif [[ -f "${dir}/status" ]]; then
+      cp -a "${dir}/status" "$status" || rc=1
+    elif [[ -f "${dir}/status.absent" ]]; then
+      rm -f "$status" || rc=1
+    fi
+  fi
+  [[ "$rc" -eq 0 ]]
+}
+
+mm_wf_transition_cleanup() {
+  rm -rf "$1" 2>/dev/null || true
+}
+
 mm_wf_atomic_write_file() {
   local dest="$1"
   local src="$2"
@@ -502,7 +556,7 @@ mm_wf_classify_config_change() {
   if [[ "$pub_chg" -eq 1 ]]; then
     MM_WF_CONFIG_CHANGE_CLASS="PUBLICATION_ENDPOINT"
     MM_WF_STALE_REASON="mirror_endpoint_changed"
-    MM_WF_NEXT_REQUIRED_ACTION="Rebuild Client Publication"
+    MM_WF_NEXT_REQUIRED_ACTION="Enable HTTP Distribution"
     return 0
   fi
   if [[ "$cmd_chg" -eq 1 && "$auth_chg" -eq 0 ]]; then
@@ -857,7 +911,7 @@ mm_wf_invalidate_after_config_change() {
 }
 
 mm_wf_mark_prepared() {
-  local gen os_gen p2_gen start_sha cur_sha
+  local gen os_gen p2_gen start_sha cur_sha txn
   gen="$(mm_wf_get WORKFLOW_GENERATION_ID)"
   [[ -n "$gen" ]] || gen="$(mm_wf_new_generation_id)"
   os_gen="${1:-$(mm_wf_new_generation_id)}"
@@ -873,6 +927,7 @@ mm_wf_mark_prepared() {
     fi
     return 1
   fi
+  txn="$(mm_wf_transition_snapshot)" || return 1
   mm_wf_set_many \
     "WORKFLOW_STATE=PREPARED" \
     "WORKFLOW_GENERATION_ID=${gen}" \
@@ -898,18 +953,26 @@ mm_wf_mark_prepared() {
     "READINESS_SELECTIVE_AWS_SEMANTIC_CONTRACT_SHA256=" \
     "COMMAND_FILE_GENERATION_ID=" \
     "OPERATION_START_CONFIG_SHA256=" \
-    "VERIFIED_UTC="
+    "VERIFIED_UTC=" \
+    || { mm_wf_transition_cleanup "$txn"; return 1; }
   if declare -F mm_status_set >/dev/null 2>&1; then
-    mm_status_set WORKFLOW_STATE PREPARED
-    mm_status_set OS_CORE_GENERATION_ID "$os_gen"
-    mm_status_set PHASE2_GENERATION_ID "$p2_gen"
-    mm_status_set UPGRADE_READINESS FAIL
+    if ! mm_status_set WORKFLOW_STATE PREPARED \
+      || ! mm_status_set OS_CORE_GENERATION_ID "$os_gen" \
+      || ! mm_status_set PHASE2_GENERATION_ID "$p2_gen" \
+      || ! mm_status_set UPGRADE_READINESS FAIL; then
+      mm_wf_warn "WORKFLOW_STATE_UPDATE=FAIL reason=prepared_status_receipt"
+      mm_wf_transition_rollback "$txn" \
+        || mm_wf_warn "WORKFLOW_STATE_ROLLBACK=FAIL reason=prepared_status_receipt"
+      mm_wf_transition_cleanup "$txn"
+      return 1
+    fi
   fi
+  mm_wf_transition_cleanup "$txn"
   mm_wf_info "WORKFLOW_STATE=PREPARED OS_CORE_GENERATION_ID=${os_gen} PHASE2_GENERATION_ID=${p2_gen}"
 }
 
 mm_wf_mark_client_set_published() {
-  local client_gen fpr input_sha source_rev runtime_sha command_ver schema_ver
+  local client_gen fpr input_sha source_rev runtime_sha command_ver schema_ver txn
   local plan_ck disc_ck contract_sha
   client_gen="${1:-$(mm_wf_new_generation_id)}"
   fpr="${2:-}"
@@ -921,6 +984,7 @@ mm_wf_mark_client_set_published() {
   plan_ck="${8:-}"
   disc_ck="${9:-}"
   contract_sha="${10:-}"
+  txn="$(mm_wf_transition_snapshot)" || return 1
   mm_wf_set_many \
     "WORKFLOW_STATE=CLIENT_SET_PUBLISHED" \
     "CLIENT_SET_GENERATION_ID=${client_gen}" \
@@ -942,23 +1006,32 @@ mm_wf_mark_client_set_published() {
     "VERIFIED_UTC=" \
     || {
       mm_wf_warn "WORKFLOW_STATE_UPDATE=FAIL reason=client_set_receipt_persist"
+      mm_wf_transition_cleanup "$txn"
       return 1
     }
   if declare -F mm_status_set >/dev/null 2>&1; then
-    mm_status_set WORKFLOW_STATE CLIENT_SET_PUBLISHED
-    mm_status_set CLIENT_SET_GENERATION_ID "$client_gen"
-    mm_status_set CLIENT_SIGNING_FINGERPRINT "$fpr"
-    mm_status_set CLIENT_BUILD_INPUT_SHA256 "$input_sha"
-    mm_status_set UPGRADE_READINESS FAIL
+    if ! mm_status_set WORKFLOW_STATE CLIENT_SET_PUBLISHED \
+      || ! mm_status_set CLIENT_SET_GENERATION_ID "$client_gen" \
+      || ! mm_status_set CLIENT_SIGNING_FINGERPRINT "$fpr" \
+      || ! mm_status_set CLIENT_BUILD_INPUT_SHA256 "$input_sha" \
+      || ! mm_status_set UPGRADE_READINESS FAIL; then
+      mm_wf_warn "WORKFLOW_STATE_UPDATE=FAIL reason=client_set_status_receipt"
+      mm_wf_transition_rollback "$txn" \
+        || mm_wf_warn "WORKFLOW_STATE_ROLLBACK=FAIL reason=client_set_status_receipt"
+      mm_wf_transition_cleanup "$txn"
+      return 1
+    fi
   fi
+  mm_wf_transition_cleanup "$txn"
   mm_wf_info "WORKFLOW_STATE=CLIENT_SET_PUBLISHED CLIENT_SET_GENERATION_ID=${client_gen} CLIENT_BUILD_INPUT_SHA256=${input_sha} SELECTIVE_AWS_SEMANTIC_CONTRACT_SHA256=${contract_sha}"
 }
 
 mm_wf_mark_http_enabled() {
-  local pub_gen client_gen
+  local pub_gen client_gen txn
   client_gen="$(mm_wf_get CLIENT_SET_GENERATION_ID)"
   pub_gen="${1:-${client_gen}}"
   [[ -n "$pub_gen" ]] || pub_gen="$(mm_wf_new_generation_id)"
+  txn="$(mm_wf_transition_snapshot)" || return 1
   mm_wf_set_many \
     "WORKFLOW_STATE=HTTP_ENABLED" \
     "HTTP_PUBLICATION_GENERATION_ID=${pub_gen}" \
@@ -968,14 +1041,22 @@ mm_wf_mark_http_enabled() {
     "VERIFIED_UTC=" \
     || {
       mm_wf_warn "WORKFLOW_HTTP=FAIL reason=http_enabled_persist"
+      mm_wf_transition_cleanup "$txn"
       return 1
     }
   if declare -F mm_status_set >/dev/null 2>&1; then
-    mm_status_set WORKFLOW_STATE HTTP_ENABLED
-    mm_status_set HTTP_PUBLICATION_GENERATION_ID "$pub_gen"
-    mm_status_set HTTP_DISTRIBUTION ENABLED
-    mm_status_set UPGRADE_READINESS FAIL
+    if ! mm_status_set WORKFLOW_STATE HTTP_ENABLED \
+      || ! mm_status_set HTTP_PUBLICATION_GENERATION_ID "$pub_gen" \
+      || ! mm_status_set HTTP_DISTRIBUTION ENABLED \
+      || ! mm_status_set UPGRADE_READINESS FAIL; then
+      mm_wf_warn "WORKFLOW_HTTP=FAIL reason=http_status_receipt"
+      mm_wf_transition_rollback "$txn" \
+        || mm_wf_warn "WORKFLOW_STATE_ROLLBACK=FAIL reason=http_status_receipt"
+      mm_wf_transition_cleanup "$txn"
+      return 1
+    fi
   fi
+  mm_wf_transition_cleanup "$txn"
   mm_wf_info "WORKFLOW_STATE=HTTP_ENABLED HTTP_PUBLICATION_GENERATION_ID=${pub_gen}"
 }
 
@@ -997,7 +1078,7 @@ mm_wf_mark_http_disabled() {
 }
 
 mm_wf_mark_readiness_verified() {
-  local pub_gen plan_ck disc_ck contract_sha mode
+  local pub_gen plan_ck disc_ck contract_sha mode txn
   pub_gen="$(mm_wf_get HTTP_PUBLICATION_GENERATION_ID)"
   [[ -n "$pub_gen" ]] || pub_gen="$(mm_wf_get CLIENT_SET_GENERATION_ID)"
   if [[ -z "$pub_gen" ]]; then
@@ -1009,6 +1090,7 @@ mm_wf_mark_readiness_verified() {
     fi
     return 1
   fi
+  txn="$(mm_wf_transition_snapshot)" || return 1
   mode="${PREPARATION_MODE:-FULL}"
   plan_ck=""
   disc_ck=""
@@ -1023,6 +1105,7 @@ mm_wf_mark_readiness_verified() {
         mm_status_set UPGRADE_READINESS FAIL
         mm_status_set READINESS_RESULT FAIL
       fi
+      mm_wf_transition_cleanup "$txn"
       return 1
     fi
     plan_ck="$(printf '%s\n' "$live" | awk -F= '$1=="SELECTIVE_PLAN_CHECKSUM"{print $2; exit}')"
@@ -1034,6 +1117,7 @@ mm_wf_mark_readiness_verified() {
         mm_status_set UPGRADE_READINESS FAIL
         mm_status_set READINESS_RESULT FAIL
       fi
+      mm_wf_transition_cleanup "$txn"
       return 1
     fi
     mm_wf_set_many \
@@ -1042,6 +1126,8 @@ mm_wf_mark_readiness_verified() {
       "SELECTIVE_AWS_SEMANTIC_CONTRACT_SHA256=${contract_sha}" \
       || {
         mm_wf_warn "WORKFLOW_READINESS=FAIL reason=selective_tuple_persist"
+        mm_wf_transition_rollback "$txn" >/dev/null 2>&1 || true
+        mm_wf_transition_cleanup "$txn"
         return 1
       }
   fi
@@ -1055,14 +1141,23 @@ mm_wf_mark_readiness_verified() {
     "VERIFIED_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     || {
       mm_wf_warn "WORKFLOW_READINESS=FAIL reason=readiness_receipt_persist"
+      mm_wf_transition_rollback "$txn" >/dev/null 2>&1 || true
+      mm_wf_transition_cleanup "$txn"
       return 1
     }
   if declare -F mm_status_set >/dev/null 2>&1; then
-    mm_status_set WORKFLOW_STATE READINESS_VERIFIED
-    mm_status_set READINESS_VERIFIED_GENERATION_ID "$pub_gen"
-    mm_status_set UPGRADE_READINESS PASS
-    mm_status_set READINESS_RESULT PASS
+    if ! mm_status_set WORKFLOW_STATE READINESS_VERIFIED \
+      || ! mm_status_set READINESS_VERIFIED_GENERATION_ID "$pub_gen" \
+      || ! mm_status_set UPGRADE_READINESS PASS \
+      || ! mm_status_set READINESS_RESULT PASS; then
+      mm_wf_warn "WORKFLOW_READINESS=FAIL reason=readiness_status_receipt"
+      mm_wf_transition_rollback "$txn" \
+        || mm_wf_warn "WORKFLOW_STATE_ROLLBACK=FAIL reason=readiness_status_receipt"
+      mm_wf_transition_cleanup "$txn"
+      return 1
+    fi
   fi
+  mm_wf_transition_cleanup "$txn"
   mm_wf_ok "UPGRADE_READINESS=PASS READINESS_VERIFIED_GENERATION_ID=${pub_gen} SELECTIVE_AWS_SEMANTIC_CONTRACT_SHA256=${contract_sha}"
 }
 
@@ -1161,14 +1256,15 @@ mm_wf_mark_commands_generated() {
     "CONFIG_COMMAND_SHA256=$(mm_wf_command_identity_sha256)" \
     "CONFIG_CHANGE_CLASS=NONE" \
     "NEXT_REQUIRED_ACTION=NONE" \
-    "DP_COMMAND_BLOCK_VERSION=SUBSHELL_V2"
+    "DP_COMMAND_BLOCK_VERSION=SUBSHELL_V2" \
+    || return 1
   if declare -F mm_status_set >/dev/null 2>&1; then
-    mm_status_set WORKFLOW_STATE COMMANDS_GENERATED
-    mm_status_set COMMAND_FILE_GENERATION_ID "$cmd_gen"
-    mm_status_set CLIENT_COMMANDS_MODE "${PREPARATION_MODE:-FULL}"
-    mm_status_set CLIENT_COMMANDS_GENERATED_AT "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    mm_status_set CONFIG_CHANGE_CLASS NONE
-    mm_status_set NEXT_REQUIRED_ACTION NONE
+    mm_status_set WORKFLOW_STATE COMMANDS_GENERATED || return 1
+    mm_status_set COMMAND_FILE_GENERATION_ID "$cmd_gen" || return 1
+    mm_status_set CLIENT_COMMANDS_MODE "${PREPARATION_MODE:-FULL}" || return 1
+    mm_status_set CLIENT_COMMANDS_GENERATED_AT "$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return 1
+    mm_status_set CONFIG_CHANGE_CLASS NONE || return 1
+    mm_status_set NEXT_REQUIRED_ACTION NONE || return 1
   fi
   mm_wf_info "WORKFLOW_STATE=COMMANDS_GENERATED COMMAND_FILE_GENERATION_ID=${cmd_gen} DP_COMMAND_BLOCK_VERSION=SUBSHELL_V2"
 }
@@ -1296,7 +1392,7 @@ mm_wf_commands_preflight() {
     return 1
   fi
 
-  if [[ -z "$(mm_wf_get CLIENT_SIGNING_FINGERPRINT)" ]]; then
+  if [[ "$mode" == "FULL" && -z "$(mm_wf_get CLIENT_SIGNING_FINGERPRINT)" ]]; then
     MM_WF_BLOCK_REASON="CLIENT_SIGNING_FINGERPRINT_MISSING"
     MM_WF_REQUIRED_ACTION="Download and Prepare"
     return 1
@@ -1333,6 +1429,17 @@ mm_wf_commands_preflight() {
     if ! mm_client_files_ready_phase2 "${MM_CLIENT_ROOT:-}" >/dev/null 2>&1; then
       MM_WF_BLOCK_REASON="phase2_wrapper_missing"
       MM_WF_REQUIRED_ACTION="Run Download and Prepare Upgrade Files"
+      return 1
+    fi
+  fi
+
+  # Commands are executable only while the publication is live now, not merely
+  # because a prior Menu 4 receipt exists. Keep this last so cheaper/stabler
+  # generation failures retain their precise remediation reason.
+  if declare -F mm_http_completed >/dev/null 2>&1; then
+    if ! mm_http_completed >/dev/null 2>&1; then
+      MM_WF_BLOCK_REASON="HTTP_LIVE_VALIDATION_FAIL"
+      MM_WF_REQUIRED_ACTION="Enable HTTP Distribution, then Verify Upgrade Readiness"
       return 1
     fi
   fi
@@ -1858,31 +1965,133 @@ mm_wf_log_command_file_validation_evidence() {
 mm_wf_atomic_publish_command_file() {
   # Args: tmp_file dest_file mode readiness_generation_id
   local tmp="$1" dest="$2" mode="$3" ready_gen="$4"
-  local evidence sha
+  local evidence sha wf status
+  local dest_backup="" wf_backup="" status_backup=""
+  local had_dest=0 had_wf=0 had_status=0 receipt_rc=0 restore_rc=0
+  local cur_wf_state cur_wf_gen cur_status_state cur_status_gen
+  local prev_wf_state prev_wf_gen prev_wf_cfg prev_wf_class prev_wf_next prev_wf_block
+  local prev_st_state prev_st_gen prev_st_mode prev_st_at prev_st_class prev_st_next
   evidence="$(mktemp)"
   if ! mm_wf_validate_command_file_content "$tmp" "$mode" | tee "$evidence"; then
     printf 'COMMAND_FILE_ATOMIC_PUBLISH=FAIL\n'
-    # Re-emit only safe structural evidence (never the candidate command body).
     grep -E '^(COMMAND_FILE_|DP_)' "$evidence" || true
     mm_wf_log_command_file_validation_evidence "$evidence"
     rm -f "$evidence"
-    # Candidate remains for caller cleanup; never replace live dest.
     return 1
   fi
   sha="$(sha256sum "$tmp" | awk '{print $1}')"
   mkdir -p "$(dirname "$dest")"
-  # Command files are operator-private (may guide credential entry; never 0644).
+  wf="$(mm_wf_file)"
+  status="${MM_STATUS_FILE:-}"
+
+  if [[ -f "$dest" ]]; then
+    had_dest=1
+    dest_backup="$(mktemp "$(dirname "$dest")/.command.previous.XXXXXX")"
+    cp -a "$dest" "$dest_backup" || { rm -f "$dest_backup" "$evidence"; return 1; }
+  fi
+  if [[ -f "$wf" ]]; then
+    had_wf=1
+    wf_backup="$(mktemp "$(dirname "$wf")/.workflow.previous.XXXXXX")"
+    cp -a "$wf" "$wf_backup" || { rm -f "$dest_backup" "$wf_backup" "$evidence"; return 1; }
+  fi
+  if [[ -n "$status" && -f "$status" ]]; then
+    had_status=1
+    status_backup="$(mktemp "$(dirname "$status")/.status.previous.XXXXXX")"
+    cp -a "$status" "$status_backup" || { rm -f "$dest_backup" "$wf_backup" "$status_backup" "$evidence"; return 1; }
+  fi
+
   chmod "${MM_PRIVATE_FILE_MODE:-0600}" "$tmp"
-  mv -f "$tmp" "$dest"
+  if ! mv -f "$tmp" "$dest"; then
+    rm -f "$dest_backup" "$wf_backup" "$status_backup" "$evidence"
+    printf 'COMMAND_FILE_ATOMIC_PUBLISH=FAIL\n'
+    printf 'COMMAND_FILE_FAILURE_REASON=LIVE_RENAME\n'
+    return 1
+  fi
   chmod "${MM_PRIVATE_FILE_MODE:-0600}" "$dest"
-  mm_wf_mark_commands_generated "$ready_gen"
+
+  if mm_wf_mark_commands_generated "$ready_gen"; then
+    receipt_rc=0
+  else
+    receipt_rc=$?
+  fi
+  if [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" && "${MM_COMMAND_FILE_FAKE_RECEIPT_FAIL:-0}" == "1" ]]; then
+    receipt_rc=97
+  fi
+  if [[ "$receipt_rc" -ne 0 ]]; then
+    if [[ "$had_dest" -eq 1 ]]; then
+      mv -f "$dest_backup" "$dest" || restore_rc=1
+      dest_backup=""
+    else
+      rm -f "$dest" || restore_rc=1
+    fi
+
+    # Do not restore whole workflow/status snapshots: an unrelated concurrent
+    # writer may have legitimately added/changed other keys after our snapshot.
+    # Roll back only the fields owned by this command-generation transaction,
+    # through each store's authoritative locked RMW helper.
+    if [[ "$had_wf" -eq 1 ]]; then
+      prev_wf_state="$(awk -F= '$1=="WORKFLOW_STATE"{print substr($0,index($0,"=")+1);exit}' "$wf_backup")"
+      prev_wf_gen="$(awk -F= '$1=="COMMAND_FILE_GENERATION_ID"{print substr($0,index($0,"=")+1);exit}' "$wf_backup")"
+      prev_wf_cfg="$(awk -F= '$1=="CONFIG_COMMAND_SHA256"{print substr($0,index($0,"=")+1);exit}' "$wf_backup")"
+      prev_wf_class="$(awk -F= '$1=="CONFIG_CHANGE_CLASS"{print substr($0,index($0,"=")+1);exit}' "$wf_backup")"
+      prev_wf_next="$(awk -F= '$1=="NEXT_REQUIRED_ACTION"{print substr($0,index($0,"=")+1);exit}' "$wf_backup")"
+      prev_wf_block="$(awk -F= '$1=="DP_COMMAND_BLOCK_VERSION"{print substr($0,index($0,"=")+1);exit}' "$wf_backup")"
+    else
+      prev_wf_state=""; prev_wf_gen=""; prev_wf_cfg=""; prev_wf_class=""; prev_wf_next=""; prev_wf_block=""
+    fi
+    cur_wf_state="$(mm_wf_get WORKFLOW_STATE)"
+    cur_wf_gen="$(mm_wf_get COMMAND_FILE_GENERATION_ID)"
+    if [[ "$cur_wf_state" == "COMMANDS_GENERATED" || "$cur_wf_gen" == "$ready_gen" ]]; then
+      mm_wf_set_many \
+        "WORKFLOW_STATE=${prev_wf_state}" \
+        "COMMAND_FILE_GENERATION_ID=${prev_wf_gen}" \
+        "CONFIG_COMMAND_SHA256=${prev_wf_cfg}" \
+        "CONFIG_CHANGE_CLASS=${prev_wf_class}" \
+        "NEXT_REQUIRED_ACTION=${prev_wf_next}" \
+        "DP_COMMAND_BLOCK_VERSION=${prev_wf_block}" \
+        || restore_rc=1
+    fi
+
+    if [[ -n "$status" ]]; then
+      if [[ "$had_status" -eq 1 ]]; then
+        prev_st_state="$(awk -F= '$1=="WORKFLOW_STATE"{print substr($0,index($0,"=")+1);exit}' "$status_backup")"
+        prev_st_gen="$(awk -F= '$1=="COMMAND_FILE_GENERATION_ID"{print substr($0,index($0,"=")+1);exit}' "$status_backup")"
+        prev_st_mode="$(awk -F= '$1=="CLIENT_COMMANDS_MODE"{print substr($0,index($0,"=")+1);exit}' "$status_backup")"
+        prev_st_at="$(awk -F= '$1=="CLIENT_COMMANDS_GENERATED_AT"{print substr($0,index($0,"=")+1);exit}' "$status_backup")"
+        prev_st_class="$(awk -F= '$1=="CONFIG_CHANGE_CLASS"{print substr($0,index($0,"=")+1);exit}' "$status_backup")"
+        prev_st_next="$(awk -F= '$1=="NEXT_REQUIRED_ACTION"{print substr($0,index($0,"=")+1);exit}' "$status_backup")"
+      else
+        prev_st_state=""; prev_st_gen=""; prev_st_mode=""; prev_st_at=""; prev_st_class=""; prev_st_next=""
+      fi
+      cur_status_state="$(mm_status_get WORKFLOW_STATE 2>/dev/null || true)"
+      cur_status_gen="$(mm_status_get COMMAND_FILE_GENERATION_ID 2>/dev/null || true)"
+      if [[ "$cur_status_state" == "COMMANDS_GENERATED" || "$cur_status_gen" == "$ready_gen" ]]; then
+        mm_status_set WORKFLOW_STATE "$prev_st_state" || restore_rc=1
+        mm_status_set COMMAND_FILE_GENERATION_ID "$prev_st_gen" || restore_rc=1
+        mm_status_set CLIENT_COMMANDS_MODE "$prev_st_mode" || restore_rc=1
+        mm_status_set CLIENT_COMMANDS_GENERATED_AT "$prev_st_at" || restore_rc=1
+        mm_status_set CONFIG_CHANGE_CLASS "$prev_st_class" || restore_rc=1
+        mm_status_set NEXT_REQUIRED_ACTION "$prev_st_next" || restore_rc=1
+      fi
+    fi
+    rm -f "$dest_backup" "$wf_backup" "$status_backup" "$evidence"
+    printf 'COMMAND_FILE_ATOMIC_PUBLISH=FAIL\n'
+    printf 'COMMAND_FILE_FAILURE_REASON=WORKFLOW_RECEIPT\n'
+    if [[ "$restore_rc" -eq 0 ]]; then
+      printf 'COMMAND_FILE_ROLLBACK=PASS previous_restored=YES\n'
+    else
+      printf 'COMMAND_FILE_ROLLBACK=FAIL\n'
+    fi
+    return 1
+  fi
+
+  rm -f "$dest_backup" "$wf_backup" "$status_backup"
   printf 'COMMAND_FILE_BUILD=PASS\n'
   printf 'COMMAND_FILE_MODE=%s\n' "$mode"
   printf 'COMMAND_FILE_GENERATION_ID=%s\n' "$ready_gen"
   printf 'COMMAND_FILE_SHA256=%s\n' "$sha"
   printf 'COMMAND_FILE_ATOMIC_PUBLISH=PASS\n'
   printf 'COMMAND_FILE_VALID_FOR_READINESS_GENERATION=%s\n' "$ready_gen"
-  # Re-emit counts from evidence
   grep -E '^COMMAND_FILE_(LINE|EXECUTABLE|OS_HOP|COMMAND_BLOCK|OS_HOP_BLOCK|OS_HOP_LAUNCHER|OS_HOP_LEGACY_BLOCK|BRINGUP_EXECUTABLE)_COUNT=' "$evidence" || true
   grep -E '^COMMAND_FILE_(MAX_BLOCK_LINES|MAX_PHYSICAL_LINE_LENGTH|CONTINUATION_VALIDATION|LAUNCHER_SHA_PINNING|PHASE2_BLOCK_VERSION)=' "$evidence" || true
   grep -E '^DP_(COMMAND_BLOCK_VERSION|OS_HOP_COMMAND_VERSION)=' "$evidence" || true
@@ -1904,6 +2113,7 @@ mm_wf_write_client_set_metadata() {
   local contract_sha="${21:-${CLIENT_AWS_SEMANTIC_CONTRACT_SHA256:-}}"
   local meta="${dest}/client-set.env"
   local hop lname lsha meta_key wname wsha wkey
+  local p2rsha p2h p2b p2p
   cat >"${meta}.tmp" <<EOF
 CLIENT_SET_GENERATION_ID=${gen}
 CLIENT_SIGNING_FINGERPRINT=${fpr}
@@ -1945,6 +2155,25 @@ EOF
   if [[ -f "${dest}/upgrade-phase2.sh.sha256" ]]; then
     printf 'CLIENT_WRAPPER_PHASE2_SHA256=%s\n' \
       "$(awk '{print $1; exit}' "${dest}/upgrade-phase2.sh.sha256")" >>"${meta}.tmp"
+  fi
+  if [[ -f "${dest}/upgrade-phase2-same-version-recovery.sh.sha256" \
+    && -f "${dest}/upgrade-phase2.sh" ]]; then
+    p2rsha="$(awk '{print $1; exit}' "${dest}/upgrade-phase2-same-version-recovery.sh.sha256")"
+    p2h="$(awk -F"'" '$1=="H="{print $2; exit}' "${dest}/upgrade-phase2.sh")"
+    p2b="$(awk -F"'" '$1=="B="{print $2; exit}' "${dest}/upgrade-phase2.sh")"
+    p2p="$(awk -F"'" '$1=="P="{print $2; exit}' "${dest}/upgrade-phase2.sh")"
+    if [[ "$schema_ver" -ge 3 ]]; then
+      [[ "$p2rsha" =~ ^[0-9a-fA-F]{64}$ \
+        && "$p2h" =~ ^[0-9a-fA-F]{64}$ \
+        && "$p2b" =~ ^[0-9a-fA-F]{64}$ \
+        && "$p2p" =~ ^[0-9a-fA-F]{64}$ ]] || return 1
+    fi
+    printf 'CLIENT_WRAPPER_PHASE2_RECOVERY_SHA256=%s\n' "$p2rsha" >>"${meta}.tmp"
+    printf 'CLIENT_PHASE2_HELPER_GENERATION_SHA256=%s\n' "$p2h" >>"${meta}.tmp"
+    printf 'CLIENT_PHASE2_BUNDLE_SHA256=%s\n' "$p2b" >>"${meta}.tmp"
+    printf 'CLIENT_PHASE2_PREREQ_IDENTITY_SHA256=%s\n' "$p2p" >>"${meta}.tmp"
+  elif [[ "$schema_ver" -ge 3 ]]; then
+    return 1
   fi
   chmod 0644 "${meta}.tmp"
   mv -f "${meta}.tmp" "$meta"

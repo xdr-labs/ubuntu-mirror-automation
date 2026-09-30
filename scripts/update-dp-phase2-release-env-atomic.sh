@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
-# Atomically refresh dp-phase2 release.env metadata fields without touching bundles.
-# Does NOT download from ACPS, regenerate bundles, or move current/previous pointers.
-# Publishes release.env as world-readable public metadata (mode 0644) for nginx.
+# RETIRED release.env publisher for the historical current/ layout.
+# Production is hard-disabled; sealed flat release metadata is owned by Mirror
+# Manager. Retained only for dual-hermetic regression coverage.
 set -euo pipefail
+
+if [[ "${MM_HERMETIC_TEST_MODE:-0}" != "1" \
+  || "${ALLOW_LEGACY_PHASE2_MAINTENANCE:-0}" != "1" ]]; then
+  echo "LEGACY_PHASE2_MAINTENANCE_DISABLED=YES utility=$(basename "$0")" >&2
+  echo "Use the authoritative Mirror Manager workflow: Menu 2 -> 3 -> 4 -> 7." >&2
+  exit 2
+fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=lib/dp-phase2-common.sh

@@ -287,6 +287,12 @@ if [[ ! -f "$r/tmp/lxd-unit-active-lxd.service" ]]; then
 else
   fail "cold-start left service active"
 fi
+if [[ ! -e "$r/tmp/systemctl.log" ]]; then
+  pass "hermetic cold-start avoids systemctl entirely"
+else
+  fail "hermetic cold-start invoked systemctl"
+  cat "$r/tmp/systemctl.log" || true
+fi
 
 # D) first inventory timeout then retry success
 r="${OUT_DIR}/retry"

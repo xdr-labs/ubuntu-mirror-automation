@@ -834,8 +834,7 @@ p2b_worker_main() {
   local _wlib
   for _wlib in \
     "${d}/lib/dp-phase2-time-readiness.sh" \
-    "${LIB_DIR:-}/dp-phase2-time-readiness.sh" \
-    "/home/aella/lib/dp-phase2-time-readiness.sh"
+    "${LIB_DIR:-}/dp-phase2-time-readiness.sh"
   do
     if [[ -f "$_wlib" ]]; then
       # shellcheck source=/dev/null
@@ -845,8 +844,7 @@ p2b_worker_main() {
   done
   for _wlib in \
     "${d}/lib/dp-phase2-post-bringup-migration.sh" \
-    "${LIB_DIR:-}/dp-phase2-post-bringup-migration.sh" \
-    "/home/aella/lib/dp-phase2-post-bringup-migration.sh"
+    "${LIB_DIR:-}/dp-phase2-post-bringup-migration.sh"
   do
     if [[ -f "$_wlib" ]]; then
       # shellcheck source=/dev/null
@@ -856,8 +854,7 @@ p2b_worker_main() {
   done
   for _wlib in \
     "${d}/lib/dp-phase2-cluster-validation.sh" \
-    "${LIB_DIR:-}/dp-phase2-cluster-validation.sh" \
-    "/home/aella/lib/dp-phase2-cluster-validation.sh"
+    "${LIB_DIR:-}/dp-phase2-cluster-validation.sh"
   do
     if [[ -f "$_wlib" ]]; then
       # shellcheck source=/dev/null
@@ -935,8 +932,7 @@ p2b_worker_main() {
   local prereq_lib
   for prereq_lib in \
     "${d}/lib/dp-phase2-ubuntu-prerequisites.sh" \
-    "${LIB_DIR:-}/dp-phase2-ubuntu-prerequisites.sh" \
-    "/home/aella/lib/dp-phase2-ubuntu-prerequisites.sh"
+    "${LIB_DIR:-}/dp-phase2-ubuntu-prerequisites.sh"
   do
     if [[ -f "$prereq_lib" ]]; then
       # shellcheck source=/dev/null

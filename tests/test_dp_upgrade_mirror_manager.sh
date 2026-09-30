@@ -43,20 +43,19 @@ cleanup() {
 trap cleanup EXIT
 
 make_selective_fixture() {
-  local root="$1" hop
-  for hop in xenial-to-bionic bionic-to-focal focal-to-jammy jammy-to-noble; do
-    mkdir -p "${root}/published/hops/${hop}/ubuntu/pool" "${root}/published/hops/${hop}/ubuntu/dists"
-    printf 'pkg-%s\n' "$hop" >"${root}/published/hops/${hop}/ubuntu/pool/hello.deb"
-    printf 'Release-%s\n' "$hop" >"${root}/published/hops/${hop}/ubuntu/dists/Release"
-  done
-  mkdir -p "${root}/published/shared/offline" "${root}/keys"
-  printf 'meta\n' >"${root}/published/shared/offline/meta-release-lts"
-  printf 'TEST-SELECTIVE-PUBLIC-KEY\n' >"${root}/keys/ubuntu-mirror-selective.gpg"
-  ln -sfn hops/jammy-to-noble/ubuntu "${root}/published/ubuntu"
+  local root="$1"
+  local fx="${WORKDIR}/client-selective-fixture"
+  # Use the production-shaped selective fixture shared by the real local
+  # client-finalization integration tests. The old minimal fixture had no
+  # release-upgrader tarballs / signed Release metadata, so current builders
+  # correctly refused to finalize clients after heavy artifacts were prepared.
   # shellcheck source=lib/client_finalization_fixture.sh
   source "${ROOT}/tests/lib/client_finalization_fixture.sh"
-  client_fixture_write_generation_binding "$root" "$ROOT" >/dev/null
+  rm -rf "$fx" "$root"
+  client_fixture_build_selective "$fx" >/dev/null
+  mv "$fx/selective" "$root"
   client_fixture_plant_aws_contract_debs "$root" "$ROOT" >/dev/null
+  rm -rf "$fx/gpg-selective" "$fx/gpg-signing" "$fx/client-signing"
 }
 
 make_upstream_bringup() {
@@ -318,8 +317,13 @@ common_env() {
   export MM_CONFIG_FILE="${WORKDIR}/gui.conf"
   export MM_STATUS_FILE="${WORKDIR}/status.env"
   export LOCAL_CLIENT_SIGNING_DIR="${WORKDIR}/config/client-signing"
-  # Synthetic OS Core fixtures lack hop/upgrader trees for a real client rebuild.
-  export MM_CLIENT_FINALIZATION_MODE=verify-only
+  # This fixture is production-shaped enough to exercise the real local client
+  # finalizer; do not bypass current generation / B-P-H trust checks.
+  export MM_CLIENT_FINALIZATION_MODE="${MM_CLIENT_FINALIZATION_MODE:-full}"
+  # Synthetic fixture disk accounting must be independent of the developer
+  # host's incidental free space. The explicit low-space case below overrides
+  # this value to prove the fail-closed disk gate.
+  export MM_MOCK_AVAILABLE_BYTES=$((80 * 1024 * 1024 * 1024))
   export DP_PHASE2_ROOT="${WORKDIR}/mirror/dp-phase2"
   export DP_PHASE2_SKIP_ROOT_CHECK=1
   export DP_PHASE2_MIN_FREE_GIB=0
@@ -810,12 +814,19 @@ set +e
 out_disk="$(run_prepare 2>&1)"; rc_disk=$?
 set -e
 [[ "$rc_disk" -ne 0 ]] && echo "$out_disk" | grep -q 'DISK_PREFLIGHT=FAIL' && pass "P disk" || fail "P disk"
-unset MM_MOCK_AVAILABLE_BYTES
+export MM_MOCK_AVAILABLE_BYTES=$((80 * 1024 * 1024 * 1024))
 
 export MM_LOCK_FILE="${WORKDIR}/lock-v"
 exec {lockfd}>"$MM_LOCK_FILE"; flock -n "$lockfd"
 set +e
-out_v="$(MM_DRY_RUN=1 run_prepare --dry-run 2>&1)"; rc_v=$?
+out_v="$(
+  MM_LOCK_FILE="$MM_LOCK_FILE" MM_HERMETIC_TEST_MODE=1 bash -c '
+    set -euo pipefail
+    source "'"${ROOT}"'/scripts/lib/mirror_manager_common.sh"
+    mm_acquire_install_lock
+  ' 2>&1
+)"
+rc_v=$?
 set -e
 flock -u "$lockfd"; eval "exec ${lockfd}>&-"
 [[ "$rc_v" -ne 0 ]] && echo "$out_v" | grep -q 'INSTALL_LOCK=BUSY' && pass "P lock" || fail "P lock"
@@ -1338,7 +1349,12 @@ grep -q 'mv -f "$payload" "$final_tmp"' "$ENGINE" \
   && grep -q 'engine_stage_acps_work_from_cache' "$ENGINE" \
   && grep -q 'engine_link_acps_file_into_work' "$ENGINE" \
   && grep -q 'hardlink_required' "$ENGINE" \
-  && grep -qE 'tar -cf "\$\{?dest_tmp\}?/\$\{?stable\}?"|tar -cf "\$2"' "$ENGINE" \
+  && grep -q -- '--format=gnu' "$ENGINE" \
+  && grep -q -- '--mtime=@0' "$ENGINE" \
+  && grep -q -- '--owner=0' "$ENGINE" \
+  && grep -q -- '--group=0' "$ENGINE" \
+  && grep -q -- '--numeric-owner' "$ENGINE" \
+  && grep -q -- '--mode=0644' "$ENGINE" \
   && grep -q 'PHASE2_BUNDLE_CREATE' "$ENGINE" \
   && grep -q 'engine_cleanup_phase2_sources' "$ENGINE" \
   && grep -q 'DP_PHASE2_ATOMIC_PUBLISH=PASS' "$ENGINE" \
@@ -1369,9 +1385,36 @@ else
   fail "T umask not restored after mm_wf_ensure_file"
 fi
 
-# Credential config remains 600
-grep -A120 '^mm_save_gui_config' "${ROOT}/scripts/lib/mirror_manager_common.sh" | grep -q 'chmod 600' \
-  && pass "T CREDENTIAL_CONFIG_MODE=600" || fail "T credential chmod 600 missing"
+# Credential config remains 600. Validate the behavior instead of grepping
+# function source text so this assertion is stable under refactors/pipefail.
+CRED_MODE_DIR="${WORKDIR}/credential-mode"
+if env \
+  MM_PROJECT_ROOT="$ROOT" \
+  MM_CONFIG_DIR="$CRED_MODE_DIR" \
+  MM_CONFIG_FILE="${CRED_MODE_DIR}/dp-upgrade-mirror.conf" \
+  MM_STATUS_FILE="${CRED_MODE_DIR}/dp-upgrade-mirror.status" \
+  MM_WORKFLOW_FILE="${CRED_MODE_DIR}/dp-upgrade-workflow.state" \
+  MM_STATE_ROOT="${CRED_MODE_DIR}/state" \
+  MM_LOG_DIR="${CRED_MODE_DIR}/logs" \
+  MM_SKIP_ROOT_CHECK=1 \
+  bash -c '
+    set -euo pipefail
+    mkdir -p "$MM_CONFIG_DIR" "$MM_STATE_ROOT" "$MM_LOG_DIR"
+    source "$MM_PROJECT_ROOT/scripts/lib/mirror_manager_common.sh"
+    PREPARATION_MODE=FULL
+    WORKER_SSH_PASSWORD="fixture-secret"
+    DL_WORKER_IPS=""
+    DA_WORKER_IPS=""
+    MIRROR_SERVER_IP="192.0.2.10"
+    MIRROR_HTTP_URL="http://192.0.2.10"
+    mm_save_gui_config >/dev/null
+    [[ "$(stat -c "%a" "$MM_CONFIG_FILE")" == "600" ]]
+  '
+then
+  pass "T CREDENTIAL_CONFIG_MODE=600"
+else
+  fail "T credential config mode is not 600"
+fi
 
 # Public dirs 755 in bootstrap
 grep -n 'chmod 755' "${ROOT}/lib/bootstrap.sh" | grep -q 'client' \

@@ -89,6 +89,34 @@ echo OK
         text = open(os.path.join(ROOT, 'lib', 'upgrade-profile.sh')).read()
         self.assertIn('offline-upgrade-selective', text)
         self.assertIn('um_reject_full_sync_request', text)
+        self.assertNotIn('eval "$(python3', text)
+
+    def test_shell_profile_parser_does_not_execute_json_as_code(self):
+        project = os.path.join(self.tmp, 'project')
+        config_dir = os.path.join(project, 'config')
+        os.makedirs(config_dir)
+        sentinel = os.path.join(self.tmp, 'PROFILE_EVAL_PWNED')
+        malicious = dict(self.profile)
+        # Python repr historically selected double quotes for this value; shell
+        # eval could then execute command substitution as root.
+        malicious['selective_mirror_root'] = "/tmp/profile';$(touch %s);#" % sentinel
+        with open(os.path.join(config_dir, 'offline-upgrade-profile.json'), 'w') as fh:
+            json.dump(malicious, fh)
+        script = r'''
+set -u
+um_warn() { :; }
+UM_PROJECT_ROOT="$1"
+source "$2/lib/upgrade-profile.sh"
+um_load_upgrade_profile
+'''
+        proc = subprocess.run(
+            ['bash', '-c', script, '_', project, ROOT],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        self.assertNotEqual(proc.returncode, 0, proc.stdout.decode('utf-8', 'replace'))
+        self.assertFalse(os.path.exists(sentinel), proc.stdout.decode('utf-8', 'replace'))
 
 
 if __name__ == '__main__':
