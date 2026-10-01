@@ -4625,12 +4625,19 @@ else
   cat "$cf_pkg/v2.out" || true
   cat "$cf_pkg/root/etc/stellar-conffile-probe.conf" 2>/dev/null || true
 fi
-if env -i PATH="/usr/bin:/bin:/usr/sbin:/sbin" HOME=/tmp \
-  apt-config -c "$cf_pkg/root/etc/apt/apt.conf.d/97stellar-offline-conffile-policy" dump 2>/dev/null \
-  | grep -Fq 'DPkg::Options:: "--force-confold"'; then
+# Capture apt-config output before matching. With global pipefail, piping a
+# producer directly into grep -q can intermittently report failure when grep
+# exits after the early match and apt-config observes SIGPIPE.
+set +e
+apt_config_dump="$(env -i PATH="/usr/bin:/bin:/usr/sbin:/sbin" HOME=/tmp \
+  apt-config -c "$cf_pkg/root/etc/apt/apt.conf.d/97stellar-offline-conffile-policy" dump 2>/dev/null)"
+apt_config_rc=$?
+set -e
+if [[ "$apt_config_rc" -eq 0 ]] \
+  && grep -Fq 'DPkg::Options:: "--force-confold"' <<<"$apt_config_dump"; then
   pass "apt-config parses force-confold policy"
 else
-  fail "apt-config did not apply force-confold"
+  fail "apt-config did not apply force-confold (rc=$apt_config_rc)"
 fi
 rm -rf "$cf_root" "$cf_pkg"
 # 16.B pre-transition failure restores conffile policy
