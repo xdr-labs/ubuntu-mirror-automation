@@ -62,6 +62,7 @@ TEST_LIST=(
   test_dns_time_readiness_policy.sh
   test_dp_offline_upgrade_xenial_to_bionic.sh
   test_dpkg_updates_empty_listing.sh
+  test_dp_client_p1_safety.sh
   test_xenial_bionic_upgrader_env_order.py
   test_postboot_shebang_and_state_machine.sh
   test_durable_write_and_lxd_coldstart.sh

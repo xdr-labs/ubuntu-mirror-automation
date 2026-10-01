@@ -1129,6 +1129,30 @@ is_critical_os_hold_package() {
 
 DURABLE_WRITE_LOG_THRESHOLD_MS="${DURABLE_WRITE_LOG_THRESHOLD_MS:-500}"
 
+# Return 0 when dpkg audit is unsafe (issues present OR the audit command itself
+# failed); return 1 only for a successful, empty audit. Do not pipe into grep -q:
+# with pipefail, an early grep exit can SIGPIPE dpkg and turn dirty state into a
+# false negative.
+dpkg_audit_has_issues() {
+  local tmp rc=0 errexit_was_on=0
+  tmp="$(mktemp "${TMPDIR:-/tmp}/dpkg-audit.XXXXXX" 2>/dev/null)" || return 0
+  case $- in *e*) errexit_was_on=1 ;; esac
+  set +e
+  dpkg --audit >"$tmp" 2>&1
+  rc=$?
+  if [[ "$errexit_was_on" -eq 1 ]]; then
+    set -e
+  else
+    set +e
+  fi
+  if [[ "$rc" -ne 0 || -s "$tmp" ]]; then
+    rm -f "$tmp"
+    return 0
+  fi
+  rm -f "$tmp"
+  return 1
+}
+
 _durable_now_ms() {
   python3 -c 'import time; print(int(time.time()*1000))' 2>/dev/null || echo 0
 }
@@ -2778,6 +2802,87 @@ DIAGNOSTIC_BUNDLE_PATH=""
 CURRENT_RUN_ID="${CURRENT_RUN_ID:-}"
 RECON_BASELINE_LOADED="NO"
 
+# Direct-sourceable reconciliation tests do not always load the durable helper.
+# Delegate to the common predicate when present; otherwise use the same
+# fail-closed full-output audit semantics locally.
+recon_dpkg_audit_has_issues() {
+  if declare -F dpkg_audit_has_issues >/dev/null 2>&1; then
+    dpkg_audit_has_issues
+    return $?
+  fi
+  local tmp rc=0 errexit_was_on=0
+  tmp="$(mktemp "${TMPDIR:-/tmp}/dpkg-audit.XXXXXX" 2>/dev/null)" || return 0
+  case $- in *e*) errexit_was_on=1 ;; esac
+  set +e
+  dpkg --audit >"$tmp" 2>&1
+  rc=$?
+  if [[ "$errexit_was_on" -eq 1 ]]; then
+    set -e
+  else
+    set +e
+  fi
+  if [[ "$rc" -ne 0 || -s "$tmp" ]]; then
+    rm -f "$tmp"
+    return 0
+  fi
+  rm -f "$tmp"
+  return 1
+}
+
+# Serialize one destructive client transaction across all four OS-hop clients.
+# All hops share one ephemeral /run/lock identity, so two different hop binaries
+# cannot race through check -> preflight -> confirmation -> commit. A stale lock
+# file is harmless: flock ownership disappears automatically when the process exits.
+CLIENT_EXECUTION_LOCK_FD=""
+CLIENT_EXECUTION_LOCK_PATH=""
+
+_client_execution_lock_fd_holds_ours() {
+  local fd="${1:-}" expected actual
+  [[ "$fd" =~ ^[0-9]+$ ]] || return 1
+  [[ -e "/proc/self/fd/${fd}" ]] || return 1
+  expected="$(hostpath "/run/lock/stellar-offline-os-upgrade-client.lock")"
+  expected="$(readlink -f "$expected" 2>/dev/null || printf '%s' "$expected")"
+  actual="$(readlink -f "/proc/self/fd/${fd}" 2>/dev/null || true)"
+  [[ -n "$actual" && "$actual" == "$expected" ]] || return 1
+  flock -n "$fd"
+}
+
+client_execution_lock_acquire() {
+  local lock dir fd
+  if _client_execution_lock_fd_holds_ours "${CLIENT_EXECUTION_LOCK_FD:-}"; then
+    return 0
+  fi
+  CLIENT_EXECUTION_LOCK_FD=""
+  CLIENT_EXECUTION_LOCK_PATH=""
+  lock="$(hostpath "/run/lock/stellar-offline-os-upgrade-client.lock")"
+  dir="$(dirname "$lock")"
+  mkdir -p "$dir" || return 1
+  exec {fd}>"$lock" || return 1
+  if ! flock -n "$fd"; then
+    eval "exec ${fd}>&-" 2>/dev/null || true
+    return 1
+  fi
+  CLIENT_EXECUTION_LOCK_FD="$fd"
+  CLIENT_EXECUTION_LOCK_PATH="$lock"
+  chmod 0600 "$lock" 2>/dev/null || true
+  if declare -F log >/dev/null 2>&1; then
+    log INFO "CLIENT_EXECUTION_LOCK=ACQUIRED path=/run/lock/stellar-offline-os-upgrade-client.lock"
+  fi
+  return 0
+}
+
+client_execution_lock_release() {
+  local fd="${CLIENT_EXECUTION_LOCK_FD:-}"
+  [[ "$fd" =~ ^[0-9]+$ ]] || return 0
+  flock -u "$fd" 2>/dev/null || true
+  eval "exec ${fd}>&-" 2>/dev/null || true
+  CLIENT_EXECUTION_LOCK_FD=""
+  if declare -F log >/dev/null 2>&1; then
+    log INFO "CLIENT_EXECUTION_LOCK=RELEASED"
+  fi
+  return 0
+}
+
 recon_hop_root() {
   hostpath "${STATE_ROOT}/hops/${PIN_HOP}"
 }
@@ -3084,7 +3189,7 @@ record_release_upgrade_run_baseline() {
   fi
   audit_out="clean"
   if [[ -z "${TEST_ROOT:-}" ]]; then
-    if dpkg --audit 2>/dev/null | grep -q .; then
+    if recon_dpkg_audit_has_issues; then
       audit_out="dirty"
     fi
   elif [[ -f "$(hostpath /tmp/dpkg-broken)" ]]; then
@@ -3259,7 +3364,7 @@ collect_package_transition_evidence() {
         "$(hostpath ${STATE_ROOT}/force-upgrade-transaction-evidence)" "force-upgrade-transaction" "yes"
     fi
   else
-    if dpkg --audit 2>/dev/null | grep -q .; then
+    if recon_dpkg_audit_has_issues; then
       DPKG_AUDIT_STATUS="INTERRUPTED"
       recon_append_evidence "INTERRUPTED_DPKG_TRANSACTION" "dpkg_audit" "dpkg --audit" \
         "audit_output_present" "yes"
@@ -5442,7 +5547,7 @@ check_dpkg_health() {
     [[ ! -f "$(hostpath /tmp/dpkg-broken)" ]] || return 1
     return 0
   fi
-  if dpkg --audit 2>/dev/null | grep -q .; then
+  if dpkg_audit_has_issues; then
     log ERROR "dpkg --audit reported issues"
     return 1
   fi
@@ -5528,7 +5633,7 @@ detect_partial_release_transition() {
     done
   fi
 
-  if dpkg --audit 2>/dev/null | grep -q .; then
+  if dpkg_audit_has_issues; then
     log ERROR "dpkg audit dirty during partial-transition check"
     mixed=1
   fi
@@ -7977,6 +8082,30 @@ dp_offline_enforce_production_fixture_policy() {
 
 DURABLE_WRITE_LOG_THRESHOLD_MS="${DURABLE_WRITE_LOG_THRESHOLD_MS:-500}"
 
+# Return 0 when dpkg audit is unsafe (issues present OR the audit command itself
+# failed); return 1 only for a successful, empty audit. Do not pipe into grep -q:
+# with pipefail, an early grep exit can SIGPIPE dpkg and turn dirty state into a
+# false negative.
+dpkg_audit_has_issues() {
+  local tmp rc=0 errexit_was_on=0
+  tmp="$(mktemp "${TMPDIR:-/tmp}/dpkg-audit.XXXXXX" 2>/dev/null)" || return 0
+  case $- in *e*) errexit_was_on=1 ;; esac
+  set +e
+  dpkg --audit >"$tmp" 2>&1
+  rc=$?
+  if [[ "$errexit_was_on" -eq 1 ]]; then
+    set -e
+  else
+    set +e
+  fi
+  if [[ "$rc" -ne 0 || -s "$tmp" ]]; then
+    rm -f "$tmp"
+    return 0
+  fi
+  rm -f "$tmp"
+  return 1
+}
+
 _durable_now_ms() {
   python3 -c 'import time; print(int(time.time()*1000))' 2>/dev/null || echo 0
 }
@@ -8356,7 +8485,7 @@ reclassify_false_empty_dpkg_updates_transition() {
   ver="$(grep -E '^VERSION_ID=' "$(_hp /etc/os-release)" 2>/dev/null | cut -d= -f2 | tr -d '"' || true)"
   [[ -n "$ver" && "$ver" == "${PIN_SOURCE_VERSION}" ]] || return 1
   if [[ -z "${_TEST_PREFIX:-}" && -z "${TEST_ROOT:-}" ]]; then
-    if dpkg --audit 2>/dev/null | grep -q .; then
+    if dpkg_audit_has_issues; then
       return 1
     fi
   fi
@@ -10213,7 +10342,7 @@ main() {
   fi
 
   LAST_COMMAND="dpkg --audit"
-  if dpkg --audit 2>/dev/null | grep -q .; then
+  if dpkg_audit_has_issues; then
     fail_stage 1 "dpkg --audit dirty before do-release-upgrade"
   fi
   LAST_COMMAND="apt-get update"
@@ -10315,7 +10444,7 @@ main() {
   set_stage "PACKAGE_TRANSACTION"
   mark_release_upgrade_package_transition_started
   set_stage "POST_UPGRADE_VERIFY"
-  if dpkg --audit 2>/dev/null | grep -q .; then
+  if dpkg_audit_has_issues; then
     fail_stage 1 "dpkg audit dirty after upgrade"
   fi
   if ! apt-get check >/dev/null 2>&1; then
@@ -10366,6 +10495,30 @@ set -euo pipefail
 # Bash 4.3+/4.4 safe; requires python3 (standard on Bionic+ upgrade hosts).
 
 DURABLE_WRITE_LOG_THRESHOLD_MS="${DURABLE_WRITE_LOG_THRESHOLD_MS:-500}"
+
+# Return 0 when dpkg audit is unsafe (issues present OR the audit command itself
+# failed); return 1 only for a successful, empty audit. Do not pipe into grep -q:
+# with pipefail, an early grep exit can SIGPIPE dpkg and turn dirty state into a
+# false negative.
+dpkg_audit_has_issues() {
+  local tmp rc=0 errexit_was_on=0
+  tmp="$(mktemp "${TMPDIR:-/tmp}/dpkg-audit.XXXXXX" 2>/dev/null)" || return 0
+  case $- in *e*) errexit_was_on=1 ;; esac
+  set +e
+  dpkg --audit >"$tmp" 2>&1
+  rc=$?
+  if [[ "$errexit_was_on" -eq 1 ]]; then
+    set -e
+  else
+    set +e
+  fi
+  if [[ "$rc" -ne 0 || -s "$tmp" ]]; then
+    rm -f "$tmp"
+    return 0
+  fi
+  rm -f "$tmp"
+  return 1
+}
 
 _durable_now_ms() {
   python3 -c 'import time; print(int(time.time()*1000))' 2>/dev/null || echo 0
@@ -10592,7 +10745,7 @@ main() {
   arch="$(dpkg --print-architecture)"
   [[ "$ver" == "18.04" && "$code" == "bionic" ]] || { log ERROR "not bionic"; write_state FAILED; exit 1; }
   [[ "$arch" == "amd64" ]] || { log ERROR "arch ${arch}"; write_state FAILED; exit 1; }
-  dpkg --audit 2>/dev/null | grep -q . && { log ERROR "dpkg audit"; write_state FAILED; exit 1; }
+  if dpkg_audit_has_issues; then log ERROR "dpkg audit"; write_state FAILED; exit 1; fi
   apt-get check >/dev/null 2>&1 || { log ERROR "broken deps"; write_state FAILED; exit 1; }
   [[ -d /opt/aelladata ]] || { log ERROR "aelladata missing"; write_state FAILED; exit 1; }
   if grep -RqiE '(archive|security|old-releases)\.ubuntu\.com' /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null; then
@@ -11770,6 +11923,9 @@ monitor_upgrade_progress() {
 
 refuse_duplicate_upgrade() {
   local st pid
+  # Monitoring an already-running detached upgrade is read-only. Never keep the
+  # destructive client transaction lock while attached as a monitor.
+  client_execution_lock_release 2>/dev/null || true
   st="$(read_state)"
   # Stuck reboot/postboot with no live runner must fail closed (not MONITOR_ONLY success).
   reject_incomplete_reboot_or_postboot "$st"
@@ -11999,6 +12155,7 @@ start_upgrade_service_detached() {
     set +e
     if [[ "$cls_rc" -eq 0 && "$HANDOFF_CONFIRMED" -eq 1 ]]; then
       CRITICAL_HOLD_RESTORE_ON_EXIT=0
+      client_execution_lock_release 2>/dev/null || true
       set +e
       maybe_attach_progress_monitor "${UPGRADE_RUNNER_PID:-0}"
       mon_rc=$?
@@ -12015,6 +12172,7 @@ start_upgrade_service_detached() {
   fi
 
   CRITICAL_HOLD_RESTORE_ON_EXIT=0
+  client_execution_lock_release 2>/dev/null || true
   set +e
   maybe_attach_progress_monitor "${UPGRADE_RUNNER_PID:-0}"
   mon_rc=$?
@@ -12287,6 +12445,13 @@ main() {
   if [[ "${DIAGNOSE_STATE_ONLY:-0}" -eq 1 ]]; then
     diagnose_release_upgrade_state
     exit 0
+  fi
+  # Serialize state reconciliation, preflight, confirmation, and destructive
+  # commit across all four hop clients. A stale lock file is harmless because
+  # flock ownership is tied to the live process, not the pathname.
+  if ! client_execution_lock_acquire; then
+    log ERROR "CLIENT_EXECUTION_LOCK=BUSY path=/run/lock/stellar-offline-os-upgrade-client.lock"
+    die "$EC_BUSY" "another DP OS upgrade client transaction is active"
   fi
   handle_existing_state
   detect_partial_release_transition
