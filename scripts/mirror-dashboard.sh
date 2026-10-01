@@ -43,7 +43,14 @@ PREV_TS=0
 CUR_RX_RATE=0
 CUR_DISK_RATE=0
 CUR_SIZE_DELTA=0
-PAUSE_SUPPORTED=1
+PAUSE_SUPPORTED=0
+# Legacy sync mutation is disabled in production. The dashboard remains useful
+# for observation, but Pause/Resume may only be exercised by explicit dual-
+# hermetic tests of the retired control plane.
+if [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" \
+  && "${MIRRORCTL_ALLOW_LEGACY_MUTATION:-0}" == "1" ]]; then
+  PAUSE_SUPPORTED=1
+fi
 
 usage() {
   cat <<'EOF'

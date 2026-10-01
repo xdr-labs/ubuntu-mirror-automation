@@ -19,28 +19,25 @@ READY_PATH="${TMP}/READY"
 DP_PHASE2_ROOT="${TMP}/dp-phase2"
 TARGET_DP_VERSION=6.6.0
 mkdir -p "$DEST_ROOT" \
-  "${DP_PHASE2_ROOT}/${TARGET_DP_VERSION}/current" \
+  "${DP_PHASE2_ROOT}/${TARGET_DP_VERSION}" \
   "$(dirname "$READY_PATH")"
 
 printf 'READY_FIXTURE\n' >"$READY_PATH"
 READY_HASH="$(sha256sum "$READY_PATH" | awk '{print $1}')"
-BUNDLE="${DP_PHASE2_ROOT}/${TARGET_DP_VERSION}/current/dp_bundle_${TARGET_DP_VERSION}-current.tar"
-# Small fixture bundle (not 30GB).
+RELEASE_DIR="${DP_PHASE2_ROOT}/${TARGET_DP_VERSION}"
+BUNDLE="${RELEASE_DIR}/dp_bundle_${TARGET_DP_VERSION}-current.tar"
+# Small fixture bundle (not 30GB) in the authoritative flat release layout.
 printf 'bundle-fixture\n' >"$BUNDLE"
-ln -sfn "${DP_PHASE2_ROOT}/${TARGET_DP_VERSION}/current" \
-  "${DP_PHASE2_ROOT}/${TARGET_DP_VERSION}/current-link" 2>/dev/null || true
-# deploy helpers-only expects CURRENT symlink/dir + release.env
-CURRENT="${DP_PHASE2_ROOT}/${TARGET_DP_VERSION}/current"
-cat >"${CURRENT}/release.env" <<EOF
+cat >"${RELEASE_DIR}/release.env" <<EOF
 TARGET_DP_VERSION=${TARGET_DP_VERSION}
 PHASE2_ARTIFACT_VERSION=${TARGET_DP_VERSION}
 DP_PHASE2_VERSION=${TARGET_DP_VERSION}
 STABLE_BUNDLE_NAME=dp_bundle_${TARGET_DP_VERSION}-current.tar
 VERIFICATION_RESULT=PASS
 EOF
-chmod 0644 "${CURRENT}/release.env"
+chmod 0644 "${RELEASE_DIR}/release.env"
 (
-  cd "$CURRENT"
+  cd "$RELEASE_DIR"
   sha256sum "dp_bundle_${TARGET_DP_VERSION}-current.tar" \
     >"dp_bundle_${TARGET_DP_VERSION}-current.tar.sha256"
 )
@@ -61,7 +58,7 @@ phase2_prereq_write_identity_for_extras \
 export MM_DP_PHASE2_ROOT="$DP_PHASE2_ROOT"
 BUNDLE_STAT_BEFORE="$(stat -c '%i %s' "$(readlink -f "$BUNDLE")")"
 BUNDLE_HASH_BEFORE="$(sha256sum "$(readlink -f "$BUNDLE")" | awk '{print $1}')"
-CURRENT_BEFORE="$(readlink -f "$CURRENT")"
+RELEASE_DIR_BEFORE="$(readlink -f "$RELEASE_DIR")"
 
 PORT="$(python3 - <<'PY'
 import socket
@@ -151,7 +148,7 @@ done
 
 echo "PHASE2_FULL_CLIENT_UNIT_PUBLISH=PASS"
 
-# Helper-only refresh must not touch READY / bundle / current.
+# Helper-only refresh must not touch READY / bundle / flat release directory.
 # Seed an older helper content marker, then redeploy from canonical sources.
 printf 'OLD_HELPER\n' >"${DEST_ROOT}/lib/dp-phase2-operation-progress.sh"
 OLD_HELPER_SHA="$(sha256sum "${DEST_ROOT}/lib/dp-phase2-operation-progress.sh" | awk '{print $1}')"
@@ -163,6 +160,6 @@ NEW_HELPER_SHA="$(sha256sum "${DEST_ROOT}/lib/dp-phase2-operation-progress.sh" |
 [[ "$(sha256sum "$READY_PATH" | awk '{print $1}')" == "$READY_HASH" ]]
 [[ "$(stat -c '%i %s' "$(readlink -f "$BUNDLE")")" == "$BUNDLE_STAT_BEFORE" ]]
 [[ "$(sha256sum "$(readlink -f "$BUNDLE")" | awk '{print $1}')" == "$BUNDLE_HASH_BEFORE" ]]
-[[ "$(readlink -f "$CURRENT")" == "$CURRENT_BEFORE" ]]
+[[ "$(readlink -f "$RELEASE_DIR")" == "$RELEASE_DIR_BEFORE" ]]
 
 echo "PHASE2_HELPER_ONLY_REFRESH_INVARIANTS=PASS"

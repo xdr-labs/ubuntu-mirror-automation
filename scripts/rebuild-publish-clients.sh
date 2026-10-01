@@ -242,12 +242,81 @@ evidence_echo() {
 FAILED_HOP=""
 FAILED_STAGE=""
 LIVE_BACKUP=""
+LIVE_PUBLISHED=0
+LIVE_COMMITTED=0
 STAGE_DIR=""
+
+rollback_live_client_set() {
+  local rollback_out="" rollback_rc=0
+  [[ "${LIVE_PUBLISHED:-0}" == "1" && "${LIVE_COMMITTED:-0}" != "1" ]] || return 0
+
+  if [[ -n "${LIVE_BACKUP:-}" && -d "$LIVE_BACKUP" && -d "$CLIENT_HTTP_ROOT" ]]; then
+    if rollback_out="$(python3 "${ROOT}/scripts/lib/atomic_dir_swap.py" \
+      --stage-dir "$LIVE_BACKUP" \
+      --live-dir "$CLIENT_HTTP_ROOT" \
+      --require-exchange 2>&1)"; then
+      printf '%s\n' "$rollback_out" >>"$EVIDENCE_LOG" 2>/dev/null || true
+      evidence_echo "CLIENT_SET_ROLLBACK=PASS previous_restored=YES"
+      LIVE_BACKUP=""
+      LIVE_PUBLISHED=0
+      return 0
+    else
+      rollback_rc=$?
+      printf '%s\n' "$rollback_out" >>"$EVIDENCE_LOG" 2>/dev/null || true
+      evidence_echo "CLIENT_SET_ROLLBACK=FAIL rc=${rollback_rc}"
+      return "$rollback_rc"
+    fi
+  fi
+
+  # First publication had no previous generation. Remove the failed new live
+  # rather than leave an operation that reported FAIL as the active client set.
+  if [[ -d "$CLIENT_HTTP_ROOT" ]]; then
+    if _rpc_assert_safe_destructive_path "$CLIENT_HTTP_ROOT" "${_CLIENT_HTTP_APPROVED_ROOT}" CLIENT_HTTP_ROOT; then
+      rm -rf "$CLIENT_HTTP_ROOT" 2>/dev/null || return 1
+    else
+      return 1
+    fi
+  fi
+  evidence_echo "CLIENT_SET_ROLLBACK=PASS previous_restored=NO live_removed=YES"
+  LIVE_PUBLISHED=0
+  return 0
+}
+
+commit_live_client_set() {
+  local previous="${LIVE_BACKUP:-}"
+  # The workflow receipt is already durable when this is called. From this
+  # point the new live generation is authoritative; cleanup failure must not
+  # roll the live tree back behind the durable receipt.
+  LIVE_COMMITTED=1
+  LIVE_BACKUP=""
+  if [[ -n "$previous" && -e "$previous" ]]; then
+    case "$previous" in
+      "$CLIENT_HTTP_ROOT".stage.*|"$CLIENT_HTTP_ROOT".prev.*) ;;
+      *)
+        evidence "CLIENT_SET_PREVIOUS_CLEANUP=WARN reason=unexpected_previous_path path=${previous}"
+        evidence_echo "CLIENT_SET_COMMIT=PASS previous_cleanup=DEFERRED"
+        return 0
+        ;;
+    esac
+    if ! rm -rf "$previous"; then
+      evidence "CLIENT_SET_PREVIOUS_CLEANUP=WARN reason=remove_failed path=${previous}"
+      evidence_echo "CLIENT_SET_COMMIT=PASS previous_cleanup=DEFERRED"
+      return 0
+    fi
+  fi
+  evidence_echo "CLIENT_SET_COMMIT=PASS previous_cleanup=PASS"
+  return 0
+}
+
 cleanup() {
+  local cleanup_rc=0
+  if [[ "${LIVE_PUBLISHED:-0}" == "1" && "${LIVE_COMMITTED:-0}" != "1" ]]; then
+    rollback_live_client_set || cleanup_rc=$?
+  fi
   if [[ -n "${STAGE_DIR:-}" && -d "${STAGE_DIR:-}" ]]; then
     rm -rf "$STAGE_DIR"
   fi
-  return 0
+  return "$cleanup_rc"
 }
 trap cleanup EXIT
 
@@ -724,7 +793,15 @@ for hop in "${HOPS[@]}"; do
   printf '%s=%s\n' "$wkey" "$wsha" >>"${STAGE_DIR}/client-set.env"
 done
 p2sha="$(awk '{print $1; exit}' "${STAGE_DIR}/upgrade-phase2.sh.sha256")"
+p2rsha="$(awk '{print $1; exit}' "${STAGE_DIR}/upgrade-phase2-same-version-recovery.sh.sha256")"
+p2h="$(awk -F"'" '$1=="H="{print $2; exit}' "${STAGE_DIR}/upgrade-phase2.sh")"
+p2b="$(awk -F"'" '$1=="B="{print $2; exit}' "${STAGE_DIR}/upgrade-phase2.sh")"
+p2p="$(awk -F"'" '$1=="P="{print $2; exit}' "${STAGE_DIR}/upgrade-phase2.sh")"
 printf 'CLIENT_WRAPPER_PHASE2_SHA256=%s\n' "$p2sha" >>"${STAGE_DIR}/client-set.env"
+printf 'CLIENT_WRAPPER_PHASE2_RECOVERY_SHA256=%s\n' "$p2rsha" >>"${STAGE_DIR}/client-set.env"
+printf 'CLIENT_PHASE2_HELPER_GENERATION_SHA256=%s\n' "$p2h" >>"${STAGE_DIR}/client-set.env"
+printf 'CLIENT_PHASE2_BUNDLE_SHA256=%s\n' "$p2b" >>"${STAGE_DIR}/client-set.env"
+printf 'CLIENT_PHASE2_PREREQ_IDENTITY_SHA256=%s\n' "$p2p" >>"${STAGE_DIR}/client-set.env"
 chmod 0644 "${STAGE_DIR}/client-set.env"
 
 # Final verify on staged tree before cutover.
@@ -787,20 +864,26 @@ evidence_echo "CLIENT_PUBLIC_PERMISSION_NORMALIZE=PASS"
 evidence_echo "CLIENT_PUBLIC_PERMISSION_PREPUBLISH_VERIFY=PASS"
 evidence_echo "CLIENT_PUBLIC_ROOT_MODE=0755"
 
-# Atomic directory swap with rollback-safe helper.
-# atomic_dir_swap.py must not alter permissions; staging is already correct.
-set +e
-swap_out="$(python3 "${ROOT}/scripts/lib/atomic_dir_swap.py" \
+# No-gap transactional cutover. Keep the previous live generation until all
+# post-publish checks + workflow receipt persistence succeed.
+if swap_out="$(python3 "${ROOT}/scripts/lib/atomic_dir_swap.py" \
   --stage-dir "$STAGE_DIR" \
-  --live-dir "$CLIENT_HTTP_ROOT" 2>&1)"
-swap_rc=$?
-set -e
+  --live-dir "$CLIENT_HTTP_ROOT" \
+  --require-exchange \
+  --keep-previous 2>&1)"; then
+  swap_rc=0
+else
+  swap_rc=$?
+fi
 printf '%s\n' "$swap_out" | tee -a "$EVIDENCE_LOG"
 if [[ "$swap_rc" -ne 0 ]]; then
-  STAGE_DIR=""  # may already be moved/cleaned by helper
+  STAGE_DIR=""  # helper may already have moved/cleaned it
   fail_build "" "atomic_swap" "CLIENT_SET_ATOMIC_SWAP=FAIL" "$swap_rc"
 fi
+LIVE_BACKUP="$(printf '%s\n' "$swap_out" | awk -F= '$1=="CLIENT_SET_PREVIOUS_PATH"{print substr($0,index($0,"=")+1); exit}')"
+LIVE_PUBLISHED=1
 STAGE_DIR=""
+evidence_echo "CLIENT_SET_PREVIOUS_PRESERVED=$([[ -n "$LIVE_BACKUP" ]] && printf YES || printf NO)"
 
 local_signing_assert_private_not_published "$CLIENT_HTTP_ROOT" || {
   fail_build "" "private_key_published" "private key present under client HTTP root" 1
@@ -814,24 +897,10 @@ evidence_echo "CLIENT_PUBLIC_PERMISSION_POSTPUBLISH_VERIFY=PASS"
 evidence_echo "CLIENT_PUBLIC_NGINX_USER_READ=PASS"
 evidence_echo "CLIENT_PUBLIC_ROOT_MODE=0755"
 
-evidence_echo "CLIENT_SET_ATOMIC_SWAP=PASS"
-evidence_echo "CLIENT_SET_ROLLBACK=NOT_REQUIRED"
-evidence_echo "CLIENT_SET_DEPLOY_ATOMIC=YES"
-evidence_echo "INSTALL_ATOMICALLY_PUBLISHES_FULL_SET=YES"
-evidence_echo "INSTALL_PUBLISHES_LOCAL_PUBLIC_KEY=YES"
-evidence_echo "PRIVATE_KEY_HTTP_PUBLISHED=NO"
-evidence_echo "ALL_FOUR_CLIENTS_ATOMICALLY_PUBLISHED=YES"
-evidence_echo "CLIENT_SET_ON_DISK_READY=PASS"
-echo "CLIENT_SET_ATOMIC_SWAP=PASS"
-echo "CLIENT_SET_ROLLBACK=NOT_REQUIRED"
-echo "CLIENT_SET_DEPLOY_ATOMIC=YES"
-echo "INSTALL_ATOMICALLY_PUBLISHES_FULL_SET=YES"
-echo "INSTALL_PUBLISHES_LOCAL_PUBLIC_KEY=YES"
-echo "PRIVATE_KEY_HTTP_PUBLISHED=NO"
-echo "ALL_FOUR_CLIENTS_ATOMICALLY_PUBLISHED=YES"
-echo "CLIENT_SET_ON_DISK_READY=PASS"
-
-# Persist generation metadata into the live client set + workflow state.
+# Persist generation metadata only after live HTTP verification succeeds.
+# Until this function and commit_live_client_set both succeed, EXIT rollback
+# restores the previous generation.
+persist_client_workflow_receipt() {
 if [[ -f "${ROOT}/scripts/lib/mirror_workflow_state.sh" ]]; then
   # Prefer the signing confdir parent as the workflow state home when unset.
   if [[ -z "${MM_WORKFLOW_FILE:-}" ]]; then
@@ -886,6 +955,7 @@ if [[ -f "${ROOT}/scripts/lib/mirror_workflow_state.sh" ]]; then
   echo "CLIENT_SET_GENERATION_ID=${CLIENT_BUILD_GENERATION_ID}"
   echo "CLIENT_SIGNING_FINGERPRINT=${LOCAL_KEY_FINGERPRINT}"
 fi
+}
 
 if [[ "$SKIP_HTTP_VERIFY" == "1" ]]; then
   evidence_echo "CLIENT_PUBLISH_HTTP_VERIFY=SKIPPED"
@@ -926,6 +996,30 @@ else
   evidence_echo "CLIENT_HTTP_READY=PASS"
   echo "CLIENT_HTTP_READY=PASS"
 fi
+
+# Only now may the new generation become authoritative. A workflow-receipt
+# failure still triggers EXIT rollback because LIVE_COMMITTED remains 0.
+persist_client_workflow_receipt
+if ! commit_live_client_set; then
+  fail_build "" "client_set_commit" "CLIENT_SET_COMMIT=FAIL previous generation retained" 1
+fi
+
+evidence_echo "CLIENT_SET_ATOMIC_SWAP=PASS"
+evidence_echo "CLIENT_SET_ROLLBACK=NOT_REQUIRED"
+evidence_echo "CLIENT_SET_DEPLOY_ATOMIC=YES"
+evidence_echo "INSTALL_ATOMICALLY_PUBLISHES_FULL_SET=YES"
+evidence_echo "INSTALL_PUBLISHES_LOCAL_PUBLIC_KEY=YES"
+evidence_echo "PRIVATE_KEY_HTTP_PUBLISHED=NO"
+evidence_echo "ALL_FOUR_CLIENTS_ATOMICALLY_PUBLISHED=YES"
+evidence_echo "CLIENT_SET_ON_DISK_READY=PASS"
+echo "CLIENT_SET_ATOMIC_SWAP=PASS"
+echo "CLIENT_SET_ROLLBACK=NOT_REQUIRED"
+echo "CLIENT_SET_DEPLOY_ATOMIC=YES"
+echo "INSTALL_ATOMICALLY_PUBLISHES_FULL_SET=YES"
+echo "INSTALL_PUBLISHES_LOCAL_PUBLIC_KEY=YES"
+echo "PRIVATE_KEY_HTTP_PUBLISHED=NO"
+echo "ALL_FOUR_CLIENTS_ATOMICALLY_PUBLISHED=YES"
+echo "CLIENT_SET_ON_DISK_READY=PASS"
 
 # Successful generation staging cleanup (keep evidence log).
 _rpc_assert_safe_destructive_path "$ARTIFACT_DIR" "${CACHE_ROOT}/client-build" ARTIFACT_DIR \

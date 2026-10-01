@@ -448,7 +448,7 @@ um_runtime_verify_python_dependency_closure() {
   case $- in *e*) errexit_was_on=1 ;; esac
   set +e
   out="$(
-    UM_EXCLUDE_REPO_ROOT="$exclude_repo" python3 - "$lib_dir" <<'PY'
+    PYTHONDONTWRITEBYTECODE=1 UM_EXCLUDE_REPO_ROOT="$exclude_repo" python3 - "$lib_dir" <<'PY'
 import importlib.util
 import os
 import sys
@@ -531,7 +531,7 @@ PY
   fi
 
   # atomic_dir_swap CLI smoke (--help)
-  if ! python3 "${lib_dir}/atomic_dir_swap.py" --help >/dev/null 2>&1; then
+  if ! PYTHONDONTWRITEBYTECODE=1 python3 "${lib_dir}/atomic_dir_swap.py" --help >/dev/null 2>&1; then
     printf 'RUNTIME_PYTHON_DEPENDENCY_CLOSURE=FAIL\n'
     printf 'RUNTIME_IMPORT_FAILED_MODULE=atomic_dir_swap\n'
     printf 'RUNTIME_IMPORT_ERROR=--help smoke failed\n'

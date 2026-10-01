@@ -466,11 +466,16 @@ echo SIZE=$sz
 
     def test_sync_start_does_not_call_apt_mirror(self):
         body = open(os.path.join(ROOT, 'scripts', 'mirrorctl'), encoding='utf-8').read()
-        # start path must use materialize via systemd, never apt-mirror binary directly
-        start_idx = body.find('case "$action" in')
-        start_block = body[start_idx:start_idx + 2500]
+        # Inspect cmd_sync itself. mirrorctl has other action-dispatch case blocks
+        # before cmd_sync, so a global search for `case "$action" in` is brittle.
+        sync_start = body.index('cmd_sync() {')
+        sync_end = body.index('\n}\n', sync_start) + 3
+        sync_block = body[sync_start:sync_end]
+        start_idx = sync_block.index('    start)')
+        stop_idx = sync_block.index('    stop)', start_idx)
+        start_block = sync_block[start_idx:stop_idx]
         self.assertIn('materialize-selective', start_block)
-        self.assertNotIn('/usr/bin/apt-mirror', start_block.split('stop)')[0])
+        self.assertNotIn('/usr/bin/apt-mirror', start_block)
 
 
 if __name__ == '__main__':

@@ -121,4 +121,53 @@ STATUS_AFTER="$(cksum "$MM_STATUS_FILE" | awk '{print $1" "$2}')"
   || fail "D: public path minted DOWNLOAD_ARTIFACT_FINGERPRINT"
 pass "D: public entrypoint preserves core fail-closed fingerprint contract"
 
+# --- E. Production Menu 4 never trusts same-stat metadata as byte integrity ---
+# This reproduces the exact audit case: mutate one byte in place, then restore
+# the original nanosecond mtime so dev/inode/size/mtime fingerprint is unchanged.
+# Readiness must still perform the cryptographic SHA256 and fail closed.
+# shellcheck source=/dev/null
+source "${ROOT}/scripts/lib/dp-phase2-common.sh"
+# shellcheck source=/dev/null
+source "${ROOT}/scripts/lib/mirror_install_engine.sh"
+BUNDLE="${TMP}/same-stat-bundle"
+SIDECAR="${BUNDLE}.sha256"
+printf '0123456789abcdef\n' >"$BUNDLE"
+sha256sum "$BUNDLE" | awk '{print $1"  same-stat-bundle"}' >"$SIDECAR"
+FP_BEFORE="$(mm_file_fingerprint "$BUNDLE")"
+python3 - "$BUNDLE" <<'PY'
+import os, sys
+p=sys.argv[1]
+st=os.stat(p)
+with open(p, 'r+b') as f:
+    b=f.read(1)
+    f.seek(0)
+    f.write(b'X' if b != b'X' else b'Y')
+os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns))
+PY
+FP_AFTER="$(mm_file_fingerprint "$BUNDLE")"
+[[ "$FP_BEFORE" == "$FP_AFTER" ]] || fail "E: same-stat reproduction did not preserve fingerprint"
+
+MM_HERMETIC_TEST_MODE=0
+MM_SKIP_HTTP_VALIDATE=0
+MM_SKIP_BUNDLE_SHA256=1
+TARGET_DP_VERSION=6.6.0
+PHASE2_TARGET_VERSION=6.6.0
+mm_http_distribution_enabled() { return 0; }
+mm_download_completed() { return 0; }
+mm_wf_get() {
+  [[ "$1" == "HTTP_PUBLICATION_GENERATION_ID" ]] && printf 'gen-same-stat\n'
+}
+engine_validate_http_layout() {
+  [[ "${MM_SKIP_BUNDLE_SHA256:-0}" != "1" ]] || return 88
+  ( cd "$(dirname "$BUNDLE")" && sha256sum -c "$(basename "$SIDECAR")" >/dev/null 2>&1 )
+}
+set +e
+SAME_STAT_OUT="$(engine_validate_upgrade_readiness_live 2>&1)"
+SAME_STAT_RC=$?
+set -e
+[[ "$SAME_STAT_RC" -ne 0 ]] || fail "E: same-stat corrupted bundle incorrectly reached readiness PASS"
+printf '%s\n' "$SAME_STAT_OUT" | grep -q 'READINESS_BUNDLE_SHA256_MODE=FULL_HASH_CRYPTOGRAPHIC_REVALIDATION' \
+  || fail "E: production readiness did not force full cryptographic hash"
+pass "E: same-stat bundle corruption is cryptographically revalidated and rejected"
+
 echo "ALL test_download_fingerprint_fail_closed checks passed"

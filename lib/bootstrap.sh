@@ -392,6 +392,8 @@ um_bootstrap_install_runtime() {
   local runtime="${INSTALL_LIB_DIR:-/usr/local/lib/ubuntu-mirror}"
   local bindir="${INSTALL_BIN_DIR:-/usr/local/bin}"
   local confdir="${INSTALL_CONF_DIR:-/etc/ubuntu-mirror}"
+  local runtime_stage="" runtime_previous="" swap_out="" swap_rc=0
+  local swap_helper="${src_root}/scripts/lib/atomic_dir_swap.py"
 
   if [[ "${UM_DRY_RUN:-0}" == "1" ]]; then
     um_dry "Would install Mirror Manager runtime under ${runtime}"
@@ -400,16 +402,86 @@ um_bootstrap_install_runtime() {
   fi
 
   mkdir -p \
-    "${runtime}" \
+    "$(dirname "$runtime")" \
     "${confdir}" \
     "${bindir}" \
     /usr/local/sbin
 
-  # Install every runtime file from the authoritative manifest (no hardcoded
-  # parallel allowlist; no wildcard copies).
-  um_runtime_install_tree "$src_root" "$runtime"
+  # Transactional runtime update:
+  #   source -> isolated stage -> dependency/import closure -> atomic cutover.
+  # Never write the live runtime file-by-file. A failed staged install leaves the
+  # previous installed tree byte-for-byte untouched.
+  [[ -f "$swap_helper" ]] || um_die "RUNTIME_ATOMIC_INSTALL=FAIL missing ${swap_helper}"
+  runtime_stage="$(mktemp -d "${runtime}.stage.XXXXXX")"
+  if ! (
+    set -euo pipefail
+    um_runtime_install_tree "$src_root" "$runtime_stage"
+    um_runtime_verify_dependency_closure "$runtime_stage"
+    um_runtime_verify_python_dependency_closure "$runtime_stage" "$src_root"
+  ); then
+    rm -rf "$runtime_stage" 2>/dev/null || true
+    um_die "RUNTIME_ATOMIC_INSTALL=FAIL reason=staged_runtime_validation"
+  fi
+  um_ok "RUNTIME_STAGE_VALIDATION=PASS path=${runtime_stage}"
 
-  # Resolve IP, local keypair, rebuild/sign/atomic-publish host-pinned clients
+  if swap_out="$(python3 "$swap_helper" \
+      --stage-dir "$runtime_stage" \
+      --live-dir "$runtime" \
+      --require-exchange \
+      --keep-previous 2>&1)"; then
+    swap_rc=0
+  else
+    swap_rc=$?
+  fi
+  printf '%s\n' "$swap_out"
+  if [[ "$swap_rc" -ne 0 ]]; then
+    rm -rf "$runtime_stage" 2>/dev/null || true
+    um_die "RUNTIME_ATOMIC_INSTALL=FAIL reason=cutover rc=${swap_rc}"
+  fi
+  runtime_previous="$(printf '%s\n' "$swap_out" | awk -F= '$1=="CLIENT_SET_PREVIOUS_PATH"{print substr($0,index($0,"=")+1); exit}')"
+
+  # Prove the live tree after cutover before discarding the previous runtime.
+  if ! (
+    set -euo pipefail
+    um_runtime_verify_dependency_closure "$runtime"
+    um_runtime_verify_python_dependency_closure "$runtime" "$src_root"
+  ); then
+    if [[ -n "$runtime_previous" && -d "$runtime_previous" ]]; then
+      if python3 "$swap_helper" \
+          --stage-dir "$runtime_previous" \
+          --live-dir "$runtime" \
+          --require-exchange >/dev/null 2>&1; then
+        um_warn "RUNTIME_ATOMIC_ROLLBACK=PASS previous_runtime_restored=YES"
+      else
+        um_error "RUNTIME_ATOMIC_ROLLBACK=FAIL previous_runtime=${runtime_previous}"
+      fi
+    else
+      case "$runtime" in
+        ""|/|/usr|/usr/local|/usr/local/lib) ;;
+        *) rm -rf "$runtime" 2>/dev/null || true ;;
+      esac
+    fi
+    um_die "RUNTIME_ATOMIC_INSTALL=FAIL reason=post_cutover_validation"
+  fi
+
+  if [[ -n "$runtime_previous" && -e "$runtime_previous" ]]; then
+    case "$runtime_previous" in
+      "$runtime".stage.*|"$runtime".prev.*)
+        rm -rf "$runtime_previous" \
+          || um_warn "RUNTIME_PREVIOUS_CLEANUP=WARN path=${runtime_previous}"
+        ;;
+      *)
+        um_warn "RUNTIME_PREVIOUS_CLEANUP=WARN reason=unexpected_path path=${runtime_previous}"
+        ;;
+    esac
+  fi
+  runtime_stage=""
+  runtime_previous=""
+  um_ok "RUNTIME_ATOMIC_INSTALL=PASS"
+
+  # Resolve IP, local keypair, rebuild/sign/atomic-publish host-pinned clients.
+  # A later client-publication failure does not leave a mixed runtime: the
+  # installed runtime has already passed its complete closure as one generation.
   um_bootstrap_deploy_client_http_artifacts
 
   # Entry points (sbin path overridable for temp-root tests)

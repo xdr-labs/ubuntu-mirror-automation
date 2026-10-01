@@ -366,21 +366,21 @@ for tin in "$X2B_IN" "$B2F_IN" "$F2J_IN" "$J2N_IN"; do
 done
 [[ "$bad" -eq 0 ]] && pass "19. no public Ubuntu download URLs in clients"
 
-# 20: interactive guidance must not use exit "$rc"
-if grep -q "Do NOT wrap this script with a trailing \`exit \"\$rc\"\`" "$APPLY" \
-  && grep -q 'APPLY_DP_PHASE2_EXIT_CODE' "$APPLY" \
-  && ! grep -qE '^\s*exit "\$rc"\s*$' "$APPLY" \
+# 20: retired direct Phase 2 apply path must be production-hard-disabled.
+if grep -q 'LEGACY_PHASE2_MAINTENANCE_DISABLED=YES' "$APPLY" \
+  && grep -q 'MM_HERMETIC_TEST_MODE' "$APPLY" \
+  && grep -q 'ALLOW_LEGACY_PHASE2_MAINTENANCE' "$APPLY" \
   && ! grep -qE 'pkill[[:space:]]+.*ssh|kill[[:space:]]+\$PPID' "$APPLY"; then
-  pass "20. Phase2 apply SSH-safe guidance (no interactive exit \"\$rc\")"
+  pass "20. retired Phase2 apply path production-disabled"
 else
-  fail "20. Phase2 SSH exit guidance"
+  fail "20. retired Phase2 apply production guard missing"
 fi
 
-if grep -q 'APPLY_DP_PHASE2_EXIT_CODE' "${ROOT}/docs/operations.md" \
-  && grep -q 'exit "\$rc"' "${ROOT}/docs/operations.md"; then
-  pass "20b. operations.md documents SSH-safe wrapper"
+if grep -q 'Do \*\*not\*\* run the old `apply-dp-phase2-production.sh`' "${ROOT}/docs/operations.md" \
+  && grep -q 'Menu 2 → 3 → 4 → 7' "${ROOT}/docs/operations.md"; then
+  pass "20b. operations.md points production to Mirror Manager only"
 else
-  fail "20b. operations.md missing SSH-safe wrapper note"
+  fail "20b. operations.md still exposes legacy Phase2 apply workflow"
 fi
 
 echo

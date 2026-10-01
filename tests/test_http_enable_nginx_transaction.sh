@@ -104,7 +104,6 @@ mkdir -p "${HTTP_ROOT}/selective/hops/jammy-to-noble/ubuntu" \
   "${HTTP_ROOT}/client" \
   "${HTTP_ROOT}/dp-phase2/6.6.0"
 ln -sfn hops/jammy-to-noble/ubuntu "${HTTP_ROOT}/selective/ubuntu"
-seed_complete_client_http_set "${HTTP_ROOT}/client" "http://192.0.2.10" "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 printf 'TARGET_DP_VERSION=6.6.0\n' >"${HTTP_ROOT}/dp-phase2/6.6.0/release.env"
 mkdir -p "${HTTP_ROOT}/dp-phase2/6.6.0/extras"
 cat >"${HTTP_ROOT}/dp-phase2/6.6.0/extras/phase2-ubuntu-prerequisites.state" <<'EOF'
@@ -126,6 +125,17 @@ tar -cf "${HTTP_ROOT}/dp-phase2/6.6.0/dp_bundle_6.6.0-current.tar" \
   cd "${HTTP_ROOT}/dp-phase2/6.6.0"
   sha256sum dp_bundle_6.6.0-current.tar >dp_bundle_6.6.0-current.tar.sha256
 )
+# Seal the published release against the exact bundle sidecar + prerequisite
+# identity before generating endpoint-bound wrappers.
+printf 'PHASE2_BUNDLE_SHA256=%s\n' \
+  "$(awk 'NF {print $1; exit}' "${HTTP_ROOT}/dp-phase2/6.6.0/dp_bundle_6.6.0-current.tar.sha256")" \
+  >>"${HTTP_ROOT}/dp-phase2/6.6.0/release.env"
+printf 'PHASE2_PREREQ_IDENTITY_SHA256=%s\n' \
+  "$(sha256sum "${HTTP_ROOT}/dp-phase2/6.6.0/extras/phase2-ubuntu-prerequisites.identity" | awk '{print $1}')" \
+  >>"${HTTP_ROOT}/dp-phase2/6.6.0/release.env"
+# Generate client wrappers only after the final prerequisite identity, bundle,
+# and sidecar exist so their B/P/H pins bind to the exact published bytes.
+seed_complete_client_http_set "${HTTP_ROOT}/client" "http://192.0.2.10" "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 printf 'prepared-artifact\n' >"${HTTP_ROOT}/client/.prepared-marker"
 printf 'prepared-bundle\n' >"${HTTP_ROOT}/dp-phase2/6.6.0/.prepared-marker"
 
@@ -213,6 +223,46 @@ if run_enable_http >/dev/null; then
 else
   fail "enable success path returned nonzero"
 fi
+
+# Published wrapper bytes and their sidecars are one integrity unit. A wrapper
+# mutation with a stale sidecar must fail before nginx publication/readiness.
+WRAPPER="${HTTP_ROOT}/client/upgrade-phase2.sh"
+WRAPPER_BACKUP="${WORKDIR}/upgrade-phase2.sh.good"
+cp -a "$WRAPPER" "$WRAPPER_BACKUP"
+printf '\n# injected-wrapper-mutation\n' >>"$WRAPPER"
+setup_nginx_case
+set +e
+wrapper_mut_out="$(run_enable_http 2>&1)"
+wrapper_mut_rc=$?
+set -e
+if [[ "$wrapper_mut_rc" -ne 0 ]] \
+  && printf '%s\n' "$wrapper_mut_out" | grep -Eq 'CLIENT_FILES_READY=FAIL|HTTP_LAYOUT=FAIL client_integrity' \
+  && [[ "$(mm_status_get HTTP_DISTRIBUTION)" != "ENABLED" ]]; then
+  pass "wrapper mutation with stale sidecar fails closed before publication"
+else
+  fail "wrapper mutation false-PASS rc=${wrapper_mut_rc} out=${wrapper_mut_out}"
+fi
+cp -a "$WRAPPER_BACKUP" "$WRAPPER"
+
+# Release seal is authoritative: changing the sealed prerequisite identity must
+# fail closed even when the prerequisite state and wrapper anchors still exist.
+RELEASE_ENV="${HTTP_ROOT}/dp-phase2/6.6.0/release.env"
+RELEASE_BACKUP="${WORKDIR}/release.env.good"
+cp -a "$RELEASE_ENV" "$RELEASE_BACKUP"
+sed -i 's/^PHASE2_PREREQ_IDENTITY_SHA256=.*/PHASE2_PREREQ_IDENTITY_SHA256=0000000000000000000000000000000000000000000000000000000000000000/' "$RELEASE_ENV"
+setup_nginx_case
+set +e
+seal_mut_out="$(run_enable_http 2>&1)"
+seal_mut_rc=$?
+set -e
+if [[ "$seal_mut_rc" -ne 0 ]] \
+  && printf '%s\n' "$seal_mut_out" | grep -q 'PHASE2_RELEASE_SEAL_LIVE=FAIL reason=prereq_seal_mismatch' \
+  && [[ "$(mm_status_get HTTP_DISTRIBUTION)" != "ENABLED" ]]; then
+  pass "release seal mismatch fails closed before publication"
+else
+  fail "release seal mismatch false-PASS rc=${seal_mut_rc} out=${seal_mut_out}"
+fi
+cp -a "$RELEASE_BACKUP" "$RELEASE_ENV"
 
 setup_nginx_case
 : >"${MOCK_SYSTEMCTL_STATE}/enable_fail"

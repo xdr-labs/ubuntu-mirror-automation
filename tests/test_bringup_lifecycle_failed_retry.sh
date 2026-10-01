@@ -6,6 +6,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=lib/phase2_prereq_fixture.sh
 source "${ROOT}/tests/lib/phase2_prereq_fixture.sh"
+# shellcheck source=lib/phase2_staging_contract_fixture.sh
+source "${ROOT}/tests/lib/phase2_staging_contract_fixture.sh"
 WRAPPER="${ROOT}/client/bringup_py3_dp_lifecycle.sh"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP" 2>/dev/null || true' EXIT
@@ -20,16 +22,11 @@ export PHASE2_BRINGUP_ALLOW_NONROOT=1
 export BRINGUP_VENDOR_SCRIPT="${TMP}/vendor.sh"
 export PHASE2_PREREQ_STATE="${TMP}/phase2-ubuntu-prerequisites.state"
 export PHASE2_STAGING_CONTRACT_ENV="${TMP}/lifecycle/staging-result.env"
-phase2_prereq_write_not_required_state "$PHASE2_PREREQ_STATE"
+export PHASE2_STAGING_ARTIFACT_ROOT="${TMP}/aelladeb_py3"
+export PHASE2_STAGING_HELPER_MANIFEST="${TMP}/lifecycle/phase2-helper-generation.manifest"
 mkdir -p "$PHASE2_BRINGUP_DIR" "$(dirname "$PHASE2_BRINGUP_LOG_DEFAULT")"
-# Authoritative staging PASS required before lifecycle can launch a worker.
-cat >"$PHASE2_STAGING_CONTRACT_ENV" <<'EOF'
-PHASE2_STAGE_RESULT=PASS
-ARTIFACT_STAGING_RESULT=PASS
-TARGET_DP_VERSION=6.6.0
-PHASE2_STAGING_CONTRACT_PERSISTED_AT=2026-01-01T00:00:00Z
-EOF
-chmod 0600 "$PHASE2_STAGING_CONTRACT_ENV"
+# Authoritative current B/P/H/A staging PASS required before lifecycle launch.
+phase2_staging_write_current_not_required_contract 6.6.0
 
 VENDOR_COUNT="${TMP}/vendor.count"
 : >"$VENDOR_COUNT"
@@ -51,6 +48,8 @@ run_wrapper() {
     BRINGUP_VENDOR_SCRIPT="$BRINGUP_VENDOR_SCRIPT" \
     PHASE2_PREREQ_STATE="$PHASE2_PREREQ_STATE" \
     PHASE2_STAGING_CONTRACT_ENV="$PHASE2_STAGING_CONTRACT_ENV" \
+    PHASE2_STAGING_ARTIFACT_ROOT="$PHASE2_STAGING_ARTIFACT_ROOT" \
+    PHASE2_STAGING_HELPER_MANIFEST="$PHASE2_STAGING_HELPER_MANIFEST" \
     bash "$WRAPPER" "$@"
 }
 

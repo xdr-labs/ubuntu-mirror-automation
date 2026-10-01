@@ -2,6 +2,7 @@
 # tests/test_post_promotion_generation_binding.sh
 # Targeted regressions A–L for post-promotion selective generation binding.
 # Does NOT run the full suite. Does NOT touch R2 / Real DP / Menu 7 execution.
+# shellcheck disable=SC2218 # sourced workflow functions are intentionally stubbed later.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -569,17 +570,22 @@ WF_RO="${WORKDIR}/wf-readonly"
 mkdir -p "$WF_RO"
 chmod 0555 "$WF_RO"
 LOG_M="${WORKDIR}/rebuild-M-wf-fail.log"
+M_BASE="${WORKDIR}/mirror-M"
+M_CLIENT="${M_BASE}/client"
+M_CACHE="${M_BASE}/.install-cache"
+mkdir -p "$M_CLIENT" "${M_CACHE}/client-build"
+printf 'KNOWN_GOOD_OLD_GENERATION=YES\n' >"${M_CLIENT}/.known-good-old"
 set +e
 env \
   MIRROR_HTTP_URL="$MIRROR_URL" \
   RESOLVED_MIRROR_BASE_URL="$MIRROR_URL" \
   RESOLVED_MIRROR_HOST_IPV4="192.0.2.77" \
   LOCAL_CLIENT_SIGNING_DIR="$SIGNING_DIR" \
-  CLIENT_HTTP_ROOT="${WORKDIR}/client-M" \
+  CLIENT_HTTP_ROOT="$M_CLIENT" \
   SELECTIVE_ROOT="$SEL" \
-  BASE_PATH="$MIRROR_ROOT" \
+  BASE_PATH="$M_BASE" \
   MM_DP_PHASE2_ROOT="$MM_DP_PHASE2_ROOT" \
-  CACHE_ROOT="$CACHE" \
+  CACHE_ROOT="$M_CACHE" \
   CONTENT_SOURCE=local-fs \
   MM_HERMETIC_TEST_MODE=1 \
   CLIENT_BUILD_PIN_URL_ONLY=1 \
@@ -602,6 +608,20 @@ else
   fail "M: expected WORKFLOW_STATE_UPDATE=FAIL without PASS (rc=${rc_m})"
   tail -40 "$LOG_M" || true
 fi
+rollback_ev="$(grep -Rl 'CLIENT_SET_ROLLBACK=PASS previous_restored=YES' "${WORKDIR}/wf-state" 2>/dev/null | tail -1 || true)"
+if [[ -f "${M_CLIENT}/.known-good-old" ]] \
+  && grep -qx 'KNOWN_GOOD_OLD_GENERATION=YES' "${M_CLIENT}/.known-good-old" \
+  && [[ -n "$rollback_ev" ]]; then
+  pass "M: workflow receipt failure restores previous known-good live generation"
+else
+  fail "M: workflow receipt failure did not restore previous live generation"
+  tail -60 "$LOG_M" || true
+  [[ -n "$rollback_ev" ]] && tail -30 "$rollback_ev" || true
+fi
+grep -q -- '--require-exchange' "${ROOT}/scripts/rebuild-publish-clients.sh" \
+  && grep -q -- '--keep-previous' "${ROOT}/scripts/rebuild-publish-clients.sh" \
+  && pass "M: FULL client cutover requires no-gap exchange and retains previous until commit" \
+  || fail "M: FULL client cutover missing transactional exchange flags"
 
 # ---------------------------------------------------------------------------
 # N: evidence redaction fail-closed (sentinel never logged)

@@ -118,11 +118,17 @@ Invalidation is dependency-scoped (not “any save resets everything”):
 | --- | --- | --- | --- |
 | No semantic change | none | everything | none |
 | Worker IPs / worker password only | commands | artifacts, client set, HTTP, readiness | Menu 7 regenerate |
-| Mirror Server IP / HTTP URL | PREPARED (client/HTTP/readiness) | downloaded OS/Phase2 content | rebuild/republish clients |
+| Mirror Server IP / HTTP URL | PREPARED (client/HTTP/readiness) | validated OS Core + Phase 2 release | Menu 3 Enable HTTP Distribution (atomic endpoint-bound client/helper republish only; no heavy download) |
 | Preparation Mode FULL ↔ PHASE2_ONLY | CONFIGURED | on-disk cache files | Download and Prepare |
 
 Semantic readiness identity uses content hashes, not config file inode/mtime.
 A no-op Save after an identical rewrite does not force Download and Prepare.
+
+For a restored/moved AMI where only the site IP or advertised HTTP endpoint changed,
+do **not** rerun Menu 2 solely to rebind that endpoint. The validated heavy release
+remains immutable. Run Menu 3, then Menu 4 and Menu 7; Menu 3 republishes the small
+endpoint-bound client/helper generation and Menu 4 verifies the wrapper B/P/H anchors
+against the same published bundle, prerequisite identity, and helper generation.
 
 Single/AIO (no worker IPs) bringup commands omit `--worker-ips` and
 `--worker-password`. Cluster commands attach only the relevant DL or DA worker

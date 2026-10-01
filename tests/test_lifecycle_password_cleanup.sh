@@ -5,6 +5,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=lib/phase2_prereq_fixture.sh
 source "${ROOT}/tests/lib/phase2_prereq_fixture.sh"
+# shellcheck source=lib/phase2_staging_contract_fixture.sh
+source "${ROOT}/tests/lib/phase2_staging_contract_fixture.sh"
 WRAPPER="${ROOT}/client/bringup_py3_dp_lifecycle.sh"
 LIB="${ROOT}/client/lib/dp-phase2-bringup-lifecycle.sh"
 
@@ -19,6 +21,8 @@ export PHASE2_BRINGUP_LOG_DEFAULT="${TMP}/bringup.log"
 export PHASE2_BRINGUP_ALLOW_NONROOT=1
 export DP_PHASE2_BRINGUP_LIB_ONLY=1
 export PHASE2_STAGING_CONTRACT_ENV="${TMP}/lifecycle/staging-result.env"
+export PHASE2_STAGING_ARTIFACT_ROOT="${TMP}/aelladeb_py3"
+export PHASE2_STAGING_HELPER_MANIFEST="${TMP}/lifecycle/phase2-helper-generation.manifest"
 mkdir -p "$PHASE2_BRINGUP_DIR"
 # shellcheck source=/dev/null
 source "$LIB"
@@ -129,14 +133,8 @@ reset_lifecycle_dir() {
   rm -rf "$PHASE2_BRINGUP_DIR"
   mkdir -p "$PHASE2_BRINGUP_DIR" "$(dirname "$PHASE2_BRINGUP_LOG_DEFAULT")"
   : >"$PHASE2_BRINGUP_LOG_DEFAULT"
-  # Staging PASS contract required before the lifecycle can launch a worker.
-  cat >"$PHASE2_STAGING_CONTRACT_ENV" <<'EOF'
-PHASE2_STAGE_RESULT=PASS
-ARTIFACT_STAGING_RESULT=PASS
-TARGET_DP_VERSION=6.6.0
-PHASE2_STAGING_CONTRACT_PERSISTED_AT=2026-01-01T00:00:00Z
-EOF
-  chmod 0600 "$PHASE2_STAGING_CONTRACT_ENV"
+  # Current generation-bound staging PASS contract required before launch.
+  phase2_staging_write_current_not_required_contract 6.6.0
 }
 
 VENDOR="${TMP}/vendor.sh"
@@ -147,6 +145,7 @@ exit 0
 EOF
 chmod +x "$VENDOR"
 PREREQ_STATE="${TMP}/phase2-ubuntu-prerequisites.state"
+export PHASE2_PREREQ_STATE="$PREREQ_STATE"
 phase2_prereq_write_not_required_state "$PREREQ_STATE"
 
 run_wrapper() {
@@ -157,6 +156,8 @@ run_wrapper() {
     PHASE2_BRINGUP_ALLOW_NONROOT=1 \
     PHASE2_PREREQ_STATE="$PREREQ_STATE" \
     PHASE2_STAGING_CONTRACT_ENV="$PHASE2_STAGING_CONTRACT_ENV" \
+    PHASE2_STAGING_ARTIFACT_ROOT="$PHASE2_STAGING_ARTIFACT_ROOT" \
+    PHASE2_STAGING_HELPER_MANIFEST="$PHASE2_STAGING_HELPER_MANIFEST" \
     BRINGUP_VENDOR_SCRIPT="${BRINGUP_VENDOR_SCRIPT:-$VENDOR}" \
     P2B_TEST_FAIL_PASSWORD_OWNED_MARKER="${P2B_TEST_FAIL_PASSWORD_OWNED_MARKER:-0}" \
     bash "$WRAPPER" "$@"

@@ -211,7 +211,6 @@ count_expected_cluster_nodes() {
 phase2_prereq_lib_paths() {
     printf '%s\n' \
         "${STAGING_DIR}/lib/dp-phase2-ubuntu-prerequisites.sh" \
-        "/home/aella/lib/dp-phase2-ubuntu-prerequisites.sh" \
         "/opt/aelladata/os-upgrade/offline/phase2-bringup/lib/dp-phase2-ubuntu-prerequisites.sh"
 }
 
@@ -311,7 +310,6 @@ phase2_prereq_lib_source_path() {
     local p
     for p in \
         "${STAGING_DIR}/lib/dp-phase2-ubuntu-prerequisites.sh" \
-        "/home/aella/lib/dp-phase2-ubuntu-prerequisites.sh" \
         "/opt/aelladata/os-upgrade/offline/phase2-bringup/lib/dp-phase2-ubuntu-prerequisites.sh"
     do
         if [[ -f "$p" ]]; then

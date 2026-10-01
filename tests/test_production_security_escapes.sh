@@ -397,5 +397,224 @@ else
 fi
 rm -rf "$CLIENT_TMP"
 
+# --- Mirror Manager HTTP/readiness escape hardening ---
+assert_mm_http_escape_reject() {
+  local name="$1"
+  set +e
+  out="$(env MM_HERMETIC_TEST_MODE=0 MM_PROJECT_ROOT="$ROOT" "${name}=1" \
+    bash -c "source '${ROOT}/scripts/lib/mirror_manager_common.sh'; source '${ROOT}/scripts/lib/mirror_install_engine.sh'; engine_enable_http_distribution" 2>&1)"
+  rc=$?
+  set -e
+  [[ "$rc" -ne 0 ]] && printf '%s' "$out" | grep -q "${name}=FAIL reason=production_forbidden" \
+    && pass "production ${name}=1 blocked" \
+    || fail "production ${name}=1 not blocked (rc=${rc} out=${out})"
+}
+
+assert_mm_http_escape_reject MM_SKIP_NGINX_APPLY
+assert_mm_http_escape_reject MM_SKIP_HTTP_VALIDATE
+assert_mm_http_escape_reject MM_SKIP_BUNDLE_SHA256
+
+for svc_override in MM_NGINX_BIN MM_SYSTEMCTL_BIN MM_NGINX_SITE_AVAIL MM_NGINX_SITE_ENABLED; do
+  set +e
+  out="$(env MM_HERMETIC_TEST_MODE=0 MM_PROJECT_ROOT="$ROOT" "${svc_override}=/bin/true" \
+    bash -c "
+      source '${ROOT}/scripts/lib/mirror_manager_common.sh'
+      source '${ROOT}/scripts/lib/mirror_install_engine.sh'
+      engine_assert_production_service_overrides_safe
+    " 2>&1)"
+  rc=$?
+  set -e
+  [[ "$rc" -ne 0 ]] && printf '%s\n' "$out" | grep -q "${svc_override}=FAIL reason=production_forbidden" \
+    && pass "production ${svc_override} override blocked" \
+    || fail "production ${svc_override} override not blocked rc=${rc} out=${out}"
+done
+
+set +e
+out="$(MM_HERMETIC_TEST_MODE=0 MM_VERIFY_HTTP_BASE=http://192.0.2.200 \
+  bash -c "
+    source '${ROOT}/scripts/lib/mirror_manager_common.sh'
+    source '${ROOT}/scripts/lib/mirror_install_engine.sh'
+    engine_http_local_smoke 6.6.0 dp_bundle_6.6.0-current.tar
+  " 2>&1)"
+rc=$?
+set -e
+[[ "$rc" -ne 0 ]] && printf '%s\n' "$out" | grep -q 'MM_VERIFY_HTTP_BASE=FAIL reason=production_forbidden' \
+  && pass "production local HTTP probe override blocked" \
+  || fail "production local HTTP probe override not blocked rc=${rc}"
+
+set +e
+out="$(MM_HERMETIC_TEST_MODE=0 MM_VERIFY_ADVERTISED_HTTP_BASE=http://127.0.0.1:9 MIRROR_SERVER_IP=192.0.2.10 \
+  bash -c "
+    source '${ROOT}/scripts/lib/mirror_manager_common.sh'
+    source '${ROOT}/scripts/lib/mirror_install_engine.sh'
+    engine_http_advertised_smoke 6.6.0 dp_bundle_6.6.0-current.tar
+  " 2>&1)"
+rc=$?
+set -e
+[[ "$rc" -ne 0 ]] && printf '%s\n' "$out" | grep -q 'MM_VERIFY_ADVERTISED_HTTP_BASE=FAIL reason=production_forbidden' \
+  && pass "production advertised HTTP probe override blocked" \
+  || fail "production advertised HTTP probe override not blocked rc=${rc}"
+
+set +e
+MM_HERMETIC_TEST_MODE=0 MM_NGINX_BIN=/bin/true MM_SYSTEMCTL_BIN=/bin/true \
+  mm_nginx_distribution_live >/dev/null 2>&1
+rc=$?
+set -e
+[[ "$rc" -ne 0 ]] \
+  && pass "production common nginx/systemctl override blocked" \
+  || fail "production common nginx/systemctl override not blocked"
+
+# --dry-run must be read-only and must not mint HTTP/workflow PASS receipts.
+DRY_ROOT="$(mktemp -d)"
+mkdir -p "$DRY_ROOT/mirror"
+set +e
+out="$(env MM_DRY_RUN=1 MM_HERMETIC_TEST_MODE=0 MM_PROJECT_ROOT="$ROOT" \
+  MM_CONFIG_DIR="$DRY_ROOT/etc" MM_CONFIG_FILE="$DRY_ROOT/etc/dp-upgrade-mirror.conf" \
+  MM_STATUS_FILE="$DRY_ROOT/status" MM_WORKFLOW_FILE="$DRY_ROOT/workflow" \
+  MM_MIRROR_ROOT="$DRY_ROOT/mirror" MM_SELECTIVE_ROOT="$DRY_ROOT/mirror/selective" \
+  MM_DP_PHASE2_ROOT="$DRY_ROOT/mirror/dp-phase2" MM_CLIENT_ROOT="$DRY_ROOT/mirror/client" \
+  MM_CACHE_ROOT="$DRY_ROOT/mirror/.install-cache" \
+  bash -c "source '${ROOT}/scripts/lib/mirror_manager_common.sh'; source '${ROOT}/scripts/lib/mirror_install_engine.sh'; engine_enable_http_distribution" 2>&1)"
+rc=$?
+set -e
+[[ "$rc" -eq 0 ]] && printf '%s' "$out" | grep -q 'HTTP_WORKFLOW_RECEIPT_WRITTEN=NO' \
+  && [[ ! -e "$DRY_ROOT/status" && ! -e "$DRY_ROOT/workflow" ]] \
+  && pass "enable-http dry-run is receipt-free/read-only" \
+  || fail "enable-http dry-run mutated authoritative state (rc=${rc} out=${out})"
+rm -rf "$DRY_ROOT"
+
+# Download-and-Prepare dry-run must also be strictly read-only: no run/status/
+# workflow state and no HTTP quiesce before returning.
+DRY_ROOT="$(mktemp -d)"
+mkdir -p "$DRY_ROOT/mirror"
+set +e
+out="$(env MM_DRY_RUN=1 MM_HERMETIC_TEST_MODE=0 MM_PROJECT_ROOT="$ROOT" \
+  PREPARATION_MODE=PHASE2_ONLY MIRROR_SERVER_IP=192.0.2.10 \
+  MM_CONFIG_DIR="$DRY_ROOT/etc" MM_CONFIG_FILE="$DRY_ROOT/etc/dp-upgrade-mirror.conf" \
+  MM_STATUS_FILE="$DRY_ROOT/status" MM_WORKFLOW_FILE="$DRY_ROOT/workflow" \
+  MM_STATE_ROOT="$DRY_ROOT/runs" MM_LOG_DIR="$DRY_ROOT/logs" \
+  MM_MIRROR_ROOT="$DRY_ROOT/mirror" MM_SELECTIVE_ROOT="$DRY_ROOT/mirror/selective" \
+  MM_DP_PHASE2_ROOT="$DRY_ROOT/mirror/dp-phase2" MM_CLIENT_ROOT="$DRY_ROOT/mirror/client" \
+  MM_CACHE_ROOT="$DRY_ROOT/mirror/.install-cache" \
+  bash -c "
+    source '${ROOT}/scripts/lib/mirror_manager_common.sh'
+    source '${ROOT}/scripts/lib/mirror_install_engine.sh'
+    mm_require_configured_mirror_server_ip(){ return 0; }
+    dp2_set_version(){ :; }
+    engine_download_and_prepare
+  " 2>&1)"
+rc=$?
+set -e
+if [[ "$rc" -eq 0 ]] \
+  && printf '%s\n' "$out" | grep -q 'DRY_RUN_WORKFLOW_RECEIPT_WRITTEN=NO' \
+  && printf '%s\n' "$out" | grep -q 'DRY_RUN_HTTP_QUIESCE=NO' \
+  && [[ ! -e "$DRY_ROOT/status" && ! -e "$DRY_ROOT/workflow" && ! -e "$DRY_ROOT/runs" ]]; then
+  pass "download-and-prepare dry-run is state/HTTP-quiesce free"
+else
+  fail "download-and-prepare dry-run mutated authoritative state (rc=${rc} out=${out})"
+fi
+rm -rf "$DRY_ROOT"
+
+# verify-readiness --dry-run runs the authoritative live gate against sandboxed
+# receipt copies and must preserve the real status/workflow byte-for-byte.
+VERIFY_ROOT="$(mktemp -d)"
+mkdir -p "$VERIFY_ROOT/etc" "$VERIFY_ROOT/mirror"
+cat >"$VERIFY_ROOT/etc/dp-upgrade-mirror.conf" <<'EOF'
+PREPARATION_MODE=PHASE2_ONLY
+MIRROR_SERVER_IP=192.0.2.10
+TARGET_DP_VERSION=6.6.0
+PHASE2_TARGET_VERSION=6.6.0
+EOF
+cat >"$VERIFY_ROOT/etc/status" <<'EOF'
+HTTP_DISTRIBUTION=ENABLED
+UPGRADE_READINESS=PASS
+READINESS_RESULT=PASS
+EOF
+cat >"$VERIFY_ROOT/etc/workflow" <<'EOF'
+WORKFLOW_STATE=READINESS_VERIFIED
+CLIENT_SET_GENERATION_ID=gen-dry-readiness
+HTTP_PUBLICATION_GENERATION_ID=gen-dry-readiness
+READINESS_VERIFIED_GENERATION_ID=gen-dry-readiness
+PREPARATION_MODE=PHASE2_ONLY
+EOF
+chmod 600 "$VERIFY_ROOT/etc/dp-upgrade-mirror.conf" "$VERIFY_ROOT/etc/status" "$VERIFY_ROOT/etc/workflow"
+status_before="$(sha256sum "$VERIFY_ROOT/etc/status" | awk '{print $1}')"
+wf_before="$(sha256sum "$VERIFY_ROOT/etc/workflow" | awk '{print $1}')"
+set +e
+verify_out="$(env MM_HERMETIC_TEST_MODE=1 MM_SKIP_ROOT_CHECK=1 \
+  MM_CONFIG_DIR="$VERIFY_ROOT/etc" \
+  MM_CONFIG_FILE="$VERIFY_ROOT/etc/dp-upgrade-mirror.conf" \
+  MM_STATUS_FILE="$VERIFY_ROOT/etc/status" \
+  MM_WORKFLOW_FILE="$VERIFY_ROOT/etc/workflow" \
+  MM_STATE_ROOT="$VERIFY_ROOT/runs" MM_LOG_DIR="$VERIFY_ROOT/logs" \
+  bash "${ROOT}/scripts/install-dp-upgrade-mirror.sh" verify-readiness \
+    --dry-run --mirror-root "$VERIFY_ROOT/mirror" 2>&1)"
+verify_rc=$?
+set -e
+status_after="$(sha256sum "$VERIFY_ROOT/etc/status" | awk '{print $1}')"
+wf_after="$(sha256sum "$VERIFY_ROOT/etc/workflow" | awk '{print $1}')"
+if printf '%s\n' "$verify_out" | grep -q 'DRY_RUN_WORKFLOW_RECEIPT_WRITTEN=NO' \
+  && [[ "$status_before" == "$status_after" && "$wf_before" == "$wf_after" ]]; then
+  pass "verify-readiness dry-run preserves real receipts (rc=${verify_rc})"
+else
+  fail "verify-readiness dry-run mutated real receipts rc=${verify_rc} out=${verify_out}"
+fi
+rm -rf "$VERIFY_ROOT"
+
+set +e
+interactive_out="$(bash "${ROOT}/scripts/install-dp-upgrade-mirror.sh" mirror-manager --dry-run 2>&1)"
+interactive_rc=$?
+set -e
+[[ "$interactive_rc" -ne 0 ]] \
+  && printf '%s\n' "$interactive_out" | grep -q 'DRY_RUN_INTERACTIVE_UNSUPPORTED=YES' \
+  && pass "interactive mirror-manager dry-run rejected explicitly" \
+  || fail "interactive mirror-manager dry-run was not rejected rc=${interactive_rc}"
+
+# The shared readiness gate must propagate a live HTTP validation failure.
+set +e
+out="$(MM_PROJECT_ROOT="$ROOT" MM_HERMETIC_TEST_MODE=1 TARGET_DP_VERSION=6.6.0 PHASE2_TARGET_VERSION=6.6.0 \
+  bash -c "
+    source '${ROOT}/scripts/lib/mirror_manager_common.sh'
+    source '${ROOT}/scripts/lib/mirror_install_engine.sh'
+    mm_http_distribution_enabled(){ return 0; }
+    mm_download_completed(){ return 0; }
+    engine_validate_http_layout(){ return 9; }
+    mm_status_set(){ :; }
+    mm_error(){ printf '%s\\n' \"\$*\" >&2; }
+    dp2_set_version(){ :; }
+    engine_validate_upgrade_readiness_live
+  " 2>&1)"
+rc=$?
+set -e
+[[ "$rc" -ne 0 ]] && printf '%s' "$out" | grep -q 'reason=live_http_validation' \
+  && pass "shared readiness gate fails on live HTTP validation failure" \
+  || fail "shared readiness gate swallowed HTTP failure (rc=${rc} out=${out})"
+grep -q 'engine_validate_upgrade_readiness_live' "${ROOT}/scripts/install-dp-upgrade-mirror.sh" \
+  && pass "CLI/GUI source includes shared readiness live gate" \
+  || fail "shared readiness live gate not wired"
+
+# Exact helper generation must not source an ambient developer checkout.
+if grep -RInF '/home/aella/ubuntu-mirror-automation/client/lib' \
+    "${ROOT}/client" "${ROOT}/scripts/lib/phase2_bringup_patch" >/dev/null 2>&1 \
+  || grep -RInF '/home/aella/lib/' \
+    "${ROOT}/client" "${ROOT}/scripts/lib/phase2_bringup_patch" >/dev/null 2>&1; then
+  fail "Phase 2 helper/patch tree still falls back to ambient developer paths"
+else
+  pass "Phase 2 helper/patch tree uses generation-owned/canonical libs only"
+fi
+
+# Mirror Manager subprocess helpers must preserve the caller errexit state.
+for fn in engine_rebuild_publish_local_client_set engine_bringup_validate_patcher engine_apply_local_bringup_patch; do
+  body="$(awk -v f="$fn" '$0 ~ "^" f "\\(\\)" {on=1} on{print} on && /^}/ {exit}' "${ROOT}/scripts/lib/mirror_install_engine.sh")"
+  if grep -q 'errexit_was_on' <<<"$body" \
+    && grep -q 'case \$- in \*e\*' <<<"$body" \
+    && grep -q 'set +e' <<<"$body" \
+    && grep -q 'set -e' <<<"$body"; then
+    pass "${fn} preserves caller errexit contract"
+  else
+    fail "${fn} missing caller-errexit preservation"
+  fi
+done
+
 [[ "$FAIL" -eq 0 ]]
 echo "ALL PRODUCTION SECURITY ESCAPE TESTS PASSED"

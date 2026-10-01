@@ -146,10 +146,15 @@ After changing its IP address:
 
 1. Open the Mirror Manager.
 2. Update and save the Mirror Server IP.
-3. Run Menu 2 → 3 → 4 → 7.
+3. Run Menu 3 → 4 → 7.
 4. Use the newly generated Menu 7 commands.
 
-Do not reuse commands generated for the old Mirror Server IP.
+An IP/HTTP-endpoint-only change preserves the already validated OS Core and Phase 2
+release. Menu 3 atomically republishes only the endpoint-bound client/helper set as
+needed; it does not redownload or rebuild the heavy artifacts. Run Menu 2 again only
+when the Mirror Manager explicitly classifies a preparation input as stale or when
+heavy-artifact validation itself fails. Do not reuse commands generated for the old
+Mirror Server IP.
 
 ## Recovery after SSH disconnect
 

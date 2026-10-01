@@ -54,8 +54,17 @@ def _renameat2_exchange(path_a, path_b):
     raise SwapError("renameat2(RENAME_EXCHANGE) failed: {}".format(os.strerror(err)))
 
 
-def atomic_dir_swap(stage_dir, live_dir, backup_dir=None):
-    """Atomically publish stage_dir to live_dir.
+def atomic_dir_swap(stage_dir, live_dir, backup_dir=None, require_exchange=False,
+                    keep_previous=False):
+    """Publish stage_dir to live_dir with rollback safety.
+
+    The first publication is one atomic rename. With an existing live directory,
+    RENAME_EXCHANGE is preferred. If require_exchange is true, fail closed before
+    mutating live rather than using the two-rename rollback fallback.
+
+    When keep_previous is true, the previous live generation is retained at
+    stage_dir (RENAME_EXCHANGE) or backup_dir (fallback) until the caller commits
+    or rolls back the surrounding transaction.
 
     On success returns dict with method and rollback status.
     On failure restores previous live_dir when possible and raises SwapError.
@@ -88,18 +97,33 @@ def atomic_dir_swap(stage_dir, live_dir, backup_dir=None):
         return {
             "method": "rename_into_place",
             "rollback": "NOT_REQUIRED",
-            "previous_preserved": "N/A",
+            "previous_preserved": "NONE",
+            "previous_path": "",
         }
 
     # Prefer atomic exchange when both exist.
     if _renameat2_exchange(stage_dir, live_dir):
         # After exchange: live_dir has new content; stage_dir has old content.
-        shutil.rmtree(stage_dir, ignore_errors=True)
+        previous_path = stage_dir if keep_previous else ""
+        if not keep_previous:
+            shutil.rmtree(stage_dir, ignore_errors=True)
         return {
             "method": "renameat2_RENAME_EXCHANGE",
             "rollback": "NOT_REQUIRED",
-            "previous_preserved": "EXCHANGED_THEN_REMOVED",
+            "previous_preserved": (
+                "RETAINED_FOR_TRANSACTION" if keep_previous
+                else "EXCHANGED_THEN_REMOVED"
+            ),
+            "previous_path": previous_path,
         }
+
+    if require_exchange:
+        # Some publications (for example a sealed prerequisite release) must
+        # never have a live-path gap. Fail before mutating either directory if
+        # the kernel/filesystem cannot provide RENAME_EXCHANGE.
+        raise SwapError(
+            "renameat2(RENAME_EXCHANGE) unavailable; live set left untouched"
+        )
 
     # Fallback: move live aside, then move stage into live; restore on failure.
     if backup_dir is None:
@@ -130,11 +154,17 @@ def atomic_dir_swap(stage_dir, live_dir, backup_dir=None):
                 "(previous at {}): {} / {}".format(backup_dir, exc, restore_exc)
             )
 
-    shutil.rmtree(backup_dir, ignore_errors=True)
+    previous_path = backup_dir if keep_previous else ""
+    if not keep_previous:
+        shutil.rmtree(backup_dir, ignore_errors=True)
     return {
         "method": "backup_rename_rollback_safe",
         "rollback": "NOT_REQUIRED",
-        "previous_preserved": "REMOVED_AFTER_SUCCESS",
+        "previous_preserved": (
+            "RETAINED_FOR_TRANSACTION" if keep_previous
+            else "REMOVED_AFTER_SUCCESS"
+        ),
+        "previous_path": previous_path,
     }
 
 
@@ -143,6 +173,10 @@ def main(argv=None):
     ap.add_argument("--stage-dir", required=True)
     ap.add_argument("--live-dir", required=True)
     ap.add_argument("--backup-dir", default="")
+    ap.add_argument("--require-exchange", action="store_true",
+                    help="fail without mutating live when RENAME_EXCHANGE is unavailable")
+    ap.add_argument("--keep-previous", action="store_true",
+                    help="retain the previous live generation for caller commit/rollback")
     ap.add_argument("--inject-fail-after-backup", action="store_true",
                     help="test hook: fail after moving live aside")
     args = ap.parse_args(argv)
@@ -167,10 +201,15 @@ def main(argv=None):
             args.stage_dir,
             args.live_dir,
             backup_dir=args.backup_dir or None,
+            require_exchange=args.require_exchange,
+            keep_previous=args.keep_previous,
         )
         print("CLIENT_SET_ATOMIC_SWAP=PASS")
         print("CLIENT_SET_ATOMIC_SWAP_METHOD={}".format(result["method"]))
         print("CLIENT_SET_ROLLBACK={}".format(result["rollback"]))
+        print("CLIENT_SET_PREVIOUS_PRESERVED={}".format(result["previous_preserved"]))
+        if result.get("previous_path"):
+            print("CLIENT_SET_PREVIOUS_PATH={}".format(result["previous_path"]))
         print("CLIENT_SET_DEPLOY_ATOMIC=YES")
         return 0
     except SwapError as exc:

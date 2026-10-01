@@ -339,7 +339,11 @@ grep -q 'PHASE2_BUNDLE_ACTION=CREATE' "$OUT" || fail "CREATE action missing"
 find "$MM_DP_PHASE2_ROOT" -maxdepth 1 -name '6.6.0.old.*' | grep -q . && fail ".old on CREATE" || true
 pass "2 missing bundle CREATE atomic final count=1"
 
-# --- 3. Invalid SHA256 ---
+# --- 3. Invalid SHA256 on an explicitly unsealed/legacy final -> rebuild ---
+# Recreate the legacy fixture so this case does not inherit the sealed release
+# produced by the CREATE path above. Legacy/unsealed invalid finals retain the
+# historical delete-and-rebuild policy.
+make_valid_final
 printf '0000000000000000000000000000000000000000000000000000000000000000  dp_bundle_6.6.0-current.tar\n' \
   >"${MM_DP_PHASE2_ROOT}/6.6.0/dp_bundle_6.6.0-current.tar.sha256"
 mm_status_set HTTP_DISTRIBUTION ENABLED
@@ -356,7 +360,40 @@ grep -q 'PHASE2_BUNDLE_ACTION=REBUILD' "$OUT" || fail "REBUILD action missing"
 find "$MM_DP_PHASE2_ROOT" -maxdepth 1 -name '6.6.0.old.*' | grep -q . && fail ".old on INVALID rebuild" || true
 [[ "$(mm_status_get HTTP_DISTRIBUTION)" == "DISABLED" ]] \
   || fail "HTTP not DISABLED after invalid rebuild path"
-pass "3 invalid SHA256 deletes final before ACPS; no .old"
+pass "3 invalid SHA256 deletes unsealed legacy final before ACPS; no .old"
+
+# --- 3S. Sealed release corruption -> fail closed, no heavy mutation/acquisition ---
+make_valid_final
+engine_prepare_phase2_ubuntu_prerequisites
+engine_record_phase2_prereq_release_identity \
+  || fail "3S could not seal valid Phase2 fixture"
+engine_phase2_release_sealed 6.6.0 \
+  || fail "3S precondition: release should be sealed"
+SEALED_MARK="${MM_DP_PHASE2_ROOT}/6.6.0/SEALED_MUST_SURVIVE"
+printf 'sealed\n' >"$SEALED_MARK"
+printf '0000000000000000000000000000000000000000000000000000000000000000  dp_bundle_6.6.0-current.tar\n' \
+  >"${MM_DP_PHASE2_ROOT}/6.6.0/dp_bundle_6.6.0-current.tar.sha256"
+mm_status_set HTTP_DISTRIBUTION ENABLED
+reset_counters
+OUT="${TMP}/prepare_sealed_invalid_sha.log"
+if run_prepare_to "$OUT"; then
+  cat "$OUT"
+  fail "sealed release corruption must fail closed"
+fi
+grep -q 'PHASE2_SEALED_RELEASE_INVALID=YES' "$OUT" \
+  || { cat "$OUT"; fail "sealed invalid marker missing"; }
+grep -q 'PHASE2_SEALED_RELEASE_MUTATION=BLOCKED' "$OUT" \
+  || fail "sealed mutation block marker missing"
+if grep -q 'INVALID_FINAL_REMOVED=YES' "$OUT"; then
+  fail "sealed invalid final was deleted"
+fi
+[[ -f "$SEALED_MARK" ]] || fail "sealed final mutated/deleted"
+[[ "$(count_of acps)" -eq 0 ]] || fail "sealed corruption acquired ACPS count=$(count_of acps)"
+[[ "$(count_of r2)" -eq 0 ]] || fail "sealed corruption acquired R2 count=$(count_of r2)"
+[[ "$(count_of place)" -eq 0 ]] || fail "sealed corruption republished heavy final count=$(count_of place)"
+[[ "$(mm_status_get HTTP_DISTRIBUTION)" == "DISABLED" ]] \
+  || fail "sealed corruption did not quiesce HTTP"
+pass "3S sealed release corruption fails closed without delete/download/rebuild"
 
 # --- 4. Invalid release.env ---
 make_valid_final

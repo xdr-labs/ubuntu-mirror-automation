@@ -32,7 +32,8 @@ um_upgrade_profile_path() {
 }
 
 um_load_upgrade_profile() {
-  local path
+  local path tmp rc=0
+  local -a vals=()
   path="$(um_upgrade_profile_path)" || {
     um_warn "offline-upgrade-profile.json not found — using built-in selective defaults"
     return 0
@@ -40,24 +41,78 @@ um_load_upgrade_profile() {
   if ! command -v python3 >/dev/null 2>&1; then
     return 0
   fi
-  # shellcheck disable=SC2016
-  eval "$(python3 - "$path" <<'PY'
-import json, sys
+
+  # Parse profile JSON as data, never shell code. The project profile may be
+  # writable by a non-root development user while install runs as root, so
+  # Python repr + shell eval is an invalid privilege boundary.
+  tmp="$(mktemp "${TMPDIR:-/tmp}/upgrade-profile.XXXXXX")" || return 1
+  if python3 - "$path" >"$tmp" <<'PY'
+import json, os, re, sys
+
 path = sys.argv[1]
-with open(path) as fh:
+with open(path, encoding="utf-8") as fh:
     data = json.load(fh)
-print('UM_UPGRADE_PROFILE_NAME=%r' % data.get('profile_name', 'offline-upgrade-selective'))
-print('UM_UPGRADE_PROFILE_SCHEMA=%r' % data.get('schema_version', 2))
-print('UM_UPGRADE_SELECTION_MODE=%r' % data.get('selection_mode', 'discovery_exact'))
-print('UM_UPGRADE_REQUIRED_SERIES=%r' % ' '.join(data.get('series', [])))
-print('UM_UPGRADE_SUPPORTED_HOPS=%r' % ' '.join(data.get('supported_hops', [])))
-print('UM_SELECTIVE_MIRROR_ROOT=%r' % data.get(
-    'selective_mirror_root', '/var/spool/apt-mirror/selective'))
-print('UM_FULL_MIRROR_SEED_ROOT=%r' % data.get(
-    'full_mirror_seed_root',
-    '/var/spool/apt-mirror/mirror/archive.ubuntu.com/ubuntu'))
+
+def fail(msg):
+    raise SystemExit("UPGRADE_PROFILE_PARSE=FAIL " + msg)
+
+profile = data.get("profile_name", "offline-upgrade-selective")
+schema = data.get("schema_version", 2)
+mode = data.get("selection_mode", "discovery_exact")
+series = data.get("series", [])
+hops = data.get("supported_hops", [])
+selective = data.get("selective_mirror_root", "/var/spool/apt-mirror/selective")
+seed = data.get("full_mirror_seed_root", "/var/spool/apt-mirror/mirror/archive.ubuntu.com/ubuntu")
+
+if profile != "offline-upgrade-selective":
+    fail("reason=profile_name")
+if schema != 2:
+    fail("reason=schema_version")
+if mode != "discovery_exact":
+    fail("reason=selection_mode")
+if series != ["xenial", "bionic", "focal", "jammy", "noble"]:
+    fail("reason=series")
+if hops != ["xenial-to-bionic", "bionic-to-focal", "focal-to-jammy", "jammy-to-noble"]:
+    fail("reason=supported_hops")
+
+safe_path = re.compile(r"^/[A-Za-z0-9._/+:-]+$")
+for name, value in (("selective_mirror_root", selective), ("full_mirror_seed_root", seed)):
+    if not isinstance(value, str) or not safe_path.fullmatch(value):
+        fail("reason=%s" % name)
+    if ".." in value.split("/"):
+        fail("reason=%s_parent_traversal" % name)
+
+vals = [
+    profile, str(schema), mode, " ".join(series), " ".join(hops), selective, seed
+]
+for value in vals:
+    if "\x00" in value or "\n" in value or "\r" in value:
+        fail("reason=control_character")
+    sys.stdout.buffer.write(value.encode("utf-8") + b"\0")
 PY
-)"
+  then
+    rc=0
+  else
+    rc=$?
+    rm -f "$tmp"
+    um_warn "offline-upgrade-profile.json rejected — keeping built-in selective defaults"
+    return "$rc"
+  fi
+
+  mapfile -d '' -t vals <"$tmp"
+  rm -f "$tmp"
+  [[ "${#vals[@]}" -eq 7 ]] || {
+    um_warn "offline-upgrade-profile.json rejected — incomplete parsed values"
+    return 1
+  }
+  UM_UPGRADE_PROFILE_NAME="${vals[0]}"
+  UM_UPGRADE_PROFILE_SCHEMA="${vals[1]}"
+  UM_UPGRADE_SELECTION_MODE="${vals[2]}"
+  UM_UPGRADE_REQUIRED_SERIES="${vals[3]}"
+  UM_UPGRADE_SUPPORTED_HOPS="${vals[4]}"
+  UM_SELECTIVE_MIRROR_ROOT="${vals[5]}"
+  UM_FULL_MIRROR_SEED_ROOT="${vals[6]}"
+  return 0
 }
 
 um_unsupported_full_sync_message() {

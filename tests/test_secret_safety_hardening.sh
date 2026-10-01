@@ -163,4 +163,14 @@ printf '%s\n' "$redacted" | grep -Fq "$secret" && fail "mm_redact leaked secret"
   || fail "mm_redact did not mask WORKER_SSH_PASSWORD="
 pass "mm_redact masks worker password forms"
 
+# Whitespace-containing secrets must not leak a suffix after token redaction.
+space_secret='alpha LEAK-SUFFIX-987'
+space_redacted="$(printf 'WORKER_SSH_PASSWORD=%s\ncmd --worker-password %s trailing\n' \
+  "$space_secret" "$space_secret" | mm_redact)"
+printf '%s\n' "$space_redacted" | grep -Fq 'LEAK-SUFFIX-987' \
+  && fail "mm_redact leaked whitespace password suffix" || true
+[[ "$space_redacted" == *'WORKER_SSH_PASSWORD=***'* ]] \
+  || fail "mm_redact did not fully mask whitespace WORKER_SSH_PASSWORD"
+pass "mm_redact fully masks whitespace-containing worker passwords"
+
 echo "ALL test_secret_safety_hardening checks passed"

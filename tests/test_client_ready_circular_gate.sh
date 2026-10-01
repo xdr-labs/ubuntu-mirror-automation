@@ -121,7 +121,10 @@ grep -q 'engine_rebuild_publish_local_client_set' "$ENGINE" \
   || fail "authoritative finalizer missing"
 
 # Enable HTTP must call the same rebuild helper (not inline env bash rebuild).
-if grep -A40 '^engine_enable_http_distribution()' "$ENGINE" \
+# Scope the assertion to the complete function; fixed grep windows become stale
+# whenever fail-closed checks add lines before the finalizer call.
+enable_http_fn="$(awk '/^engine_enable_http_distribution\(\)/,/^}/' "$ENGINE")"
+if printf '%s\n' "$enable_http_fn" \
   | grep -q 'engine_rebuild_publish_local_client_set\|engine_ensure_phase2_helpers'
 then
   pass "Enable HTTP uses authoritative client finalizer"

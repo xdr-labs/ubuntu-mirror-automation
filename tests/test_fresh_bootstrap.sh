@@ -269,8 +269,10 @@ EMPTY="${WORKDIR}/empty-client"; mkdir -p "$EMPTY"
 MM_CLIENT_ROOT="$EMPTY"
 if mm_client_files_ready "$EMPTY"; then fail "empty client dir READY"; else pass "empty client dir rejected"; fi
 GOOD="${WORKDIR}/good-client"
+GOOD_DP_PHASE2_ROOT="${WORKDIR}/dp-phase2"
 # shellcheck source=lib/seed_complete_client_http_set.sh
 source "${ROOT}/tests/lib/seed_complete_client_http_set.sh"
+MM_DP_PHASE2_ROOT="$GOOD_DP_PHASE2_ROOT"
 seed_complete_client_http_set "$GOOD" "http://192.0.2.10" "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 if mm_client_files_ready "$GOOD"; then pass "client files READY"; else fail "client files READY"; fi
 rm -f "${GOOD}/stage-dp-phase2.sh.sha256"
@@ -329,7 +331,7 @@ mkdir -p "${HTTP_ROOT}/selective/hops/jammy-to-noble/ubuntu" \
   "${HTTP_ROOT}/client" \
   "${HTTP_ROOT}/dp-phase2/6.6.0"
 ln -sfn hops/jammy-to-noble/ubuntu "${HTTP_ROOT}/selective/ubuntu"
-seed_complete_client_http_set "${HTTP_ROOT}/client" "http://192.0.2.10" "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+MM_DP_PHASE2_ROOT="${HTTP_ROOT}/dp-phase2"
 printf 'TARGET_DP_VERSION=6.6.0\n' >"${HTTP_ROOT}/dp-phase2/6.6.0/release.env"
 mkdir -p "${HTTP_ROOT}/dp-phase2/6.6.0/extras"
 cat >"${HTTP_ROOT}/dp-phase2/6.6.0/extras/phase2-ubuntu-prerequisites.state" <<'EOF'
@@ -351,6 +353,17 @@ tar -cf "${HTTP_ROOT}/dp-phase2/6.6.0/dp_bundle_6.6.0-current.tar" -C "${HTTP_RO
   cd "${HTTP_ROOT}/dp-phase2/6.6.0"
   sha256sum dp_bundle_6.6.0-current.tar >dp_bundle_6.6.0-current.tar.sha256
 )
+# Model a production-sealed Phase 2 release before HTTP publication. The live
+# seal check must bind both the exact bundle sidecar and prerequisite identity.
+printf 'PHASE2_BUNDLE_SHA256=%s\n' \
+  "$(awk 'NF {print $1; exit}' "${HTTP_ROOT}/dp-phase2/6.6.0/dp_bundle_6.6.0-current.tar.sha256")" \
+  >>"${HTTP_ROOT}/dp-phase2/6.6.0/release.env"
+printf 'PHASE2_PREREQ_IDENTITY_SHA256=%s\n' \
+  "$(sha256sum "${HTTP_ROOT}/dp-phase2/6.6.0/extras/phase2-ubuntu-prerequisites.identity" | awk '{print $1}')" \
+  >>"${HTTP_ROOT}/dp-phase2/6.6.0/release.env"
+# Generate client wrappers only after the final test bundle + prerequisite
+# identity exist, so their B/P/H pins bind to the exact bytes validated below.
+seed_complete_client_http_set "${HTTP_ROOT}/client" "http://192.0.2.10" "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 
 export MM_MIRROR_ROOT="$HTTP_ROOT"
 export MM_SELECTIVE_ROOT="${HTTP_ROOT}/selective"
@@ -442,6 +455,11 @@ sum1="$(find "${INSTALL_LIB_DIR}/scripts" -type f -exec sha256sum {} \; | sort |
 um_bootstrap_install_runtime
 sum2="$(find "${INSTALL_LIB_DIR}/scripts" -type f -exec sha256sum {} \; | sort | sha256sum | awk '{print $1}')"
 [[ "$sum1" == "$sum2" ]] && pass "reinstall no drift" || fail "reinstall drift"
+if find "${INSTALL_LIB_DIR}/scripts" -type d -name __pycache__ -print -quit | grep -q .; then
+  fail "runtime verification left Python bytecode cache"
+else
+  pass "runtime verification leaves no Python bytecode cache"
+fi
 # No credential leakage in bootstrap scripts
 grep -RInE 'ACPS_PASSWORD=.+[^*=]|SECRET_ACCESS_KEY|rclone\.conf' \
   "${ROOT}/install.sh" "${ROOT}/lib/bootstrap.sh" 2>/dev/null \

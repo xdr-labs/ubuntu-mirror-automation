@@ -2021,6 +2021,34 @@ def transaction_is_safe(simulation, extra_protected=None):
     ])
 
 
+def _tar_add_canonical_file(tf, path, arcname):
+    """Add one regular file with release-stable tar metadata."""
+    info = tf.gettarinfo(path, arcname=arcname)
+    if not info.isfile():
+        raise ValueError('canonical prerequisite member must be a regular file: %s' % arcname)
+    info.uid = 0
+    info.gid = 0
+    info.uname = ''
+    info.gname = ''
+    info.mtime = 0
+    info.mode = 0o644
+    with open(path, 'rb') as fh:
+        tf.addfile(info, fh)
+
+
+def _write_reproducible_tar_gz(path, members):
+    """Write byte-reproducible gzip/tar bytes for identical member bytes."""
+    tmp = path + '.part'
+    with open(tmp, 'wb') as raw:
+        # filename='' prevents the temporary output path from entering the gzip
+        # header; mtime=0 prevents wall-clock rebuilds from changing the digest.
+        with gzip.GzipFile(filename='', mode='wb', fileobj=raw, mtime=0) as gz:
+            with tarfile.open(fileobj=gz, mode='w', format=tarfile.GNU_FORMAT) as tf:
+                for src, arcname in members:
+                    _tar_add_canonical_file(tf, src, arcname)
+    os.replace(tmp, path)
+
+
 def build_prerequisite_artifact(package_rows, dest_dir, include_missing=False,
                                 install_plan=None):
     """Write phase2-ubuntu-prerequisites.tar.gz + manifest + sha256 sidecar.
@@ -2053,6 +2081,12 @@ def build_prerequisite_artifact(package_rows, dest_dir, include_missing=False,
             dest_name = os.path.basename(src)
             shutil.copy2(src, os.path.join(debs_dir, dest_name))
             out = OrderedDict(rec)
+            # Host-local acquisition details are not release identity. Keeping
+            # absolute pool/cache paths or transient verification results in the
+            # published manifest makes identical package bytes hash differently
+            # across hosts/snapshots.
+            for ephemeral in ('deb_path', 'url', 'local_verify'):
+                out.pop(ephemeral, None)
             out['artifact_filename'] = dest_name
             packed.append(out)
             if out.get('package'):
@@ -2091,24 +2125,26 @@ def build_prerequisite_artifact(package_rows, dest_dir, include_missing=False,
         ])
         dump_json(manifest, os.path.join(work, MANIFEST_NAME))
         artifact_path = os.path.join(dest_dir, ARTIFACT_NAME)
-        tmp_art = artifact_path + '.part'
-        with tarfile.open(tmp_art, 'w:gz') as tf:
-            tf.add(os.path.join(work, MANIFEST_NAME), arcname=MANIFEST_NAME)
-            tf.add(os.path.join(work, INSTALL_ORDER_NAME), arcname=INSTALL_ORDER_NAME)
-            packed_names = set()
-            for rec in packed:
-                fn = rec.get('artifact_filename')
-                if not fn:
-                    continue
-                packed_names.add(fn)
-                tf.add(os.path.join(debs_dir, fn), arcname='debs/%s' % fn)
-        os.rename(tmp_art, artifact_path)
+        members = [
+            (os.path.join(work, MANIFEST_NAME), MANIFEST_NAME),
+            (os.path.join(work, INSTALL_ORDER_NAME), INSTALL_ORDER_NAME),
+        ]
+        packed_names = set()
+        for rec in packed:
+            fn = rec.get('artifact_filename')
+            if not fn:
+                continue
+            packed_names.add(fn)
+            members.append((os.path.join(debs_dir, fn), 'debs/%s' % fn))
+        _write_reproducible_tar_gz(artifact_path, members)
         digest = sha256_file(artifact_path)
         sidecar = artifact_path + '.sha256'
         with open(sidecar, 'w') as fh:
             fh.write('%s  %s\n' % (digest, ARTIFACT_NAME))
         manifest['sha256'] = digest
-        manifest['artifact_path'] = artifact_path
+        # Published manifest must be relocatable/reproducible. Never bind a
+        # temporary candidate directory or host path into release identity.
+        manifest['artifact_path'] = ARTIFACT_NAME
         dump_json(manifest, os.path.join(dest_dir, MANIFEST_NAME))
         with open(os.path.join(dest_dir, INSTALL_ORDER_NAME), 'w') as fh:
             fh.write(order_text)
@@ -2125,7 +2161,9 @@ def build_prerequisite_artifact(package_rows, dest_dir, include_missing=False,
                 except OSError:
                     pass
             return None
-        return manifest
+        result = OrderedDict(manifest)
+        result['artifact_path'] = artifact_path
+        return result
     finally:
         shutil.rmtree(work, ignore_errors=True)
 

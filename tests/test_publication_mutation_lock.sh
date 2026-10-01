@@ -22,8 +22,8 @@ grep -q 'MM_LOCK_FILE=.*ubuntu-mirror-publication.lock' "$COMMON" \
 grep -q 'DP_PHASE2_LOCK_FILE=.*ubuntu-mirror-publication.lock' "$DP2" \
   && pass "legacy phase2 lock is publication lock" \
   || fail "legacy phase2 lock path drifted"
-grep -q 'mm_acquire_install_lock' "$ENGINE" \
-  && grep -A12 '^engine_enable_http_distribution()' "$ENGINE" | grep -q 'mm_acquire_install_lock' \
+enable_http_fn="$(awk '/^engine_enable_http_distribution\(\)/,/^}/' "$ENGINE")"
+printf '%s\n' "$enable_http_fn" | grep -q 'mm_acquire_install_lock' \
   && pass "enable-http takes publication lock" \
   || fail "enable-http missing publication lock"
 

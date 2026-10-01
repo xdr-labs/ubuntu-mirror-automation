@@ -67,7 +67,10 @@ FAKE_BUNDLE_SHA="$(printf '%064d' 42)"
 phase2_upgrade_wrapper_write "$MM_CLIENT_ROOT" "$MIRROR_HTTP_URL" 6.6.0 "$FAKE_BUNDLE_SHA" >/dev/null
 printf 'LIVE_MARKER=OLD\n' >"${MM_CLIENT_ROOT}/.live-marker"
 mm_phase2_helpers_ready "$MM_CLIENT_ROOT" || fail "seeded live helpers not ready"
-live_before="$(find "$MM_CLIENT_ROOT" -type f | sort | sha256sum)"
+tree_digest() {
+  find "$1" -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}'
+}
+live_before="$(tree_digest "$MM_CLIENT_ROOT")"
 
 # Injected swap failure must preserve previous live generation.
 export MM_PHASE2_HELPERS_FORCE_REPUBLISH=1
@@ -76,12 +79,35 @@ set +e
 engine_ensure_phase2_helpers >"${TMP}/out.txt" 2>&1
 rc=$?
 set -e
-live_after="$(find "$MM_CLIENT_ROOT" -type f | sort | sha256sum)"
+live_after="$(tree_digest "$MM_CLIENT_ROOT")"
 [[ "$rc" -ne 0 ]] || fail "fake swap failure unexpectedly succeeded"
 [[ "$live_before" == "$live_after" ]] || fail "live generation mutated on swap failure"
 grep -q 'LIVE_MARKER=OLD' "${MM_CLIENT_ROOT}/.live-marker" \
   || fail "live marker missing after swap failure"
 pass "injected swap failure preserves previous live generation"
+
+# Post-swap validation failure must exchange the exact previous generation back
+# into place. This closes the cutover window where the old implementation had
+# already deleted the known-good live generation before the final check.
+unset MM_PHASE2_HELPERS_FAKE_SWAP_FAIL
+mm_check_phase2_helpers_ready() { return 77; }
+post_before="$(tree_digest "$MM_CLIENT_ROOT")"
+set +e
+engine_ensure_phase2_helpers >"${TMP}/post-swap-fail.txt" 2>&1
+post_rc=$?
+set -e
+post_after="$(tree_digest "$MM_CLIENT_ROOT")"
+unset -f mm_check_phase2_helpers_ready
+[[ "$post_rc" -ne 0 ]] || fail "post-swap validation failure unexpectedly succeeded"
+[[ "$post_before" == "$post_after" ]] || fail "post-swap failure did not restore exact previous live generation"
+grep -q 'LIVE_MARKER=OLD' "${MM_CLIENT_ROOT}/.live-marker" \
+  || fail "previous marker missing after post-swap rollback"
+if find "$(dirname "$MM_CLIENT_ROOT")" -maxdepth 1 -name 'client.helpers.*' -print -quit | grep -q .; then
+  fail "post-swap rollback left previous/candidate helper directory"
+fi
+grep -q 'PHASE2_HELPERS_TRANSACTION=ROLLBACK_PASS previous_restored=YES' \
+  "${TMP}/post-swap-fail.txt" || fail "post-swap rollback PASS evidence missing"
+pass "post-swap failure restores exact previous known-good generation"
 
 # Incomplete stage validation path: corrupt a required live file so force
 # republish builds stage, then make stage fail validation by removing swap

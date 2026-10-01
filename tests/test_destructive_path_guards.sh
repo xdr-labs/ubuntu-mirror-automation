@@ -124,4 +124,40 @@ echo "$out" | grep -qE 'CLIENT_HTTP_ROOT=FAIL|CLIENT_HTTP_ROOT_UNSAFE' \
   && { echo "FAIL valid CLIENT_HTTP_ROOT rejected"; echo "$out"; exit 1; }
 echo "PASS valid BASE_PATH/client not rejected by containment guard"
 
+# Mirror Manager engine roots must stay strictly below MM_MIRROR_ROOT.
+# shellcheck source=/dev/null
+source "${ROOT}/scripts/lib/mirror_install_engine.sh"
+set +e
+engine_out="$(
+  MM_MIRROR_ROOT="${TMP}/mirror-safe" \
+  MM_SELECTIVE_ROOT="${TMP}/outside-selective" \
+  MM_DP_PHASE2_ROOT="${TMP}/mirror-safe/dp-phase2" \
+  MM_CLIENT_ROOT="${TMP}/mirror-safe/client" \
+  MM_CACHE_ROOT="${TMP}/mirror-safe/.install-cache" \
+  engine_resolve_paths 2>&1
+)"
+engine_rc=$?
+set -e
+[[ "$engine_rc" -ne 0 ]] \
+  || { echo "FAIL Mirror Manager accepted selective root outside mirror root"; exit 1; }
+printf '%s\n' "$engine_out" | grep -q 'CONFIG_PATH=FAIL reason=outside_mirror_root' \
+  || { echo "FAIL missing Mirror Manager containment failure"; echo "$engine_out"; exit 1; }
+echo "PASS Mirror Manager rejects product subtree outside mirror root"
+
+set +e
+engine_out="$(
+  MM_MIRROR_ROOT="${TMP}/mirror-safe" \
+  MM_SELECTIVE_ROOT="${TMP}/mirror-safe" \
+  MM_DP_PHASE2_ROOT="${TMP}/mirror-safe/dp-phase2" \
+  MM_CLIENT_ROOT="${TMP}/mirror-safe/client" \
+  MM_CACHE_ROOT="${TMP}/mirror-safe/.install-cache" \
+  engine_resolve_paths 2>&1
+)"
+engine_rc=$?
+set -e
+[[ "$engine_rc" -ne 0 ]] \
+  && printf '%s\n' "$engine_out" | grep -q 'product_root_equals_mirror_root' \
+  || { echo "FAIL Mirror Manager accepted destructive subtree equal to mirror root"; echo "$engine_out"; exit 1; }
+echo "PASS Mirror Manager rejects product subtree equal to mirror root"
+
 echo "PASS test_destructive_path_guards"

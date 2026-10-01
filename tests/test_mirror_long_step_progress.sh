@@ -90,6 +90,24 @@ mkdir -p "$MM_CACHE_ROOT" "$MM_SELECTIVE_ROOT" "$MM_DP_PHASE2_ROOT" "$MM_STATE_D
 : >"$MM_STATUS_FILE"
 : >"${MM_STATE_DIR}/state.env"
 
+# Long-step helpers must restore caller signal traps exactly.
+trap 'printf "caller-int\\n" >>"${TMP}/caller-traps.log"' INT
+trap 'printf "caller-term\\n" >>"${TMP}/caller-traps.log"' TERM
+int_before="$(trap -p INT)"
+term_before="$(trap -p TERM)"
+mm_bg_with_heartbeat TRAP_BG "case=trap" "trap probe" -- bash -c 'exit 0' \
+  || fail "mm_bg_with_heartbeat trap probe failed"
+[[ "$(trap -p INT)" == "$int_before" && "$(trap -p TERM)" == "$term_before" ]] \
+  || fail "mm_bg_with_heartbeat did not preserve caller traps"
+TRAP_OUT="${TMP}/trap-file-progress.out"
+mm_run_with_file_progress TRAP_FILE "case=trap" "$TRAP_OUT" 1 "trap probe" -- \
+  bash -c 'printf x >"$1"' _ "$TRAP_OUT" \
+  || fail "mm_run_with_file_progress trap probe failed"
+[[ "$(trap -p INT)" == "$int_before" && "$(trap -p TERM)" == "$term_before" ]] \
+  || fail "mm_run_with_file_progress did not preserve caller traps"
+trap - INT TERM
+pass "long-step helpers preserve caller INT/TERM traps"
+
 dp2_set_version 6.6.0
 CACHE="$(acps_cache_dir 6.6.0)"
 mkdir -p "$CACHE"
@@ -189,8 +207,9 @@ MM_LOG_FILE=""
 cat >"${SHA_WRAP}/tar" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-# When creating (-cf), sleep briefly so progress monitor can sample.
-if [[ "${1:-}" == "-cf" ]]; then
+# When creating (-cf), sleep briefly so progress monitor can sample. Canonical
+# tar options may precede -cf, so inspect the full argv rather than only $1.
+if printf ' %s ' "$*" | grep -q ' -cf '; then
   (
     sleep 0.3
     exec /usr/bin/tar "$@"

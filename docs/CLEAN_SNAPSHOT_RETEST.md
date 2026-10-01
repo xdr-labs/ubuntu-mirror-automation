@@ -54,9 +54,14 @@ This is the original clean-room retest flow.
 2. Repository clean check + pull latest `origin/main` (sections 2–4).
 3. `sudo ./install.sh` (section 5) — refreshes `/usr/local/lib/ubuntu-mirror` runtime.
 4. Menu 1 Configuration — confirm mode, Mirror IP, and cluster worker settings if applicable (section 6).
-5. **Menu 2 Download and Prepare — DO NOT SKIP** (section 7).
+5. Decide from the saved configuration change class:
 
-   Expected heavy-artifact behavior when inputs unchanged:
+   - **Code/runtime/preparation input changed:** run Menu 2 Download and Prepare (section 7).
+   - **Only Mirror Server IP / HTTP URL changed:** skip Menu 2 and run Menu 3 → 4 → 7.
+     The validated heavy release is immutable; Menu 3 republishes only the small
+     endpoint-bound client/helper generation.
+
+   When Menu 2 is required and heavy inputs are unchanged, expected behavior is:
 
    ```text
    OS_CORE_ACTION=REUSE_VERIFIED
@@ -73,11 +78,11 @@ This is the original clean-room retest flow.
    CLIENT_SET_ACTION=REBUILD_SIGN_PUBLISH   # when code/runtime inputs changed
    ```
 
-6. Menu 3 → Menu 4 → Menu 7 (sections 8–11) only after Menu 2 PASS.
+6. Menu 3 → Menu 4 → Menu 7 (sections 8–11). If Menu 2 was required, proceed only after Menu 2 PASS.
 
 **Explicit Snapshot B rules — do not:**
 
-- skip Menu 2 (it validates heavy artifacts and rebuilds stale clients)
+- rerun Menu 2 solely because the restored AMI/site has a new Mirror Server IP; use Menu 3 → 4 → 7 for endpoint-only rebind
 - delete selective / OS Core artifacts
 - delete Phase 2 bundle artifacts
 - delete or rotate the local signing key by hand
@@ -294,9 +299,10 @@ REQUIRED_ACTION=...
 
 **Stop if:** Menu 7 shows commands while HTTP is down.
 
-After Snapshot B restoration, Menu 2 must be run so launchers are regenerated when
-Mirror URL, signing fingerprint, or launcher source changes. OS Core and Phase 2
-are not redownloaded for launcher-only client-set rebuilds.
+After Snapshot B restoration, launcher/source or other preparation-input changes still
+require Menu 2. A Mirror URL/IP-only change does not: save the new endpoint, then run
+Menu 3 → 4 → 7. Menu 3 atomically republishes the endpoint-bound client/helper set
+while the validated OS Core and Phase 2 release bytes remain unchanged.
 
 ---
 

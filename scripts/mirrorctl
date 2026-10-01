@@ -69,6 +69,49 @@ EOF
 
 need_root() { um_require_root; }
 
+mirrorctl_legacy_mutation_allowed() {
+  [[ "${MM_HERMETIC_TEST_MODE:-0}" == "1" && "${MIRRORCTL_ALLOW_LEGACY_MUTATION:-0}" == "1" ]]
+}
+
+mirrorctl_require_authoritative_control_plane() {
+  local cmd="${1:-}" action="${2:-}"
+  mirrorctl_legacy_mutation_allowed && return 0
+  um_die "MIRRORCTL_MUTATION_DISABLED=YES reason=authoritative_mirror_manager command=${cmd}${action:+:${action}}; use: sudo ubuntu-offline-mirror mirror-manager" 2
+}
+
+mirrorctl_enforce_control_plane() {
+  local cmd="${1:-}" action="${2:-status}"
+  case "$cmd" in
+    finalize|cleanup|restart|recover)
+      mirrorctl_require_authoritative_control_plane "$cmd" "$action"
+      ;;
+    sync)
+      case "$action" in
+        status|"") ;;
+        *) mirrorctl_require_authoritative_control_plane "$cmd" "$action" ;;
+      esac
+      ;;
+    nginx)
+      case "$action" in
+        status|test|"") ;;
+        *) mirrorctl_require_authoritative_control_plane "$cmd" "$action" ;;
+      esac
+      ;;
+    timer)
+      case "$action" in
+        status|"") ;;
+        *) mirrorctl_require_authoritative_control_plane "$cmd" "$action" ;;
+      esac
+      ;;
+    client)
+      case "$action" in
+        validate|"") ;;
+        *) mirrorctl_require_authoritative_control_plane "$cmd" "$action" ;;
+      esac
+      ;;
+  esac
+}
+
 dashboard_bin() {
   local dash repo here
   # 1) Git checkout recorded at install time (so git pull applies without reinstall)
@@ -604,6 +647,7 @@ main() {
   um_load_config "$UM_CONFIG_ARG"
   um_set_log_file "${LOG_DIR}/mirrorctl.log"
   um_ensure_log_dir
+  mirrorctl_enforce_control_plane "$cmd" "${args[0]:-status}"
 
   case "$cmd" in
     status)   cmd_status "${args[@]+"${args[@]}"}" ;;

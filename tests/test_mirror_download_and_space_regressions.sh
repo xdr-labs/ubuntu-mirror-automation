@@ -45,8 +45,13 @@ if awk '
 fi
 pass "download failure status propagation"
 
-grep -qE 'tar -cf "\$\{?dest_tmp\}?/\$\{?stable\}?"|tar -cf "\$2"' "$ENGINE" \
-  || fail "bundle is not built in final staging"
+grep -q -- '--format=gnu' "$ENGINE" \
+  && grep -q -- '--mtime=@0' "$ENGINE" \
+  && grep -q -- '--owner=0' "$ENGINE" \
+  && grep -q -- '--group=0' "$ENGINE" \
+  && grep -q -- '--numeric-owner' "$ENGINE" \
+  && grep -q -- '--mode=0644' "$ENGINE" \
+  || fail "bundle creation is not canonical/reproducible"
 grep -q 'PHASE2_BUNDLE_CREATE' "$ENGINE" || fail "bundle create progress events missing"
 grep -q 'mm_run_with_file_progress\|mm_bg_with_heartbeat' "$COMMON" \
   || fail "long-step heartbeat helpers missing"
@@ -88,6 +93,41 @@ cleanup() {
   rm -rf "$TMP"
 }
 trap cleanup EXIT
+
+
+# Phase 2 bundle bytes must be reproducible from identical file contents even
+# when source mtimes/modes differ. Mirror the production tar contract exactly.
+REPRO_A="${TMP}/repro-a"
+REPRO_B="${TMP}/repro-b"
+mkdir -p "$REPRO_A" "$REPRO_B"
+REPRO_FILES=(
+  aelladeb_py3_common.tar.gz
+  aelladeb_py3_common.tar.gz.sha1
+  aella-uvp-2404_6.6.0ubuntu1_amd64.deb
+  aella-uvp-2404_6.6.0ubuntu1_amd64.deb.sha1
+  bringup_py3_dp_after_os_upgrade.sh
+  bringup_py3_dp_after_os_upgrade.sh.sha1
+  images-6.6.0.list
+  images-6.6.0.tar
+  images-6.6.0.tar.sha256
+)
+for f in "${REPRO_FILES[@]}"; do
+  printf 'fixture:%s\n' "$f" >"${REPRO_A}/${f}"
+  cp "${REPRO_A}/${f}" "${REPRO_B}/${f}"
+done
+chmod 0600 "${REPRO_A}/"*
+chmod 0755 "${REPRO_B}/"*
+touch -t 202001010101 "${REPRO_A}/"*
+touch -t 202612312359 "${REPRO_B}/"*
+for src in "$REPRO_A" "$REPRO_B"; do
+  tar --format=gnu --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner --mode=0644 \
+    -cf "${src}.tar" -C "$src" "${REPRO_FILES[@]}"
+done
+REPRO_SHA_A="$(sha256sum "${REPRO_A}.tar" | awk '{print $1}')"
+REPRO_SHA_B="$(sha256sum "${REPRO_B}.tar" | awk '{print $1}')"
+[[ "$REPRO_SHA_A" == "$REPRO_SHA_B" ]] \
+  && pass "Phase 2 bundle canonical tar is byte-reproducible across metadata drift" \
+  || fail "canonical Phase 2 tar SHA drifted: ${REPRO_SHA_A} != ${REPRO_SHA_B}"
 
 MM_PROJECT_ROOT="$ROOT"
 MM_HERMETIC_TEST_MODE=1

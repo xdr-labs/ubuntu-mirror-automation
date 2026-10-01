@@ -82,6 +82,18 @@ meta_get() {
 
 classify_mode() {
   local mode="$1"
+  if [[ "$mode" == "PHASE2_ONLY" ]]; then
+    if engine_phase2_only_metadata_current "$CLIENT_ROOT" "$MIRROR_URL" 6.6.0; then
+      echo "CLIENT_SET_STATE=CURRENT_VERIFIED"
+      echo "CLIENT_SET_ACTION=REUSE_CURRENT"
+      echo "CLIENT_SET_REASON=phase2_only_anchor_identity_match"
+    else
+      echo "CLIENT_SET_STATE=STALE_BUILD_INPUT"
+      echo "CLIENT_SET_ACTION=REBUILD_SIGN_PUBLISH"
+      echo "CLIENT_SET_REASON=phase2_only_anchor_identity_mismatch"
+    fi
+    return 0
+  fi
   python3 "${ROOT}/scripts/lib/client_build_provenance.py" classify-client-set \
     --project-root "$ROOT" \
     --client-root "$CLIENT_ROOT" \
@@ -94,11 +106,13 @@ classify_mode() {
 expected_digest() {
   local mode="$1"
   local plan="" disc="" contract=""
-  if [[ "$mode" == "FULL" ]]; then
-    plan="$(awk -F= '$1=="plan_checksum"{print tolower($2); exit}' "${SEL}/state/READY")"
-    disc="$(awk -F= '$1=="discovery_artifact_checksum"{print tolower($2); exit}' "${SEL}/state/READY")"
-    contract="$(awk -F= '$1=="aws_semantic_contract_sha256"{print tolower($2); exit}' "${SEL}/state/READY")"
+  if [[ "$mode" == "PHASE2_ONLY" ]]; then
+    engine_phase2_only_client_identity "$CLIENT_ROOT" "$MIRROR_URL" 6.6.0
+    return
   fi
+  plan="$(awk -F= '$1=="plan_checksum"{print tolower($2); exit}' "${SEL}/state/READY")"
+  disc="$(awk -F= '$1=="discovery_artifact_checksum"{print tolower($2); exit}' "${SEL}/state/READY")"
+  contract="$(awk -F= '$1=="aws_semantic_contract_sha256"{print tolower($2); exit}' "${SEL}/state/READY")"
   python3 "${ROOT}/scripts/lib/client_build_provenance.py" compute \
     --project-root "$ROOT" \
     --mirror-base-url "$MIRROR_URL" \
@@ -220,8 +234,8 @@ if printf '%s\n' "$OUT_B" | grep -q 'CLIENT_SET_STATE=CURRENT_VERIFIED'; then
 else
   pass "OLD_FULL_GENERATION_NOT_REUSED_AS_PHASE2_ONLY=PASS"
 fi
-if printf '%s\n' "$OUT_B" | grep -Eq 'mode_mismatch|build_input_mismatch'; then
-  pass "CASE B reject reason is mode/digest mismatch"
+if printf '%s\n' "$OUT_B" | grep -q 'CLIENT_SET_REASON=phase2_only_anchor_identity_mismatch'; then
+  pass "CASE B reject reason is PHASE2_ONLY anchor identity mismatch"
 else
   fail "CASE B unexpected classify output: $OUT_B"
 fi
@@ -299,6 +313,15 @@ printf '%s\n' "$OUT_A" | grep -q 'CLIENT_SET_STATE=CURRENT_VERIFIED' \
 printf '%s\n' "$OUT_A" | grep -q 'CLIENT_SET_ACTION=REUSE_CURRENT' \
   && pass "EXACT_GENERATION_BINDING=PASS" \
   || fail "CASE A action not REUSE_CURRENT"
+# Actual Menu 7 preflight calls mm_client_set_current_source. PHASE2_ONLY must
+# use its helper/wrapper canonical identity rather than the FULL launcher schema.
+if CURRENT_SOURCE_OUT="$(mm_client_set_current_source "$MM_CLIENT_ROOT" 2>&1)"; then
+  printf '%s\n' "$CURRENT_SOURCE_OUT" | grep -q 'CLIENT_SET_REASON=phase2_only_exact_match' \
+    && pass "PHASE2_ONLY_MENU7_CURRENT_SOURCE=PASS" \
+    || fail "PHASE2_ONLY current-source reason missing: ${CURRENT_SOURCE_OUT}"
+else
+  fail "PHASE2_ONLY actual Menu 7 source preflight failed: ${CURRENT_SOURCE_OUT}"
+fi
 
 # Menu 7 PHASE2_ONLY command content (no OS hops; one executable bringup).
 cmd_file="${MM_LOG_DIR}/dp-client-upgrade-commands.txt"
@@ -390,6 +413,7 @@ DIG_F2="$(meta_get CLIENT_BUILD_INPUT_SHA256)"
   || fail "CASE F FULL digests drifted ${DIG_F1} vs ${DIG_F2}"
 [[ "$DIG_P1" != "$DIG_F1" ]] && pass "REPEATED_MODE_SWITCH_IDEMPOTENT=PASS" \
   || fail "CASE F digests collapsed across modes"
+
 
 echo
 echo "FULL_TO_PHASE2_ONLY=$([[ "$FAIL" -eq 0 ]] && echo PASS || echo FAIL)"
