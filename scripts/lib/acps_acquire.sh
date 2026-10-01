@@ -268,7 +268,12 @@ acps_write_verified_marker() {
   # historical internal name; production source is immutable R2
   local dir="$1"
   local tmp f fp cid
-  tmp="${dir}/.VERIFIED.tmp.$$"
+  # Use a uniquely-created same-directory temporary file. Bash keeps $$ stable
+  # across background subshells, so ".VERIFIED.tmp.$$" lets concurrent writers
+  # collide: one writer can rename the shared temp while another still owns it.
+  # mktemp preserves atomic same-filesystem promotion without that collision.
+  [[ -d "$dir" ]] || return 1
+  tmp="$(mktemp "${dir}/.VERIFIED.tmp.XXXXXX" 2>/dev/null)" || return 1
   {
     # Format 2 binds the verified cache to the pinned R2 release identity.
     printf 'ACPS_VERIFIED_FORMAT=2\n'
@@ -289,7 +294,10 @@ acps_write_verified_marker() {
     done
   } >"$tmp" || { rm -f "$tmp"; return 1; }
   acps_chmod_private_file "$tmp" 2>/dev/null || chmod 0600 "$tmp" 2>/dev/null || true
-  mv -f "$tmp" "${dir}/.VERIFIED"
+  if ! mv -f "$tmp" "${dir}/.VERIFIED"; then
+    rm -f "$tmp"
+    return 1
+  fi
   acps_chmod_private_file "${dir}/.VERIFIED" 2>/dev/null || true
 }
 

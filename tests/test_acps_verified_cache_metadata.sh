@@ -88,6 +88,27 @@ grep -q '^ACPS_VERIFIED_FORMAT=2$' "${CACHE}/.VERIFIED" || fail "format line mis
 acps_is_verified_cache "$CACHE" || fail "fresh marker should verify"
 pass "verified marker written after checksum pass"
 
+# Concurrent writers run in Bash subshells that share the parent's $$ value.
+# The marker writer must therefore use a genuinely unique same-directory temp
+# rather than a PID-derived name that all writers can collide on.
+marker_pids=()
+marker_bad=0
+for _ in $(seq 1 24); do
+  (acps_write_verified_marker "$CACHE") &
+  marker_pids+=("$!")
+done
+for marker_pid in "${marker_pids[@]}"; do
+  if ! wait "$marker_pid"; then
+    marker_bad=$((marker_bad + 1))
+  fi
+done
+[[ "$marker_bad" -eq 0 ]] || fail "concurrent verified-marker writers failed=$marker_bad"
+if find "$CACHE" -maxdepth 1 -name '.VERIFIED.tmp.*' -print -quit | grep -q .; then
+  fail "concurrent verified-marker writers left temporary files"
+fi
+acps_is_verified_cache "$CACHE" || fail "concurrent verified-marker final state invalid"
+pass "concurrent verified-marker publication uses collision-free temp files"
+
 : >"$SHA256_CALL_LOG"
 if acps_acquire_all 6.6.0 >"${TMP}/reuse.log" 2>&1; then
   :
