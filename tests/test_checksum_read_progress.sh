@@ -229,6 +229,8 @@ unset OS_CORE_TEST_EXPECTED_SHA256 OS_CORE_TEST_EXPECTED_BYTES MM_HERMETIC_TEST_
 
 mm_assert_os_core_production_identity() { return 0; }
 unset R2_OS_CORE_PUBLISHER_PUBLIC_KEY || true
+VERIFY_RELEASE="${TMP}/os-core-verify-release"
+rm -f "$VERIFY_RELEASE"
 cat >"${WRAP}/python3" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
@@ -239,7 +241,11 @@ if [[ "\${1:-}" == "$PY" && "\${2:-}" == verify ]]; then
   esac
   [[ -n "\${MM_CHECKSUM_PROGRESS_TOTAL_BYTES:-}" ]] || { echo "progress total unset" >&2; exit 3; }
   [[ -n "\${MM_CHECKSUM_PROGRESS_DONE_FILE:-}" ]] || { echo "done file unset" >&2; exit 3; }
-  sleep 1.2
+  for _ in {1..100}; do
+    [[ -e "$VERIFY_RELEASE" ]] && break
+    sleep 0.1
+  done
+  [[ -e "$VERIFY_RELEASE" ]] || { echo "progress observation timeout" >&2; exit 5; }
   : >"\${MM_CHECKSUM_PROGRESS_DONE_FILE}"
   sleep 2.2
   printf '%s\n' OUTER_SHA256=PASS OS_CORE_VERIFY=PASS RELEASE_ID=oscore-progress PAYLOAD_BYTES=1
@@ -250,9 +256,30 @@ EOF
 chmod +x "${WRAP}/python3"
 hash -r
 LOGC="${TMP}/os-core-progress.log"
-if ! (
+rm -f "$VERIFY_RELEASE"
+(
   engine_verify_os_core_package "$DATA"
-) >"$LOGC" 2>&1; then
+) >"$LOGC" 2>&1 &
+VERIFY_PID=$!
+if [[ -r /proc/self/io ]]; then
+  PROGRESS_SEEN=0
+  for _ in {1..100}; do
+    if grep -q 'OS_CORE_SHA256_VERIFY_PROGRESS ' "$LOGC" 2>/dev/null; then
+      PROGRESS_SEEN=1
+      break
+    fi
+    kill -0 "$VERIFY_PID" 2>/dev/null || break
+    sleep 0.1
+  done
+  if [[ "$PROGRESS_SEEN" -ne 1 ]]; then
+    touch "$VERIFY_RELEASE"
+    wait "$VERIFY_PID" || true
+    cat "$LOGC" >&2
+    fail "outer SHA progress missing before verifier completion"
+  fi
+fi
+touch "$VERIFY_RELEASE"
+if ! wait "$VERIFY_PID"; then
   cat "$LOGC" >&2
   fail "os core verify failed"
 fi
