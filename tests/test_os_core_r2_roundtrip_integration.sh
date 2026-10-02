@@ -568,14 +568,14 @@ export LOCAL_CLIENT_SIGNING_DIR="${CLIENT_SIGNING_DIR}"
 export PREPARATION_MODE=FULL
 
 mkdir -p "$MM_CACHE_ROOT" "$MM_LOG_DIR" "$MM_STATE_ROOT" "$MM_CONFIG_DIR" \
-  "$MM_CLIENT_ROOT" "$MM_DP_PHASE2_ROOT"
-# Fresh publication means the selective destination does not exist yet.
+  "$MM_CLIENT_ROOT" "$MM_DP_PHASE2_ROOT" "$MM_SELECTIVE_ROOT"
+# Match a real clean install: bootstrap creates an empty selective/ placeholder.
+# It must not be mistaken for a previously published OS Core generation.
 
-# Prove destination started empty (no state/plan.json)
-[[ ! -f "${MM_SELECTIVE_ROOT}/state/plan.json" ]] \
-  && pass "FRESH_MIRROR_STARTED_EMPTY (no state/plan.json)" \
-  || fail "fresh mirror already had plan.json"
-echo "FRESH_MIRROR_STARTED_EMPTY=YES"
+[[ -d "$MM_SELECTIVE_ROOT" && -z "$(find "$MM_SELECTIVE_ROOT" -mindepth 1 -maxdepth 1 -print -quit)" ]] \
+  && pass "FRESH_MIRROR_BOOTSTRAP_EMPTY_SELECTIVE=YES" \
+  || fail "fresh bootstrap selective placeholder is not empty"
+echo "FRESH_MIRROR_BOOTSTRAP_EMPTY_SELECTIVE=YES"
 
 # shellcheck source=../scripts/lib/mirror_manager_common.sh
 source "$COMMON"
@@ -584,12 +584,38 @@ source "$ENGINE"
 mm_state_init
 engine_resolve_paths
 
+# A non-empty root without a verified OS Core identity is not a bootstrap
+# placeholder. It must fail closed before any atomic cutover and preserve bytes.
+BAD_SELECTIVE="${TMP}/identityless-mirror/selective"
+mkdir -p "$BAD_SELECTIVE"
+printf 'preserve-me\n' >"${BAD_SELECTIVE}/operator-data.txt"
+bad_before="$(sha256sum "${BAD_SELECTIVE}/operator-data.txt" | awk '{print $1}')"
+set +e
+( MM_SELECTIVE_ROOT="$BAD_SELECTIVE" engine_materialize_os_mirror "$PKG" ) \
+  >"${TMP}/identityless-materialize.log" 2>&1
+bad_rc=$?
+set -e
+bad_after="$(sha256sum "${BAD_SELECTIVE}/operator-data.txt" 2>/dev/null | awk '{print $1}')"
+[[ "$bad_rc" -ne 0 && "$bad_before" == "$bad_after" ]] \
+  && grep -q 'OS_MIRROR_PREEXISTING_ROOT=FAIL reason=identity_missing_nonempty' \
+       "${TMP}/identityless-materialize.log" \
+  && pass "non-empty identity-less selective fails closed before cutover" \
+  || fail "identity-less selective fail-closed contract broken rc=${bad_rc}"
+if compgen -G "${BAD_SELECTIVE}.new.*" >/dev/null; then
+  fail "identity-less selective created a cutover candidate"
+else
+  pass "identity-less selective left no cutover candidate"
+fi
+
 set +e
 ( engine_materialize_os_mirror "$PKG" ) >"${TMP}/engine-materialize.log" 2>&1
 ENG_RC=$?
 set -e
 tail -40 "${TMP}/engine-materialize.log" || true
 [[ "$ENG_RC" -eq 0 ]] && pass "engine_materialize_os_mirror exit 0" || fail "engine rc=${ENG_RC}"
+grep -q '^.*OS_MIRROR_EMPTY_PLACEHOLDER=INITIAL_PUBLISH' "${TMP}/engine-materialize.log" \
+  && pass "bootstrap empty selective treated as initial publish" \
+  || fail "bootstrap empty selective was not classified as initial publish"
 
 [[ -f "${MM_SELECTIVE_ROOT}/state/READY" ]] && pass "READY exists after engine materialize" \
   || fail "READY missing after engine materialize"

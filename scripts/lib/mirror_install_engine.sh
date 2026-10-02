@@ -1198,6 +1198,22 @@ engine_materialize_os_mirror() {
     return 0
   fi
 
+  # Fresh bootstrap creates an empty selective/ placeholder for ownership and
+  # directory layout. It is not a published OS Core generation. Treat only a
+  # truly empty directory as initial publication; any non-empty identity-less
+  # root is unknown state and must fail closed before the atomic cutover.
+  if [[ -d "$MM_SELECTIVE_ROOT" ]]; then
+    previous_selective_gen="$(engine_selective_generation_id_for_root "$MM_SELECTIVE_ROOT" 2>/dev/null || true)"
+    if [[ "$previous_selective_gen" == oscore:* ]]; then
+      mm_info "OS_MIRROR_EXISTING_GENERATION=VERIFIED generation=${previous_selective_gen}"
+    elif rmdir "$MM_SELECTIVE_ROOT" 2>/dev/null; then
+      previous_selective_gen=""
+      mm_info "OS_MIRROR_EMPTY_PLACEHOLDER=INITIAL_PUBLISH"
+    else
+      mm_die "OS_MIRROR_PREEXISTING_ROOT=FAIL reason=identity_missing_nonempty"
+    fi
+  fi
+
   rm -rf "$staging_extract" "$final_tmp"
   local extract_pub=""
   local -a extract_args=(
@@ -1290,9 +1306,9 @@ engine_materialize_os_mirror() {
     previous_selective="$(printf '%s\n' "$swap_out" | awk -F= '$1=="CLIENT_SET_PREVIOUS_PATH"{print substr($0,index($0,"=")+1); exit}')"
     [[ -n "$previous_selective" && -d "$previous_selective" ]] \
       || mm_die "OS_MIRROR_ATOMIC_SWAP=FAIL reason=previous_generation_missing"
-    previous_selective_gen="$(engine_selective_generation_id_for_root "$previous_selective" 2>/dev/null || true)"
-    [[ "$previous_selective_gen" == oscore:* ]] \
-      || mm_die "OS_MIRROR_ATOMIC_SWAP=FAIL reason=previous_generation_identity_missing"
+    # previous_selective_gen was validated before cutover. RENAME_EXCHANGE moves
+    # that exact directory to previous_selective, so no post-cutover identity
+    # discovery is needed to decide whether rollback is possible.
     mm_info "OS_MIRROR_ATOMIC_SWAP=PASS previous_retained=YES"
   else
     mv -f "$final_tmp" "$MM_SELECTIVE_ROOT" || {
