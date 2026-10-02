@@ -717,6 +717,10 @@ mm_bg_with_heartbeat() {
   trap '_mm_hb_cleanup' INT TERM
 
   (
+    # Internal monitor subshells must not inherit caller lifecycle traps.
+    # A naturally exiting monitor would otherwise run the caller's EXIT trap
+    # (for example, deleting the caller-owned mktemp tree mid-operation).
+    trap - EXIT RETURN INT TERM
     while kill -0 "$cmd_pid" 2>/dev/null; do
       sleep "$hb_secs" || break
       kill -0 "$cmd_pid" 2>/dev/null || break
@@ -820,6 +824,10 @@ mm_run_with_file_progress() {
   trap '_mm_prog_cleanup' INT TERM
 
   (
+    # Internal monitor subshells must not inherit caller lifecycle traps.
+    # A naturally exiting monitor would otherwise run the caller's EXIT trap
+    # (for example, deleting the caller-owned mktemp tree mid-operation).
+    trap - EXIT RETURN INT TERM
     while kill -0 "$cmd_pid" 2>/dev/null; do
       sleep "$hb_secs" || break
       kill -0 "$cmd_pid" 2>/dev/null || break
@@ -3160,6 +3168,10 @@ mm_run_long_operation() {
   }
   trap '_mm_op_cleanup' INT TERM
   (
+    # Internal monitor subshells must not inherit caller lifecycle traps.
+    # A naturally exiting monitor would otherwise run the caller's EXIT trap
+    # (for example, deleting the caller-owned mktemp tree mid-operation).
+    trap - EXIT RETURN INT TERM
     while kill -0 "$cmd_pid" 2>/dev/null; do
       sleep "$hb_secs" || break
       kill -0 "$cmd_pid" 2>/dev/null || break

@@ -108,6 +108,47 @@ mm_run_with_file_progress TRAP_FILE "case=trap" "$TRAP_OUT" 1 "trap probe" -- \
 trap - INT TERM
 pass "long-step helpers preserve caller INT/TERM traps"
 
+# Internal background monitors must never execute the caller's EXIT trap.
+# Delay the parent's non--0 kill just enough for the monitor to observe the
+# completed command and exit naturally; this deterministically reproduces the
+# race that used to delete caller-owned temp trees mid-operation.
+assert_monitor_does_not_run_exit_trap() {
+  local helper="$1" marker="${TMP}/monitor-exit-${1}.log" out="${TMP}/monitor-out-${1}" rc=0
+  : >"$marker"
+  (
+    trap 'printf "caller-exit\n" >>"$marker"' EXIT
+    kill() {
+      if [[ "${1:-}" != "-0" ]]; then
+        sleep 0.35
+      fi
+      builtin kill "$@"
+    }
+    export MM_LONG_STEP_HEARTBEAT_SEC=1
+    case "$helper" in
+      bg)
+        mm_bg_with_heartbeat TRAP_EXIT_BG "case=exit-trap" "trap probe" -- \
+          bash -c 'sleep 0.9'
+        ;;
+      file)
+        mm_run_with_file_progress TRAP_EXIT_FILE "case=exit-trap" "$out" 1 "trap probe" -- \
+          bash -c 'sleep 0.9; printf x >"$1"' _ "$out"
+        ;;
+      long)
+        mm_run_long_operation TRAP_EXIT_LONG target -- bash -c 'sleep 0.9'
+        ;;
+      *) return 2 ;;
+    esac
+    [[ ! -s "$marker" ]] || exit 91
+  ) || rc=$?
+  [[ "$rc" -eq 0 ]] || fail "${helper} monitor executed caller EXIT trap early (rc=${rc})"
+  [[ "$(wc -l <"$marker" | tr -d ' ')" -eq 1 ]] \
+    || fail "${helper} caller EXIT trap count unexpected"
+}
+assert_monitor_does_not_run_exit_trap bg
+assert_monitor_does_not_run_exit_trap file
+assert_monitor_does_not_run_exit_trap long
+pass "internal progress monitors do not execute caller EXIT traps"
+
 dp2_set_version 6.6.0
 CACHE="$(acps_cache_dir 6.6.0)"
 mkdir -p "$CACHE"
