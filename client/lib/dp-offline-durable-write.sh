@@ -6,6 +6,30 @@
 
 DURABLE_WRITE_LOG_THRESHOLD_MS="${DURABLE_WRITE_LOG_THRESHOLD_MS:-500}"
 
+# Return 0 when dpkg audit is unsafe (issues present OR the audit command itself
+# failed); return 1 only for a successful, empty audit. Do not pipe into grep -q:
+# with pipefail, an early grep exit can SIGPIPE dpkg and turn dirty state into a
+# false negative.
+dpkg_audit_has_issues() {
+  local tmp rc=0 errexit_was_on=0
+  tmp="$(mktemp "${TMPDIR:-/tmp}/dpkg-audit.XXXXXX" 2>/dev/null)" || return 0
+  case $- in *e*) errexit_was_on=1 ;; esac
+  set +e
+  dpkg --audit >"$tmp" 2>&1
+  rc=$?
+  if [[ "$errexit_was_on" -eq 1 ]]; then
+    set -e
+  else
+    set +e
+  fi
+  if [[ "$rc" -ne 0 || -s "$tmp" ]]; then
+    rm -f "$tmp"
+    return 0
+  fi
+  rm -f "$tmp"
+  return 1
+}
+
 _durable_now_ms() {
   python3 -c 'import time; print(int(time.time()*1000))' 2>/dev/null || echo 0
 }

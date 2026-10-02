@@ -36,6 +36,87 @@ DIAGNOSTIC_BUNDLE_PATH=""
 CURRENT_RUN_ID="${CURRENT_RUN_ID:-}"
 RECON_BASELINE_LOADED="NO"
 
+# Direct-sourceable reconciliation tests do not always load the durable helper.
+# Delegate to the common predicate when present; otherwise use the same
+# fail-closed full-output audit semantics locally.
+recon_dpkg_audit_has_issues() {
+  if declare -F dpkg_audit_has_issues >/dev/null 2>&1; then
+    dpkg_audit_has_issues
+    return $?
+  fi
+  local tmp rc=0 errexit_was_on=0
+  tmp="$(mktemp "${TMPDIR:-/tmp}/dpkg-audit.XXXXXX" 2>/dev/null)" || return 0
+  case $- in *e*) errexit_was_on=1 ;; esac
+  set +e
+  dpkg --audit >"$tmp" 2>&1
+  rc=$?
+  if [[ "$errexit_was_on" -eq 1 ]]; then
+    set -e
+  else
+    set +e
+  fi
+  if [[ "$rc" -ne 0 || -s "$tmp" ]]; then
+    rm -f "$tmp"
+    return 0
+  fi
+  rm -f "$tmp"
+  return 1
+}
+
+# Serialize one destructive client transaction across all four OS-hop clients.
+# All hops share one ephemeral /run/lock identity, so two different hop binaries
+# cannot race through check -> preflight -> confirmation -> commit. A stale lock
+# file is harmless: flock ownership disappears automatically when the process exits.
+CLIENT_EXECUTION_LOCK_FD=""
+CLIENT_EXECUTION_LOCK_PATH=""
+
+_client_execution_lock_fd_holds_ours() {
+  local fd="${1:-}" expected actual
+  [[ "$fd" =~ ^[0-9]+$ ]] || return 1
+  [[ -e "/proc/self/fd/${fd}" ]] || return 1
+  expected="$(hostpath "/run/lock/stellar-offline-os-upgrade-client.lock")"
+  expected="$(readlink -f "$expected" 2>/dev/null || printf '%s' "$expected")"
+  actual="$(readlink -f "/proc/self/fd/${fd}" 2>/dev/null || true)"
+  [[ -n "$actual" && "$actual" == "$expected" ]] || return 1
+  flock -n "$fd"
+}
+
+client_execution_lock_acquire() {
+  local lock dir fd
+  if _client_execution_lock_fd_holds_ours "${CLIENT_EXECUTION_LOCK_FD:-}"; then
+    return 0
+  fi
+  CLIENT_EXECUTION_LOCK_FD=""
+  CLIENT_EXECUTION_LOCK_PATH=""
+  lock="$(hostpath "/run/lock/stellar-offline-os-upgrade-client.lock")"
+  dir="$(dirname "$lock")"
+  mkdir -p "$dir" || return 1
+  exec {fd}>"$lock" || return 1
+  if ! flock -n "$fd"; then
+    eval "exec ${fd}>&-" 2>/dev/null || true
+    return 1
+  fi
+  CLIENT_EXECUTION_LOCK_FD="$fd"
+  CLIENT_EXECUTION_LOCK_PATH="$lock"
+  chmod 0600 "$lock" 2>/dev/null || true
+  if declare -F log >/dev/null 2>&1; then
+    log INFO "CLIENT_EXECUTION_LOCK=ACQUIRED path=/run/lock/stellar-offline-os-upgrade-client.lock"
+  fi
+  return 0
+}
+
+client_execution_lock_release() {
+  local fd="${CLIENT_EXECUTION_LOCK_FD:-}"
+  [[ "$fd" =~ ^[0-9]+$ ]] || return 0
+  flock -u "$fd" 2>/dev/null || true
+  eval "exec ${fd}>&-" 2>/dev/null || true
+  CLIENT_EXECUTION_LOCK_FD=""
+  if declare -F log >/dev/null 2>&1; then
+    log INFO "CLIENT_EXECUTION_LOCK=RELEASED"
+  fi
+  return 0
+}
+
 recon_hop_root() {
   hostpath "${STATE_ROOT}/hops/${PIN_HOP}"
 }
@@ -342,7 +423,7 @@ record_release_upgrade_run_baseline() {
   fi
   audit_out="clean"
   if [[ -z "${TEST_ROOT:-}" ]]; then
-    if dpkg --audit 2>/dev/null | grep -q .; then
+    if recon_dpkg_audit_has_issues; then
       audit_out="dirty"
     fi
   elif [[ -f "$(hostpath /tmp/dpkg-broken)" ]]; then
@@ -517,7 +598,7 @@ collect_package_transition_evidence() {
         "$(hostpath ${STATE_ROOT}/force-upgrade-transaction-evidence)" "force-upgrade-transaction" "yes"
     fi
   else
-    if dpkg --audit 2>/dev/null | grep -q .; then
+    if recon_dpkg_audit_has_issues; then
       DPKG_AUDIT_STATUS="INTERRUPTED"
       recon_append_evidence "INTERRUPTED_DPKG_TRANSACTION" "dpkg_audit" "dpkg --audit" \
         "audit_output_present" "yes"

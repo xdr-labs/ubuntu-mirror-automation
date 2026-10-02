@@ -1394,9 +1394,15 @@ def cmd_verify(args):
     if len(parts) < 1 or not re.match(r"^[0-9a-fA-F]{64}$", parts[0]):
         raise OsCoreError("OUTER_SHA256_FORMAT")
     expected = parts[0].lower()
+    # Hash the package this process will extract. A caller-supplied digest
+    # is not bound to those bytes.
     actual = sha256_file(package)
     if expected != actual:
         raise OsCoreError("OUTER_SHA256_FAIL expected=%s actual=%s" % (expected, actual))
+    done = os.environ.get("MM_CHECKSUM_PROGRESS_DONE_FILE", "")
+    if done:
+        with open(done, "a"):
+            pass
     print("OUTER_SHA256=PASS")
 
     asc_path = sha_path + ".asc"

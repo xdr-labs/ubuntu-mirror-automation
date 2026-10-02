@@ -267,9 +267,24 @@ mm_assert_os_core_production_identity() {
     return 1
   fi
 
-  got_sha="$(sha256sum "$package" | awk '{print tolower($1)}')"
-  expected_sha="$(printf '%s' "$expected_sha" | tr 'A-F' 'a-f')"
   got_bytes="$(stat -c%s "$package" 2>/dev/null || wc -c <"$package" | tr -d ' ')"
+  # Shared by the post-download pin and Menu 2 verify. One sha256sum reader.
+  export MM_CHECKSUM_PROGRESS_TOTAL_BYTES="$got_bytes"
+  export MM_CHECKSUM_PROGRESS_FILE="$(basename "$package")"
+  local id_rc=0
+  mm_bg_with_heartbeat \
+    "OS_CORE_PRODUCTION_IDENTITY" \
+    "file=$(basename "$package") bytes=${got_bytes}" \
+    "Still verifying the OS Core production identity checksum..." \
+    -- sha256sum "$package" && id_rc=0 || id_rc=$?
+  unset MM_CHECKSUM_PROGRESS_TOTAL_BYTES MM_CHECKSUM_PROGRESS_FILE \
+    MM_CHECKSUM_RCHAR_BASE MM_CHECKSUM_PROGRESS_LAST_LINE
+  if [[ "$id_rc" -ne 0 ]]; then
+    mm_error "OS_CORE_PRODUCTION_IDENTITY=FAIL reason=sha256sum rc=${id_rc}"
+    return 1
+  fi
+  got_sha="$(printf '%s\n' "$MM_LONG_STEP_LAST_STDOUT" | awk '{print tolower($1); exit}')"
+  expected_sha="$(printf '%s' "$expected_sha" | tr 'A-F' 'a-f')"
 
   # Sidecar cross-check must not replace the immutable pin.
   if [[ -f "${package}.sha256" ]]; then
@@ -503,8 +518,167 @@ mm_human_lines() {
 MM_LONG_STEP_LAST_STDOUT=""
 MM_LONG_STEP_LAST_ELAPSED=0
 
+mm_format_duration() {
+  local s="${1:-0}" h m
+  if ! [[ "$s" =~ ^[0-9]+$ ]]; then
+    printf 'unavailable'
+    return 0
+  fi
+  h=$((s / 3600))
+  m=$(((s % 3600) / 60))
+  s=$((s % 60))
+  if [[ "$h" -gt 0 ]]; then
+    printf '%dh %dm %ds' "$h" "$m" "$s"
+  elif [[ "$m" -gt 0 ]]; then
+    printf '%dm %ds' "$m" "$s"
+  else
+    printf '%ds' "$s"
+  fi
+}
+
+# /proc/<pid>/io rchar. MM_CHECKSUM_PROGRESS_IO_ROOT overrides /proc in tests.
+# Return 1 when the counter cannot be read (process-exit race included).
+_mm_proc_rchar() {
+  local pid="$1" root io val
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  root="${MM_CHECKSUM_PROGRESS_IO_ROOT:-/proc}"
+  io="${root}/${pid}/io"
+  [[ -r "$io" ]] || return 1
+  val="$(awk '/^rchar:/ {print $2; exit}' "$io" 2>/dev/null || true)"
+  [[ "$val" =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "$val"
+}
+
+# One checksum read stream. A direct command uses its own rchar. A shell
+# with exactly one child uses that child only. A pipeline reads the same
+# logical bytes twice (tar | sha256sum). Detect that from the command line
+# on every sample: one stage often exits before the first heartbeat, so a
+# live child count is not enough. Return 1 and keep the heartbeat.
+_mm_checksum_authoritative_rchar() {
+  local root_pid="$1"
+  local -a kids=()
+  local pid cmd
+  cmd="$(tr '\0' ' ' < "/proc/${root_pid}/cmdline" 2>/dev/null || true)"
+  if [[ "$cmd" == *"|"* ]]; then
+    return 1
+  fi
+  if command -v pgrep >/dev/null 2>&1; then
+    while read -r pid; do
+      [[ "$pid" =~ ^[0-9]+$ ]] || continue
+      kids+=("$pid")
+    done < <(pgrep -P "$root_pid" 2>/dev/null || true)
+  fi
+  if [[ "${#kids[@]}" -ge 2 ]]; then
+    return 1
+  fi
+  if [[ "${#kids[@]}" -eq 1 ]]; then
+    _mm_proc_rchar "${kids[0]}"
+    return
+  fi
+  _mm_proc_rchar "$root_pid"
+}
+
+# While the checksum process is still running, percent is capped below 100.
+# rchar can include non-payload reads and must not be shown as a finished hash.
+_mm_checksum_percent() {
+  local read_bytes="$1" total="$2"
+  awk -v read="$read_bytes" -v total="$total" 'BEGIN {
+    if (total+0 <= 0 || read+0 < 0) { print "UNKNOWN"; exit }
+    p = (read * 100.0) / total
+    if (p < 0) p = 0
+    if (p >= 100) p = 99.9
+    printf "%.1f", p
+  }'
+}
+
+_mm_checksum_rate_mib() {
+  local read_bytes="$1" elapsed="$2"
+  awk -v read="$read_bytes" -v elapsed="$elapsed" 'BEGIN {
+    if (elapsed+0 <= 0 || read+0 < 0) { print "UNKNOWN"; exit }
+    printf "%.1f", (read / elapsed) / (1024 * 1024)
+  }'
+}
+
+_mm_checksum_eta_seconds() {
+  local read_bytes="$1" total="$2" elapsed="$3"
+  awk -v read="$read_bytes" -v total="$total" -v elapsed="$elapsed" 'BEGIN {
+    if (elapsed+0 <= 0 || read+0 <= 0 || total+0 <= 0 || read+0 >= total+0) {
+      print "UNKNOWN"; exit
+    }
+    rate = read / elapsed
+    if (rate <= 0) { print "UNKNOWN"; exit }
+    printf "%d", (total - read) / rate
+  }'
+}
+
+# Emit checksum read progress. Return 1 to let the caller fall back to heartbeat.
+# human_still is the same operator sentence the heartbeat path prints.
+_mm_emit_checksum_progress() {
+  local event_prefix="$1" pid="$2" elapsed="$3" human_still="${4:-}"
+  local total file base read_bytes payload percent rate eta
+  local read_h total_h elapsed_h eta_h line
+  # The hash pass finished. Later reads are not this checksum stream.
+  if [[ -n "${MM_CHECKSUM_PROGRESS_DONE_FILE:-}" && -e "${MM_CHECKSUM_PROGRESS_DONE_FILE}" ]]; then
+    return 1
+  fi
+  total="${MM_CHECKSUM_PROGRESS_TOTAL_BYTES:-}"
+  file="${MM_CHECKSUM_PROGRESS_FILE:-}"
+  [[ "$total" =~ ^[0-9]+$ && "$total" -gt 0 ]] || return 1
+  [[ -n "$file" ]] || return 1
+  read_bytes="$(_mm_checksum_authoritative_rchar "$pid" 2>/dev/null || true)"
+  [[ "$read_bytes" =~ ^[0-9]+$ ]] || return 1
+  base="${MM_CHECKSUM_RCHAR_BASE:-0}"
+  [[ "$base" =~ ^[0-9]+$ ]] || base=0
+  if [[ "$read_bytes" -ge "$base" ]]; then
+    payload=$((read_bytes - base))
+  else
+    payload="$read_bytes"
+  fi
+  percent="$(_mm_checksum_percent "$payload" "$total")"
+  rate="$(_mm_checksum_rate_mib "$payload" "$elapsed")"
+  eta="$(_mm_checksum_eta_seconds "$payload" "$total" "$elapsed")"
+  # Never claim completion while the checksum process is still running.
+  case "$percent" in
+    100|100.0|100.00) return 1 ;;
+  esac
+  line="${event_prefix}_PROGRESS file=${file} read_bytes=${payload} total_bytes=${total} percent=${percent} elapsed=${elapsed}s rate_mib_s=${rate} eta=${eta}s status=running"
+  [[ "$line" == "${MM_CHECKSUM_PROGRESS_LAST_LINE:-}" ]] && return 0
+  MM_CHECKSUM_PROGRESS_LAST_LINE="$line"
+  mm_info "$line"
+  if [[ -n "$human_still" ]]; then
+    mm_info "$human_still"
+  fi
+  read_h="$(mm_format_bytes "$payload")"
+  total_h="$(mm_format_bytes "$total")"
+  elapsed_h="$(mm_format_duration "$elapsed")"
+  if [[ "$eta" =~ ^[0-9]+$ ]]; then
+    eta_h="~$(mm_format_duration "$eta")"
+  else
+    eta_h="unavailable"
+  fi
+  mm_info "Progress : ${read_h} / ${total_h}"
+  if [[ "$percent" == "UNKNOWN" ]]; then
+    mm_info "Percent  : unavailable"
+  else
+    mm_info "Percent  : ${percent}%"
+  fi
+  mm_info "Elapsed  : ${elapsed_h}"
+  if [[ "$rate" == "UNKNOWN" ]]; then
+    mm_info "Rate     : unavailable"
+  else
+    mm_info "Rate     : ${rate} MiB/s"
+  fi
+  mm_info "ETA      : ${eta_h}"
+  mm_info "Status   : Running normally"
+  mm_info "ETA is approximate and can vary on newly restored or AMI-backed EBS volumes."
+  return 0
+}
+
 # Background a command with heartbeat only. Caller emits START/COMPLETE.
 # Sets MM_LONG_STEP_LAST_STDOUT and MM_LONG_STEP_LAST_ELAPSED. Preserves child rc.
+# When MM_CHECKSUM_PROGRESS_TOTAL_BYTES and MM_CHECKSUM_PROGRESS_FILE are set,
+# samples /proc/<pid>/io rchar and emits EVENT_PROGRESS. Missing counters fall
+# back to the existing EVENT_HEARTBEAT liveness line.
 # Usage: mm_bg_with_heartbeat EVENT_PREFIX "k=v ..." "human still..." -- cmd args...
 mm_bg_with_heartbeat() {
   local event_prefix="$1"
@@ -517,7 +691,7 @@ mm_bg_with_heartbeat() {
   shift
 
   local start_ts hb_secs hb_pid="" cmd_pid="" rc=0 elapsed
-  local out err last_hb_line="" hb_line
+  local out err last_hb_line="" hb_line monitor_ready=""
   local caller_int_trap="" caller_term_trap=""
   MM_LONG_STEP_LAST_STDOUT=""
   MM_LONG_STEP_LAST_ELAPSED=0
@@ -530,6 +704,11 @@ mm_bg_with_heartbeat() {
   caller_term_trap="$(trap -p TERM || true)"
   "$@" >"$out" 2>"$err" &
   cmd_pid=$!
+  MM_CHECKSUM_RCHAR_BASE=""
+  MM_CHECKSUM_PROGRESS_LAST_LINE=""
+  if [[ -n "${MM_CHECKSUM_PROGRESS_TOTAL_BYTES:-}" ]]; then
+    MM_CHECKSUM_RCHAR_BASE="$(_mm_checksum_authoritative_rchar "$cmd_pid" 2>/dev/null || true)"
+  fi
 
   _mm_hb_cleanup() {
     kill "$cmd_pid" 2>/dev/null || true
@@ -537,11 +716,21 @@ mm_bg_with_heartbeat() {
   }
   trap '_mm_hb_cleanup' INT TERM
 
+  # A background Bash subshell can briefly retain the caller's lifecycle trap
+  # before its first command runs. Wait until the monitor has explicitly
+  # cleared those traps before the parent is allowed to kill/reap it.
+  monitor_ready="$(mktemp)"
+  rm -f "$monitor_ready"
   (
+    trap - EXIT RETURN INT TERM
+    : >"$monitor_ready"
     while kill -0 "$cmd_pid" 2>/dev/null; do
       sleep "$hb_secs" || break
       kill -0 "$cmd_pid" 2>/dev/null || break
       elapsed=$(( $(date +%s) - start_ts ))
+      if _mm_emit_checksum_progress "$event_prefix" "$cmd_pid" "$elapsed" "$human_still"; then
+        continue
+      fi
       hb_line="${event_prefix}_HEARTBEAT ${fields} elapsed=${elapsed}s status=running"
       if [[ "$hb_line" != "$last_hb_line" ]]; then
         mm_info "$hb_line"
@@ -554,6 +743,11 @@ mm_bg_with_heartbeat() {
     done
   ) &
   hb_pid=$!
+  while [[ ! -e "$monitor_ready" ]]; do
+    kill -0 "$hb_pid" 2>/dev/null || break
+    sleep 0.01
+  done
+  rm -f "$monitor_ready"
 
   if wait "$cmd_pid"; then
     rc=0
@@ -618,7 +812,7 @@ mm_run_with_file_progress() {
   shift
 
   local start_ts hb_secs hb_pid="" cmd_pid="" rc=0 elapsed
-  local err last_prog="" written pct written_h expected_h prog_line
+  local err last_prog="" written pct written_h expected_h prog_line monitor_ready=""
   local caller_int_trap="" caller_term_trap=""
   start_ts="$(date +%s)"
   hb_secs="$(mm_long_step_heartbeat_seconds)"
@@ -637,7 +831,11 @@ mm_run_with_file_progress() {
   }
   trap '_mm_prog_cleanup' INT TERM
 
+  monitor_ready="$(mktemp)"
+  rm -f "$monitor_ready"
   (
+    trap - EXIT RETURN INT TERM
+    : >"$monitor_ready"
     while kill -0 "$cmd_pid" 2>/dev/null; do
       sleep "$hb_secs" || break
       kill -0 "$cmd_pid" 2>/dev/null || break
@@ -664,6 +862,11 @@ mm_run_with_file_progress() {
     done
   ) &
   hb_pid=$!
+  while [[ ! -e "$monitor_ready" ]]; do
+    kill -0 "$hb_pid" 2>/dev/null || break
+    sleep 0.01
+  done
+  rm -f "$monitor_ready"
 
   if wait "$cmd_pid"; then
     rc=0
@@ -707,8 +910,12 @@ mm_sha256_write_sidecar_logged() {
     "The bundle is large, so this step may take 5–10 minutes." \
     "The program is still running normally." \
     "Please wait and do not interrupt the process."
+  export MM_CHECKSUM_PROGRESS_TOTAL_BYTES="$(stat -c%s "$file" 2>/dev/null || echo 0)"
+  export MM_CHECKSUM_PROGRESS_FILE="$(basename "$file")"
   mm_bg_with_heartbeat "$event_prefix" "$fields" \
     "Still calculating Phase 2 bundle SHA256..." -- sha256sum "$file" && rc=0 || rc=$?
+  unset MM_CHECKSUM_PROGRESS_TOTAL_BYTES MM_CHECKSUM_PROGRESS_FILE \
+    MM_CHECKSUM_RCHAR_BASE MM_CHECKSUM_PROGRESS_LAST_LINE
   if [[ "$rc" -ne 0 ]]; then
     mm_error "${event_prefix}_FAIL ${fields} elapsed=${MM_LONG_STEP_LAST_ELAPSED}s result=FAIL rc=${rc}"
     return "$rc"
@@ -754,7 +961,11 @@ mm_verify_sha256_pair_logged() {
     fields="${extra_fields} ${fields}"
   fi
   mm_info "${event_prefix}_START ${fields}"
+  export MM_CHECKSUM_PROGRESS_TOTAL_BYTES="$bytes"
+  export MM_CHECKSUM_PROGRESS_FILE="$(basename "$data_file")"
   mm_bg_with_heartbeat "$event_prefix" "$fields" "$human_still" -- sha256sum "$data_file" && rc=0 || rc=$?
+  unset MM_CHECKSUM_PROGRESS_TOTAL_BYTES MM_CHECKSUM_PROGRESS_FILE \
+    MM_CHECKSUM_RCHAR_BASE MM_CHECKSUM_PROGRESS_LAST_LINE
   if [[ "$rc" -ne 0 ]]; then
     mm_error "${event_prefix}_COMPLETE ${fields} elapsed=${MM_LONG_STEP_LAST_ELAPSED}s result=FAIL rc=${rc}"
     return "$rc"
@@ -2956,7 +3167,7 @@ mm_run_long_operation() {
     mm_die "mm_run_long_operation: expected -- before command"
   fi
   shift
-  local start_ts hb_secs hb_pid="" cmd_pid="" rc=0 elapsed sanitized
+  local start_ts hb_secs hb_pid="" cmd_pid="" rc=0 elapsed sanitized monitor_ready=""
   sanitized="$(basename "$target" 2>/dev/null || printf '%s' "$target")"
   sanitized="${sanitized//[^A-Za-z0-9._+-]/_}"
   start_ts="$(date +%s)"
@@ -2969,7 +3180,12 @@ mm_run_long_operation() {
     kill "$hb_pid" 2>/dev/null || true
   }
   trap '_mm_op_cleanup' INT TERM
+
+  monitor_ready="$(mktemp)"
+  rm -f "$monitor_ready"
   (
+    trap - EXIT RETURN INT TERM
+    : >"$monitor_ready"
     while kill -0 "$cmd_pid" 2>/dev/null; do
       sleep "$hb_secs" || break
       kill -0 "$cmd_pid" 2>/dev/null || break
@@ -2978,6 +3194,12 @@ mm_run_long_operation() {
     done
   ) &
   hb_pid=$!
+  while [[ ! -e "$monitor_ready" ]]; do
+    kill -0 "$hb_pid" 2>/dev/null || break
+    sleep 0.01
+  done
+  rm -f "$monitor_ready"
+
   if wait "$cmd_pid"; then rc=0; else rc=$?; fi
   if [[ -n "$hb_pid" ]]; then
     kill "$hb_pid" 2>/dev/null || true

@@ -279,9 +279,17 @@ set -e
 
 START_N="$(grep -c 'SHA256_VERIFICATION_START' "$HB_LOG" || true)"
 HB_N="$(grep -c 'SHA256_VERIFICATION_HEARTBEAT' "$HB_LOG" || true)"
+PROG_N="$(grep -c 'SHA256_VERIFICATION_PROGRESS ' "$HB_LOG" || true)"
 DONE_N="$(grep -c 'SHA256_VERIFICATION_COMPLETE.*result=PASS' "$HB_LOG" || true)"
 [[ "$START_N" -eq 1 ]] || fail "START count=${START_N}"
-[[ "$HB_N" -ge 2 ]] || fail "HEARTBEAT count=${HB_N}"
+if [[ -r /proc/self/io ]]; then
+  [[ "$PROG_N" -ge 1 ]] || fail "PROGRESS count=${PROG_N} hb=${HB_N}"
+  if grep -Eq 'percent=100([^0-9.]|$)|Percent  : 100%' "$HB_LOG"; then
+    fail "enable-http SHA256 reported 100% before completion"
+  fi
+else
+  [[ "$HB_N" -ge 2 ]] || fail "HEARTBEAT count=${HB_N}"
+fi
 [[ "$DONE_N" -eq 1 ]] || fail "COMPLETE count=${DONE_N}"
 grep -q 'operation=enable-http' "$HB_LOG" || fail "operation field missing"
 grep -q 'Still verifying the Phase 2 bundle SHA256 before enabling HTTP distribution' "$HB_LOG" \
@@ -292,7 +300,7 @@ while read -r n; do
   [[ -z "$n" ]] && continue
   if [[ "$n" -lt "$PREV" ]]; then MONO=0; fi
   PREV="$n"
-done < <(grep 'SHA256_VERIFICATION_HEARTBEAT' "$HB_LOG" | grep -oE 'elapsed=[0-9]+' | cut -d= -f2)
+done < <(grep -E 'SHA256_VERIFICATION_(HEARTBEAT|PROGRESS) ' "$HB_LOG" | grep -oE 'elapsed=[0-9]+' | cut -d= -f2)
 [[ "$MONO" -eq 1 ]] || fail "elapsed not monotonic"
 ADJ="$(adjacent_dup_count "$HB_LOG")"
 [[ "$ADJ" -eq 0 ]] || fail "adjacent duplicates=${ADJ}"

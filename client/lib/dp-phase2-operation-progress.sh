@@ -59,6 +59,92 @@ dp2_progress_now() {
   date -u +%s
 }
 
+# rchar for a live checksum process. Missing /proc (or a just-exited pid) is
+# a fallback signal, not a checksum failure.
+dp2_proc_rchar() {
+  local pid="$1" root io val
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  root="${DP2_CHECKSUM_PROGRESS_IO_ROOT:-/proc}"
+  io="${root}/${pid}/io"
+  [[ -r "$io" ]] || return 1
+  val="$(awk '/^rchar:/ {print $2; exit}' "$io" 2>/dev/null || true)"
+  [[ "$val" =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "$val"
+}
+
+# True when pid has the checksum target open. Does not walk unrelated /proc.
+dp2_pid_opens_target() {
+  local pid="$1" target="$2" fd link
+  [[ "$pid" =~ ^[0-9]+$ && -d "/proc/${pid}/fd" ]] || return 1
+  target="$(readlink -f "$target" 2>/dev/null || printf '%s' "$target")"
+  for fd in "/proc/${pid}/fd"/*; do
+    link="$(readlink "$fd" 2>/dev/null || true)"
+    [[ "$link" == "$target" ]] && return 0
+  done
+  return 1
+}
+
+dp2_walk_pids() {
+  local pid="$1" child
+  printf '%s\n' "$pid"
+  while read -r child; do
+    [[ "$child" =~ ^[0-9]+$ ]] || continue
+    dp2_walk_pids "$child"
+  done < <(pgrep -P "$pid" 2>/dev/null || true)
+}
+
+# One payload reader. bash -c is not that reader: sha256sum is a descendant.
+# Two openers (a pipeline reading the same file twice) stay on heartbeat.
+# The chosen pid stays fixed for the rest of the sample loop. Call this in
+# the current shell. A command substitution would drop DP2_CHECKSUM_READER_PID.
+# Sets DP2_CHECKSUM_RCHAR_OUT on success.
+dp2_authoritative_checksum_rchar() {
+  local root_pid="$1" target="$2"
+  local pid cmd openers=()
+  DP2_CHECKSUM_RCHAR_OUT=""
+  if [[ "${DP2_CHECKSUM_MULTI_READER:-0}" == "1" ]]; then
+    return 1
+  fi
+  if [[ -n "${DP2_CHECKSUM_READER_PID:-}" ]]; then
+    if kill -0 "$DP2_CHECKSUM_READER_PID" 2>/dev/null; then
+      DP2_CHECKSUM_RCHAR_OUT="$(dp2_proc_rchar "$DP2_CHECKSUM_READER_PID")" || return 1
+      return 0
+    fi
+    return 1
+  fi
+  while read -r pid; do
+    if dp2_pid_opens_target "$pid" "$target"; then
+      openers+=("$pid")
+    fi
+  done < <(dp2_walk_pids "$root_pid")
+  if [[ "${#openers[@]}" -ge 2 ]]; then
+    DP2_CHECKSUM_MULTI_READER=1
+    return 1
+  fi
+  if [[ "${#openers[@]}" -eq 1 ]]; then
+    DP2_CHECKSUM_READER_PID="${openers[0]}"
+    DP2_CHECKSUM_RCHAR_OUT="$(dp2_proc_rchar "$DP2_CHECKSUM_READER_PID")" || return 1
+    return 0
+  fi
+  cmd="$(tr '\0' ' ' < "/proc/${root_pid}/cmdline" 2>/dev/null || true)"
+  if [[ "$cmd" == *" -c "* || "$cmd" == *"-c "* ]]; then
+    return 1
+  fi
+  DP2_CHECKSUM_RCHAR_OUT="$(dp2_proc_rchar "$root_pid")" || return 1
+  return 0
+}
+
+# Cap displayed percent below 100 until the checksum process has exited.
+dp2_checksum_running_percent() {
+  awk -v read="$1" -v total="$2" 'BEGIN {
+    if (total+0 <= 0 || read+0 < 0) { print "UNKNOWN"; exit }
+    p = (read * 100.0) / total
+    if (p < 0) p = 0
+    if (p >= 100) p = 99.9
+    printf "%.1f", p
+  }'
+}
+
 # Run command with periodic OPERATION_PROGRESS heartbeats.
 # Usage: dp2_run_with_heartbeat <name> <target> <command...>
 # Or:    dp2_run_with_heartbeat <name> <target> -- <command...>
@@ -70,18 +156,37 @@ dp2_run_with_heartbeat() {
     shift
   fi
   local sanitized child_pid hb_pid start now elapsed rc=0
-  local stop_file
+  local stop_file checksum_progress=0 total_bytes=0 read_base="" monitor_ready=""
+  local read_now payload percent rate eta
   sanitized="$(dp2_progress_sanitize_target "$target")"
+  case " $* " in
+    *sha256sum*|*sha1sum*)
+      if [[ -f "$target" ]]; then
+        total_bytes="$(stat -c%s "$target" 2>/dev/null || echo 0)"
+        if [[ "$total_bytes" =~ ^[0-9]+$ && "$total_bytes" -gt 0 ]]; then
+          checksum_progress=1
+        fi
+      fi
+      ;;
+  esac
   stop_file="$(mktemp "${TMPDIR:-/tmp}/dp2-hb-stop.XXXXXX")"
   rm -f "$stop_file"
   start="$(dp2_progress_now)"
   printf 'OPERATION_START name=%s target=%s\n' "$name" "$sanitized"
 
+  monitor_ready="$(mktemp "${TMPDIR:-/tmp}/dp2-hb-ready.XXXXXX")" || return 1
+  rm -f "$monitor_ready"
   "$@" &
   child_pid=$!
+  DP2_CHECKSUM_READER_PID=""
+  DP2_CHECKSUM_MULTI_READER=0
+  DP2_CHECKSUM_RCHAR_OUT=""
+  read_base=""
 
   (
+    trap - EXIT RETURN
     trap 'exit 0' TERM INT
+    : >"$monitor_ready"
     while true; do
       if [[ -f "$stop_file" ]]; then
         exit 0
@@ -98,10 +203,48 @@ dp2_run_with_heartbeat() {
       fi
       now="$(dp2_progress_now)"
       elapsed=$((now - start))
+      if [[ "$checksum_progress" -eq 1 ]]; then
+        read_now=""
+        if dp2_authoritative_checksum_rchar "$child_pid" "$target"; then
+          read_now="$DP2_CHECKSUM_RCHAR_OUT"
+        fi
+        if [[ "$read_now" =~ ^[0-9]+$ ]]; then
+          if [[ -z "${read_base}" ]]; then
+            read_base="$read_now"
+          fi
+          payload="$read_now"
+          if [[ "${read_base:-0}" =~ ^[0-9]+$ && "$read_now" -ge "${read_base:-0}" ]]; then
+            payload=$((read_now - read_base))
+          fi
+          percent="$(dp2_checksum_running_percent "$payload" "$total_bytes")"
+          rate="UNKNOWN"
+          eta="UNKNOWN"
+          if [[ "$elapsed" -gt 0 && "$payload" -gt 0 ]]; then
+            rate="$(awk -v read="$payload" -v elapsed="$elapsed" 'BEGIN { printf "%.1f", (read / elapsed) / (1024*1024) }')"
+            if [[ "$payload" -lt "$total_bytes" ]]; then
+              eta="$(awk -v read="$payload" -v total="$total_bytes" -v elapsed="$elapsed" 'BEGIN { printf "%d", (total - read) / (read / elapsed) }')"
+            fi
+          fi
+          case "$percent" in
+            100|100.0) percent="99.9" ;;
+          esac
+          printf 'OPERATION_PROGRESS name=%s elapsed_seconds=%s read_bytes=%s total_bytes=%s percent=%s rate_mib_s=%s eta_seconds=%s status=running\n' \
+            "$name" "$elapsed" "$payload" "$total_bytes" "$percent" "$rate" "$eta"
+          printf 'Progress : %s / %s bytes\nPercent  : %s%%\nElapsed  : %ss\nRate     : %s MiB/s\nETA      : %ss\nStatus   : Running normally\n' \
+            "$payload" "$total_bytes" "$percent" "$elapsed" "$rate" "$eta"
+          printf 'ETA is approximate and can vary on newly restored or AMI-backed EBS volumes.\n'
+          continue
+        fi
+      fi
       printf 'OPERATION_PROGRESS name=%s elapsed_seconds=%s\n' "$name" "$elapsed"
     done
   ) &
   hb_pid=$!
+  while [[ ! -e "$monitor_ready" ]]; do
+    kill -0 "$hb_pid" 2>/dev/null || break
+    sleep 0.01
+  done
+  rm -f "$monitor_ready"
 
   if wait "$child_pid"; then
     rc=0
@@ -125,7 +268,7 @@ dp2_run_download_with_progress() {
   local bytes_total="$4"
   shift 4
   local child_pid hb_pid start now elapsed rc=0
-  local stop_file last_bytes=0 unchanged=0 bytes_now avg eta percent
+  local stop_file last_bytes=0 unchanged=0 bytes_now avg eta percent monitor_ready=""
   local sanitized="download"
   stop_file="$(mktemp "${TMPDIR:-/tmp}/dp2-dl-stop.XXXXXX")"
   rm -f "$stop_file"
@@ -138,11 +281,15 @@ dp2_run_download_with_progress() {
   printf 'OPERATION_START name=%s target=%s mode=%s bytes_total=%s\n' \
     "$name" "$sanitized" "$mode" "${bytes_total:-UNKNOWN}"
 
+  monitor_ready="$(mktemp "${TMPDIR:-/tmp}/dp2-dl-ready.XXXXXX")" || return 1
+  rm -f "$monitor_ready"
   "$@" &
   child_pid=$!
 
   (
+    trap - EXIT RETURN
     trap 'exit 0' TERM INT
+    : >"$monitor_ready"
     while true; do
       if [[ -f "$stop_file" ]]; then exit 0; fi
       if ! kill -0 "$child_pid" 2>/dev/null; then exit 0; fi
@@ -179,6 +326,11 @@ dp2_run_download_with_progress() {
     done
   ) &
   hb_pid=$!
+  while [[ ! -e "$monitor_ready" ]]; do
+    kill -0 "$hb_pid" 2>/dev/null || break
+    sleep 0.01
+  done
+  rm -f "$monitor_ready"
 
   if wait "$child_pid"; then
     rc=0
@@ -304,17 +456,21 @@ dp2_run_extract_with_progress() {
     fi
   fi
 
-  local child_pid hb_pid start now elapsed rc=0 stop_file
+  local child_pid hb_pid start now elapsed rc=0 stop_file monitor_ready=""
   local extracted_bytes extracted_files
   stop_file="$(mktemp "${TMPDIR:-/tmp}/dp2-ex-stop.XXXXXX")"
   rm -f "$stop_file"
   start="$(dp2_progress_now)"
   printf 'OPERATION_START name=%s target=%s\n' "$name" "$(dp2_progress_sanitize_target "$dest_dir")"
 
+  monitor_ready="$(mktemp "${TMPDIR:-/tmp}/dp2-ex-ready.XXXXXX")" || return 1
+  rm -f "$monitor_ready"
   "$@" &
   child_pid=$!
   (
+    trap - EXIT RETURN
     trap 'exit 0' TERM INT
+    : >"$monitor_ready"
     while true; do
       if [[ -f "$stop_file" ]]; then exit 0; fi
       if ! kill -0 "$child_pid" 2>/dev/null; then exit 0; fi
@@ -334,6 +490,11 @@ dp2_run_extract_with_progress() {
     done
   ) &
   hb_pid=$!
+  while [[ ! -e "$monitor_ready" ]]; do
+    kill -0 "$hb_pid" 2>/dev/null || break
+    sleep 0.01
+  done
+  rm -f "$monitor_ready"
 
   if wait "$child_pid"; then
     rc=0

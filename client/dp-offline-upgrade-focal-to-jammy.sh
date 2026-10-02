@@ -1259,6 +1259,30 @@ is_critical_os_hold_package() {
 
 DURABLE_WRITE_LOG_THRESHOLD_MS="${DURABLE_WRITE_LOG_THRESHOLD_MS:-500}"
 
+# Return 0 when dpkg audit is unsafe (issues present OR the audit command itself
+# failed); return 1 only for a successful, empty audit. Do not pipe into grep -q:
+# with pipefail, an early grep exit can SIGPIPE dpkg and turn dirty state into a
+# false negative.
+dpkg_audit_has_issues() {
+  local tmp rc=0 errexit_was_on=0
+  tmp="$(mktemp "${TMPDIR:-/tmp}/dpkg-audit.XXXXXX" 2>/dev/null)" || return 0
+  case $- in *e*) errexit_was_on=1 ;; esac
+  set +e
+  dpkg --audit >"$tmp" 2>&1
+  rc=$?
+  if [[ "$errexit_was_on" -eq 1 ]]; then
+    set -e
+  else
+    set +e
+  fi
+  if [[ "$rc" -ne 0 || -s "$tmp" ]]; then
+    rm -f "$tmp"
+    return 0
+  fi
+  rm -f "$tmp"
+  return 1
+}
+
 _durable_now_ms() {
   python3 -c 'import time; print(int(time.time()*1000))' 2>/dev/null || echo 0
 }
@@ -2989,6 +3013,87 @@ DIAGNOSTIC_BUNDLE_PATH=""
 CURRENT_RUN_ID="${CURRENT_RUN_ID:-}"
 RECON_BASELINE_LOADED="NO"
 
+# Direct-sourceable reconciliation tests do not always load the durable helper.
+# Delegate to the common predicate when present; otherwise use the same
+# fail-closed full-output audit semantics locally.
+recon_dpkg_audit_has_issues() {
+  if declare -F dpkg_audit_has_issues >/dev/null 2>&1; then
+    dpkg_audit_has_issues
+    return $?
+  fi
+  local tmp rc=0 errexit_was_on=0
+  tmp="$(mktemp "${TMPDIR:-/tmp}/dpkg-audit.XXXXXX" 2>/dev/null)" || return 0
+  case $- in *e*) errexit_was_on=1 ;; esac
+  set +e
+  dpkg --audit >"$tmp" 2>&1
+  rc=$?
+  if [[ "$errexit_was_on" -eq 1 ]]; then
+    set -e
+  else
+    set +e
+  fi
+  if [[ "$rc" -ne 0 || -s "$tmp" ]]; then
+    rm -f "$tmp"
+    return 0
+  fi
+  rm -f "$tmp"
+  return 1
+}
+
+# Serialize one destructive client transaction across all four OS-hop clients.
+# All hops share one ephemeral /run/lock identity, so two different hop binaries
+# cannot race through check -> preflight -> confirmation -> commit. A stale lock
+# file is harmless: flock ownership disappears automatically when the process exits.
+CLIENT_EXECUTION_LOCK_FD=""
+CLIENT_EXECUTION_LOCK_PATH=""
+
+_client_execution_lock_fd_holds_ours() {
+  local fd="${1:-}" expected actual
+  [[ "$fd" =~ ^[0-9]+$ ]] || return 1
+  [[ -e "/proc/self/fd/${fd}" ]] || return 1
+  expected="$(hostpath "/run/lock/stellar-offline-os-upgrade-client.lock")"
+  expected="$(readlink -f "$expected" 2>/dev/null || printf '%s' "$expected")"
+  actual="$(readlink -f "/proc/self/fd/${fd}" 2>/dev/null || true)"
+  [[ -n "$actual" && "$actual" == "$expected" ]] || return 1
+  flock -n "$fd"
+}
+
+client_execution_lock_acquire() {
+  local lock dir fd
+  if _client_execution_lock_fd_holds_ours "${CLIENT_EXECUTION_LOCK_FD:-}"; then
+    return 0
+  fi
+  CLIENT_EXECUTION_LOCK_FD=""
+  CLIENT_EXECUTION_LOCK_PATH=""
+  lock="$(hostpath "/run/lock/stellar-offline-os-upgrade-client.lock")"
+  dir="$(dirname "$lock")"
+  mkdir -p "$dir" || return 1
+  exec {fd}>"$lock" || return 1
+  if ! flock -n "$fd"; then
+    eval "exec ${fd}>&-" 2>/dev/null || true
+    return 1
+  fi
+  CLIENT_EXECUTION_LOCK_FD="$fd"
+  CLIENT_EXECUTION_LOCK_PATH="$lock"
+  chmod 0600 "$lock" 2>/dev/null || true
+  if declare -F log >/dev/null 2>&1; then
+    log INFO "CLIENT_EXECUTION_LOCK=ACQUIRED path=/run/lock/stellar-offline-os-upgrade-client.lock"
+  fi
+  return 0
+}
+
+client_execution_lock_release() {
+  local fd="${CLIENT_EXECUTION_LOCK_FD:-}"
+  [[ "$fd" =~ ^[0-9]+$ ]] || return 0
+  flock -u "$fd" 2>/dev/null || true
+  eval "exec ${fd}>&-" 2>/dev/null || true
+  CLIENT_EXECUTION_LOCK_FD=""
+  if declare -F log >/dev/null 2>&1; then
+    log INFO "CLIENT_EXECUTION_LOCK=RELEASED"
+  fi
+  return 0
+}
+
 recon_hop_root() {
   hostpath "${STATE_ROOT}/hops/${PIN_HOP}"
 }
@@ -3295,7 +3400,7 @@ record_release_upgrade_run_baseline() {
   fi
   audit_out="clean"
   if [[ -z "${TEST_ROOT:-}" ]]; then
-    if dpkg --audit 2>/dev/null | grep -q .; then
+    if recon_dpkg_audit_has_issues; then
       audit_out="dirty"
     fi
   elif [[ -f "$(hostpath /tmp/dpkg-broken)" ]]; then
@@ -3470,7 +3575,7 @@ collect_package_transition_evidence() {
         "$(hostpath ${STATE_ROOT}/force-upgrade-transaction-evidence)" "force-upgrade-transaction" "yes"
     fi
   else
-    if dpkg --audit 2>/dev/null | grep -q .; then
+    if recon_dpkg_audit_has_issues; then
       DPKG_AUDIT_STATUS="INTERRUPTED"
       recon_append_evidence "INTERRUPTED_DPKG_TRANSACTION" "dpkg_audit" "dpkg --audit" \
         "audit_output_present" "yes"
@@ -5677,7 +5782,7 @@ check_dpkg_health() {
     fi
     return 0
   fi
-  if dpkg --audit 2>/dev/null | grep -q .; then
+  if dpkg_audit_has_issues; then
     log ERROR "dpkg --audit reported issues"
     return 1
   fi
@@ -5786,7 +5891,7 @@ detect_partial_release_transition() {
     done
   fi
 
-  if dpkg --audit 2>/dev/null | grep -q .; then
+  if dpkg_audit_has_issues; then
     log ERROR "dpkg audit dirty during partial-transition check"
     mixed=1
   fi
@@ -9661,6 +9766,30 @@ dp_offline_enforce_production_fixture_policy() {
 
 DURABLE_WRITE_LOG_THRESHOLD_MS="${DURABLE_WRITE_LOG_THRESHOLD_MS:-500}"
 
+# Return 0 when dpkg audit is unsafe (issues present OR the audit command itself
+# failed); return 1 only for a successful, empty audit. Do not pipe into grep -q:
+# with pipefail, an early grep exit can SIGPIPE dpkg and turn dirty state into a
+# false negative.
+dpkg_audit_has_issues() {
+  local tmp rc=0 errexit_was_on=0
+  tmp="$(mktemp "${TMPDIR:-/tmp}/dpkg-audit.XXXXXX" 2>/dev/null)" || return 0
+  case $- in *e*) errexit_was_on=1 ;; esac
+  set +e
+  dpkg --audit >"$tmp" 2>&1
+  rc=$?
+  if [[ "$errexit_was_on" -eq 1 ]]; then
+    set -e
+  else
+    set +e
+  fi
+  if [[ "$rc" -ne 0 || -s "$tmp" ]]; then
+    rm -f "$tmp"
+    return 0
+  fi
+  rm -f "$tmp"
+  return 1
+}
+
 _durable_now_ms() {
   python3 -c 'import time; print(int(time.time()*1000))' 2>/dev/null || echo 0
 }
@@ -9980,6 +10109,104 @@ clear_effective_source_gate_markers() {
   fi
   rm -f "$armed" "$passed" 2>/dev/null || true
 }
+# Byte-exact dpkg updates listing. An empty directory must stay a zero-byte
+# file. Command substitution plus printf '%s\n' turns that empty listing into
+# one newline, so empty→empty was classified as dpkg_updates_changed.
+# BEGIN_DPKG_UPDATES_LISTING_COMPARE
+_write_dpkg_updates_listing() {
+  # Return 0 only after a successful enumeration. A missing directory or a
+  # failed find/sort must not become a zero-byte proof of emptiness.
+  local updates_dir="$1"
+  local dest="$2"
+  local tmp
+  [[ -d "$updates_dir" && -r "$updates_dir" ]] || return 1
+  tmp="$(mktemp "${dest}.part.XXXXXX")" || return 1
+  if ! (
+    set -o pipefail
+    find "$updates_dir" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort >"$tmp"
+  ); then
+    rm -f "$tmp"
+    return 1
+  fi
+  mv -f "$tmp" "$dest"
+}
+
+_dpkg_updates_listing_differs() {
+  local updates_dir="$1"
+  local before="${HOLDS_DIR}/dpkg_updates_listing_before"
+  local now
+  [[ -f "$before" ]] || return 1
+  now="$(mktemp "${TMPDIR:-/tmp}/dpkg-updates-listing.XXXXXX")" || return 0
+  # Unreadable current listing is not "the same". Callers treat this as
+  # a change so a missing read cannot clear or skip transition evidence.
+  if ! _write_dpkg_updates_listing "$updates_dir" "$now"; then
+    rm -f "$now"
+    return 0
+  fi
+  if cmp -s "$now" "$before"; then
+    rm -f "$now"
+    return 1
+  fi
+  rm -f "$now"
+  return 0
+}
+
+reclassify_false_empty_dpkg_updates_transition() {
+  # Retract only the empty-listing false positive. Any other recorded source,
+  # a missing evidence file, a non-empty baseline, a failed current listing
+  # read, or a fresh real-mutation scan stays fail-closed. The transition
+  # marker otherwise never regresses.
+  local donef marker evid src ver before now
+  donef="${HOLDS_DIR}/package_transition_detection.done"
+  marker="${HOLDS_DIR}/release_upgrade_package_transition_started"
+  [[ -f "$donef" && -f "$marker" ]] || return 1
+  grep -qx 'true' "$marker" || return 1
+  src="$(awk -F= '$1=="PACKAGE_TRANSITION_DETECTION_SOURCE"{print substr($0, index($0, "=")+1); exit}' "$donef")"
+  evid="$(awk -F= '$1=="PACKAGE_TRANSITION_DETECTION_EVIDENCE"{print substr($0, index($0, "=")+1); exit}' "$donef")"
+  [[ "$src" == "dpkg_status_db" && "$evid" == "dpkg_updates_changed" ]] || return 1
+  before="${HOLDS_DIR}/dpkg_updates_listing_before"
+  [[ -f "$before" && ! -s "$before" ]] || return 1
+  ver="$(grep -E '^VERSION_ID=' "$(_hp /etc/os-release)" 2>/dev/null | cut -d= -f2 | tr -d '"' || true)"
+  [[ -n "$ver" && "$ver" == "${PIN_SOURCE_VERSION}" ]] || return 1
+  if [[ -z "${_TEST_PREFIX:-}" && -z "${TEST_ROOT:-}" ]]; then
+    if dpkg_audit_has_issues; then
+      return 1
+    fi
+  fi
+  if detect_package_transition_evidence; then
+    return 1
+  fi
+  now="$(mktemp "${TMPDIR:-/tmp}/dpkg-updates-listing.XXXXXX")" || return 1
+  if ! _write_dpkg_updates_listing "$(_hp /var/lib/dpkg/updates)" "$now"; then
+    rm -f "$now"
+    return 1
+  fi
+  if ! cmp -s "$now" "$before"; then
+    rm -f "$now"
+    return 1
+  fi
+  rm -f "$now"
+  printf 'false\n' >"${marker}.tmp.$$"
+  mv -f "${marker}.tmp.$$" "$marker"
+  {
+    printf 'PACKAGE_TRANSITION_RECLASSIFIED=YES\n'
+    printf 'PACKAGE_TRANSITION_RECLASSIFY_REASON=empty_dpkg_updates_listing_false_positive\n'
+    printf 'PACKAGE_TRANSITION_DETECTION_SOURCE=%s\n' "$src"
+    printf 'PACKAGE_TRANSITION_DETECTION_EVIDENCE=%s\n' "$evid"
+  } >"${donef}.tmp.$$"
+  mv -f "${donef}.tmp.$$" "$donef"
+  if [[ -f "${HOLDS_DIR}/critical-holds-state.json" ]]; then
+    sed -i 's/"release_upgrade_package_transition_started": true/"release_upgrade_package_transition_started": false/' \
+      "${HOLDS_DIR}/critical-holds-state.json" 2>/dev/null || true
+  fi
+  RELEASE_UPGRADE_PACKAGE_TRANSITION_STARTED="false"
+  persist_flags
+  log INFO "FALSE_DPKG_UPDATES_TRANSITION_RECLASSIFIED=YES"
+  log INFO "RELEASE_UPGRADE_PACKAGE_TRANSITION_STARTED=false"
+  log INFO "ROLLBACK_ELIGIBLE=YES"
+  return 0
+}
+# END_DPKG_UPDATES_LISTING_COMPARE
 snapshot_pre_dro_package_state() {
   # Capture baselines used by the realtime package transition watcher.
   local status dpkglog updates_dir pkg ver
@@ -10011,11 +10238,11 @@ snapshot_pre_dro_package_state() {
     echo 0 >"${HOLDS_DIR}/dpkg_log_mtime_before"
     echo 0 >"${HOLDS_DIR}/dpkg_log_size_before"
   fi
-  if [[ -d "$updates_dir" ]]; then
-    find "$updates_dir" -mindepth 1 -maxdepth 1 -printf '%f\n' 2>/dev/null | LC_ALL=C sort \
-      >"${HOLDS_DIR}/dpkg_updates_listing_before" || : >"${HOLDS_DIR}/dpkg_updates_listing_before"
-  else
-    : >"${HOLDS_DIR}/dpkg_updates_listing_before"
+  if ! _write_dpkg_updates_listing "$updates_dir" "${HOLDS_DIR}/dpkg_updates_listing_before"; then
+    rm -f "${HOLDS_DIR}/dpkg_updates_listing_before"
+    log ERROR "DPKG_UPDATES_LISTING_BASELINE=UNREADABLE"
+    log ERROR "PACKAGE_TRANSITION_STARTED=NO"
+    fail_stage 1 "DPKG_UPDATES_LISTING_BASELINE=UNREADABLE"
   fi
   : >"${HOLDS_DIR}/core_package_versions_before"
   for pkg in base-files libc6 libc-bin apt dpkg; do
@@ -10148,7 +10375,7 @@ _dpkg_process_from_this_run() {
 detect_package_transition_evidence() {
   # Sets PACKAGE_TRANSITION_DETECTION_SOURCE/EVIDENCE. Return 0 on mutation.
   local ver status dpkglog mainlog aptlog before_mtime before_sha now_mtime now_sha
-  local status_tail slice updates_dir listing_now pkg now_ver
+  local status_tail slice updates_dir pkg now_ver
   PACKAGE_TRANSITION_DETECTION_SOURCE=""
   PACKAGE_TRANSITION_DETECTION_EVIDENCE=""
 
@@ -10192,15 +10419,10 @@ detect_package_transition_evidence() {
   fi
 
   updates_dir="$(_hp /var/lib/dpkg/updates)"
-  if [[ -d "$updates_dir" ]]; then
-    listing_now="$(find "$updates_dir" -mindepth 1 -maxdepth 1 -printf '%f\n' 2>/dev/null | LC_ALL=C sort || true)"
-    if [[ -f "${HOLDS_DIR}/dpkg_updates_listing_before" ]]; then
-      if ! printf '%s\n' "$listing_now" | diff -q - "${HOLDS_DIR}/dpkg_updates_listing_before" >/dev/null 2>&1; then
-        PACKAGE_TRANSITION_DETECTION_SOURCE="dpkg_status_db"
-        PACKAGE_TRANSITION_DETECTION_EVIDENCE="dpkg_updates_changed"
-        return 0
-      fi
-    fi
+  if _dpkg_updates_listing_differs "$updates_dir"; then
+    PACKAGE_TRANSITION_DETECTION_SOURCE="dpkg_status_db"
+    PACKAGE_TRANSITION_DETECTION_EVIDENCE="dpkg_updates_changed"
+    return 0
   fi
 
   if [[ -f "$status" ]]; then
@@ -11528,7 +11750,7 @@ main() {
   fi
 
   LAST_COMMAND="dpkg --audit"
-  if dpkg --audit 2>/dev/null | grep -q .; then
+  if dpkg_audit_has_issues; then
     fail_stage 1 "dpkg --audit dirty before do-release-upgrade"
   fi
   LAST_COMMAND="apt-get update"
@@ -11611,7 +11833,7 @@ main() {
   set_stage "PACKAGE_TRANSACTION"
   mark_release_upgrade_package_transition_started
   set_stage "POST_UPGRADE_VERIFY"
-  if dpkg --audit 2>/dev/null | grep -q .; then
+  if dpkg_audit_has_issues; then
     fail_stage 1 "dpkg audit dirty after upgrade"
   fi
   if ! apt-get check >/dev/null 2>&1; then
@@ -11662,6 +11884,30 @@ set -euo pipefail
 # Bash 4.3+/4.4 safe; requires python3 (standard on Bionic+ upgrade hosts).
 
 DURABLE_WRITE_LOG_THRESHOLD_MS="${DURABLE_WRITE_LOG_THRESHOLD_MS:-500}"
+
+# Return 0 when dpkg audit is unsafe (issues present OR the audit command itself
+# failed); return 1 only for a successful, empty audit. Do not pipe into grep -q:
+# with pipefail, an early grep exit can SIGPIPE dpkg and turn dirty state into a
+# false negative.
+dpkg_audit_has_issues() {
+  local tmp rc=0 errexit_was_on=0
+  tmp="$(mktemp "${TMPDIR:-/tmp}/dpkg-audit.XXXXXX" 2>/dev/null)" || return 0
+  case $- in *e*) errexit_was_on=1 ;; esac
+  set +e
+  dpkg --audit >"$tmp" 2>&1
+  rc=$?
+  if [[ "$errexit_was_on" -eq 1 ]]; then
+    set -e
+  else
+    set +e
+  fi
+  if [[ "$rc" -ne 0 || -s "$tmp" ]]; then
+    rm -f "$tmp"
+    return 0
+  fi
+  rm -f "$tmp"
+  return 1
+}
 
 _durable_now_ms() {
   python3 -c 'import time; print(int(time.time()*1000))' 2>/dev/null || echo 0
@@ -11893,7 +12139,7 @@ main() {
   [[ "$py3ver" == 3.10* ]] || { log ERROR "python3 not Jammy-series (${py3ver})"; write_state FAILED; exit 1; }
   log INFO "PYTHON3_SERIES_CHECK=PASS version=${py3ver}"
   log INFO "PYTHON2_RESIDUAL_IGNORED_BY_PHASE1_POLICY=YES"
-  dpkg --audit 2>/dev/null | grep -q . && { log ERROR "dpkg audit"; write_state FAILED; exit 1; }
+  if dpkg_audit_has_issues; then log ERROR "dpkg audit"; write_state FAILED; exit 1; fi
   apt-get check >/dev/null 2>&1 || { log ERROR "broken deps"; write_state FAILED; exit 1; }
   [[ -d /opt/aelladata ]] || { log ERROR "aelladata missing"; write_state FAILED; exit 1; }
   if grep -RqiE '(archive|security|old-releases)\.ubuntu\.com' /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null; then
@@ -13143,6 +13389,9 @@ monitor_upgrade_progress() {
 
 refuse_duplicate_upgrade() {
   local st pid
+  # Monitoring an already-running detached upgrade is read-only. Never keep the
+  # destructive client transaction lock while attached as a monitor.
+  client_execution_lock_release 2>/dev/null || true
   st="$(read_state)"
   # Stuck reboot/postboot with no live runner must fail closed (not MONITOR_ONLY success).
   reject_incomplete_reboot_or_postboot "$st"
@@ -13382,6 +13631,7 @@ start_upgrade_service_detached() {
     set +e
     if [[ "$cls_rc" -eq 0 && "$HANDOFF_CONFIRMED" -eq 1 ]]; then
       CRITICAL_HOLD_RESTORE_ON_EXIT=0
+      client_execution_lock_release 2>/dev/null || true
       set +e
       maybe_attach_progress_monitor "${UPGRADE_RUNNER_PID:-0}"
       mon_rc=$?
@@ -13398,6 +13648,7 @@ start_upgrade_service_detached() {
   fi
 
   CRITICAL_HOLD_RESTORE_ON_EXIT=0
+  client_execution_lock_release 2>/dev/null || true
   set +e
   maybe_attach_progress_monitor "${UPGRADE_RUNNER_PID:-0}"
   mon_rc=$?
@@ -15998,6 +16249,18 @@ handle_existing_state() {
       refuse_duplicate_upgrade
       ;;
     FAILED_AFTER_PACKAGE_TRANSITION|FAILED_POST_TRANSACTION)
+      if declare -F reclassify_false_empty_dpkg_updates_transition >/dev/null 2>&1 \
+        && reclassify_false_empty_dpkg_updates_transition; then
+        write_state "FAILED_BEFORE_PACKAGE_TRANSITION"
+        log INFO "previous state=${st}; assessing safe resume after empty dpkg updates reclassification"
+        if assess_safe_resume_from_failed; then
+          write_state "READY_FOR_RESUME"
+          log INFO "state transition ${st} -> READY_FOR_RESUME (false empty dpkg updates listing)"
+          return 0
+        fi
+        log ERROR "empty dpkg updates marker cleared but resume safety validation failed"
+        die "$EC_STATE" "STALE_STATE_RECOVERY_REQUIRED (state=FAILED_BEFORE_PACKAGE_TRANSITION)"
+      fi
       log ERROR "FAIL_PARTIAL_RELEASE_TRANSITION_DETECTED: previous state=${st}; refusing automatic resume"
       log ERROR "RELEASE_UPGRADE_PACKAGE_TRANSITION_STARTED=true"
       log ERROR "ROLLBACK_ELIGIBLE=NO"
@@ -16129,6 +16392,13 @@ main() {
   fi
   # Multi-hop: inspect/accept previous-hop terminal BEFORE loading transaction flags.
   # Loading bionic-to-focal markers into b2f globals causes false CURRENT_HOP_MUTATION.
+  # Serialize state reconciliation, preflight, confirmation, and destructive
+  # commit across all four hop clients. A stale lock file is harmless because
+  # flock ownership is tied to the live process, not the pathname.
+  if ! client_execution_lock_acquire; then
+    log ERROR "CLIENT_EXECUTION_LOCK=BUSY path=/run/lock/stellar-offline-os-upgrade-client.lock"
+    die "$EC_BUSY" "another DP OS upgrade client transaction is active"
+  fi
   handle_existing_state
   load_current_hop_identity_vars || true
   load_release_upgrade_started_flag_for_current_hop

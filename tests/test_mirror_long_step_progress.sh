@@ -108,6 +108,47 @@ mm_run_with_file_progress TRAP_FILE "case=trap" "$TRAP_OUT" 1 "trap probe" -- \
 trap - INT TERM
 pass "long-step helpers preserve caller INT/TERM traps"
 
+# Internal background monitors must never execute the caller's EXIT trap.
+# Delay the parent's non--0 kill just enough for the monitor to observe the
+# completed command and exit naturally; this deterministically reproduces the
+# race that used to delete caller-owned temp trees mid-operation.
+assert_monitor_does_not_run_exit_trap() {
+  local helper="$1" marker="${TMP}/monitor-exit-${1}.log" out="${TMP}/monitor-out-${1}" rc=0
+  : >"$marker"
+  (
+    trap 'printf "caller-exit\n" >>"$marker"' EXIT
+    kill() {
+      if [[ "${1:-}" != "-0" ]]; then
+        sleep 0.35
+      fi
+      builtin kill "$@"
+    }
+    export MM_LONG_STEP_HEARTBEAT_SEC=1
+    case "$helper" in
+      bg)
+        mm_bg_with_heartbeat TRAP_EXIT_BG "case=exit-trap" "trap probe" -- \
+          bash -c 'sleep 0.9'
+        ;;
+      file)
+        mm_run_with_file_progress TRAP_EXIT_FILE "case=exit-trap" "$out" 1 "trap probe" -- \
+          bash -c 'sleep 0.9; printf x >"$1"' _ "$out"
+        ;;
+      long)
+        mm_run_long_operation TRAP_EXIT_LONG target -- bash -c 'sleep 0.9'
+        ;;
+      *) return 2 ;;
+    esac
+    [[ ! -s "$marker" ]] || exit 91
+  ) || rc=$?
+  [[ "$rc" -eq 0 ]] || fail "${helper} monitor executed caller EXIT trap early (rc=${rc})"
+  [[ "$(wc -l <"$marker" | tr -d ' ')" -eq 1 ]] \
+    || fail "${helper} caller EXIT trap count unexpected"
+}
+assert_monitor_does_not_run_exit_trap bg
+assert_monitor_does_not_run_exit_trap file
+assert_monitor_does_not_run_exit_trap long
+pass "internal progress monitors do not execute caller EXIT traps"
+
 dp2_set_version 6.6.0
 CACHE="$(acps_cache_dir 6.6.0)"
 mkdir -p "$CACHE"
@@ -169,9 +210,17 @@ acps_write_verified_marker "$CACHE" || fail "acps_write_verified_marker"
 
 ACPS_START="$(count_exact 'ACPS_CHECKSUM_VERIFY_START.*images-6\.6\.0\.tar.*algorithm=SHA256' "$VERIFY_LOG")"
 ACPS_HB="$(count_exact 'ACPS_CHECKSUM_VERIFY_HEARTBEAT.*images-6\.6\.0\.tar.*algorithm=SHA256' "$VERIFY_LOG")"
+ACPS_PROG="$(count_exact 'ACPS_CHECKSUM_VERIFY_PROGRESS .*status=running' "$VERIFY_LOG")"
 ACPS_DONE="$(count_exact 'ACPS_CHECKSUM_VERIFY_COMPLETE.*images-6\.6\.0\.tar.*algorithm=SHA256.*result=PASS' "$VERIFY_LOG")"
 [[ "$ACPS_START" -eq 1 ]] || fail "ACPS SHA256 START count=${ACPS_START}"
-[[ "$ACPS_HB" -ge 2 ]] || fail "ACPS SHA256 HEARTBEAT count=${ACPS_HB}"
+if [[ -r /proc/self/io ]]; then
+  [[ "$ACPS_PROG" -ge 1 ]] || fail "ACPS SHA256 PROGRESS missing while /proc/io is readable hb=${ACPS_HB}"
+  if grep -Eq 'percent=100([^0-9.]|$)|Percent  : 100%' "$VERIFY_LOG"; then
+    fail "ACPS SHA256 reported 100% before completion"
+  fi
+else
+  [[ "$ACPS_HB" -ge 2 ]] || fail "ACPS SHA256 HEARTBEAT count=${ACPS_HB}"
+fi
 [[ "$ACPS_DONE" -eq 1 ]] || fail "ACPS SHA256 COMPLETE count=${ACPS_DONE}"
 grep -q 'algorithm=SHA1' "$VERIFY_LOG" || fail "SHA1 labeled events missing"
 if grep -E 'images-6\.6\.0\.tar.*algorithm=SHA1|algorithm=SHA1.*images-6\.6\.0\.tar' "$VERIFY_LOG"; then
@@ -227,7 +276,7 @@ chmod +x "${SHA_WRAP}/tar"
 
 set +e
 # mm_die/dp2_die call exit — isolate in a subshell.
-( engine_place_dp_phase2_final "$WORK" 6.6.0 ) >"$PLACE_LOG" 2>&1
+( trap - EXIT RETURN INT TERM; engine_place_dp_phase2_final "$WORK" 6.6.0 ) >"$PLACE_LOG" 2>&1
 PLACE_RC=$?
 set -e
 [[ "$PLACE_RC" -eq 0 ]] || { tail -n 80 "$PLACE_LOG"; fail "engine_place_dp_phase2_final rc=${PLACE_RC}"; }
@@ -246,19 +295,32 @@ pass "bundle create START/PROGRESS/COMPLETE"
 
 S_START="$(count_exact 'PHASE2_BUNDLE_SHA256_CREATE_START' "$PLACE_LOG")"
 S_HB="$(count_exact 'PHASE2_BUNDLE_SHA256_CREATE_HEARTBEAT' "$PLACE_LOG")"
+S_PROG="$(count_exact 'PHASE2_BUNDLE_SHA256_CREATE_PROGRESS .*status=running' "$PLACE_LOG")"
 S_DONE="$(count_exact 'PHASE2_BUNDLE_SHA256_CREATE_COMPLETE.*result=PASS' "$PLACE_LOG")"
 [[ "$S_START" -eq 1 ]] || fail "bundle SHA256 CREATE START=${S_START}"
-[[ "$S_HB" -ge 2 ]] || fail "bundle SHA256 CREATE HEARTBEAT=${S_HB}"
+if [[ -r /proc/self/io ]]; then
+  [[ "$S_PROG" -ge 1 ]] || fail "bundle SHA256 CREATE PROGRESS missing hb=${S_HB}"
+else
+  [[ "$S_HB" -ge 2 ]] || fail "bundle SHA256 CREATE HEARTBEAT=${S_HB}"
+fi
 [[ "$S_DONE" -eq 1 ]] || fail "bundle SHA256 CREATE COMPLETE=${S_DONE}"
-pass "bundle SHA256 create START/HEARTBEAT/COMPLETE"
+pass "bundle SHA256 create START/PROGRESS/COMPLETE"
 
 F_START="$(count_exact 'PHASE2_FINAL_SHA256_VERIFY_START' "$PLACE_LOG")"
 F_HB="$(count_exact 'PHASE2_FINAL_SHA256_VERIFY_HEARTBEAT' "$PLACE_LOG")"
+F_PROG="$(count_exact 'PHASE2_FINAL_SHA256_VERIFY_PROGRESS .*status=running' "$PLACE_LOG")"
 F_DONE="$(count_exact 'PHASE2_FINAL_SHA256_VERIFY_COMPLETE.*result=PASS' "$PLACE_LOG")"
 [[ "$F_START" -eq 1 ]] || fail "final SHA256 START=${F_START}"
-[[ "$F_HB" -ge 2 ]] || fail "final SHA256 HEARTBEAT=${F_HB}"
+if [[ -r /proc/self/io ]]; then
+  [[ "$F_PROG" -ge 1 ]] || fail "final SHA256 PROGRESS missing hb=${F_HB}"
+  if grep -Eq 'percent=100([^0-9.]|$)|Percent  : 100%' "$PLACE_LOG"; then
+    fail "final SHA256 reported 100% before completion"
+  fi
+else
+  [[ "$F_HB" -ge 2 ]] || fail "final SHA256 HEARTBEAT=${F_HB}"
+fi
 [[ "$F_DONE" -eq 1 ]] || fail "final SHA256 COMPLETE=${F_DONE}"
-pass "final SHA256 verify START/HEARTBEAT/COMPLETE"
+pass "final SHA256 verify START/PROGRESS/COMPLETE"
 
 grep -q 'DP_PHASE2_ATOMIC_PUBLISH_START' "$PLACE_LOG" || fail "ATOMIC_PUBLISH_START missing"
 grep -q 'DP_PHASE2_ATOMIC_PUBLISH=PASS' "$PLACE_LOG" || fail "ATOMIC_PUBLISH=PASS missing"
@@ -298,7 +360,7 @@ FAIL_LOG="${TMP}/fail-sha.log"
 MM_LOG_FILE=""
 : >"$FAIL_LOG"
 set +e
-( mm_acps_verify_payload_checksums "$BAD_CACHE" ) >"$FAIL_LOG" 2>&1
+( trap - EXIT RETURN INT TERM; mm_acps_verify_payload_checksums "$BAD_CACHE" ) >"$FAIL_LOG" 2>&1
 FAIL_RC=$?
 set -e
 [[ "$FAIL_RC" -ne 0 ]] || fail "mismatch should fail"
@@ -327,7 +389,7 @@ for f in "${DP_PHASE2_REQUIRED_FILES[@]}"; do
 done
 rm -f "${BAD_WORK}/images-6.6.0.list"
 set +e
-( engine_place_dp_phase2_final "$BAD_WORK" 6.6.0 >/dev/null 2>&1 )
+( trap - EXIT RETURN INT TERM; engine_place_dp_phase2_final "$BAD_WORK" 6.6.0 >/dev/null 2>&1 )
 BAD_PLACE_RC=$?
 set -e
 [[ "$BAD_PLACE_RC" -ne 0 ]] || fail "broken place should fail"
@@ -343,7 +405,7 @@ FAIL_HB_LOG="${TMP}/fail-hb.log"
 MM_LOG_FILE=""
 : >"$FAIL_HB_LOG"
 set +e
-( mm_run_with_heartbeat "TEST_HB" "file=x" "Still testing..." -- bash -c 'sleep 2.2; exit 7' ) \
+( trap - EXIT RETURN INT TERM; mm_run_with_heartbeat "TEST_HB" "file=x" "Still testing..." -- bash -c 'sleep 2.2; exit 7' ) \
   >"$FAIL_HB_LOG" 2>&1
 HB_RC=$?
 set -e

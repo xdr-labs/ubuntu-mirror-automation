@@ -282,8 +282,12 @@ r2_download_package() {
     expected="$cl"
   fi
 
-  local progress_pid=""
+  local progress_pid="" monitor_ready=""
+  monitor_ready="$(mktemp "${TMPDIR:-/tmp}/r2-progress-ready.XXXXXX")" || return 1
+  rm -f "$monitor_ready"
   (
+    trap - EXIT RETURN INT TERM
+    : >"$monitor_ready"
     while true; do
       sleep "$R2_PROGRESS_INTERVAL_SEC" || break
       now="$(date +%s)"
@@ -310,6 +314,11 @@ r2_download_package() {
     done
   ) &
   progress_pid=$!
+  while [[ ! -e "$monitor_ready" ]]; do
+    kill -0 "$progress_pid" 2>/dev/null || break
+    sleep 0.01
+  done
+  rm -f "$monitor_ready"
 
   local rc=0
   if ! r2_http_download_to_part "$url" "$part" "$base_name"; then
