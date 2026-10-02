@@ -276,7 +276,7 @@ chmod +x "${SHA_WRAP}/tar"
 
 set +e
 # mm_die/dp2_die call exit — isolate in a subshell.
-( engine_place_dp_phase2_final "$WORK" 6.6.0 ) >"$PLACE_LOG" 2>&1
+( trap - EXIT RETURN INT TERM; engine_place_dp_phase2_final "$WORK" 6.6.0 ) >"$PLACE_LOG" 2>&1
 PLACE_RC=$?
 set -e
 [[ "$PLACE_RC" -eq 0 ]] || { tail -n 80 "$PLACE_LOG"; fail "engine_place_dp_phase2_final rc=${PLACE_RC}"; }
@@ -360,7 +360,7 @@ FAIL_LOG="${TMP}/fail-sha.log"
 MM_LOG_FILE=""
 : >"$FAIL_LOG"
 set +e
-( mm_acps_verify_payload_checksums "$BAD_CACHE" ) >"$FAIL_LOG" 2>&1
+( trap - EXIT RETURN INT TERM; mm_acps_verify_payload_checksums "$BAD_CACHE" ) >"$FAIL_LOG" 2>&1
 FAIL_RC=$?
 set -e
 [[ "$FAIL_RC" -ne 0 ]] || fail "mismatch should fail"
@@ -389,7 +389,7 @@ for f in "${DP_PHASE2_REQUIRED_FILES[@]}"; do
 done
 rm -f "${BAD_WORK}/images-6.6.0.list"
 set +e
-( engine_place_dp_phase2_final "$BAD_WORK" 6.6.0 >/dev/null 2>&1 )
+( trap - EXIT RETURN INT TERM; engine_place_dp_phase2_final "$BAD_WORK" 6.6.0 >/dev/null 2>&1 )
 BAD_PLACE_RC=$?
 set -e
 [[ "$BAD_PLACE_RC" -ne 0 ]] || fail "broken place should fail"
@@ -405,7 +405,7 @@ FAIL_HB_LOG="${TMP}/fail-hb.log"
 MM_LOG_FILE=""
 : >"$FAIL_HB_LOG"
 set +e
-( mm_run_with_heartbeat "TEST_HB" "file=x" "Still testing..." -- bash -c 'sleep 2.2; exit 7' ) \
+( trap - EXIT RETURN INT TERM; mm_run_with_heartbeat "TEST_HB" "file=x" "Still testing..." -- bash -c 'sleep 2.2; exit 7' ) \
   >"$FAIL_HB_LOG" 2>&1
 HB_RC=$?
 set -e

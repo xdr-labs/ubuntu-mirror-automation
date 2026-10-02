@@ -691,7 +691,7 @@ mm_bg_with_heartbeat() {
   shift
 
   local start_ts hb_secs hb_pid="" cmd_pid="" rc=0 elapsed
-  local out err last_hb_line="" hb_line
+  local out err last_hb_line="" hb_line monitor_ready=""
   local caller_int_trap="" caller_term_trap=""
   MM_LONG_STEP_LAST_STDOUT=""
   MM_LONG_STEP_LAST_ELAPSED=0
@@ -716,11 +716,14 @@ mm_bg_with_heartbeat() {
   }
   trap '_mm_hb_cleanup' INT TERM
 
+  # A background Bash subshell can briefly retain the caller's lifecycle trap
+  # before its first command runs. Wait until the monitor has explicitly
+  # cleared those traps before the parent is allowed to kill/reap it.
+  monitor_ready="$(mktemp)"
+  rm -f "$monitor_ready"
   (
-    # Internal monitor subshells must not inherit caller lifecycle traps.
-    # A naturally exiting monitor would otherwise run the caller's EXIT trap
-    # (for example, deleting the caller-owned mktemp tree mid-operation).
     trap - EXIT RETURN INT TERM
+    : >"$monitor_ready"
     while kill -0 "$cmd_pid" 2>/dev/null; do
       sleep "$hb_secs" || break
       kill -0 "$cmd_pid" 2>/dev/null || break
@@ -740,6 +743,11 @@ mm_bg_with_heartbeat() {
     done
   ) &
   hb_pid=$!
+  while [[ ! -e "$monitor_ready" ]]; do
+    kill -0 "$hb_pid" 2>/dev/null || break
+    sleep 0.01
+  done
+  rm -f "$monitor_ready"
 
   if wait "$cmd_pid"; then
     rc=0
@@ -804,7 +812,7 @@ mm_run_with_file_progress() {
   shift
 
   local start_ts hb_secs hb_pid="" cmd_pid="" rc=0 elapsed
-  local err last_prog="" written pct written_h expected_h prog_line
+  local err last_prog="" written pct written_h expected_h prog_line monitor_ready=""
   local caller_int_trap="" caller_term_trap=""
   start_ts="$(date +%s)"
   hb_secs="$(mm_long_step_heartbeat_seconds)"
@@ -823,11 +831,11 @@ mm_run_with_file_progress() {
   }
   trap '_mm_prog_cleanup' INT TERM
 
+  monitor_ready="$(mktemp)"
+  rm -f "$monitor_ready"
   (
-    # Internal monitor subshells must not inherit caller lifecycle traps.
-    # A naturally exiting monitor would otherwise run the caller's EXIT trap
-    # (for example, deleting the caller-owned mktemp tree mid-operation).
     trap - EXIT RETURN INT TERM
+    : >"$monitor_ready"
     while kill -0 "$cmd_pid" 2>/dev/null; do
       sleep "$hb_secs" || break
       kill -0 "$cmd_pid" 2>/dev/null || break
@@ -854,6 +862,11 @@ mm_run_with_file_progress() {
     done
   ) &
   hb_pid=$!
+  while [[ ! -e "$monitor_ready" ]]; do
+    kill -0 "$hb_pid" 2>/dev/null || break
+    sleep 0.01
+  done
+  rm -f "$monitor_ready"
 
   if wait "$cmd_pid"; then
     rc=0
@@ -3154,7 +3167,7 @@ mm_run_long_operation() {
     mm_die "mm_run_long_operation: expected -- before command"
   fi
   shift
-  local start_ts hb_secs hb_pid="" cmd_pid="" rc=0 elapsed sanitized
+  local start_ts hb_secs hb_pid="" cmd_pid="" rc=0 elapsed sanitized monitor_ready=""
   sanitized="$(basename "$target" 2>/dev/null || printf '%s' "$target")"
   sanitized="${sanitized//[^A-Za-z0-9._+-]/_}"
   start_ts="$(date +%s)"
@@ -3167,11 +3180,12 @@ mm_run_long_operation() {
     kill "$hb_pid" 2>/dev/null || true
   }
   trap '_mm_op_cleanup' INT TERM
+
+  monitor_ready="$(mktemp)"
+  rm -f "$monitor_ready"
   (
-    # Internal monitor subshells must not inherit caller lifecycle traps.
-    # A naturally exiting monitor would otherwise run the caller's EXIT trap
-    # (for example, deleting the caller-owned mktemp tree mid-operation).
     trap - EXIT RETURN INT TERM
+    : >"$monitor_ready"
     while kill -0 "$cmd_pid" 2>/dev/null; do
       sleep "$hb_secs" || break
       kill -0 "$cmd_pid" 2>/dev/null || break
@@ -3180,6 +3194,12 @@ mm_run_long_operation() {
     done
   ) &
   hb_pid=$!
+  while [[ ! -e "$monitor_ready" ]]; do
+    kill -0 "$hb_pid" 2>/dev/null || break
+    sleep 0.01
+  done
+  rm -f "$monitor_ready"
+
   if wait "$cmd_pid"; then rc=0; else rc=$?; fi
   if [[ -n "$hb_pid" ]]; then
     kill "$hb_pid" 2>/dev/null || true
