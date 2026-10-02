@@ -156,7 +156,7 @@ dp2_run_with_heartbeat() {
     shift
   fi
   local sanitized child_pid hb_pid start now elapsed rc=0
-  local stop_file checksum_progress=0 total_bytes=0 read_base=""
+  local stop_file checksum_progress=0 total_bytes=0 read_base="" monitor_ready=""
   local read_now payload percent rate eta
   sanitized="$(dp2_progress_sanitize_target "$target")"
   case " $* " in
@@ -174,6 +174,8 @@ dp2_run_with_heartbeat() {
   start="$(dp2_progress_now)"
   printf 'OPERATION_START name=%s target=%s\n' "$name" "$sanitized"
 
+  monitor_ready="$(mktemp "${TMPDIR:-/tmp}/dp2-hb-ready.XXXXXX")" || return 1
+  rm -f "$monitor_ready"
   "$@" &
   child_pid=$!
   DP2_CHECKSUM_READER_PID=""
@@ -182,7 +184,9 @@ dp2_run_with_heartbeat() {
   read_base=""
 
   (
+    trap - EXIT RETURN
     trap 'exit 0' TERM INT
+    : >"$monitor_ready"
     while true; do
       if [[ -f "$stop_file" ]]; then
         exit 0
@@ -236,6 +240,11 @@ dp2_run_with_heartbeat() {
     done
   ) &
   hb_pid=$!
+  while [[ ! -e "$monitor_ready" ]]; do
+    kill -0 "$hb_pid" 2>/dev/null || break
+    sleep 0.01
+  done
+  rm -f "$monitor_ready"
 
   if wait "$child_pid"; then
     rc=0
@@ -259,7 +268,7 @@ dp2_run_download_with_progress() {
   local bytes_total="$4"
   shift 4
   local child_pid hb_pid start now elapsed rc=0
-  local stop_file last_bytes=0 unchanged=0 bytes_now avg eta percent
+  local stop_file last_bytes=0 unchanged=0 bytes_now avg eta percent monitor_ready=""
   local sanitized="download"
   stop_file="$(mktemp "${TMPDIR:-/tmp}/dp2-dl-stop.XXXXXX")"
   rm -f "$stop_file"
@@ -272,11 +281,15 @@ dp2_run_download_with_progress() {
   printf 'OPERATION_START name=%s target=%s mode=%s bytes_total=%s\n' \
     "$name" "$sanitized" "$mode" "${bytes_total:-UNKNOWN}"
 
+  monitor_ready="$(mktemp "${TMPDIR:-/tmp}/dp2-dl-ready.XXXXXX")" || return 1
+  rm -f "$monitor_ready"
   "$@" &
   child_pid=$!
 
   (
+    trap - EXIT RETURN
     trap 'exit 0' TERM INT
+    : >"$monitor_ready"
     while true; do
       if [[ -f "$stop_file" ]]; then exit 0; fi
       if ! kill -0 "$child_pid" 2>/dev/null; then exit 0; fi
@@ -313,6 +326,11 @@ dp2_run_download_with_progress() {
     done
   ) &
   hb_pid=$!
+  while [[ ! -e "$monitor_ready" ]]; do
+    kill -0 "$hb_pid" 2>/dev/null || break
+    sleep 0.01
+  done
+  rm -f "$monitor_ready"
 
   if wait "$child_pid"; then
     rc=0
@@ -438,17 +456,21 @@ dp2_run_extract_with_progress() {
     fi
   fi
 
-  local child_pid hb_pid start now elapsed rc=0 stop_file
+  local child_pid hb_pid start now elapsed rc=0 stop_file monitor_ready=""
   local extracted_bytes extracted_files
   stop_file="$(mktemp "${TMPDIR:-/tmp}/dp2-ex-stop.XXXXXX")"
   rm -f "$stop_file"
   start="$(dp2_progress_now)"
   printf 'OPERATION_START name=%s target=%s\n' "$name" "$(dp2_progress_sanitize_target "$dest_dir")"
 
+  monitor_ready="$(mktemp "${TMPDIR:-/tmp}/dp2-ex-ready.XXXXXX")" || return 1
+  rm -f "$monitor_ready"
   "$@" &
   child_pid=$!
   (
+    trap - EXIT RETURN
     trap 'exit 0' TERM INT
+    : >"$monitor_ready"
     while true; do
       if [[ -f "$stop_file" ]]; then exit 0; fi
       if ! kill -0 "$child_pid" 2>/dev/null; then exit 0; fi
@@ -468,6 +490,11 @@ dp2_run_extract_with_progress() {
     done
   ) &
   hb_pid=$!
+  while [[ ! -e "$monitor_ready" ]]; do
+    kill -0 "$hb_pid" 2>/dev/null || break
+    sleep 0.01
+  done
+  rm -f "$monitor_ready"
 
   if wait "$child_pid"; then
     rc=0

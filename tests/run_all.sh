@@ -141,6 +141,7 @@ TEST_LIST=(
   test_r2_publisher_trust.sh
   test_phase2_stale_target_state.sh
   test_mirror_long_step_progress.sh
+  test_progress_monitor_trap_isolation.py
   test_checksum_read_progress.sh
   test_mirror_manager_menu_status.sh
   test_bringup_image_import_heartbeat.sh

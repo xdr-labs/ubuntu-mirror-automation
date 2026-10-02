@@ -980,9 +980,16 @@ acps_download_one() {
     curl_args+=(-D "$hdr" -o "$part")
   fi
 
-  local err progress_pid=""
+  local err progress_pid="" monitor_ready=""
   err="$(mktemp)"
+  monitor_ready="$(mktemp "${TMPDIR:-/tmp}/acps-progress-ready.XXXXXX")" || {
+    rm -f "$err" "$hdr" "$resp"
+    return 1
+  }
+  rm -f "$monitor_ready"
   (
+    trap - EXIT RETURN INT TERM
+    : >"$monitor_ready"
     while true; do
       sleep "$ACPS_PROGRESS_INTERVAL_SEC" || break
       now="$(date +%s)"
@@ -1006,6 +1013,11 @@ acps_download_one() {
     done
   ) &
   progress_pid=$!
+  while [[ ! -e "$monitor_ready" ]]; do
+    kill -0 "$progress_pid" 2>/dev/null || break
+    sleep 0.01
+  done
+  rm -f "$monitor_ready"
 
   # Preserve real curl rc: `if ! curl; then rc=$?` yields 0 inside the then-branch.
   local rc=0
