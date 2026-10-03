@@ -1,25 +1,38 @@
 version: 1
-
 exact_head_required: true
 artifact_hash_required: false
 provenance_required: false
 sbom_required: false
-execution_context: "github-hosted"
-setup_command: ""
+execution_context: protected-production
+setup_command: ''
 preflight_required: false
-preflight_command: ""
-qualification_command: ""
-artifact_hash_command: ""
-provenance_command: ""
-sbom_command: ""
-operational_e2e_required: false
-operational_e2e_command: ""
-full_e2e_passes: 0
-public_smoke_required: false
-public_smoke_command: ""
-human_equivalent_user_tests_required: false
-
+preflight_command: ''
+qualification_command: bash tests/run_pr_gate.sh
+artifact_hash_command: ''
+provenance_command: ''
+sbom_command: ''
+operational_e2e_required: true
+operational_e2e_command: bash tests/run_pr_gate.sh
+full_e2e_passes: 1
+public_smoke_required: true
+public_smoke_command: bash scripts/mirrorctl validate
+human_equivalent_user_tests_required: true
 blockers:
   p0: true
   p1: true
   user_blocking_p2: true
+human_equivalent_user_tests:
+  executor: EXECUTION_PROFILE
+  actual_user_surface_required: true
+  primary_user_surface: cli
+  actual_browser_process_required: false
+  same_candidate_required: true
+  ci_contract_validation_only: true
+  surface_reconciliation:
+    mandatory: true
+    contract: docs/ENGINEERING_SURFACE_RECONCILIATION.md
+    minimum_passes: 1
+  full_user_e2e:
+    mandatory: true
+    contract: docs/ENGINEERING_FULL_USER_E2E.md
+    minimum_passes: 1
