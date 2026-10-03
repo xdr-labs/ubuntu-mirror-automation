@@ -20,12 +20,12 @@ operations:
   production_oriented: true
   runbook_required: true
   incident_response_required: true
-  persistent_state: false
+  persistent_state: true
   runbook_paths:
   - docs/operations.md
   - docs/recovery.md
   health_command: bash scripts/mirrorctl status
-  backup_command: ''
-  restore_test_command: ''
+  backup_command: bash scripts/engineering-state-backup.sh backup "$ENGINEERING_STATE_BACKUP"
+  restore_test_command: bash scripts/engineering-state-backup.sh verify "$ENGINEERING_STATE_BACKUP"
   upgrade_command: bash scripts/install-dp-upgrade-mirror.sh --help
   rollback_command: ''
