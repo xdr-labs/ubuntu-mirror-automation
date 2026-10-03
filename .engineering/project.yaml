@@ -1,0 +1,33 @@
+engineering_system:
+  version: "1.7.0"
+  policy_epoch: 6
+  mode: adopted
+  baseline: "f2ecbeec1686b925f64dac925333dace2f969466"
+  ci_mode: "shared"
+  native_ci_workflows: []
+  merge_gate_status: "advisory"
+
+project:
+  name: "ubuntu-mirror-automation"
+  type: "generic"
+  maturity: "development"
+  user_facing: false
+  primary_user_surface: "none"
+
+domains:
+  - "core"
+
+platforms:
+  - "linux"
+
+operations:
+  production_oriented: false
+  runbook_required: false
+  incident_response_required: false
+  persistent_state: false
+  runbook_paths: []
+  health_command: ""
+  backup_command: ""
+  restore_test_command: ""
+  upgrade_command: ""
+  rollback_command: ""
