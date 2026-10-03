@@ -55,6 +55,8 @@ run_step() {
 run_step "bash_n_roundtrip" bash -n tests/test_os_core_r2_roundtrip_integration.sh
 run_step "bash_n_client_finalization" bash -n tests/test_client_finalization_local_fs_integration.sh
 run_step "bash_n_run_pr_gate" bash -n tests/run_pr_gate.sh
+run_step "bash_n_engineering_state_backup" bash -n scripts/engineering-state-backup.sh tests/test_engineering_state_backup.sh
+run_step "engineering_state_backup" bash tests/test_engineering_state_backup.sh
 run_step "python_compile_fixture" python3 -m py_compile tests/lib/build_tiny_os_core_lifecycle_fixture.py
 run_step "python_compile_os_core" python3 -m py_compile scripts/lib/os_core_package.py
 run_step "python_compile_field_fix" python3 -m py_compile tests/test_aws_os_core_completeness_field_fix.py
