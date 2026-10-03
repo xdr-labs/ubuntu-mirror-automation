@@ -1,0 +1,31 @@
+engineering_system:
+  version: 1.7.0
+  policy_epoch: 7
+  mode: adopted
+  baseline: 9a4fbbd25b95d3f2270febe84f835877784e1507
+  ci_mode: shared
+  native_ci_workflows: []
+  merge_gate_status: advisory
+project:
+  name: ubuntu-mirror-automation
+  type: generic
+  maturity: production
+  user_facing: true
+  primary_user_surface: cli
+domains:
+- core
+platforms:
+- linux
+operations:
+  production_oriented: true
+  runbook_required: true
+  incident_response_required: true
+  persistent_state: false
+  runbook_paths:
+  - docs/operations.md
+  - docs/recovery.md
+  health_command: bash scripts/mirrorctl status
+  backup_command: ''
+  restore_test_command: ''
+  upgrade_command: bash scripts/install-dp-upgrade-mirror.sh --help
+  rollback_command: ''
