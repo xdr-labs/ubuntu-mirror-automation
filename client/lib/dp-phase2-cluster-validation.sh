@@ -192,6 +192,8 @@ p2b_analyze_aella_status_text() {
   local nodes_ready=NO
   local host_services_ready=NO
   local license_valid=NO
+  local system_ready=NO
+  local status_role=UNKNOWN
   local indices_ready=NO
   local models_ready=NO
   local provision_ready=NO
@@ -209,8 +211,20 @@ p2b_analyze_aella_status_text() {
   if printf '%s\n' "$text" | grep -qiE 'All host services are ready'; then
     host_services_ready=YES
   fi
+  if printf '%s\n' "$text" | grep -qiE 'DataProcessor\((DL|AIO)([-_A-Za-z0-9]*)?\)>'; then
+    status_role=DL_AIO
+  elif printf '%s\n' "$text" | grep -qiE 'DataProcessor\((DR|DA)([-_A-Za-z0-9]*)?\)>'; then
+    status_role=DA_DR
+  fi
   if printf '%s\n' "$text" | grep -qiE 'License is valid'; then
     license_valid=YES
+  fi
+  # DA/DR-master status does not necessarily print the DL-side license/index
+  # lines. Vendor status uses "System Ready" as its healthy terminal signal,
+  # but do not let that relax the DL/AIO license requirement: role evidence
+  # must explicitly identify a DA/DR prompt before System Ready can substitute.
+  if printf '%s\n' "$text" | grep -qiE '(^|[[:space:]])System Ready([[:space:]]|$)'; then
+    system_ready=YES
   fi
   if printf '%s\n' "$text" | grep -qiE 'All[[:space:]]+[0-9]+[[:space:]]+indices ready'; then
     indices_ready=YES
@@ -231,7 +245,9 @@ p2b_analyze_aella_status_text() {
   echo "CLUSTER_STATUS_PAUSED=${paused}"
   echo "CLUSTER_SIGNAL_NODES_READY=${nodes_ready}"
   echo "CLUSTER_SIGNAL_HOST_SERVICES_READY=${host_services_ready}"
+  echo "CLUSTER_SIGNAL_STATUS_ROLE=${status_role}"
   echo "CLUSTER_SIGNAL_LICENSE_VALID=${license_valid}"
+  echo "CLUSTER_SIGNAL_SYSTEM_READY=${system_ready}"
   echo "CLUSTER_SIGNAL_INDICES_READY=${indices_ready}"
   echo "CLUSTER_SIGNAL_MODELS_READY=${models_ready}"
   echo "CLUSTER_SIGNAL_PROVISION_READY=${provision_ready}"
@@ -259,16 +275,18 @@ p2b_analyze_aella_status_text() {
     return 0
   fi
 
-  if [[ "$nodes_ready" == "YES" \
-    && "$host_services_ready" == "YES" \
-    && "$license_valid" == "YES" ]]; then
-    authoritative_ready=YES
+  if [[ "$nodes_ready" == "YES" && "$host_services_ready" == "YES" ]]; then
+    if [[ "$license_valid" == "YES" ]]; then
+      authoritative_ready=YES
+    elif [[ "$status_role" == "DA_DR" && "$system_ready" == "YES" ]]; then
+      authoritative_ready=YES
+    fi
   fi
 
   if [[ "$authoritative_ready" == "YES" ]]; then
     echo "CLUSTER_STATUS_SUMMARY=AUTHORITATIVE_SIGNALS_PRESENT"
     echo "CLUSTER_VALIDATION_RECORDABLE_PASS=OPERATOR_JUDGEMENT"
-    echo "OPERATOR_NOTE=Pod count 'at least N expected' is informational; missing role-dependent pods alone do not force FAIL when nodes/host services/license readiness signals are present"
+    echo "OPERATOR_NOTE=Pod count 'at least N expected' is informational; require nodes + host services + role-appropriate vendor readiness (License is valid on DL/AIO or System Ready on DA/DR)"
   else
     echo "CLUSTER_STATUS_SUMMARY=NOT_READY_OR_INCOMPLETE"
     echo "CLUSTER_VALIDATION_RECORDABLE_PASS=NO"

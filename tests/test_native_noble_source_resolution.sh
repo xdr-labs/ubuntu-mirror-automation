@@ -147,6 +147,24 @@ assert_eq "$SPV_SOURCE_DP_VERSION" 6.5.0 "N06 version" || true
 assert_eq "$SPV_SOURCE_DP_VERSION_RESOLUTION" PASS "N06 pass" || true
 pass "N06 rerun reuses persisted evidence"
 
+# N06b partial/corrupt origin evidence on a coherent Noble host is ambiguous.
+# Even if live aella_cli is healthy, do not silently reclassify as Native Noble.
+rm -f "$SOURCE_PRODUCT_ENV_DEFAULT_PATH" "$SOURCE_PRODUCT_OS_STATE_FILE" \
+  "$SOURCE_PRODUCT_PHASE1_LOG_DEFAULT" "$SOURCE_PRODUCT_RELEASE_IMAGE_DEFAULT"
+printf 'SOURCE_DP_VERSION=6.3.0\n' >"$SOURCE_PRODUCT_ENV_DEFAULT_PATH"
+install_fake_aella_cli 6.5.0 ok
+if spv_resolve_source_dp_version "$SOURCE_PRODUCT_ENV_DEFAULT_PATH" \
+    "${TMP}/none.log" "${TMP}/none.yml" "" 1 n06b 1; then
+  fail "N06b partial env should fail closed"
+else
+  assert_eq "$SPV_PHASE2_ENTRY_MODE" AMBIGUOUS_NOBLE "N06b entry" || true
+  assert_eq "$SPV_SOURCE_PRODUCT_ENV_STATUS" INVALID_SCHEMA "N06b env diagnostic" || true
+  assert_eq "$SPV_SOURCE_DP_VERSION_FAILURE_REASON" AMBIGUOUS_NOBLE_ORIGIN "N06b reason" || true
+  assert_eq "$SPV_AELLA_CLI_VERSION_DETECTION" NOT_EVALUATED "N06b live CLI skipped" || true
+  pass "N06b partial Noble origin evidence fails closed before live CLI"
+fi
+rm -f "$SOURCE_PRODUCT_ENV_DEFAULT_PATH"
+
 # N07 inconsistent multi versions
 rm -f "$SOURCE_PRODUCT_ENV_DEFAULT_PATH"
 install_fake_aella_cli x multi
@@ -241,6 +259,101 @@ spv_resolve_source_dp_version "$SOURCE_PRODUCT_ENV_DEFAULT_PATH" \
 assert_eq "$SPV_PHASE2_ENTRY_MODE" POST_PHASE1_NOBLE "P01 entry" || true
 assert_eq "$SPV_SOURCE_DP_VERSION_RESOLUTION" PASS "P01" || true
 pass "P01 Post-Phase1 uses env without live CLI"
+
+# P01b: field-shaped Phase 1 capture uses origin=aella_cli. If the mutable
+# COMPLETED_NOBLE state marker is lost, immutable pre-Noble capture metadata
+# must still prevent misclassification as Native Noble.
+rm -f "$SOURCE_PRODUCT_OS_STATE_FILE" "$SOURCE_PRODUCT_ENV_DEFAULT_PATH" \
+  "$SOURCE_PRODUCT_PHASE1_LOG_DEFAULT" "$SOURCE_PRODUCT_RELEASE_IMAGE_DEFAULT"
+spv_persist_source_product_env "$SOURCE_PRODUCT_ENV_DEFAULT_PATH" 6.3.0 aella_cli 16.04 xenial p01b \
+  || fail "P01b persist"
+remove_aella_cli
+spv_resolve_source_dp_version "$SOURCE_PRODUCT_ENV_DEFAULT_PATH" \
+  "${TMP}/none.log" "${TMP}/missing.yml" "" 1 p01b 1 || fail "P01b"
+assert_eq "$SPV_PHASE2_ENTRY_MODE" POST_PHASE1_NOBLE "P01b entry" || true
+assert_eq "$SPV_SOURCE_DP_VERSION" 6.3.0 "P01b version" || true
+assert_eq "$SPV_PHASE1_LOG_EVIDENCE_STATUS" NOT_EVALUATED "P01b skipped log diagnostic" || true
+pass "P01b pre-Noble aella_cli capture survives missing state marker"
+
+# P01b2: resolver parameters are authoritative. Classification must inspect
+# the env/log paths passed to spv_resolve_source_dp_version, not silently fall
+# back to the module defaults.
+ALT_DIR="${TMP}/alternate-source"
+mkdir -p "$ALT_DIR"
+ALT_ENV="${ALT_DIR}/source-product.env"
+ALT_LOG="${ALT_DIR}/phase1.log"
+rm -f "$SOURCE_PRODUCT_ENV_DEFAULT_PATH" "$SOURCE_PRODUCT_OS_STATE_FILE" "$SOURCE_PRODUCT_PHASE1_LOG_DEFAULT"
+spv_persist_source_product_env "$ALT_ENV" 6.3.0 aella_cli 16.04 xenial p01b2 \
+  || fail "P01b2 persist"
+remove_aella_cli
+spv_resolve_source_dp_version "$ALT_ENV" "$ALT_LOG" "${TMP}/missing.yml" "" 1 p01b2 1 \
+  || fail "P01b2 resolve"
+assert_eq "$SPV_PHASE2_ENTRY_MODE" POST_PHASE1_NOBLE "P01b2 entry" || true
+assert_eq "$SPV_SOURCE_DP_VERSION" 6.3.0 "P01b2 version" || true
+pass "P01b2 resolver classification honors explicit evidence paths"
+
+# P01c: an explicit Native Noble capture must remain Native Noble when the
+# state marker is absent; the new captured-OS rule must not over-classify it.
+rm -f "$SOURCE_PRODUCT_ENV_DEFAULT_PATH"
+spv_persist_source_product_env "$SOURCE_PRODUCT_ENV_DEFAULT_PATH" 6.6.0 aella_cli-native-noble 24.04 noble p01c \
+  || fail "P01c persist"
+remove_aella_cli
+spv_resolve_source_dp_version "$SOURCE_PRODUCT_ENV_DEFAULT_PATH" \
+  "${TMP}/none.log" "${TMP}/missing.yml" "" 1 p01c 1 || fail "P01c"
+assert_eq "$SPV_PHASE2_ENTRY_MODE" NATIVE_NOBLE "P01c native entry" || true
+assert_eq "$SPV_SOURCE_DP_VERSION" 6.6.0 "P01c native version" || true
+pass "P01c explicit Native Noble capture stays native"
+
+# P01d: verify the classifier consumes the success marker the Phase 1 producer
+# actually writes. Couple this regression to the real producer template so a
+# later producer rename cannot silently leave the consumer fixture stale again.
+PHASE1_PRODUCER="${ROOT}/client/dp-offline-upgrade-jammy-to-noble.sh.in"
+grep -Fq 'SOURCE_PRODUCT_ENV=${SPV_SOURCE_VERSION_CAPTURE_STATUS}' "$PHASE1_PRODUCER" \
+  || fail "P01d Phase 1 producer success marker changed"
+grep -Fq 'SOURCE_PRODUCT_ENV=(WRITTEN|REUSED)' "$LIB" \
+  || fail "P01d Phase 2 consumer success marker missing"
+grep -Fq 'PHASE1_OS_UPGRADE=COMPLETE' "$PHASE1_PRODUCER" \
+  && grep -Fq 'PHASE1_OS_UPGRADE=COMPLETE' "$LIB" \
+  || fail "P01d completion marker producer/consumer drift"
+pass "P01d Phase 1/Phase 2 producer-consumer marker contract is coupled"
+
+# The old consumer looked for SOURCE_PRODUCT_ENV_CAPTURE=PASS, which is only a
+# failure-path label and is never the successful producer form.
+rm -f "$SOURCE_PRODUCT_ENV_DEFAULT_PATH" "$SOURCE_PRODUCT_OS_STATE_FILE"
+cat >"$SOURCE_PRODUCT_PHASE1_LOG_DEFAULT" <<'EOF'
+2026-10-03T13:34:45Z [INFO] SOURCE_PRODUCT_ENV=WRITTEN version=6.3.0 origin=aella_cli
+EOF
+spv_detect_phase2_entry_mode
+assert_eq "$SPV_PHASE2_ENTRY_MODE" POST_PHASE1_NOBLE "P01d producer marker" || true
+pass "P01d actual Phase 1 source-product success marker is recognized"
+
+# P01e: if the mutable state file and source-product.env are both lost, an
+# intact production-shaped Phase 1 completion log must both classify the host
+# as Post-Phase1 and recover the source version without consulting live CLI.
+rm -f "$SOURCE_PRODUCT_ENV_DEFAULT_PATH" "$SOURCE_PRODUCT_OS_STATE_FILE" \
+  "$SOURCE_PRODUCT_RELEASE_IMAGE_DEFAULT"
+cat >"$SOURCE_PRODUCT_PHASE1_LOG_DEFAULT" <<'EOF'
+2026-10-03T13:34:45Z [INFO] SOURCE_PRODUCT_ENV=WRITTEN version=6.3.0 origin=aella_cli
+2026-10-03T13:34:45Z [INFO] DP_VERSION=6.3.0
+2026-10-03T13:34:45Z [INFO] DP_VERSION_SOURCE=aella_cli
+2026-10-03T13:34:45Z [INFO] DP_VERSION_DETECT_STATUS=ok
+2026-10-03T13:34:45Z [INFO] DP_VERSION_CONSISTENCY=PASS
+2026-10-03T15:30:03Z [INFO] state=COMPLETED_NOBLE
+2026-10-03T15:30:03Z [INFO] PHASE1_OS_UPGRADE=COMPLETE
+2026-10-03T15:30:03Z [INFO] NOBLE_OS_VALIDATION=PASS
+EOF
+remove_aella_cli
+spv_resolve_source_dp_version "$SOURCE_PRODUCT_ENV_DEFAULT_PATH" \
+  "$SOURCE_PRODUCT_PHASE1_LOG_DEFAULT" "${TMP}/missing.yml" "" 1 p01e 1 || fail "P01e"
+assert_eq "$SPV_PHASE2_ENTRY_MODE" POST_PHASE1_NOBLE "P01e entry" || true
+assert_eq "$SPV_PHASE1_LOG_EVIDENCE_STATUS" PASS "P01e log status" || true
+assert_eq "$SPV_SOURCE_DP_VERSION" 6.3.0 "P01e version" || true
+assert_eq "$SPV_SOURCE_DP_VERSION_ORIGIN" phase1-log-recovery "P01e origin" || true
+assert_eq "$SPV_AELLA_CLI_VERSION_DETECTION" NOT_EVALUATED "P01e live CLI skipped" || true
+pass "P01e immutable Phase 1 log recovers when mutable state/env are missing"
+
+# Restore the authoritative state fixture for log-recovery cases below.
+printf 'COMPLETED_NOBLE\n' >"$SOURCE_PRODUCT_OS_STATE_FILE"
 
 # P02 Phase1 log recovery
 rm -f "$SOURCE_PRODUCT_ENV_DEFAULT_PATH" "$SOURCE_PRODUCT_BRINGUP_RESULT_ENV"

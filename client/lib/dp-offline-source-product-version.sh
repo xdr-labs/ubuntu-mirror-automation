@@ -436,7 +436,7 @@ spv_scan_phase1_log_evidence() {
   local production_mode="${2:-1}"
   local line ver src status cons
   local -a pass_versions=()
-  local record_count=0 complete_pass=0 undetermined=0
+  local record_count=0 complete_pass=0 undetermined=0 fake_complete=0
   local cur_ver="" cur_src="" cur_status="" cur_cons=""
   local uniq="" v
 
@@ -477,6 +477,7 @@ spv_scan_phase1_log_evidence() {
       if [[ "$cur_status" == "ok" && "$cur_cons" == "PASS" ]]; then
         if spv_is_fake_version_source "$cur_src"; then
           if [[ "$production_mode" == "1" ]]; then
+            fake_complete=$((fake_complete + 1))
             _spv_flush_partial
             return 0
           fi
@@ -494,7 +495,7 @@ spv_scan_phase1_log_evidence() {
   }
 
   while IFS= read -r line || [[ -n "$line" ]]; do
-    if [[ "$line" =~ DP_VERSION=([^[:space:]]+) ]]; then
+    if [[ "$line" =~ (^|[[:space:]])DP_VERSION=([^[:space:]]+) ]]; then
       # Starting a new version field closes any incomplete prior window without voting.
       if [[ -n "$cur_ver" || -n "$cur_src" || -n "$cur_status" || -n "$cur_cons" ]]; then
         # If previous had all four, try_complete; else discard incomplete.
@@ -507,19 +508,19 @@ spv_scan_phase1_log_evidence() {
           _spv_flush_partial
         fi
       fi
-      cur_ver="${BASH_REMATCH[1]}"
+      cur_ver="${BASH_REMATCH[2]}"
       continue
     fi
-    if [[ "$line" =~ DP_VERSION_SOURCE=([^[:space:]]+) ]]; then
-      cur_src="${BASH_REMATCH[1]}"
+    if [[ "$line" =~ (^|[[:space:]])DP_VERSION_SOURCE=([^[:space:]]+) ]]; then
+      cur_src="${BASH_REMATCH[2]}"
       continue
     fi
-    if [[ "$line" =~ DP_VERSION_DETECT_STATUS=([^[:space:]]+) ]]; then
-      cur_status="${BASH_REMATCH[1]}"
+    if [[ "$line" =~ (^|[[:space:]])DP_VERSION_DETECT_STATUS=([^[:space:]]+) ]]; then
+      cur_status="${BASH_REMATCH[2]}"
       continue
     fi
-    if [[ "$line" =~ DP_VERSION_CONSISTENCY=([^[:space:]]+) ]]; then
-      cur_cons="${BASH_REMATCH[1]}"
+    if [[ "$line" =~ (^|[[:space:]])DP_VERSION_CONSISTENCY=([^[:space:]]+) ]]; then
+      cur_cons="${BASH_REMATCH[2]}"
       _spv_try_complete
       continue
     fi
@@ -541,9 +542,11 @@ spv_scan_phase1_log_evidence() {
   SPV_PHASE1_LOG_EVIDENCE_UNDETERMINED_COUNT="$undetermined"
 
   if [[ "$complete_pass" -eq 0 ]]; then
-    # Distinguish fake-only vs none
-    if [[ "$record_count" -gt 0 ]]; then
-      SPV_PHASE1_LOG_EVIDENCE_STATUS="NO_COMPLETE_RECORD"
+    # Distinguish production-rejected fake evidence from malformed/incomplete
+    # evidence. The old FAKE_SOURCE_ONLY branch was unreachable because the
+    # function returned here before unique-version analysis.
+    if [[ "$fake_complete" -gt 0 && "$fake_complete" -eq "$record_count" ]]; then
+      SPV_PHASE1_LOG_EVIDENCE_STATUS="FAKE_SOURCE_ONLY"
     else
       SPV_PHASE1_LOG_EVIDENCE_STATUS="NO_COMPLETE_RECORD"
     fi
@@ -565,11 +568,6 @@ spv_scan_phase1_log_evidence() {
     SPV_PHASE1_LOG_EVIDENCE_STATUS="MULTIPLE_VERSIONS"
     return 1
   fi
-  if [[ "${SPV_PHASE1_LOG_EVIDENCE_UNIQUE_VERSION_COUNT}" -eq 0 ]]; then
-    SPV_PHASE1_LOG_EVIDENCE_STATUS="FAKE_SOURCE_ONLY"
-    return 1
-  fi
-
   SPV_PHASE1_SELECTED_VERSION="$(printf '%s' "$uniq" | tr ' ' '\n' | awk 'NF{print; exit}')"
   for v in "${pass_versions[@]}"; do
     ver="${v%%|*}"
@@ -745,9 +743,9 @@ spv_read_os_release() {
 spv_has_phase1_origin_evidence() {
   # True when immutable Phase 1 artifacts strongly suggest this host arrived
   # via OS upgrade even if COMPLETED_NOBLE marker is missing.
-  local dest="${SOURCE_PRODUCT_ENV_DEFAULT_PATH}"
-  local logf="${SOURCE_PRODUCT_PHASE1_LOG_DEFAULT}"
-  local state_file="${SOURCE_PRODUCT_OS_STATE_FILE:-/opt/aelladata/os-upgrade/offline/current-state.txt}"
+  local dest="${1:-${SOURCE_PRODUCT_ENV_DEFAULT_PATH}}"
+  local logf="${2:-${SOURCE_PRODUCT_PHASE1_LOG_DEFAULT}}"
+  local state
   if [[ -f "$dest" ]]; then
     if spv_parse_source_product_env_file "$dest" 2>/dev/null; then
       case "${SPV_PARSED_SOURCE_DP_VERSION_ORIGIN:-}" in
@@ -755,8 +753,24 @@ spv_has_phase1_origin_evidence() {
           return 0
           ;;
       esac
+
+      # Phase 1 normally captures the product version before the OS hops start.
+      # The historical producer records origin=aella_cli, so origin alone cannot
+      # distinguish that record from a native-Noble observation. The immutable
+      # capture OS/codename is the discriminator: any non-Noble capture proves
+      # this Noble host passed through Phase 1.
+      if [[ -n "${SPV_PARSED_SOURCE_DP_VERSION_CAPTURED_OS:-}" \
+        && "${SPV_PARSED_SOURCE_DP_VERSION_CAPTURED_OS}" != "24.04" ]]; then
+        return 0
+      fi
+      if [[ -n "${SPV_PARSED_SOURCE_DP_VERSION_CAPTURED_CODENAME:-}" \
+        && "${SPV_PARSED_SOURCE_DP_VERSION_CAPTURED_CODENAME}" != "noble" ]]; then
+        return 0
+      fi
+
       # Any durable source-product.env on a Noble host is Phase1-class evidence
-      # when origin is not explicitly native/aella_cli.
+      # when origin is not explicitly native/aella_cli/operator. Explicit
+      # native records are written by the Native Noble resolver itself.
       case "${SPV_PARSED_SOURCE_DP_VERSION_ORIGIN:-}" in
         aella_cli*|operator*|native*) ;;
         *)
@@ -765,14 +779,17 @@ spv_has_phase1_origin_evidence() {
       esac
     fi
   fi
-  if [[ -f "$logf" ]] && grep -Eq 'SOURCE_PRODUCT_ENV_CAPTURE=PASS|COMPLETED_NOBLE|SOURCE_DP_VERSION=' "$logf" 2>/dev/null; then
+  if [[ -f "$logf" ]] && grep -Eq \
+      '(^|[[:space:]])(state=COMPLETED_NOBLE|os_upgrade_result=COMPLETED_NOBLE|PHASE1_OS_UPGRADE=COMPLETE|NOBLE_OS_VALIDATION=PASS|SOURCE_PRODUCT_ENV=(WRITTEN|REUSED)([[:space:]]|$))' \
+      "$logf" 2>/dev/null; then
     return 0
   fi
-  if [[ -f "$state_file" ]]; then
-    case "$(tr -d '\r\n' <"$state_file" 2>/dev/null || true)" in
-      COMPLETED_NOBLE|POST_*|HOP_*NOBLE*|RELEASE_UPGRADE_*) return 0 ;;
-    esac
-  fi
+  # Reuse the canonical state discovery contract instead of a separate
+  # current-state.txt path that Phase 1 does not publish at the state root.
+  state="$(spv_os_upgrade_state)"
+  case "$state" in
+    COMPLETED_NOBLE|POST_*|HOP_*NOBLE*|RELEASE_UPGRADE_*) return 0 ;;
+  esac
   return 1
 }
 
@@ -785,6 +802,8 @@ spv_os_identity_is_coherent_noble() {
 }
 
 spv_detect_phase2_entry_mode() {
+  local dest="${1:-${SOURCE_PRODUCT_ENV_DEFAULT_PATH}}"
+  local logf="${2:-${SOURCE_PRODUCT_PHASE1_LOG_DEFAULT}}"
   local state
   SPV_PHASE2_ENTRY_MODE=""
   state="$(spv_os_upgrade_state)"
@@ -794,7 +813,30 @@ spv_detect_phase2_entry_mode() {
     return 0
   fi
   if spv_os_identity_is_coherent_noble; then
-    if spv_has_phase1_origin_evidence; then
+    # A source-product.env that exists but cannot prove a valid PASS is
+    # contradictory/partial origin evidence. Never downgrade that situation to
+    # Native Noble and consult live product state; fail closed as ambiguous.
+    if [[ -e "$dest" ]]; then
+      if ! spv_parse_source_product_env_file "$dest" 2>/dev/null; then
+        case "${SPV_PARSE_STATUS:-}" in
+          UNREADABLE) SPV_SOURCE_PRODUCT_ENV_STATUS="UNREADABLE" ;;
+          DUPLICATE_KEY) SPV_SOURCE_PRODUCT_ENV_STATUS="DUPLICATE_KEY" ;;
+          *) SPV_SOURCE_PRODUCT_ENV_STATUS="INVALID_SCHEMA" ;;
+        esac
+        SPV_PHASE2_ENTRY_MODE="AMBIGUOUS_NOBLE"
+        return 0
+      fi
+      if ! spv_validate_parsed_pass_record 2>/dev/null; then
+        case "${SPV_PARSE_STATUS:-}" in
+          RECORDED_FAILURE) SPV_SOURCE_PRODUCT_ENV_STATUS="RECORDED_FAILURE" ;;
+          INVALID_VERSION) SPV_SOURCE_PRODUCT_ENV_STATUS="INVALID_VERSION" ;;
+          *) SPV_SOURCE_PRODUCT_ENV_STATUS="INVALID_SCHEMA" ;;
+        esac
+        SPV_PHASE2_ENTRY_MODE="AMBIGUOUS_NOBLE"
+        return 0
+      fi
+    fi
+    if spv_has_phase1_origin_evidence "$dest" "$logf"; then
       # Marker missing but Phase1 evidence remains → do not trust live CLI.
       SPV_PHASE2_ENTRY_MODE="POST_PHASE1_NOBLE"
       return 0
@@ -1016,15 +1058,24 @@ spv_resolve_source_dp_version() {
   local allow_write="${5:-1}"
   local run_id="${6:-}"
   local production_mode="${7:-1}"
-  local state op_norm
+  local op_norm
 
   SPV_SOURCE_PRODUCT_ENV_PATH="$dest"
-  SPV_SOURCE_PRODUCT_ENV_STATUS=""
-  SPV_SOURCE_VERSION_CAPTURE_STATUS=""
+  SPV_SOURCE_PRODUCT_ENV_STATUS="NOT_EVALUATED"
+  SPV_SOURCE_VERSION_CAPTURE_STATUS="NOT_EVALUATED"
   SPV_PHASE1_LOG_EVIDENCE_PATH="$logf"
-  SPV_PHASE1_LOG_EVIDENCE_STATUS=""
+  SPV_PHASE1_LOG_EVIDENCE_STATUS="NOT_EVALUATED"
+  SPV_PHASE1_LOG_EVIDENCE_RECORD_COUNT=0
+  SPV_PHASE1_LOG_EVIDENCE_COMPLETE_PASS_COUNT=0
+  SPV_PHASE1_LOG_EVIDENCE_UNIQUE_VERSION_COUNT=0
+  SPV_PHASE1_LOG_EVIDENCE_UNDETERMINED_COUNT=0
+  SPV_PHASE1_SELECTED_VERSION=""
+  SPV_PHASE1_SELECTED_SOURCE=""
   SPV_RELEASE_IMAGE_PATH="$image"
-  SPV_RELEASE_IMAGE_STATUS=""
+  SPV_RELEASE_IMAGE_STATUS="NOT_EVALUATED"
+  SPV_RELEASE_IMAGE_AUTHORITATIVE_RECORD_COUNT=0
+  SPV_RELEASE_IMAGE_UNIQUE_VERSION_COUNT=0
+  SPV_RELEASE_SELECTED_VERSION=""
   SPV_OPERATOR_SOURCE_VERSION_STATUS="NOT_PROVIDED"
   SPV_SOURCE_DP_VERSION=""
   SPV_SOURCE_DP_VERSION_RAW=""
@@ -1034,9 +1085,9 @@ spv_resolve_source_dp_version() {
   SPV_SOURCE_DP_VERSION_FAILURE_REASON=""
   SPV_SOURCE_DP_VERSION_REMEDIATION=""
   SPV_SOURCE_DP_VERSION_RECOVERY=""
-  SPV_AELLA_CLI_VERSION_DETECTION=""
+  SPV_AELLA_CLI_VERSION_DETECTION="NOT_EVALUATED"
   SPV_AELLA_CLI_VERSION=""
-  spv_detect_phase2_entry_mode
+  spv_detect_phase2_entry_mode "$dest" "$logf"
 
   if [[ "${SPV_PHASE2_ENTRY_MODE}" == "AMBIGUOUS_NOBLE" ]]; then
     spv_set_failure "AMBIGUOUS_NOBLE_ORIGIN" \
@@ -1084,10 +1135,11 @@ spv_resolve_source_dp_version() {
 
   # 2) immutable capture already covered by read failure statuses above
 
-  # 3) Phase 1 log recovery (POST_PHASE1 / COMPLETED_NOBLE + bringup not completed)
-  #    Never use live aella_cli on this path.
-  state="$(spv_os_upgrade_state)"
-  if [[ "$state" == "COMPLETED_NOBLE" ]] && ! spv_bringup_completed_marker; then
+  # 3) Phase 1 log recovery (any safely-classified POST_PHASE1_NOBLE entry
+  #    + bringup not completed). This must also work when the mutable state file
+  #    is missing but immutable Phase 1 completion/log evidence classified the
+  #    host as Post-Phase1. Never use live aella_cli on this path.
+  if [[ "${SPV_PHASE2_ENTRY_MODE}" == "POST_PHASE1_NOBLE" ]] && ! spv_bringup_completed_marker; then
     if spv_scan_phase1_log_evidence "$logf" "$production_mode"; then
       if [[ "$allow_write" == "1" ]]; then
         if ! spv_require_persist_or_fail "$dest" \

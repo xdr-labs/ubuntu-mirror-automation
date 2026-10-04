@@ -20,7 +20,7 @@ image_import_format_elapsed() {
 image_import_progress_pct() {
     local pid="$1"
     local tar_file="$2"
-    local tar_abs size pos fd_path link fd_num
+    local tar_abs size pos fd_path link fd_num max_pos=""
     tar_abs="$(readlink -f "$tar_file" 2>/dev/null || true)"
     [[ -n "$tar_abs" && -f "$tar_abs" ]] || { printf 'UNKNOWN\n'; return 0; }
     size="$(stat -c '%s' "$tar_abs" 2>/dev/null || true)"
@@ -33,17 +33,21 @@ image_import_progress_pct() {
             fd_num="${fd_path##*/}"
             pos="$(awk '/^pos:/ {print $2; exit}' "/proc/${pid}/fdinfo/${fd_num}" 2>/dev/null || true)"
             if [[ -n "$pos" && "$pos" =~ ^[0-9]+$ ]]; then
-                if (( pos >= size )); then
-                    printf '100\n'
-                else
-                    printf '%s\n' "$(( (pos * 100) / size ))"
+                if [[ -z "$max_pos" || "$pos" -gt "$max_pos" ]]; then
+                    max_pos="$pos"
                 fi
-                shopt -u nullglob
-                return 0
             fi
         fi
     done
     shopt -u nullglob
+    if [[ -n "$max_pos" ]]; then
+        if (( max_pos >= size )); then
+            printf '100\n'
+        else
+            printf '%s\n' "$(( (max_pos * 100) / size ))"
+        fi
+        return 0
+    fi
     printf 'UNKNOWN\n'
     return 0
 }
@@ -58,13 +62,31 @@ image_import_emit_progress() {
     local tar_file="$2"
     local import_pid="$3"
     local start_ts="$4"
-    local base elapsed alive progress disk_free cpu_pct img_count extras
+    local base elapsed alive progress raw_progress disk_free cpu_pct img_count extras
     base="$(basename "$tar_file")"
     elapsed="$(image_import_format_elapsed $(( $(date +%s) - start_ts )))"
     alive=NO
     kill -0 "$import_pid" 2>/dev/null && alive=YES
-    progress="$(image_import_progress_pct "$import_pid" "$tar_file")"
-    [[ "$progress" == "UNKNOWN" ]] || progress="${progress}%"
+
+    raw_progress="$(image_import_progress_pct "$import_pid" "$tar_file")"
+    progress="$raw_progress"
+    if [[ "$raw_progress" =~ ^[0-9]+$ ]]; then
+        # The import process can momentarily expose multiple/reopened FDs for the
+        # same tar. Report the highest observed read position for this import so
+        # operator progress never moves backwards. Do not display 100% while the
+        # process is still alive; completion is authoritative only after wait(1).
+        if [[ -n "${last_progress_pct:-}" \
+          && "${last_progress_pct}" =~ ^[0-9]+$ \
+          && "$raw_progress" -lt "${last_progress_pct}" ]]; then
+            raw_progress="${last_progress_pct}"
+        fi
+        if [[ "$alive" == "YES" && "$raw_progress" -ge 100 ]]; then
+            raw_progress=99
+        fi
+        last_progress_pct="$raw_progress"
+        progress="${raw_progress}%"
+    fi
+
     disk_free="$(image_import_disk_free "$tar_file")"
     [[ -n "$disk_free" ]] || disk_free=UNKNOWN
     extras=""
@@ -87,7 +109,7 @@ run_image_import_with_heartbeat() {
     local log_file="$3"
     shift 3
     local -a extra_args=("$@")
-    local hb_secs base size import_pid start_ts now next_hb import_rc elapsed poll_secs
+    local hb_secs base size import_pid start_ts now next_hb import_rc elapsed poll_secs last_progress_pct=""
     hb_secs="$(image_import_heartbeat_seconds)"
     poll_secs=5
     # Keep poll short enough to honor small heartbeat intervals in tests.

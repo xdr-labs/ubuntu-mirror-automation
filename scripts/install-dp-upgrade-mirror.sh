@@ -1566,7 +1566,7 @@ STEP 7 — VERIFY DP HEALTH / RECORD COMPLETION
 Confirm readiness signals such as:
 • All cluster nodes are ready
 • All host services are ready
-• License is valid
+• Role-appropriate vendor readiness: License is valid (DL/AIO) or System Ready (DA/DR)
 • Indices / models / provision ready when shown
 • No explicit critical failure
 
@@ -1749,7 +1749,7 @@ STEP 10 — VERIFY DP HEALTH / RECORD COMPLETION
 Confirm readiness signals such as:
 • All cluster nodes are ready
 • All host services are ready
-• License is valid
+• Role-appropriate vendor readiness: License is valid (DL/AIO) or System Ready (DA/DR)
 • Indices / models / provision ready when shown
 • No explicit critical failure
 

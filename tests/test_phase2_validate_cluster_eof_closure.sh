@@ -317,6 +317,63 @@ echo "$ANAL_R" | grep -q 'CLUSTER_STATUS_PAUSED=NO' \
   && pass "field 52/54 + missing pods does not hard-fail; authoritative signals noted" \
   || fail "ready analysis: $ANAL_R"
 
+# DA/DR-master vendor status is role-specific: it may omit DL-side License/index
+# lines and report System Ready instead. That must still be recordable operator
+# readiness when cluster nodes + host services are ready.
+DA_READY_TXT="$(cat <<'EOF'
+DataProcessor(DR-master)> show status
+All pods are running
+144 images installed on host
+All images to run microservices are ready
+All images to support platform are ready
+DNS server has been setup
+All cluster nodes are ready
+All host services are ready
+System Ready
+No upgrade image pre-pulling is scheduled yet
+EOF
+)"
+ANAL_DA="$(p2b_analyze_aella_status_text "$DA_READY_TXT")"
+echo "$ANAL_DA" | grep -q 'CLUSTER_SIGNAL_STATUS_ROLE=DA_DR' \
+  && echo "$ANAL_DA" | grep -q 'CLUSTER_SIGNAL_LICENSE_VALID=NO' \
+  && echo "$ANAL_DA" | grep -q 'CLUSTER_SIGNAL_SYSTEM_READY=YES' \
+  && echo "$ANAL_DA" | grep -q 'CLUSTER_STATUS_SUMMARY=AUTHORITATIVE_SIGNALS_PRESENT' \
+  && echo "$ANAL_DA" | grep -q 'CLUSTER_VALIDATION_RECORDABLE_PASS=OPERATOR_JUDGEMENT' \
+  && pass "DA/DR role-specific System Ready is accepted without DL license line" \
+  || fail "DA/DR ready analysis: $ANAL_DA"
+
+# System Ready must not relax the DL/AIO license gate.
+DL_NO_LICENSE_TXT="$(cat <<'EOF'
+DataProcessor(DL-master)> show status
+All cluster nodes are ready
+All host services are ready
+System Ready
+EOF
+)"
+ANAL_DL_NO_LICENSE="$(p2b_analyze_aella_status_text "$DL_NO_LICENSE_TXT")"
+echo "$ANAL_DL_NO_LICENSE" | grep -q 'CLUSTER_SIGNAL_STATUS_ROLE=DL_AIO' \
+  && echo "$ANAL_DL_NO_LICENSE" | grep -q 'CLUSTER_SIGNAL_LICENSE_VALID=NO' \
+  && echo "$ANAL_DL_NO_LICENSE" | grep -q 'CLUSTER_SIGNAL_SYSTEM_READY=YES' \
+  && echo "$ANAL_DL_NO_LICENSE" | grep -q 'CLUSTER_STATUS_SUMMARY=NOT_READY_OR_INCOMPLETE' \
+  && echo "$ANAL_DL_NO_LICENSE" | grep -q 'CLUSTER_VALIDATION_RECORDABLE_PASS=NO' \
+  && pass "DL/AIO still requires license even when System Ready is present" \
+  || fail "DL/AIO role gate analysis: $ANAL_DL_NO_LICENSE"
+
+# Nodes + host services alone are insufficient: require license, or explicit
+# DA/DR role plus System Ready, so the role-aware relaxation does not auto-pass.
+INCOMPLETE_TXT="$(cat <<'EOF'
+All cluster nodes are ready
+All host services are ready
+EOF
+)"
+ANAL_I="$(p2b_analyze_aella_status_text "$INCOMPLETE_TXT")"
+echo "$ANAL_I" | grep -q 'CLUSTER_SIGNAL_LICENSE_VALID=NO' \
+  && echo "$ANAL_I" | grep -q 'CLUSTER_SIGNAL_SYSTEM_READY=NO' \
+  && echo "$ANAL_I" | grep -q 'CLUSTER_STATUS_SUMMARY=NOT_READY_OR_INCOMPLETE' \
+  && echo "$ANAL_I" | grep -q 'CLUSTER_VALIDATION_RECORDABLE_PASS=NO' \
+  && pass "readiness still fails closed without license or System Ready" \
+  || fail "incomplete ready analysis: $ANAL_I"
+
 # ---------------------------------------------------------------------------
 # Full --validate-cluster surface with fake CLI (paused)
 # ---------------------------------------------------------------------------

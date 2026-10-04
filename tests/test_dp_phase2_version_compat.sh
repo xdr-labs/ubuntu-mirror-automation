@@ -53,27 +53,58 @@ _ver="$(os_release_field VERSION)"
 assert_eq "$TARGET_DP_VERSION" "6.6.0" "target unchanged after os VERSION read"
 [[ "$_ver" != "$TARGET_DP_VERSION" ]] && pass "OS VERSION distinct from target" || fail "OS VERSION collided"
 
+echo "[test] coherent modern bringup completion blocks destructive same-version recovery"
+export PHASE2_BRINGUP_DIR="${WORKDIR}/lifecycle"
+export SOURCE_PRODUCT_BRINGUP_RESULT_ENV="${PHASE2_BRINGUP_DIR}/result.env"
+mkdir -p "$PHASE2_BRINGUP_DIR"
+cat >"$SOURCE_PRODUCT_BRINGUP_RESULT_ENV" <<'EOF'
+BRINGUP_TERMINAL_STATE=COMPLETED
+BRINGUP_RESULT=PASS
+BRINGUP_RUN_ID=run-modern
+BRINGUP_EXIT_CODE=0
+BRINGUP_COMPLETION_SENTINEL=PASS
+EOF
+printf 'COMPLETED\n' >"${PHASE2_BRINGUP_DIR}/state"
+printf 'run-modern\n' >"${PHASE2_BRINGUP_DIR}/run-id"
+printf '0\n' >"${PHASE2_BRINGUP_DIR}/exit-code"
+if bringup_already_executed; then
+  pass "coherent current lifecycle completion is treated as already executed"
+else
+  fail "coherent current lifecycle completion was ignored"
+fi
+rm -rf "$PHASE2_BRINGUP_DIR"
+
 echo "[test] compatibility matrix via evaluate_version_compatibility"
 run_compat() {
-  local src="$1" tgt="$2" recovery="${3:-0}" fake_state
+  local src="$1" tgt="$2" recovery="${3:-0}" fake_state fake_entry_mode
   # Allow explicit empty state (do not treat "" as unset).
   if [[ $# -ge 4 ]]; then
     fake_state="$4"
   else
     fake_state="COMPLETED_NOBLE"
   fi
+  if [[ $# -ge 5 ]]; then
+    fake_entry_mode="$5"
+  elif [[ "$fake_state" == "COMPLETED_NOBLE" ]]; then
+    fake_entry_mode="POST_PHASE1_NOBLE"
+  else
+    fake_entry_mode="NATIVE_NOBLE"
+  fi
   SOURCE_DP_VERSION="$src"
   SOURCE_DP_VERSION_RAW="$src"
   SOURCE_DP_VERSION_ORIGIN="test"
   SOURCE_DP_VERSION_CHECK="PASS"
+  SPV_PHASE2_ENTRY_MODE="$fake_entry_mode"
   TARGET_DP_VERSION="$tgt"
   PHASE2_ARTIFACT_VERSION="$tgt"
   SAME_VERSION_RECOVERY="$recovery"
   # Closures over locals are unreliable under `set -u`; use globals for fakes.
   TEST_FAKE_OS_STATE="$fake_state"
+  TEST_FAKE_PHASE1_NOT_RUN=NO
+  [[ "$fake_entry_mode" == "POST_PHASE1_NOBLE" ]] && TEST_FAKE_PHASE1_NOT_RUN=YES
   read_os_upgrade_state() { printf '%s' "${TEST_FAKE_OS_STATE:-}"; }
   phase1_product_validation_is_not_run() {
-    [[ "${TEST_FAKE_OS_STATE:-}" == "COMPLETED_NOBLE" ]]
+    [[ "${TEST_FAKE_PHASE1_NOT_RUN:-NO}" == "YES" ]]
   }
   bringup_already_executed() { return 1; }
   set +e
@@ -119,6 +150,20 @@ if out="$(capture_compat 6.5.0 6.5.0 1 COMPLETED_NOBLE)"; then
   echo "$out" | grep -q 'SAME_VERSION_RECOVERY_REQUIRED' && pass "generic 6.5.0 recovery allowed with ack" || fail "generic 6.5 recovery allow"
 else
   fail "generic 6.5 recovery with ack should not die: $out"
+fi
+# Mutable state can be absent after a completed OS path; immutable entry-mode
+# classification must still prevent a Post-Phase1 host from being called healthy
+# ALREADY_AT_TARGET.
+out="$(capture_compat 6.6.0 6.6.0 0 '' POST_PHASE1_NOBLE || true)"
+echo "$out" | grep -q 'SAME_VERSION_RECOVERY_REQUIRED' \
+  && pass "Post-Phase1 classification survives missing state for same-version gate" \
+  || fail "missing-state Post-Phase1 same-version gate"
+if out="$(capture_compat 6.6.0 6.6.0 1 '' POST_PHASE1_NOBLE)"; then
+  echo "$out" | grep -q 'SAME_VERSION_RECOVERY_REQUIRED' \
+    && pass "missing-state Post-Phase1 recovery allowed only with ack" \
+    || fail "missing-state Post-Phase1 recovery message"
+else
+  fail "missing-state Post-Phase1 recovery with ack should not die: $out"
 fi
 out="$(capture_compat 6.6.0 6.6.0 0 '' || true)"
 echo "$out" | grep -q 'ALREADY_AT_TARGET' && pass "6.6.0 same version ALREADY_AT_TARGET" || fail "6.6.0 ALREADY_AT_TARGET"
