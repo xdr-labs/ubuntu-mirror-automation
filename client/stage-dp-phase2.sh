@@ -203,7 +203,7 @@ Required:
 
 Options:
   --source-dp-version VER  Explicit source DP product version (operator override)
-  --same-version-recovery  Allow source==target when COMPLETED_NOBLE recovery applies
+  --same-version-recovery  Allow source==target when Post-Phase1 Noble recovery applies
   --keep-cache             Keep verified bundle cache after successful staging
   --diagnose-source-version  Read-only source version diagnosis (no download/mutation)
   -h, --help               Show this help
@@ -211,7 +211,7 @@ Options:
 Source version resolution priority:
   1) ${SOURCE_PRODUCT_ENV}
   2) immutable capture evidence (same path)
-  3) structured Phase 1 log evidence (COMPLETED_NOBLE recovery)
+  3) structured Phase 1 log evidence (Post-Phase1 Noble recovery)
   4) authoritative keys in /opt/aelladata/release-image.yml
   5) --source-dp-version (origin=operator-argument)
   6) fail closed with source-specific diagnostics (no FAIL_UNKNOWN)
@@ -685,12 +685,19 @@ phase1_product_validation_is_not_run() {
 }
 
 bringup_already_executed() {
+  # Prefer the current lifecycle contract: terminal PASS must belong to the
+  # current run and include coherent state/result/exit/sentinel evidence.
+  if declare -F spv_bringup_completed_marker >/dev/null 2>&1; then
+    if spv_bringup_completed_marker; then
+      return 0
+    fi
+  fi
+
+  # Legacy BRINGUP_EXECUTED is only attempt evidence, but for the destructive
+  # same-version recovery gate an existing marker remains a conservative block.
+  # Never infer completion from a log mention alone.
   if [[ -f /opt/aelladata/os-upgrade/offline/BRINGUP_EXECUTED ]]; then
     return 0
-  fi
-  if grep -Eq 'BRINGUP_EXECUTED=YES|bringup_py3_dp_after_os_upgrade' /var/log/aella/offline_os_upgrade.log 2>/dev/null; then
-    # log mention alone is weak; require explicit YES marker elsewhere
-    :
   fi
   return 1
 }
@@ -938,7 +945,7 @@ diagnose_source_version_main() {
 }
 
 evaluate_version_compatibility() {
-  local cmp_min cmp_tgt state
+  local cmp_min cmp_tgt state post_phase1=0
   if [[ "$SOURCE_DP_VERSION_CHECK" != "PASS" || -z "$SOURCE_DP_VERSION" ]]; then
     SOURCE_DP_VERSION_CHECK="FAIL"
     die "SOURCE_DP_VERSION_RESOLUTION=FAIL (compatibility precondition)"
@@ -965,20 +972,29 @@ evaluate_version_compatibility() {
       ;;
     eq)
       state="$(read_os_upgrade_state)"
-      if [[ "$state" == "COMPLETED_NOBLE" ]] && \
+      # The resolver's entry-mode classifier can prove Post-Phase1 Noble from
+      # immutable capture/log evidence even when the mutable state file is lost.
+      # Keep the direct state check for compatibility with older callers/tests,
+      # but never downgrade a safely classified Post-Phase1 host to
+      # ALREADY_AT_TARGET merely because that one state file is absent.
+      if [[ "${SPV_PHASE2_ENTRY_MODE:-}" == "POST_PHASE1_NOBLE" \
+        || "$state" == "COMPLETED_NOBLE" ]]; then
+        post_phase1=1
+      fi
+      if [[ "$post_phase1" -eq 1 ]] && \
          phase1_product_validation_is_not_run && \
          ! bringup_already_executed && \
          [[ "$SAME_VERSION_RECOVERY" -eq 1 ]]; then
         TARGET_VERSION_COMPATIBILITY="SAME_VERSION_RECOVERY_REQUIRED"
         log "TARGET_VERSION_COMPATIBILITY=SAME_VERSION_RECOVERY_REQUIRED"
         log "PREREQUISITE: powered-off VM snapshot/backup confirmed by operator"
-      elif [[ "$state" == "COMPLETED_NOBLE" ]] && \
+      elif [[ "$post_phase1" -eq 1 ]] && \
             phase1_product_validation_is_not_run && \
             ! bringup_already_executed && \
             [[ "$SAME_VERSION_RECOVERY" -eq 0 ]]; then
         TARGET_VERSION_COMPATIBILITY="SAME_VERSION_RECOVERY_REQUIRED"
         die "TARGET_VERSION_COMPATIBILITY=SAME_VERSION_RECOVERY_REQUIRED (pass --same-version-recovery after snapshot)"
-      elif [[ "$state" == "COMPLETED_NOBLE" ]]; then
+      elif [[ "$post_phase1" -eq 1 ]]; then
         TARGET_VERSION_COMPATIBILITY="SAME_VERSION_RECOVERY_BLOCKED"
         die "TARGET_VERSION_COMPATIBILITY=SAME_VERSION_RECOVERY_BLOCKED
 Safe same-version recovery could not be confirmed.

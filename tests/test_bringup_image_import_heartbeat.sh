@@ -202,6 +202,43 @@ C_RC=0
 assert_grep 'progress=UNKNOWN' "$C_OUT" "C progress=UNKNOWN"
 assert_grep 'IMAGE_IMPORT_COMPLETE namespace=k8s.io' "$C_OUT" "C COMPLETE despite UNKNOWN"
 
+# --- C2: operator progress is monotonic and never reports 100% while alive ---
+# Field E2E exposed 99% -> 97% from changing/reopened tar FDs. The heartbeat is
+# advisory, but it must not move backwards or imply completion before wait(1).
+C2_OUT="${WORKDIR}/c2.out"
+(
+  set -euo pipefail
+  # shellcheck disable=SC1090
+  source "$HELPERS"
+  SEQ="${WORKDIR}/c2-seq"
+  printf '99\n97\n100\n' >"$SEQ"
+  image_import_progress_pct() {
+    local v
+    v="$(head -n1 "$SEQ")"
+    sed -i '1d' "$SEQ"
+    printf '%s\n' "$v"
+  }
+  ctr() {
+    if [[ "$*" == *"images ls"* ]]; then
+      return 0
+    fi
+    return 0
+  }
+  sleep 30 &
+  import_pid=$!
+  trap 'kill "$import_pid" 2>/dev/null || true; wait "$import_pid" 2>/dev/null || true' EXIT
+  last_progress_pct=""
+  started="$(date +%s)"
+  image_import_emit_progress "moby" "$TAR" "$import_pid" "$started"
+  image_import_emit_progress "moby" "$TAR" "$import_pid" "$started"
+  image_import_emit_progress "moby" "$TAR" "$import_pid" "$started"
+) >"$C2_OUT" 2>&1
+c2_count="$(grep -c 'IMAGE_IMPORT_PROGRESS namespace=moby' "$C2_OUT" || true)"
+[[ "$c2_count" -eq 3 ]] && pass "C2 emitted three progress samples" || fail "C2 progress sample count=$c2_count"
+c2_99="$(grep -c 'progress=99%' "$C2_OUT" || true)"
+[[ "$c2_99" -eq 3 ]] && pass "C2 progress clamps 99->97->100(alive) to monotonic 99%" \
+  || { fail "C2 monotonic progress"; cat "$C2_OUT"; }
+
 # Invalid heartbeat env falls back to 60 (unit check of helper only).
 HB_OUT="${WORKDIR}/hb.out"
 (

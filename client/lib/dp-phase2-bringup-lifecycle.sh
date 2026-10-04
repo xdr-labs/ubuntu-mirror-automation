@@ -469,6 +469,26 @@ p2b_discover_aella_cli() {
   return 1
 }
 
+# Stream observability text for the active lifecycle run only when run
+# identity metadata exists. A missing/invalid current-run marker must not fall
+# back to the whole persistent log, because that can leak stale progress from a
+# previous bringup. Legacy/unit contexts with no lifecycle identity still read
+# the whole log for backwards compatibility.
+p2b_observability_log_stream() {
+  local logf="$1"
+  local d run_id offset_file
+  d="$(p2b_dir)"
+  run_id="$(p2b_read_file "${d}/run-id")"
+  offset_file="${d}/log-start-offset"
+  if [[ -n "$run_id" || -f "$offset_file" ]]; then
+    [[ -n "$run_id" && -f "$offset_file" ]] || return 2
+    p2b_current_run_log_stream "$logf"
+    return $?
+  fi
+  [[ -f "$logf" ]] || return 1
+  cat "$logf"
+}
+
 p2b_parse_image_import_progress() {
   local logf="${1:-${PHASE2_BRINGUP_LOG_DEFAULT}}"
   IMAGE_IMPORT_STATE="UNKNOWN"
@@ -478,11 +498,19 @@ p2b_parse_image_import_progress() {
     return 1
   fi
   # Read last IMAGE_IMPORT_* records — do not invent percentages.
-  local line last_prog="" last_ns="" started=0
+  local line last_prog="" last_ns="" started=0 scoped_log="" progress_token=""
+  scoped_log="$(mktemp)"
+  if ! p2b_observability_log_stream "$logf" >"$scoped_log"; then
+    rm -f "$scoped_log"
+    return 2
+  fi
   while IFS= read -r line || [[ -n "$line" ]]; do
     if [[ "$line" =~ IMAGE_IMPORT_START ]]; then
       started=1
       IMAGE_IMPORT_STATE="RUNNING"
+      # A new namespace/import is a new progress domain. Never carry a prior
+      # namespace's percentage forward while the new import is still UNKNOWN.
+      last_prog=""
       if [[ "$line" =~ namespace=([^[:space:]]+) ]]; then
         last_ns="${BASH_REMATCH[1]}"
       fi
@@ -490,10 +518,15 @@ p2b_parse_image_import_progress() {
     if [[ "$line" =~ IMAGE_IMPORT_PROGRESS ]]; then
       started=1
       IMAGE_IMPORT_STATE="RUNNING"
-      if [[ "$line" =~ progress=([0-9]+%?) ]]; then
-        last_prog="${BASH_REMATCH[1]}"
-      elif [[ "$line" =~ ([0-9]+)% ]]; then
-        last_prog="${BASH_REMATCH[1]}%"
+      # Parse only the explicit progress= field. A generic "NN%" fallback can
+      # accidentally consume cpu=37.5% when progress=UNKNOWN and fabricate 5%.
+      if [[ "$line" =~ progress=([^[:space:]]+) ]]; then
+        progress_token="${BASH_REMATCH[1]}"
+        if [[ "$progress_token" =~ ^[0-9]+%?$ ]]; then
+          last_prog="$progress_token"
+        else
+          last_prog=""
+        fi
       fi
       if [[ "$line" =~ namespace=([^[:space:]]+) ]]; then
         last_ns="${BASH_REMATCH[1]}"
@@ -502,7 +535,8 @@ p2b_parse_image_import_progress() {
     if [[ "$line" =~ IMAGE_IMPORT_END|IMAGE_IMPORT_COMPLETE ]]; then
       IMAGE_IMPORT_STATE="DONE"
     fi
-  done <"$logf"
+  done <"$scoped_log"
+  rm -f "$scoped_log"
   IMAGE_IMPORT_PROGRESS="$last_prog"
   IMAGE_IMPORT_NAMESPACE="$last_ns"
   if [[ "$started" -eq 1 && "$IMAGE_IMPORT_STATE" == "UNKNOWN" ]]; then
@@ -516,7 +550,12 @@ p2b_current_phase_from_log() {
   CURRENT_PHASE="UNKNOWN"
   CURRENT_OPERATION="UNKNOWN"
   [[ -f "$logf" ]] || return 1
-  local line
+  local line scoped_log=""
+  scoped_log="$(mktemp)"
+  if ! p2b_observability_log_stream "$logf" >"$scoped_log"; then
+    rm -f "$scoped_log"
+    return 2
+  fi
   # Prefer last IMAGE_IMPORT markers; else last conspicuous phase line.
   while IFS= read -r line || [[ -n "$line" ]]; do
     if [[ "$line" =~ IMAGE_IMPORT_START ]]; then
@@ -525,6 +564,9 @@ p2b_current_phase_from_log() {
     elif [[ "$line" =~ IMAGE_IMPORT_PROGRESS ]]; then
       CURRENT_PHASE="IMAGE_IMPORT"
       CURRENT_OPERATION="image_import"
+    elif [[ "$line" =~ IMAGE_IMPORT_END|IMAGE_IMPORT_COMPLETE ]]; then
+      CURRENT_PHASE="IMAGE_IMPORT_COMPLETE"
+      CURRENT_OPERATION="image_import_complete"
     elif [[ "$line" =~ Installing\ Docker|Install\ Docker ]]; then
       CURRENT_PHASE="DOCKER"
       CURRENT_OPERATION="install_docker"
@@ -532,7 +574,8 @@ p2b_current_phase_from_log() {
       CURRENT_PHASE="LOAD_IMAGES"
       CURRENT_OPERATION="load_images"
     fi
-  done <"$logf"
+  done <"$scoped_log"
+  rm -f "$scoped_log"
 }
 
 p2b_status_snapshot() {
@@ -1199,7 +1242,8 @@ Bringup process completed successfully. This is NOT yet DP_UPGRADE_COMPLETE.
 3) After services start, re-run validation:
      sudo bash ${_wrap} --validate-cluster
    Authoritative readiness signals include cluster nodes ready, host services
-   ready, and license valid. Pod "at least N expected" is informational.
+   ready, plus role-appropriate vendor readiness: "License is valid" on DL/AIO
+   or "System Ready" on DA/DR. Pod "at least N expected" is informational.
 
 4) If POST_BRINGUP_MIGRATION=REQUIRED, run the vendor migration manually, then:
      sudo bash ${_wrap} --record-post-bringup-migration PASS

@@ -76,6 +76,56 @@ assert_eq "$SPV_SOURCE_DP_VERSION_ORIGIN" phase1-log-recovery "recovery origin"
 assert_eq "$SPV_PHASE1_LOG_EVIDENCE_UNDETERMINED_COUNT" 1 "later undetermined counted"
 pass "Phase 1 recovery retains earlier PASS evidence"
 
+# Production logs are timestamp-prefixed; the scanner must still recognize the
+# complete DP_VERSION evidence record rather than relying on synthetic bare keys.
+cat >"$SOURCE_PRODUCT_PHASE1_LOG_DEFAULT" <<'EOF'
+2026-10-03T13:34:45Z [INFO] DP_VERSION=6.3.0
+2026-10-03T13:34:45Z [INFO] DP_VERSION_SOURCE=aella_cli
+2026-10-03T13:34:45Z [INFO] DP_VERSION_DETECT_STATUS=ok
+2026-10-03T13:34:45Z [INFO] DP_VERSION_CONSISTENCY=PASS
+2026-10-03T15:30:03Z [INFO] PHASE1_OS_UPGRADE=COMPLETE
+2026-10-03T15:30:03Z [INFO] NOBLE_OS_VALIDATION=PASS
+EOF
+spv_scan_phase1_log_evidence "$SOURCE_PRODUCT_PHASE1_LOG_DEFAULT" 1 \
+  || fail "timestamp-prefixed Phase 1 evidence scan"
+assert_eq "$SPV_PHASE1_LOG_EVIDENCE_STATUS" PASS "production-shaped Phase 1 status"
+assert_eq "$SPV_PHASE1_LOG_EVIDENCE_RECORD_COUNT" 1 "production-shaped record count"
+assert_eq "$SPV_PHASE1_LOG_EVIDENCE_COMPLETE_PASS_COUNT" 1 "production-shaped PASS count"
+assert_eq "$SPV_PHASE1_SELECTED_VERSION" 6.3.0 "production-shaped selected version"
+pass "timestamp-prefixed production Phase 1 evidence parses"
+
+# Prefix/suffix collisions must not be mistaken for the canonical DP_VERSION
+# record. SOURCE_DP_VERSION contains the same token suffix and previously could
+# seed a partial window because the scanner matched unanchored substrings.
+cat >"$SOURCE_PRODUCT_PHASE1_LOG_DEFAULT" <<'EOF'
+2026-10-03T15:30:03Z [INFO] SOURCE_DP_VERSION=9.9.9
+2026-10-03T15:30:03Z [INFO] SOURCE_DP_VERSION_ORIGIN=diagnostic
+2026-10-03T13:34:45Z [INFO] DP_VERSION=6.3.0
+2026-10-03T13:34:45Z [INFO] DP_VERSION_SOURCE=aella_cli
+2026-10-03T13:34:45Z [INFO] DP_VERSION_DETECT_STATUS=ok
+2026-10-03T13:34:45Z [INFO] DP_VERSION_CONSISTENCY=PASS
+EOF
+spv_scan_phase1_log_evidence "$SOURCE_PRODUCT_PHASE1_LOG_DEFAULT" 1 \
+  || fail "suffix-collision Phase 1 evidence scan"
+assert_eq "$SPV_PHASE1_LOG_EVIDENCE_RECORD_COUNT" 1 "suffix collision ignored"
+assert_eq "$SPV_PHASE1_SELECTED_VERSION" 6.3.0 "suffix collision selected version"
+pass "Phase 1 scanner matches exact structured keys only"
+
+# A valid immutable source-product.env has higher precedence than the Phase 1
+# log. Diagnostics must say lower-priority sources were NOT_EVALUATED rather
+# than showing blank status with zero counts (which looks like a failed scan).
+rm -f "$SOURCE_PRODUCT_ENV_DEFAULT_PATH"
+spv_persist_source_product_env "$SOURCE_PRODUCT_ENV_DEFAULT_PATH" 6.3.0 aella_cli 16.04 xenial field-short-circuit \
+  || fail "field short-circuit env persist"
+spv_resolve_source_dp_version "$SOURCE_PRODUCT_ENV_DEFAULT_PATH" "$SOURCE_PRODUCT_PHASE1_LOG_DEFAULT" \
+  "${TMP}/missing-release.yml" "" 1 field-short-circuit 1 || fail "field short-circuit resolve"
+assert_eq "$SPV_SOURCE_DP_VERSION" 6.3.0 "field short-circuit version"
+assert_eq "$SPV_PHASE1_LOG_EVIDENCE_STATUS" NOT_EVALUATED "Phase 1 scan short-circuit status"
+assert_eq "$SPV_PHASE1_LOG_EVIDENCE_RECORD_COUNT" 0 "Phase 1 scan short-circuit count"
+assert_eq "$SPV_RELEASE_IMAGE_STATUS" NOT_EVALUATED "release-image short-circuit status"
+assert_eq "$SPV_AELLA_CLI_VERSION_DETECTION" NOT_EVALUATED "CLI short-circuit status"
+pass "higher-priority env emits explicit NOT_EVALUATED diagnostics"
+
 { write_log_record 6.4.0; write_log_record 6.5.0; } >"$SOURCE_PRODUCT_PHASE1_LOG_DEFAULT"
 expect_fail spv_scan_phase1_log_evidence "$SOURCE_PRODUCT_PHASE1_LOG_DEFAULT" 1
 assert_eq "$SPV_PHASE1_LOG_EVIDENCE_STATUS" MULTIPLE_VERSIONS "conflicting Phase 1 evidence"
@@ -84,7 +134,12 @@ expect_fail spv_scan_phase1_log_evidence "$SOURCE_PRODUCT_PHASE1_LOG_DEFAULT" 1
 assert_eq "$SPV_PHASE1_LOG_EVIDENCE_STATUS" NO_COMPLETE_RECORD "incomplete record"
 write_log_record 6.5.0 FAKE >"$SOURCE_PRODUCT_PHASE1_LOG_DEFAULT"
 expect_fail spv_scan_phase1_log_evidence "$SOURCE_PRODUCT_PHASE1_LOG_DEFAULT" 1
-[[ "$SPV_PHASE1_LOG_EVIDENCE_STATUS" != PASS ]] || fail "fake source accepted in production mode"
+assert_eq "$SPV_PHASE1_LOG_EVIDENCE_STATUS" FAKE_SOURCE_ONLY "fake-only Phase 1 evidence"
+rm -f "$SOURCE_PRODUCT_ENV_DEFAULT_PATH" "$SOURCE_PRODUCT_RELEASE_IMAGE_DEFAULT"
+expect_fail spv_resolve_source_dp_version "$SOURCE_PRODUCT_ENV_DEFAULT_PATH" \
+  "$SOURCE_PRODUCT_PHASE1_LOG_DEFAULT" "$SOURCE_PRODUCT_RELEASE_IMAGE_DEFAULT" "" 0 fake-only 1
+assert_eq "$SPV_SOURCE_DP_VERSION_FAILURE_REASON" PHASE1_EVIDENCE_FAKE_SOURCE_ONLY \
+  "fake-only resolver failure reason"
 pass "incomplete, conflicting, and fake Phase 1 evidence fail closed"
 
 cat >"$SOURCE_PRODUCT_RELEASE_IMAGE_DEFAULT" <<'EOF'

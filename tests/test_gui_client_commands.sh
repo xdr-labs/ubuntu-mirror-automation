@@ -290,6 +290,7 @@ second_cmd="$(gui_client_hop_command_line "http://192.0.2.20" "dp-offline-upgrad
 [[ "$second_cmd" == *"http://192.0.2.20/client/upgrade-xenial-to-bionic.sh"* ]] \
   || fail "second fixture URL missing from hop command"
 grep -q 'License is valid' "$OUT" || fail "license check missing"
+grep -q 'System Ready (DA/DR)' "$OUT" || fail "DA/DR System Ready guidance missing"
 pass "FULL mode client commands"
 
 # --- PHASE2_ONLY mode: no OS hops ---

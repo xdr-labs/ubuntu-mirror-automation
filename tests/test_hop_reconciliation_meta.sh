@@ -202,16 +202,31 @@ run_reconcile() {
   return 0
 }
 
-# Embed check: functions in generated client match helper text fingerprints
+# Embed check: generated clients must carry the exact shared helper bytes.
+# A distinctive-line spot check is insufficient for producer/consumer contracts:
+# a stale embedded helper can still contain the same markers while missing a
+# newly fixed parser/state rule.
 HELPER_SHA="$(sha256sum "$HELPER" | awk '{print $1}')"
+SOURCE_VERSION_HELPER="${ROOT}/client/lib/dp-offline-source-product-version.sh"
+SOURCE_VERSION_HELPER_SHA="$(sha256sum "$SOURCE_VERSION_HELPER" | awk '{print $1}')"
 for entry in "${HOPS[@]}"; do
   IFS=: read -r hop _ <<<"$entry"
   built="${ARTIFACTS}/${hop}/$(script_name "$hop")"
-  # Spot-check a distinctive helper line is present (not just a stub).
   grep -Fq 'RUN_SCOPED_BASELINE=PASS' "$built" || fail "${hop}: baseline log marker missing from embed"
   grep -Fq 'SAFE_PRE_TRANSITION_RESUME' "$built" || fail "${hop}: SAFE_PRE_TRANSITION_RESUME missing"
+  python3 - "$built" "$SOURCE_VERSION_HELPER" <<'PY' || fail "${hop}: embedded source-version helper byte drift"
+from pathlib import Path
+import sys
+generated = Path(sys.argv[1]).read_text()
+helper = Path(sys.argv[2]).read_text().rstrip("\n")
+marker = "#!/usr/bin/env bash\n# Shared source DP product version capture / parse / recovery.\n"
+start = generated.index(marker)
+end = generated.index("\ncritical_holds_dir() {", start)
+embedded = generated[start:end].rstrip("\n")
+raise SystemExit(0 if embedded == helper else 1)
+PY
 done
-pass "generated clients embed shared helper body markers (helper_sha=${HELPER_SHA:0:12}…)"
+pass "generated clients embed exact source-version helper bytes (helper_sha=${SOURCE_VERSION_HELPER_SHA:0:12}…)"
 
 for entry in "${HOPS[@]}"; do
   IFS=: read -r hop src tgt scode tcode <<<"$entry"
