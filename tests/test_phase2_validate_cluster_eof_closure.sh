@@ -342,6 +342,23 @@ echo "$ANAL_DA" | grep -q 'CLUSTER_SIGNAL_STATUS_ROLE=DA_DR' \
   && pass "DA/DR role-specific System Ready is accepted without DL license line" \
   || fail "DA/DR ready analysis: $ANAL_DA"
 
+# An identified DA/DR role must not pass on a DL-style license signal alone.
+DA_LICENSE_ONLY_TXT="$(cat <<'EOF'
+DataProcessor(DR-master)> show status
+All cluster nodes are ready
+All host services are ready
+License is valid
+EOF
+)"
+ANAL_DA_LICENSE_ONLY="$(p2b_analyze_aella_status_text "$DA_LICENSE_ONLY_TXT")"
+echo "$ANAL_DA_LICENSE_ONLY" | grep -q 'CLUSTER_SIGNAL_STATUS_ROLE=DA_DR' \
+  && echo "$ANAL_DA_LICENSE_ONLY" | grep -q 'CLUSTER_SIGNAL_LICENSE_VALID=YES' \
+  && echo "$ANAL_DA_LICENSE_ONLY" | grep -q 'CLUSTER_SIGNAL_SYSTEM_READY=NO' \
+  && echo "$ANAL_DA_LICENSE_ONLY" | grep -q 'CLUSTER_STATUS_SUMMARY=NOT_READY_OR_INCOMPLETE' \
+  && echo "$ANAL_DA_LICENSE_ONLY" | grep -q 'CLUSTER_VALIDATION_RECORDABLE_PASS=NO' \
+  && pass "DA/DR requires System Ready even when a license line is present" \
+  || fail "DA/DR license-only role gate analysis: $ANAL_DA_LICENSE_ONLY"
+
 # System Ready must not relax the DL/AIO license gate.
 DL_NO_LICENSE_TXT="$(cat <<'EOF'
 DataProcessor(DL-master)> show status

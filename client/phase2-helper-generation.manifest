@@ -7,4 +7,4 @@ dc4af7b2184a264a0fbbf2f00e9674d3f791fa4111928ede2c6b7cf99f81e42d  lib/dp-phase2-
 4c71a220f596a6bd11f191a75758dcba19bc766bdd791e5ba4b452edfef08b7a  lib/dp-phase2-time-readiness.sh
 b4c5021c177eedcf34c67e5000b48bfc724ff1deb22ee2997738bf26eaad84a8  lib/dp-phase2-staging-contract.sh
 f47f79daef4c46a4fb7dec59f7b24527e5eb240c081d4600a535100acf255ff1  lib/dp-phase2-post-bringup-migration.sh
-ba0fa8b87c4397b9d8c21d302c10a1525b6082873ed3354def1968fc9ab1ae4f  lib/dp-phase2-cluster-validation.sh
+fa779fa8cf1db99bf256f96c9c98250ca8db6ce60ebf8f2ded706b8596eb10b7  lib/dp-phase2-cluster-validation.sh

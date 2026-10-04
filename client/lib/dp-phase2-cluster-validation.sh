@@ -276,11 +276,14 @@ p2b_analyze_aella_status_text() {
   fi
 
   if [[ "$nodes_ready" == "YES" && "$host_services_ready" == "YES" ]]; then
-    if [[ "$license_valid" == "YES" ]]; then
-      authoritative_ready=YES
-    elif [[ "$status_role" == "DA_DR" && "$system_ready" == "YES" ]]; then
-      authoritative_ready=YES
-    fi
+    case "$status_role" in
+      DA_DR)
+        [[ "$system_ready" == "YES" ]] && authoritative_ready=YES
+        ;;
+      DL_AIO|UNKNOWN)
+        [[ "$license_valid" == "YES" ]] && authoritative_ready=YES
+        ;;
+    esac
   fi
 
   if [[ "$authoritative_ready" == "YES" ]]; then
