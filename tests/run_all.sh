@@ -124,6 +124,7 @@ TEST_LIST=(
   test_bringup_lifecycle.sh
   test_bringup_lifecycle_run_contract.sh
   test_bringup_lifecycle_failed_retry.sh
+  test_phase2_detached_handoff_identity.sh
   test_mirror_download_and_space_regressions.sh
   test_phase2_bundle_reuse_disk.sh
   test_phase2_stale_bringup_bundle.sh
