@@ -62,6 +62,7 @@ env -i \
   HOME="$TMP" \
   MM_WORKFLOW_FILE="$MM_WORKFLOW_FILE" \
   MM_CONFIG_DIR="$MM_CONFIG_DIR" \
+  PREPARATION_MODE=PHASE2_ONLY \
   LOG_CAPTURE="$LOG_CAPTURE" \
   bash --noprofile --norc -c '
 set -euo pipefail
