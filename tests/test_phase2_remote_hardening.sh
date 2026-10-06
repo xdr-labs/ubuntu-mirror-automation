@@ -207,6 +207,15 @@ WRAP_EQ_RC=0
   source "$WRAPPER"
   parse_args --version 6.6.0 --worker-password=--dashpass --detach
   [[ "$ATTACH_MONITOR" -eq 0 ]]
+  # Parsing is mutation-free: the legacy secret stays pending until a safe
+  # new-worker start has been established.
+  [[ "$PENDING_WORKER_PASSWORD" == --dashpass ]]
+  [[ ! -e "$(p2b_lifecycle_owned_worker_password_path)" ]]
+  for arg in "${PASSTHRU[@]}"; do
+    [[ "$arg" != --worker-password-file ]]
+  done
+  p2b_prepare_worker_credentials_for_start
+  [[ -z "$PENDING_WORKER_PASSWORD" ]]
   pw_file=""
   for ((i = 0; i < ${#PASSTHRU[@]}; i++)); do
     if [[ "${PASSTHRU[$i]}" == --worker-password-file ]]; then
@@ -218,8 +227,8 @@ WRAP_EQ_RC=0
   [[ "$(<"$pw_file")" == --dashpass ]]
 ) || WRAP_EQ_RC=$?
 set -e
-[[ "$WRAP_EQ_RC" -eq 0 ]] && pass "lifecycle equals-form password preserves detach via password file" \
-  || fail "lifecycle equals-form rc=$WRAP_EQ_RC"
+[[ "$WRAP_EQ_RC" -eq 0 ]] && pass "lifecycle password is deferred until safe start and preserves detach" \
+  || fail "lifecycle deferred password rc=$WRAP_EQ_RC"
 
 bash -n "$COMPAT" && bash -n "$WRAPPER" && bash -n "$0" \
   && pass "shell syntax" || fail "shell syntax"
