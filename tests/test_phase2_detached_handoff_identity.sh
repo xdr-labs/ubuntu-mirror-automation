@@ -88,6 +88,19 @@ PROC_TICKS="$(awk '{print $22}' "/proc/$WORKER_PID/stat")"
 [[ -f "$GATE_STARTED" ]] || fail "worker-side slow gate did not start"
 [[ ! -f "$GATE_DONE" ]] || fail "handoff waited for the slow worker gate instead of identity publication"
 
+# This is the exact production failure surface: while worker-side readiness is
+# still blocked, the authoritative lifecycle snapshot must see the published
+# worker as live and identity-matched rather than STALE_OR_UNKNOWN.
+source "$ROOT/client/lib/dp-phase2-bringup-lifecycle.sh"
+p2b_status_snapshot
+[[ "$BRINGUP_STATE" == "STARTING" ]] \
+  || fail "live slow-gate worker state=$BRINGUP_STATE expected STARTING"
+[[ "$BRINGUP_WORKER_ALIVE" == "YES" ]] \
+  || fail "live slow-gate worker was not detected alive"
+[[ "$BRINGUP_PROCESS_IDENTITY_MATCH" == "YES" ]] \
+  || fail "live slow-gate worker identity did not match"
+pass "slow readiness snapshot stays STARTING with live matching worker"
+
 mapfile -d '' -t WORKER_ARGV <"/proc/$WORKER_PID/cmdline"
 WORKER_VERSION_FLAGS=0
 for arg in "${WORKER_ARGV[@]}"; do
@@ -98,7 +111,6 @@ done
 pass "handoff publishes a coherent live identity before slow worker readiness completes"
 
 # STARTING without an identity is pre-handoff, not evidence of a stale worker.
-source "$ROOT/client/lib/dp-phase2-bringup-lifecycle.sh"
 PRE="$TMP/pre-handoff"
 export PHASE2_BRINGUP_DIR="$PRE"
 mkdir -p "$PRE"
