@@ -1331,10 +1331,16 @@ EOF
     fi
 
     if [[ "$state" == "STALE_OR_UNKNOWN" ]]; then
+      local stale_worker_flag="GONE"
+      if [[ "${BRINGUP_WORKER_ALIVE}" == "YES" && "${BRINGUP_PROCESS_IDENTITY_MATCH}" != "YES" ]]; then
+        stale_worker_flag="ALIVE_IDENTITY_MISMATCH"
+      fi
       cat <<EOF
-BRINGUP_PROGRESS run_id=${run_id} state=STALE_OR_UNKNOWN elapsed_seconds=${elapsed} worker=GONE last_log_age_seconds=${last_log_age} current_phase=${CURRENT_PHASE:-UNKNOWN} current_operation=${CURRENT_OPERATION:-UNKNOWN}
+BRINGUP_PROGRESS run_id=${run_id} state=STALE_OR_UNKNOWN elapsed_seconds=${elapsed} worker=${stale_worker_flag} last_log_age_seconds=${last_log_age} current_phase=${CURRENT_PHASE:-UNKNOWN} current_operation=${CURRENT_OPERATION:-UNKNOWN}
 BRINGUP_RESULT=FAIL
 BRINGUP_STATE=STALE_OR_UNKNOWN
+BRINGUP_WORKER_ALIVE=${BRINGUP_WORKER_ALIVE}
+BRINGUP_PROCESS_IDENTITY_MATCH=${BRINGUP_PROCESS_IDENTITY_MATCH}
 FAILURE_REASON=STALE_PID_OR_MISSING_TERMINAL_RESULT
 AELLA_CLI_AVAILABLE=NOT_CHECKED
 DO_NOT_RUN_AELLA_CLI_YET=YES
