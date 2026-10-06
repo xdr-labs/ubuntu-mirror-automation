@@ -18,7 +18,7 @@ PRIORITY=NORMAL
 INTENT_REVISION=1
 CHANGE_RISK=MEDIUM
 EXECUTION_PROFILE=datarelay-managed
-EXECUTION_PROFILE_REVISION=2
+EXECUTION_PROFILE_REVISION=3
 
 ## Goal
 
@@ -56,7 +56,7 @@ Do not assume one GitHub Issue equals one implementation job. Batch adjacent sma
 - Terminal evidence required (exact HEAD/runtime/CI as applicable):
 - Blocking finding classes for this packet:
 - Stop condition / sufficiency rule:
-- Depth budget: NORMAL (implementation -> independent audit -> corrective pass if needed -> verification -> stop)
+- Depth budget: NORMAL (implementation -> required terminal audit/review -> corrective pass if needed -> verification -> stop)
 
 ## Follow-up Discoveries
 
@@ -80,6 +80,8 @@ Record meaningful out-of-scope findings as linked Issues/Work Packets. Do not si
 ```text
 HEAD=UNKNOWN
 TARGETED_TESTS=NOT_RUN
+AFFECTED_CONVERGENCE=NOT_RUN
+FULL_CONFIRMATION=NOT_RUN
 CI=NOT_RUN
 ```
 
