@@ -190,8 +190,11 @@ p2b_publish_worker_identity() {
   [[ -r "/proc/${pid}/stat" ]] || return 1
   start_tick="$(awk '{print $22}' "/proc/${pid}/stat" 2>/dev/null || true)"
   [[ "$start_tick" =~ ^[0-9]+$ ]] || return 1
-  printf '%s\n' "$pid" | p2b_atomic_write "$(p2b_dir)/worker.pid" || return 1
+  # Publish the identity anchor first and the PID last. Consumers read
+  # worker.pid as the commit marker, so pid-present always implies the matching
+  # start-tick record has already been durably published.
   printf '%s\n' "$start_tick" | p2b_atomic_write "$(p2b_dir)/worker-start-ticks" || return 1
+  printf '%s\n' "$pid" | p2b_atomic_write "$(p2b_dir)/worker.pid" || return 1
   return 0
 }
 
