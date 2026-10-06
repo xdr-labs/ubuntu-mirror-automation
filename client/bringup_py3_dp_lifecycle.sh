@@ -354,23 +354,6 @@ start_or_monitor() {
     return 0
   fi
 
-  # A live PID with failed identity verification is ambiguous: it may be
-  # the real bringup worker with damaged/stale metadata. Never overwrite the
-  # lifecycle state or launch a second bringup while that process is alive.
-  if [[ "${BRINGUP_STATE}" == "STALE_OR_UNKNOWN" && "${BRINGUP_WORKER_ALIVE}" == "YES" ]]; then
-    echo "BRINGUP_RETRY_BLOCKED=YES"
-    echo "ACTION=BLOCK_LIVE_STALE_WORKER"
-    echo "BRINGUP_RUN_ID=${BRINGUP_RUN_ID}"
-    echo "BRINGUP_WORKER_PID=${BRINGUP_WORKER_PID}"
-    echo "BRINGUP_WORKER_ALIVE=${BRINGUP_WORKER_ALIVE}"
-    echo "BRINGUP_PROCESS_IDENTITY_MATCH=${BRINGUP_PROCESS_IDENTITY_MATCH}"
-    echo "FAILURE_REASON=LIVE_WORKER_IDENTITY_MISMATCH"
-    echo "NEXT_ACTION=sudo bash ${P2B_WRAPPER_PATH} --diagnose"
-    p2b_release_lock
-    trap - EXIT
-    return 1
-  fi
-
   if p2b_current_run_completion_coherent; then
     echo "BRINGUP_ALREADY_COMPLETED=YES"
     p2b_print_status
@@ -385,6 +368,25 @@ start_or_monitor() {
       echo "OPERATOR_NOTE=Bringup already completed; do not re-run bringup. Validate cluster, resume if paused, then record validation/migration as required."
     fi
     return 0
+  fi
+
+  # A live PID with failed identity verification is ambiguous: it may be
+  # the real bringup worker with damaged/stale metadata. After coherent
+  # completion has been handled above, never archive/overwrite lifecycle state
+  # or launch a second bringup while an unverified persisted PID is still alive.
+  if [[ "${BRINGUP_WORKER_ALIVE}" == "YES" && "${BRINGUP_PROCESS_IDENTITY_MATCH}" != "YES" ]]; then
+    echo "BRINGUP_RETRY_BLOCKED=YES"
+    echo "ACTION=BLOCK_LIVE_UNVERIFIED_WORKER"
+    echo "BRINGUP_STATE=${BRINGUP_STATE}"
+    echo "BRINGUP_RUN_ID=${BRINGUP_RUN_ID}"
+    echo "BRINGUP_WORKER_PID=${BRINGUP_WORKER_PID}"
+    echo "BRINGUP_WORKER_ALIVE=${BRINGUP_WORKER_ALIVE}"
+    echo "BRINGUP_PROCESS_IDENTITY_MATCH=${BRINGUP_PROCESS_IDENTITY_MATCH}"
+    echo "FAILURE_REASON=LIVE_WORKER_IDENTITY_MISMATCH"
+    echo "NEXT_ACTION=sudo bash ${P2B_WRAPPER_PATH} --diagnose"
+    p2b_release_lock
+    trap - EXIT
+    return 1
   fi
 
   if [[ "${BRINGUP_STATE}" == "FAILED" ]]; then
