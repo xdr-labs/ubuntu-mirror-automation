@@ -124,7 +124,7 @@ mkdir -p "$ORDER_DIR"
     printf '%s\n' "$(basename "$dest")" >>"$ORDER_LOG"
     cat >"$dest"
   }
-  p2b_publish_worker_identity "$"
+  p2b_publish_worker_identity "$BASHPID"
 )
 mapfile -t IDENTITY_WRITE_ORDER <"$ORDER_LOG"
 [[ "${#IDENTITY_WRITE_ORDER[@]}" -eq 2 ]] \
