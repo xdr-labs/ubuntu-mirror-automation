@@ -131,6 +131,17 @@ pass "stale and self-matching worker identities are rejected"
 # STARTING without a published identity is allowed only during a finite handoff
 # grace. This preserves the real pre-handoff window without allowing an
 # abandoned starter record to report IN_PROGRESS forever.
+PHASE2_BRINGUP_STARTING_GRACE_SECONDS=08
+[[ "$(p2b_starting_grace_seconds)" == 8 ]] \
+  || fail "leading-zero grace 08 was not normalized as decimal"
+PHASE2_BRINGUP_STARTING_GRACE_SECONDS=010
+[[ "$(p2b_starting_grace_seconds)" == 10 ]] \
+  || fail "leading-zero grace 010 was not normalized as decimal"
+PHASE2_BRINGUP_STARTING_GRACE_SECONDS=9999999
+[[ "$(p2b_starting_grace_seconds)" == 15 ]] \
+  || fail "oversized grace did not fall back to safe default"
+pass "STARTING grace configuration is decimal-normalized and bounded"
+
 PHASE2_BRINGUP_STARTING_GRACE_SECONDS=5
 write_file "$(p2b_dir)/state" STARTING
 write_file "$(p2b_dir)/run-id" starting-grace-run
