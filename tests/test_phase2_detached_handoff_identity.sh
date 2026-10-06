@@ -206,7 +206,70 @@ set -e
 [[ "$STALE_RC" -ne 0 ]] || { cat "$TMP/stale-live.out"; fail "live stale worker retry unexpectedly succeeded"; }
 grep -q '^BRINGUP_RETRY_BLOCKED=YES$' "$TMP/stale-live.out" \
   || { cat "$TMP/stale-live.out"; fail "live stale worker retry was not explicitly blocked"; }
-grep -q '^ACTION=BLOCK_LIVE_STALE_WORKER$' "$TMP/stale-live.out" \
+grep -q '^ACTION=BLOCK_LIVE_UNVERIFIED_WORKER  || fail "live stale worker block action missing"
+grep -q '^BRINGUP_WORKER_ALIVE=YES$' "$TMP/stale-live.out" \
+  || fail "live stale worker evidence missing"
+grep -q '^BRINGUP_PROCESS_IDENTITY_MATCH=NO$' "$TMP/stale-live.out" \
+  || fail "identity mismatch evidence missing"
+[[ "$(cat "$STALE_DIR/run-id")" == "$STALE_BEFORE_RUN_ID" ]] \
+  || fail "blocked retry overwrote stale run-id"
+[[ "$(cat "$STALE_DIR/worker.pid")" == "$STALE_PID" ]] \
+  || fail "blocked retry replaced stale live worker pid"
+kill -0 "$STALE_PID" 2>/dev/null || fail "blocked retry killed the ambiguous live worker"
+pass "live stale identity mismatch blocks duplicate bringup launch"
+
+# FAILED is also unsafe to retry while its persisted PID is alive but identity
+# cannot be verified. Do not archive the failed run and start over in that state.
+printf '%s\n' FAILED >"$STALE_DIR/state"
+set +e
+PHASE2_BRINGUP_DIR="$STALE_DIR" PHASE2_BRINGUP_LOG_DEFAULT="$STALE_LOG" \
+  bash "$RUNTIME/bringup_py3_dp_lifecycle.sh" \
+    --version 6.6.0 --skip-download --detach >"$TMP/failed-live.out" 2>&1
+FAILED_LIVE_RC=$?
+set -e
+[[ "$FAILED_LIVE_RC" -ne 0 ]] \
+  || { cat "$TMP/failed-live.out"; fail "FAILED live mismatch retry unexpectedly succeeded"; }
+grep -q '^ACTION=BLOCK_LIVE_UNVERIFIED_WORKER$' "$TMP/failed-live.out" \
+  || { cat "$TMP/failed-live.out"; fail "FAILED live mismatch was not blocked"; }
+[[ "$(cat "$STALE_DIR/run-id")" == "$STALE_BEFORE_RUN_ID" ]] \
+  || fail "FAILED live mismatch overwrote run-id"
+[[ "$(cat "$STALE_DIR/worker.pid")" == "$STALE_PID" ]] \
+  || fail "FAILED live mismatch replaced worker pid"
+[[ ! -e "$STALE_DIR/previous-failed" ]] \
+  || fail "FAILED live mismatch was archived despite live ambiguous worker"
+kill -0 "$STALE_PID" 2>/dev/null || fail "FAILED live mismatch killed the ambiguous worker"
+pass "FAILED live identity mismatch blocks archive and duplicate retry"
+
+# Once the ambiguous PID is actually gone, the same stale lifecycle may use the
+# existing retry path. Restore a RUNNING state so the dead PID is classified
+# STALE_OR_UNKNOWN and exercises that path explicitly.
+printf '%s\n' RUNNING >"$STALE_DIR/state"
+kill "$STALE_PID" 2>/dev/null || true
+wait "$STALE_PID" 2>/dev/null || true
+STALE_PID=""
+
+# Once the ambiguous PID is actually gone, the same stale lifecycle may use the
+# existing retry path. This guards against over-correcting the live-process block.
+set +e
+PHASE2_BRINGUP_DIR="$STALE_DIR" PHASE2_BRINGUP_LOG_DEFAULT="$STALE_LOG" \
+  bash "$RUNTIME/bringup_py3_dp_lifecycle.sh" \
+    --version 6.6.0 --skip-download --detach >"$TMP/stale-dead-retry.out" 2>&1
+STALE_DEAD_RC=$?
+set -e
+[[ "$STALE_DEAD_RC" -eq 0 ]] \
+  || { cat "$TMP/stale-dead-retry.out"; fail "dead stale worker retry did not proceed"; }
+grep -q '^BRINGUP_HANDOFF=PASS$' "$TMP/stale-dead-retry.out" \
+  || { cat "$TMP/stale-dead-retry.out"; fail "dead stale worker retry missing handoff"; }
+STALE_PID="$(cat "$STALE_DIR/worker.pid")"
+[[ "$STALE_PID" =~ ^[0-9]+$ ]] || fail "dead stale retry missing replacement pid"
+kill -0 "$STALE_PID" 2>/dev/null || fail "dead stale retry replacement worker not alive"
+kill "$STALE_PID" 2>/dev/null || true
+wait "$STALE_PID" 2>/dev/null || true
+STALE_PID=""
+pass "dead stale lifecycle still permits a new verified handoff"
+
+echo "TEST_PHASE2_DETACHED_HANDOFF_IDENTITY=PASS"
+ "$TMP/stale-live.out" \
   || fail "live stale worker block action missing"
 grep -q '^BRINGUP_WORKER_ALIVE=YES$' "$TMP/stale-live.out" \
   || fail "live stale worker evidence missing"
