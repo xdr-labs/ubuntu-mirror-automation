@@ -166,7 +166,18 @@ write_file "$(p2b_dir)/started-at" not-a-time
 p2b_status_snapshot
 [[ "$BRINGUP_STATE" == STALE_OR_UNKNOWN ]] \
   || fail "invalid-time no-pid STARTING state=$BRINGUP_STATE"
-pass "unverifiable no-pid STARTING fails closed as stale"
+
+for RELATIVE_STARTED in now today '15 seconds ago'; do
+  write_file "$(p2b_dir)/started-at" "$RELATIVE_STARTED"
+  p2b_status_snapshot
+  [[ "$BRINGUP_STATE" == STALE_OR_UNKNOWN ]] \
+    || fail "relative-time '$RELATIVE_STARTED' no-pid STARTING state=$BRINGUP_STATE"
+done
+write_file "$(p2b_dir)/started-at" '2026-02-30T12:00:00Z'
+p2b_status_snapshot
+[[ "$BRINGUP_STATE" == STALE_OR_UNKNOWN ]] \
+  || fail "invalid-calendar no-pid STARTING state=$BRINGUP_STATE"
+pass "unverifiable or non-canonical no-pid STARTING fails closed as stale"
 write_file "$(p2b_dir)/started-at" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 # If the PID is alive but belongs to a different process identity, diagnostics
