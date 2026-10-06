@@ -222,4 +222,24 @@ wait "$STALE_PID" 2>/dev/null || true
 STALE_PID=""
 pass "live stale identity mismatch blocks duplicate bringup launch"
 
+# Once the ambiguous PID is actually gone, the same stale lifecycle may use the
+# existing retry path. This guards against over-correcting the live-process block.
+set +e
+PHASE2_BRINGUP_DIR="$STALE_DIR" PHASE2_BRINGUP_LOG_DEFAULT="$STALE_LOG" \
+  bash "$RUNTIME/bringup_py3_dp_lifecycle.sh" \
+    --version 6.6.0 --skip-download --detach >"$TMP/stale-dead-retry.out" 2>&1
+STALE_DEAD_RC=$?
+set -e
+[[ "$STALE_DEAD_RC" -eq 0 ]] \
+  || { cat "$TMP/stale-dead-retry.out"; fail "dead stale worker retry did not proceed"; }
+grep -q '^BRINGUP_HANDOFF=PASS$' "$TMP/stale-dead-retry.out" \
+  || { cat "$TMP/stale-dead-retry.out"; fail "dead stale worker retry missing handoff"; }
+STALE_PID="$(cat "$STALE_DIR/worker.pid")"
+[[ "$STALE_PID" =~ ^[0-9]+$ ]] || fail "dead stale retry missing replacement pid"
+kill -0 "$STALE_PID" 2>/dev/null || fail "dead stale retry replacement worker not alive"
+kill "$STALE_PID" 2>/dev/null || true
+wait "$STALE_PID" 2>/dev/null || true
+STALE_PID=""
+pass "dead stale lifecycle still permits a new verified handoff"
+
 echo "TEST_PHASE2_DETACHED_HANDOFF_IDENTITY=PASS"
