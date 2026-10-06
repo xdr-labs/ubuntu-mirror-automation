@@ -6,6 +6,7 @@
 PHASE2_BRINGUP_DIR_DEFAULT="${PHASE2_BRINGUP_DIR_DEFAULT:-/opt/aelladata/os-upgrade/offline/phase2-bringup}"
 PHASE2_BRINGUP_LOG_DEFAULT="${PHASE2_BRINGUP_LOG_DEFAULT:-/var/log/aella/aella_py3_bringup.log}"
 PHASE2_BRINGUP_MONITOR_SECONDS="${PHASE2_BRINGUP_MONITOR_SECONDS:-30}"
+PHASE2_BRINGUP_STARTING_GRACE_SECONDS="${PHASE2_BRINGUP_STARTING_GRACE_SECONDS:-15}"
 
 # Known aella_cli paths (bounded discovery — never full filesystem scan)
 PHASE2_AELLA_CLI_CANDIDATES=(
@@ -142,6 +143,15 @@ p2b_utc_now() {
 
 p2b_new_run_id() {
   date -u +%Y%m%dT%H%M%SZ-$$-${RANDOM:-0}
+}
+
+p2b_starting_grace_seconds() {
+  local raw="${PHASE2_BRINGUP_STARTING_GRACE_SECONDS:-15}"
+  if [[ "$raw" =~ ^[0-9]+$ ]]; then
+    printf '%s' "$raw"
+  else
+    printf '15'
+  fi
 }
 
 # Validate PID identity: cmdline must contain expected token; reject pgrep self-match.
@@ -639,30 +649,39 @@ p2b_status_snapshot() {
     fi
   fi
 
-  # Stale PID detection. STARTING with no published PID is a valid pre-handoff
-  # state; the starter owns the handoff timeout and will persist FAILED if the
-  # worker never publishes a coherent identity. Once a PID is published, both
-  # STARTING and RUNNING remain fail-closed on dead/mismatched identity.
+  if [[ -n "$started" ]]; then
+    local start_epoch now_epoch
+    start_epoch="$(date -u -d "$started" +%s 2>/dev/null || true)"
+    now_epoch="$(date -u +%s)"
+    if [[ "$start_epoch" =~ ^[0-9]+$ ]]; then
+      elapsed=$((now_epoch - start_epoch))
+    fi
+  fi
+
+  # Stale PID detection. A no-PID STARTING state is legitimate only during the
+  # short parent/worker handoff window. If that state outlives the bounded grace,
+  # or its age cannot be verified, fail closed instead of reporting IN_PROGRESS
+  # forever after a starter crash. Once a PID is published, both STARTING and
+  # RUNNING remain fail-closed on dead/mismatched process identity.
   if [[ "$state" == "RUNNING" ]]; then
     if [[ "$alive" != "YES" || "$identity" != "YES" ]]; then
       if [[ "$result_terminal" != "YES" ]]; then
         state="STALE_OR_UNKNOWN"
       fi
     fi
-  elif [[ "$state" == "STARTING" && -n "$pid" ]]; then
-    if [[ "$alive" != "YES" || "$identity" != "YES" ]]; then
-      if [[ "$result_terminal" != "YES" ]]; then
+  elif [[ "$state" == "STARTING" ]]; then
+    if [[ -n "$pid" ]]; then
+      if [[ "$alive" != "YES" || "$identity" != "YES" ]]; then
+        if [[ "$result_terminal" != "YES" ]]; then
+          state="STALE_OR_UNKNOWN"
+        fi
+      fi
+    elif [[ "$result_terminal" != "YES" ]]; then
+      local starting_grace
+      starting_grace="$(p2b_starting_grace_seconds)"
+      if [[ ! "${elapsed:-}" =~ ^[0-9]+$ ]] || [[ "$elapsed" -gt "$starting_grace" ]]; then
         state="STALE_OR_UNKNOWN"
       fi
-    fi
-  fi
-
-  if [[ -n "$started" ]]; then
-    local start_epoch now_epoch
-    start_epoch="$(date -u -d "$started" +%s 2>/dev/null || true)"
-    now_epoch="$(date -u +%s)"
-    if [[ -n "$start_epoch" ]]; then
-      elapsed=$((now_epoch - start_epoch))
     fi
   fi
 
