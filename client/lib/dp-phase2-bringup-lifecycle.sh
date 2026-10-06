@@ -147,11 +147,22 @@ p2b_new_run_id() {
 
 p2b_starting_grace_seconds() {
   local raw="${PHASE2_BRINGUP_STARTING_GRACE_SECONDS:-15}"
+  local normalized=""
   if [[ "$raw" =~ ^[0-9]+$ ]]; then
-    printf '%s' "$raw"
-  else
-    printf '15'
+    normalized="$raw"
+    # Bash arithmetic treats leading-zero integers as octal. Normalize the
+    # operator-facing decimal setting as text before any numeric comparison.
+    while [[ "${#normalized}" -gt 1 && "$normalized" == 0* ]]; do
+      normalized="${normalized#0}"
+    done
+    # Bound arithmetic width so a hostile/mistyped environment value cannot
+    # overflow the later integer comparison. Invalid values use the safe default.
+    if [[ "${#normalized}" -le 6 ]]; then
+      printf '%s' "$normalized"
+      return 0
+    fi
   fi
+  printf '15'
 }
 
 # Validate PID identity: cmdline must contain expected token; reject pgrep self-match.
