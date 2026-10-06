@@ -6,9 +6,13 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$(mktemp -d)"
 WORKER_PID=""
+STALE_PID=""
 cleanup() {
   if [[ -n "${WORKER_PID:-}" ]]; then
     kill "$WORKER_PID" 2>/dev/null || true
+  fi
+  if [[ -n "${STALE_PID:-}" ]]; then
+    kill "$STALE_PID" 2>/dev/null || true
   fi
   rm -rf "$TMP"
 }
@@ -176,5 +180,46 @@ awk '
   END { exit found ? 0 : 1 }
 ' "$VENDOR_ARGS" || { cat "$VENDOR_ARGS"; fail "vendor target version forwarding is incorrect"; }
 pass "worker and vendor each receive exactly one target --version"
+
+# A stale lifecycle record whose PID is still alive must fail closed rather than
+# starting a second bringup. Identity mismatch may mean metadata damage, not a
+# dead worker, so retry is unsafe until the live process is resolved.
+STALE_DIR="$TMP/stale-live"
+STALE_LOG="$TMP/stale-live.log"
+mkdir -p "$STALE_DIR"
+bash -c 'exec -a bringup-stale-worker sleep 30' &
+STALE_PID=$!
+printf '%s\n' RUNNING >"$STALE_DIR/state"
+printf '%s\n' stale-live-run >"$STALE_DIR/run-id"
+printf '%s\n' "$STALE_PID" >"$STALE_DIR/worker.pid"
+printf '%s\n' 1 >"$STALE_DIR/worker-start-ticks"
+printf '%s\n' 6.6.0 >"$STALE_DIR/target-version"
+printf '%s\n' "$STALE_LOG" >"$STALE_DIR/log-path"
+printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$STALE_DIR/started-at"
+STALE_BEFORE_RUN_ID="$(cat "$STALE_DIR/run-id")"
+set +e
+PHASE2_BRINGUP_DIR="$STALE_DIR" PHASE2_BRINGUP_LOG_DEFAULT="$STALE_LOG" \
+  bash "$RUNTIME/bringup_py3_dp_lifecycle.sh" \
+    --version 6.6.0 --skip-download --detach >"$TMP/stale-live.out" 2>&1
+STALE_RC=$?
+set -e
+[[ "$STALE_RC" -ne 0 ]] || { cat "$TMP/stale-live.out"; fail "live stale worker retry unexpectedly succeeded"; }
+grep -q '^BRINGUP_RETRY_BLOCKED=YES "$TMP/stale-live.out" \
+  || { cat "$TMP/stale-live.out"; fail "live stale worker retry was not explicitly blocked"; }
+grep -q '^ACTION=BLOCK_LIVE_STALE_WORKER "$TMP/stale-live.out" \
+  || fail "live stale worker block action missing"
+grep -q '^BRINGUP_WORKER_ALIVE=YES "$TMP/stale-live.out" \
+  || fail "live stale worker evidence missing"
+grep -q '^BRINGUP_PROCESS_IDENTITY_MATCH=NO "$TMP/stale-live.out" \
+  || fail "identity mismatch evidence missing"
+[[ "$(cat "$STALE_DIR/run-id")" == "$STALE_BEFORE_RUN_ID" ]] \
+  || fail "blocked retry overwrote stale run-id"
+[[ "$(cat "$STALE_DIR/worker.pid")" == "$STALE_PID" ]] \
+  || fail "blocked retry replaced stale live worker pid"
+kill -0 "$STALE_PID" 2>/dev/null || fail "blocked retry killed the ambiguous live worker"
+kill "$STALE_PID" 2>/dev/null || true
+wait "$STALE_PID" 2>/dev/null || true
+STALE_PID=""
+pass "live stale identity mismatch blocks duplicate bringup launch"
 
 echo "TEST_PHASE2_DETACHED_HANDOFF_IDENTITY=PASS"
