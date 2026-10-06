@@ -165,6 +165,19 @@ p2b_starting_grace_seconds() {
   printf '15'
 }
 
+p2b_canonical_utc_epoch() {
+  local raw="${1:-}" epoch="" normalized=""
+  # Lifecycle timestamps are written by p2b_utc_now(). Never let GNU date
+  # relative expressions such as "now" or "15 seconds ago" become durable
+  # identity evidence, because re-evaluating them would reset age on every read.
+  [[ "$raw" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || return 1
+  epoch="$(date -u -d "$raw" +%s 2>/dev/null || true)"
+  [[ "$epoch" =~ ^[0-9]+$ ]] || return 1
+  normalized="$(date -u -d "@$epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
+  [[ "$normalized" == "$raw" ]] || return 1
+  printf '%s' "$epoch"
+}
+
 # Validate PID identity: cmdline must contain expected token; reject pgrep self-match.
 p2b_pid_alive_and_matches() {
   local pid="$1"
@@ -662,7 +675,7 @@ p2b_status_snapshot() {
 
   if [[ -n "$started" ]]; then
     local start_epoch now_epoch
-    start_epoch="$(date -u -d "$started" +%s 2>/dev/null || true)"
+    start_epoch="$(p2b_canonical_utc_epoch "$started" 2>/dev/null || true)"
     now_epoch="$(date -u +%s)"
     if [[ "$start_epoch" =~ ^[0-9]+$ ]]; then
       elapsed=$((now_epoch - start_epoch))
