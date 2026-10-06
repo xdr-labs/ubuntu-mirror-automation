@@ -1,11 +1,12 @@
 engineering_system:
   version: 1.7.0
-  policy_epoch: 10
+  policy_epoch: 19
   mode: adopted
-  baseline: 713d6f9123ddfddf1ed7bb6829603dd3f740bbec
+  baseline: 2c73cdd52b98db4143b379730ee0c69d284f80e8
   ci_mode: shared
   native_ci_workflows: []
   merge_gate_status: advisory
+  governance_epoch: 0
 project:
   name: ubuntu-mirror-automation
   type: generic
