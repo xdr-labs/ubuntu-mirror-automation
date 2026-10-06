@@ -440,14 +440,26 @@ assert_no_secret 'external-all-paths-secret' \
   "$PHASE2_BRINGUP_DIR" "$PHASE2_BRINGUP_LOG_DEFAULT"
 pass "external_password_file_preserved_on_all_failure_paths"
 
-# --prompt-worker-password creates lifecycle-owned secret (non-interactive reject)
+# --prompt-worker-password is parsed without mutation, then fails closed when
+# credential materialization is attempted without an interactive terminal.
 reset_lifecycle_dir
 set +e
-env -u DP_PHASE2_BRINGUP_LIB_ONLY \
-  PHASE2_BRINGUP_DIR="$PHASE2_BRINGUP_DIR" \
-  PHASE2_BRINGUP_ALLOW_NONROOT=1 \
-  bash "$WRAPPER" --prompt-worker-password --version \
-  >"${TMP}/prompt-parse.out" 2>&1
+(
+  ATTACH_MONITOR=1
+  STATUS_ONLY=0
+  DIAGNOSE_ONLY=0
+  WORKER_MODE=0
+  TARGET_VERSION=""
+  WORKER_PASSWORD_FILE=""
+  WORKER_PASSWORD_FILE_OWNED=NO
+  PENDING_WORKER_PASSWORD=""
+  PROMPT_WORKER_PASSWORD=0
+  PASSTHRU=()
+  parse_args --prompt-worker-password --version 6.6.0
+  [[ "$PROMPT_WORKER_PASSWORD" -eq 1 ]]
+  [[ ! -f "$(p2b_dir)/worker-password" ]]
+  p2b_prepare_worker_credentials_for_start
+) >"${TMP}/prompt-parse.out" 2>&1
 prompt_rc=$?
 set -e
 [[ "$prompt_rc" -ne 0 ]] || fail "prompt without tty should fail"
@@ -455,7 +467,7 @@ set -e
   || fail "prompt failure left owned password"
 grep -q 'interactive terminal\|could not prompt' "${TMP}/prompt-parse.out" \
   || fail "missing prompt failure reason"
-pass "prompt-worker-password fails closed without tty and leaves no secret"
+pass "prompt-worker-password defers mutation and fails closed without tty"
 
 # Direct owned store via p2b_prompt path equivalent
 p2b_store_worker_password 'prompt-owned-secret'
