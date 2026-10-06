@@ -607,6 +607,9 @@ WRAP_OUT="$(
   # shellcheck disable=SC1090
   source "$WRAPPER"
   parse_args --version 6.6.0 --standby 192.0.2.20 --worker-password 'wrap-secret' --skip-download
+  [[ "$PENDING_WORKER_PASSWORD" == 'wrap-secret' ]]
+  [[ ! -e "$(p2b_lifecycle_owned_worker_password_path)" ]]
+  p2b_prepare_worker_credentials_for_start
   printf 'TARGET=%s\n' "$TARGET_VERSION"
   printf 'PASSTHRU=%s\n' "${PASSTHRU[*]}"
   printf 'WORKER_PASSWORD_FILE=%s\n' "${WORKER_PASSWORD_FILE:-}"

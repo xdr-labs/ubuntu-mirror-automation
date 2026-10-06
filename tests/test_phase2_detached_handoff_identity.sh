@@ -6,9 +6,13 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$(mktemp -d)"
 WORKER_PID=""
+STALE_PID=""
 cleanup() {
   if [[ -n "${WORKER_PID:-}" ]]; then
     kill "$WORKER_PID" 2>/dev/null || true
+  fi
+  if [[ -n "${STALE_PID:-}" ]]; then
+    kill "$STALE_PID" 2>/dev/null || true
   fi
   rm -rf "$TMP"
 }
@@ -176,5 +180,99 @@ awk '
   END { exit found ? 0 : 1 }
 ' "$VENDOR_ARGS" || { cat "$VENDOR_ARGS"; fail "vendor target version forwarding is incorrect"; }
 pass "worker and vendor each receive exactly one target --version"
+
+# A persisted PID that is still alive but identity-mismatched is ambiguous.
+# Starting another bringup is unsafe until that process is resolved.
+STALE_DIR="$TMP/stale-live"
+STALE_LOG="$TMP/stale-live.log"
+mkdir -p "$STALE_DIR"
+bash -c 'exec -a bringup-stale-worker sleep 30' &
+STALE_PID=$!
+printf '%s\n' RUNNING >"$STALE_DIR/state"
+printf '%s\n' stale-live-run >"$STALE_DIR/run-id"
+printf '%s\n' "$STALE_PID" >"$STALE_DIR/worker.pid"
+printf '%s\n' 1 >"$STALE_DIR/worker-start-ticks"
+printf '%s\n' 6.6.0 >"$STALE_DIR/target-version"
+printf '%s\n' "$STALE_LOG" >"$STALE_DIR/log-path"
+printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$STALE_DIR/started-at"
+STALE_PASSWORD="$STALE_DIR/worker-password"
+STALE_PASSWORD_MARKER="$STALE_DIR/worker-password.owned"
+printf '%s' 'old-live-secret' >"$STALE_PASSWORD"
+printf '%s\n' "$STALE_PASSWORD" >"$STALE_PASSWORD_MARKER"
+chmod 0600 "$STALE_PASSWORD" "$STALE_PASSWORD_MARKER"
+STALE_BEFORE_RUN_ID="$(cat "$STALE_DIR/run-id")"
+
+set +e
+PHASE2_BRINGUP_DIR="$STALE_DIR" PHASE2_BRINGUP_LOG_DEFAULT="$STALE_LOG" \
+  bash "$RUNTIME/bringup_py3_dp_lifecycle.sh" \
+    --version 6.6.0 --skip-download --worker-password=new-retry-secret --detach >"$TMP/stale-live.out" 2>&1
+STALE_RC=$?
+set -e
+[[ "$STALE_RC" -ne 0 ]] || { cat "$TMP/stale-live.out"; fail "live stale worker retry unexpectedly succeeded"; }
+grep -q '^BRINGUP_RETRY_BLOCKED=YES$' "$TMP/stale-live.out" \
+  || { cat "$TMP/stale-live.out"; fail "live stale worker retry was not explicitly blocked"; }
+grep -q '^ACTION=BLOCK_LIVE_UNVERIFIED_WORKER$' "$TMP/stale-live.out" \
+  || fail "live stale worker block action missing"
+grep -q '^BRINGUP_WORKER_ALIVE=YES$' "$TMP/stale-live.out" \
+  || fail "live stale worker evidence missing"
+grep -q '^BRINGUP_PROCESS_IDENTITY_MATCH=NO$' "$TMP/stale-live.out" \
+  || fail "identity mismatch evidence missing"
+[[ "$(cat "$STALE_DIR/run-id")" == "$STALE_BEFORE_RUN_ID" ]] \
+  || fail "blocked retry overwrote stale run-id"
+[[ "$(cat "$STALE_DIR/worker.pid")" == "$STALE_PID" ]] \
+  || fail "blocked retry replaced stale live worker pid"
+kill -0 "$STALE_PID" 2>/dev/null || fail "blocked retry killed the ambiguous live worker"
+[[ "$(cat "$STALE_PASSWORD")" == "old-live-secret" ]] \
+  || fail "blocked retry overwrote lifecycle password before safety check"
+pass "live stale identity mismatch blocks duplicate bringup launch without credential mutation"
+
+# FAILED is also unsafe to retry while its persisted PID is alive but identity
+# cannot be verified. It must not be archived and replaced by another worker.
+printf '%s\n' FAILED >"$STALE_DIR/state"
+set +e
+PHASE2_BRINGUP_DIR="$STALE_DIR" PHASE2_BRINGUP_LOG_DEFAULT="$STALE_LOG" \
+  bash "$RUNTIME/bringup_py3_dp_lifecycle.sh" \
+    --version 6.6.0 --skip-download --detach >"$TMP/failed-live.out" 2>&1
+FAILED_LIVE_RC=$?
+set -e
+[[ "$FAILED_LIVE_RC" -ne 0 ]] \
+  || { cat "$TMP/failed-live.out"; fail "FAILED live mismatch retry unexpectedly succeeded"; }
+grep -q '^ACTION=BLOCK_LIVE_UNVERIFIED_WORKER$' "$TMP/failed-live.out" \
+  || { cat "$TMP/failed-live.out"; fail "FAILED live mismatch was not blocked"; }
+[[ "$(cat "$STALE_DIR/run-id")" == "$STALE_BEFORE_RUN_ID" ]] \
+  || fail "FAILED live mismatch overwrote run-id"
+[[ "$(cat "$STALE_DIR/worker.pid")" == "$STALE_PID" ]] \
+  || fail "FAILED live mismatch replaced worker pid"
+[[ ! -e "$STALE_DIR/previous-failed" ]] \
+  || fail "FAILED live mismatch was archived despite live ambiguous worker"
+kill -0 "$STALE_PID" 2>/dev/null || fail "FAILED live mismatch killed the ambiguous worker"
+[[ "$(cat "$STALE_PASSWORD")" == "old-live-secret" ]] \
+  || fail "FAILED live mismatch changed lifecycle password"
+pass "FAILED live identity mismatch blocks archive and duplicate retry"
+
+rm -f "$STALE_PASSWORD" "$STALE_PASSWORD_MARKER"
+# Once the ambiguous PID is actually gone, retain the existing retry behavior.
+# Restore RUNNING so the dead PID is classified STALE_OR_UNKNOWN explicitly.
+printf '%s\n' RUNNING >"$STALE_DIR/state"
+kill "$STALE_PID" 2>/dev/null || true
+wait "$STALE_PID" 2>/dev/null || true
+STALE_PID=""
+set +e
+PHASE2_BRINGUP_DIR="$STALE_DIR" PHASE2_BRINGUP_LOG_DEFAULT="$STALE_LOG" \
+  bash "$RUNTIME/bringup_py3_dp_lifecycle.sh" \
+    --version 6.6.0 --skip-download --detach >"$TMP/stale-dead-retry.out" 2>&1
+STALE_DEAD_RC=$?
+set -e
+[[ "$STALE_DEAD_RC" -eq 0 ]] \
+  || { cat "$TMP/stale-dead-retry.out"; fail "dead stale worker retry did not proceed"; }
+grep -q '^BRINGUP_HANDOFF=PASS$' "$TMP/stale-dead-retry.out" \
+  || { cat "$TMP/stale-dead-retry.out"; fail "dead stale worker retry missing handoff"; }
+STALE_PID="$(cat "$STALE_DIR/worker.pid")"
+[[ "$STALE_PID" =~ ^[0-9]+$ ]] || fail "dead stale retry missing replacement pid"
+kill -0 "$STALE_PID" 2>/dev/null || fail "dead stale retry replacement worker not alive"
+kill "$STALE_PID" 2>/dev/null || true
+wait "$STALE_PID" 2>/dev/null || true
+STALE_PID=""
+pass "dead stale lifecycle still permits a new verified handoff"
 
 echo "TEST_PHASE2_DETACHED_HANDOFF_IDENTITY=PASS"
