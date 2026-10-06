@@ -17,7 +17,9 @@ fail() { echo "  FAIL: $*"; FAIL=1; RESULT="FAIL"; }
 WORKDIR="$(mktemp -d /tmp/test-os-userspace-matrix.XXXXXX)"
 
 cleanup() {
-  sudo rm -rf "$WORKDIR" 2>/dev/null || rm -rf "$WORKDIR" 2>/dev/null || true
+  # Never block a noninteractive suite on a sudo password prompt. Most fixture
+  # files are user-owned; only fall back to noninteractive sudo when needed.
+  rm -rf "$WORKDIR" 2>/dev/null || sudo -n rm -rf "$WORKDIR" 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -33,8 +35,8 @@ report_blocked() {
 docker_cmd() {
   if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
     docker "$@"
-  elif command -v sudo >/dev/null 2>&1 && sudo docker info >/dev/null 2>&1; then
-    sudo docker "$@"
+  elif command -v sudo >/dev/null 2>&1 && sudo -n docker info >/dev/null 2>&1; then
+    sudo -n docker "$@"
   else
     return 1
   fi
@@ -73,8 +75,8 @@ probe_image() {
 init_docker() {
   if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
     DOCKER=(docker)
-  elif command -v sudo >/dev/null 2>&1 && sudo docker info >/dev/null 2>&1; then
-    DOCKER=(sudo docker)
+  elif command -v sudo >/dev/null 2>&1 && sudo -n docker info >/dev/null 2>&1; then
+    DOCKER=(sudo -n docker)
   else
     report_blocked "docker daemon unavailable"
   fi

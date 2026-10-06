@@ -53,7 +53,8 @@ run_case "WORKFLOW_WITH_STATUS_STUB" '
 mm_status_set() { :; }
 '
 
-# Case C: real logger helpers are preferred when defined.
+# Case C: real logger helpers are preferred when defined. Use PHASE2_ONLY so
+# this logger-only fixture does not need the unrelated FULL selective tuple.
 rm -f "$MM_WORKFLOW_FILE"
 LOG_CAPTURE="$TMP/logger.capture"
 : >"$LOG_CAPTURE"
@@ -64,6 +65,7 @@ env -i \
   MM_CONFIG_DIR="$MM_CONFIG_DIR" \
   PREPARATION_MODE=PHASE2_ONLY \
   LOG_CAPTURE="$LOG_CAPTURE" \
+  PREPARATION_MODE=PHASE2_ONLY \
   bash --noprofile --norc -c '
 set -euo pipefail
 mm_info() { printf "INFO:%s\n" "$*" >>"$LOG_CAPTURE"; }
