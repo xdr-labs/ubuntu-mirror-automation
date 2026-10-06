@@ -66,6 +66,7 @@ jobs:
           set -euo pipefail
           bash tests/test_phase2_staging_atomic_bringup_gate.sh
           bash tests/test_phase2_staging_bringup_exclusion.sh
+          bash tests/test_phase2_detached_handoff_identity.sh
           bash tests/test_status_store_concurrent_writers.sh
           bash tests/test_install_lock_metadata_handoff.sh
           bash tests/test_uom_lock_metadata_handoff.sh
