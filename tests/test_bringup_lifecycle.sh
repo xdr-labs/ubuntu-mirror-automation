@@ -147,65 +147,9 @@ wait "$MISMATCH_PID" 2>/dev/null || true
 [[ "$MISMATCH_RC" -ne 0 ]] || fail "live identity mismatch unexpectedly passed"
 grep -q 'worker=ALIVE_IDENTITY_MISMATCH' "${TMP}/monitor.mismatch" \
   || fail "live identity mismatch was reported as worker gone"
-grep -q '^BRINGUP_WORKER_ALIVE=YES# a genuine completed result.  Override discovery to avoid host package state.
-write_file "$(p2b_dir)/state" COMPLETED
-write_file "$(p2b_dir)/run-id" completed-run
-cat >"$(p2b_dir)/result.env" <<'EOF'
-BRINGUP_TERMINAL_STATE=COMPLETED
-BRINGUP_RESULT=PASS
-BRINGUP_RUN_ID=completed-run
-BRINGUP_EXIT_CODE=0
-BRINGUP_COMPLETION_SENTINEL=PASS
-EOF
-p2b_discover_aella_cli() { AELLA_CLI_AVAILABLE=NO; AELLA_CLI_PATH=""; return 1; }
-set +e
-p2b_monitor_loop completed-run >"${TMP}/monitor.out" 2>&1
-MONITOR_RC=$?
-set -e
-[[ "$MONITOR_RC" -ne 0 ]] || fail "missing post-completion CLI passed"
-grep -q '^BRINGUP_RESULT=FAIL_POSTCONDITION$' "${TMP}/monitor.out" || fail "postcondition failure missing"
-grep -q '^BRINGUP_STATE=FAILED$' "${TMP}/monitor.out" || fail "postcondition state missing"
-pass "missing CLI is only terminal failure after completion"
-
-# Status/diagnose snapshot has no lifecycle mutation.
-before="$(tar -cf - -C "$(p2b_dir)" . | sha256sum | awk '{print $1}')"
-p2b_print_status >/dev/null
-after="$(tar -cf - -C "$(p2b_dir)" . | sha256sum | awk '{print $1}')"
-[[ "$before" == "$after" ]] || fail "status snapshot mutated lifecycle files"
-pass "status snapshot is read-only"
-
-echo "TEST_BRINGUP_LIFECYCLE=PASS"
- "${TMP}/monitor.mismatch" \
+grep -q '^BRINGUP_WORKER_ALIVE=YES$' "${TMP}/monitor.mismatch" \
   || fail "live identity mismatch missing alive evidence"
-grep -q '^BRINGUP_PROCESS_IDENTITY_MATCH=NO# a genuine completed result.  Override discovery to avoid host package state.
-write_file "$(p2b_dir)/state" COMPLETED
-write_file "$(p2b_dir)/run-id" completed-run
-cat >"$(p2b_dir)/result.env" <<'EOF'
-BRINGUP_TERMINAL_STATE=COMPLETED
-BRINGUP_RESULT=PASS
-BRINGUP_RUN_ID=completed-run
-BRINGUP_EXIT_CODE=0
-BRINGUP_COMPLETION_SENTINEL=PASS
-EOF
-p2b_discover_aella_cli() { AELLA_CLI_AVAILABLE=NO; AELLA_CLI_PATH=""; return 1; }
-set +e
-p2b_monitor_loop completed-run >"${TMP}/monitor.out" 2>&1
-MONITOR_RC=$?
-set -e
-[[ "$MONITOR_RC" -ne 0 ]] || fail "missing post-completion CLI passed"
-grep -q '^BRINGUP_RESULT=FAIL_POSTCONDITION$' "${TMP}/monitor.out" || fail "postcondition failure missing"
-grep -q '^BRINGUP_STATE=FAILED$' "${TMP}/monitor.out" || fail "postcondition state missing"
-pass "missing CLI is only terminal failure after completion"
-
-# Status/diagnose snapshot has no lifecycle mutation.
-before="$(tar -cf - -C "$(p2b_dir)" . | sha256sum | awk '{print $1}')"
-p2b_print_status >/dev/null
-after="$(tar -cf - -C "$(p2b_dir)" . | sha256sum | awk '{print $1}')"
-[[ "$before" == "$after" ]] || fail "status snapshot mutated lifecycle files"
-pass "status snapshot is read-only"
-
-echo "TEST_BRINGUP_LIFECYCLE=PASS"
- "${TMP}/monitor.mismatch" \
+grep -q '^BRINGUP_PROCESS_IDENTITY_MATCH=NO$' "${TMP}/monitor.mismatch" \
   || fail "live identity mismatch missing identity evidence"
 pass "live identity mismatch is reported accurately instead of worker GONE"
 
