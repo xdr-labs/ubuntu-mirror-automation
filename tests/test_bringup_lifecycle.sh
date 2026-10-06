@@ -128,6 +128,87 @@ if p2b_pid_alive_and_matches "$$" pgrep; then
 fi
 pass "stale and self-matching worker identities are rejected"
 
+# If the PID is alive but belongs to a different process identity, diagnostics
+# must not lie that the worker is GONE. This was visible in the original AWS
+# incident and is important for operator recovery decisions.
+bash -c 'exec -a unrelated-worker sleep 30' &
+MISMATCH_PID=$!
+write_file "$(p2b_dir)/state" RUNNING
+write_file "$(p2b_dir)/run-id" mismatch-live-run
+write_file "$(p2b_dir)/worker.pid" "$MISMATCH_PID"
+write_file "$(p2b_dir)/worker-start-ticks" "$(awk '{print $22}' "/proc/${MISMATCH_PID}/stat")"
+rm -f "$(p2b_dir)/result.env"
+set +e
+p2b_monitor_loop mismatch-live-run >"${TMP}/monitor.mismatch" 2>&1
+MISMATCH_RC=$?
+set -e
+kill "$MISMATCH_PID" 2>/dev/null || true
+wait "$MISMATCH_PID" 2>/dev/null || true
+[[ "$MISMATCH_RC" -ne 0 ]] || fail "live identity mismatch unexpectedly passed"
+grep -q 'worker=ALIVE_IDENTITY_MISMATCH' "${TMP}/monitor.mismatch" \
+  || fail "live identity mismatch was reported as worker gone"
+grep -q '^BRINGUP_WORKER_ALIVE=YES# a genuine completed result.  Override discovery to avoid host package state.
+write_file "$(p2b_dir)/state" COMPLETED
+write_file "$(p2b_dir)/run-id" completed-run
+cat >"$(p2b_dir)/result.env" <<'EOF'
+BRINGUP_TERMINAL_STATE=COMPLETED
+BRINGUP_RESULT=PASS
+BRINGUP_RUN_ID=completed-run
+BRINGUP_EXIT_CODE=0
+BRINGUP_COMPLETION_SENTINEL=PASS
+EOF
+p2b_discover_aella_cli() { AELLA_CLI_AVAILABLE=NO; AELLA_CLI_PATH=""; return 1; }
+set +e
+p2b_monitor_loop completed-run >"${TMP}/monitor.out" 2>&1
+MONITOR_RC=$?
+set -e
+[[ "$MONITOR_RC" -ne 0 ]] || fail "missing post-completion CLI passed"
+grep -q '^BRINGUP_RESULT=FAIL_POSTCONDITION$' "${TMP}/monitor.out" || fail "postcondition failure missing"
+grep -q '^BRINGUP_STATE=FAILED$' "${TMP}/monitor.out" || fail "postcondition state missing"
+pass "missing CLI is only terminal failure after completion"
+
+# Status/diagnose snapshot has no lifecycle mutation.
+before="$(tar -cf - -C "$(p2b_dir)" . | sha256sum | awk '{print $1}')"
+p2b_print_status >/dev/null
+after="$(tar -cf - -C "$(p2b_dir)" . | sha256sum | awk '{print $1}')"
+[[ "$before" == "$after" ]] || fail "status snapshot mutated lifecycle files"
+pass "status snapshot is read-only"
+
+echo "TEST_BRINGUP_LIFECYCLE=PASS"
+ "${TMP}/monitor.mismatch" \
+  || fail "live identity mismatch missing alive evidence"
+grep -q '^BRINGUP_PROCESS_IDENTITY_MATCH=NO# a genuine completed result.  Override discovery to avoid host package state.
+write_file "$(p2b_dir)/state" COMPLETED
+write_file "$(p2b_dir)/run-id" completed-run
+cat >"$(p2b_dir)/result.env" <<'EOF'
+BRINGUP_TERMINAL_STATE=COMPLETED
+BRINGUP_RESULT=PASS
+BRINGUP_RUN_ID=completed-run
+BRINGUP_EXIT_CODE=0
+BRINGUP_COMPLETION_SENTINEL=PASS
+EOF
+p2b_discover_aella_cli() { AELLA_CLI_AVAILABLE=NO; AELLA_CLI_PATH=""; return 1; }
+set +e
+p2b_monitor_loop completed-run >"${TMP}/monitor.out" 2>&1
+MONITOR_RC=$?
+set -e
+[[ "$MONITOR_RC" -ne 0 ]] || fail "missing post-completion CLI passed"
+grep -q '^BRINGUP_RESULT=FAIL_POSTCONDITION$' "${TMP}/monitor.out" || fail "postcondition failure missing"
+grep -q '^BRINGUP_STATE=FAILED$' "${TMP}/monitor.out" || fail "postcondition state missing"
+pass "missing CLI is only terminal failure after completion"
+
+# Status/diagnose snapshot has no lifecycle mutation.
+before="$(tar -cf - -C "$(p2b_dir)" . | sha256sum | awk '{print $1}')"
+p2b_print_status >/dev/null
+after="$(tar -cf - -C "$(p2b_dir)" . | sha256sum | awk '{print $1}')"
+[[ "$before" == "$after" ]] || fail "status snapshot mutated lifecycle files"
+pass "status snapshot is read-only"
+
+echo "TEST_BRINGUP_LIFECYCLE=PASS"
+ "${TMP}/monitor.mismatch" \
+  || fail "live identity mismatch missing identity evidence"
+pass "live identity mismatch is reported accurately instead of worker GONE"
+
 # CLI absence is not failure while running, but is a terminal postcondition after
 # a genuine completed result.  Override discovery to avoid host package state.
 write_file "$(p2b_dir)/state" COMPLETED
