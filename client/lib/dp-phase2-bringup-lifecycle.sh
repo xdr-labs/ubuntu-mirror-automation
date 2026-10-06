@@ -184,6 +184,17 @@ p2b_pid_alive_and_matches() {
   return 0
 }
 
+p2b_publish_worker_identity() {
+  local pid="${1:-$$}" start_tick=""
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  [[ -r "/proc/${pid}/stat" ]] || return 1
+  start_tick="$(awk '{print $22}' "/proc/${pid}/stat" 2>/dev/null || true)"
+  [[ "$start_tick" =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "$pid" | p2b_atomic_write "$(p2b_dir)/worker.pid" || return 1
+  printf '%s\n' "$start_tick" | p2b_atomic_write "$(p2b_dir)/worker-start-ticks" || return 1
+  return 0
+}
+
 p2b_read_state() {
   p2b_read_file "$(p2b_dir)/state"
 }
@@ -625,8 +636,17 @@ p2b_status_snapshot() {
     fi
   fi
 
-  # Stale PID detection
-  if [[ "$state" == "RUNNING" || "$state" == "STARTING" ]]; then
+  # Stale PID detection. STARTING with no published PID is a valid pre-handoff
+  # state; the starter owns the handoff timeout and will persist FAILED if the
+  # worker never publishes a coherent identity. Once a PID is published, both
+  # STARTING and RUNNING remain fail-closed on dead/mismatched identity.
+  if [[ "$state" == "RUNNING" ]]; then
+    if [[ "$alive" != "YES" || "$identity" != "YES" ]]; then
+      if [[ "$result_terminal" != "YES" ]]; then
+        state="STALE_OR_UNKNOWN"
+      fi
+    fi
+  elif [[ "$state" == "STARTING" && -n "$pid" ]]; then
     if [[ "$alive" != "YES" || "$identity" != "YES" ]]; then
       if [[ "$result_terminal" != "YES" ]]; then
         state="STALE_OR_UNKNOWN"
@@ -912,6 +932,15 @@ p2b_worker_main() {
   started="$(p2b_read_file "${d}/started-at")"
   mkdir -p "$(dirname "$logf")" 2>/dev/null || true
 
+  # Publish the canonical worker identity before any potentially slow worker-side
+  # readiness checks. Parent handoff and the foreground monitor consume these
+  # files; delaying them until after NTP/preflight can falsely classify a live
+  # STARTING worker as stale.
+  if ! p2b_publish_worker_identity "$$"; then
+    rc=1
+    p2b_fail_run "$d" "$run_id" "$$" "$target" "$started" "$logf" "$rc" "WORKER_IDENTITY_PUBLISH"
+  fi
+
   # Re-check time gate inside the detached worker before any vendor execution.
   # Use the same persisted PHASE2_TIME_REF_URL that the parent pre-detach gate used.
   if declare -F dp_phase2_load_time_ref_url >/dev/null 2>&1; then
@@ -962,11 +991,6 @@ p2b_worker_main() {
     p2b_fail_run "$d" "$run_id" "$$" "$target" "$started" "$logf" "$rc" "CURRENT_RUN_LOG_MARKER_WRITE"
   fi
   p2b_write_state "RUNNING"
-  printf '%s\n' "$$" | p2b_atomic_write "${d}/worker.pid"
-  if [[ -r /proc/$$/stat ]]; then
-    start_tick="$(awk '{print $22}' /proc/$$/stat)"
-    printf '%s\n' "$start_tick" | p2b_atomic_write "${d}/worker-start-ticks"
-  fi
 
   export BRINGUP_DETACHED=1
   export BRINGUP_LIFECYCLE_MANAGED=1
