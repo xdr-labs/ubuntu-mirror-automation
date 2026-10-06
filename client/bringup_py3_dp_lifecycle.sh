@@ -73,6 +73,8 @@ RUN_CLUSTER_VALIDATION=0
 TARGET_VERSION=""
 WORKER_PASSWORD_FILE=""
 WORKER_PASSWORD_FILE_OWNED=NO
+PENDING_WORKER_PASSWORD=""
+PROMPT_WORKER_PASSWORD=0
 P2B_PASSWORD_HANDOFF_VERIFIED=NO
 PASSTHRU=()
 
@@ -131,6 +133,20 @@ p2b_append_worker_password_file_passthru() {
     fi
   done
   PASSTHRU+=("--worker-password-file" "$WORKER_PASSWORD_FILE")
+}
+
+# Materialize credentials only after lifecycle safety checks prove that this
+# invocation will actually start a new worker. Parsing a retry command must
+# never overwrite a credential used by an ambiguous live worker.
+p2b_prepare_worker_credentials_for_start() {
+  if [[ "${PROMPT_WORKER_PASSWORD:-0}" -eq 1 ]]; then
+    p2b_prompt_worker_password || return 1
+    PROMPT_WORKER_PASSWORD=0
+  elif [[ -n "${PENDING_WORKER_PASSWORD:-}" ]]; then
+    p2b_store_worker_password "$PENDING_WORKER_PASSWORD" || return 1
+    PENDING_WORKER_PASSWORD=""
+  fi
+  p2b_append_worker_password_file_passthru
 }
 
 usage() {
@@ -221,13 +237,17 @@ parse_args() {
           echo "ERROR: --worker-password requires a value" >&2
           exit 1
         fi
-        p2b_store_worker_password "$worker_password_value" \
-          || { echo "ERROR: could not store worker password file" >&2; exit 1; }
+        PENDING_WORKER_PASSWORD="$worker_password_value"
+        PROMPT_WORKER_PASSWORD=0
+        WORKER_PASSWORD_FILE=""
+        WORKER_PASSWORD_FILE_OWNED=NO
         shift
         ;;
       --worker-password-file=*)
         WORKER_PASSWORD_FILE="${1#*=}"
         WORKER_PASSWORD_FILE_OWNED=NO
+        PENDING_WORKER_PASSWORD=""
+        PROMPT_WORKER_PASSWORD=0
         if [[ -z "$WORKER_PASSWORD_FILE" ]]; then
           echo "ERROR: --worker-password-file requires a path" >&2
           exit 1
@@ -235,8 +255,10 @@ parse_args() {
         shift
         ;;
       --prompt-worker-password)
-        p2b_prompt_worker_password \
-          || { echo "ERROR: could not prompt/store worker password" >&2; exit 1; }
+        PROMPT_WORKER_PASSWORD=1
+        PENDING_WORKER_PASSWORD=""
+        WORKER_PASSWORD_FILE=""
+        WORKER_PASSWORD_FILE_OWNED=NO
         shift
         ;;
       --skip-download|--worker-ips|--worker-password|--worker-password-file|--dry-run|--standby)
@@ -245,8 +267,10 @@ parse_args() {
             echo "ERROR: $1 requires a value (use --worker-password=VALUE when VALUE begins with --)" >&2
             exit 1
           fi
-          p2b_store_worker_password "$2" \
-            || { echo "ERROR: could not store worker password file" >&2; exit 1; }
+          PENDING_WORKER_PASSWORD="$2"
+          PROMPT_WORKER_PASSWORD=0
+          WORKER_PASSWORD_FILE=""
+          WORKER_PASSWORD_FILE_OWNED=NO
           shift 2
         elif [[ "$1" == "--worker-password-file" ]]; then
           if [[ $# -lt 2 || -z "${2:-}" || "$2" == --* ]]; then
@@ -255,6 +279,8 @@ parse_args() {
           fi
           WORKER_PASSWORD_FILE="$2"
           WORKER_PASSWORD_FILE_OWNED=NO
+          PENDING_WORKER_PASSWORD=""
+          PROMPT_WORKER_PASSWORD=0
           shift 2
         elif [[ "$1" == "--worker-ips" || "$1" == "--standby" ]]; then
           if [[ $# -lt 2 || -z "${2:-}" || "$2" == --* ]]; then
@@ -274,7 +300,6 @@ parse_args() {
         ;;
     esac
   done
-  p2b_append_worker_password_file_passthru
 }
 
 print_diagnose() {
@@ -451,6 +476,10 @@ start_or_monitor() {
   fi
   echo "BRINGUP_STAGING_GATE=PASS"
 
+  if ! p2b_prepare_worker_credentials_for_start; then
+    p2b_lifecycle_die "could not prepare worker credentials"
+  fi
+
   run_id="$(p2b_new_run_id)"
   started="$(p2b_utc_now)"
   p2b_ensure_dir
@@ -595,6 +624,8 @@ main() {
     p2b_install_parent_pre_handoff_trap
     [[ -n "$VENDOR_BRINGUP" && -f "$VENDOR_BRINGUP" ]] \
       || p2b_lifecycle_die "vendor bringup missing in worker mode"
+    # Re-add a consumed --worker-password-file for the vendor invocation.
+    p2b_append_worker_password_file_passthru
     # Filter passthru: drop our meta flags already consumed
     p2b_worker_main "$VENDOR_BRINGUP" --version "$TARGET_VERSION" "${PASSTHRU[@]}"
     exit $?
