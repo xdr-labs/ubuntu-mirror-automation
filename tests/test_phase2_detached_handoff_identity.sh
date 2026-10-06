@@ -110,6 +110,31 @@ done
   || fail "worker argv contains $WORKER_VERSION_FLAGS --version flags"
 pass "handoff publishes a coherent live identity before slow worker readiness completes"
 
+# Publication ordering contract: worker.pid is the commit marker. If publication
+# is interrupted, observers may see start ticks without a PID, but never a PID
+# without its identity anchor.
+ORDER_DIR="$TMP/identity-order"
+ORDER_LOG="$TMP/identity-order.log"
+mkdir -p "$ORDER_DIR"
+: >"$ORDER_LOG"
+(
+  export PHASE2_BRINGUP_DIR="$ORDER_DIR"
+  p2b_atomic_write() {
+    local dest="$1"
+    printf '%s\n' "$(basename "$dest")" >>"$ORDER_LOG"
+    cat >"$dest"
+  }
+  p2b_publish_worker_identity "$BASHPID"
+)
+mapfile -t IDENTITY_WRITE_ORDER <"$ORDER_LOG"
+[[ "${#IDENTITY_WRITE_ORDER[@]}" -eq 2 ]] \
+  || fail "identity publication write count=${#IDENTITY_WRITE_ORDER[@]}"
+[[ "${IDENTITY_WRITE_ORDER[0]}" == "worker-start-ticks" ]] \
+  || fail "identity anchor was not published first"
+[[ "${IDENTITY_WRITE_ORDER[1]}" == "worker.pid" ]] \
+  || fail "worker.pid was not the publication commit marker"
+pass "worker.pid is published last as the identity commit marker"
+
 # STARTING without an identity is pre-handoff, not evidence of a stale worker.
 PRE="$TMP/pre-handoff"
 export PHASE2_BRINGUP_DIR="$PRE"
