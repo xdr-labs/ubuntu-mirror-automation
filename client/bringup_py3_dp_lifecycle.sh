@@ -179,7 +179,6 @@ parse_args() {
       --version)
         TARGET_VERSION="${2:-}"
         [[ -n "$TARGET_VERSION" ]] || { echo "ERROR: --version requires a value" >&2; exit 1; }
-        PASSTHRU+=("$1" "$2")
         shift 2
         ;;
       --detach)
@@ -455,7 +454,8 @@ start_or_monitor() {
   printf '%s\n' "$TARGET_VERSION" | p2b_atomic_write "${d}/target-version"
   printf '%s\n' "$logf" | p2b_atomic_write "${d}/log-path"
   printf '%s\n' "$started" | p2b_atomic_write "${d}/started-at"
-  rm -f "${d}/completed-at" "${d}/exit-code" "${d}/completion.sentinel" "${d}/result.env" 2>/dev/null || true
+  rm -f "${d}/completed-at" "${d}/exit-code" "${d}/completion.sentinel" "${d}/result.env" \
+    "${d}/worker.pid" "${d}/worker-start-ticks" "${d}/log-start-offset" 2>/dev/null || true
   p2b_write_state "STARTING"
 
   mkdir -p "$(dirname "$logf")" 2>/dev/null || true
@@ -502,6 +502,15 @@ start_or_monitor() {
     fi
     p2b_write_state "FAILED"
     p2b_lifecycle_die "BRINGUP_HANDOFF=FAIL worker pid not verified"
+  fi
+
+  # Publish the exact identity the parent just verified before declaring handoff
+  # success or attaching the monitor. The detached worker republishes the same
+  # identity at entry, but monitor correctness must not depend on how long its
+  # worker-side readiness checks take.
+  if ! p2b_publish_worker_identity "$pid"; then
+    p2b_write_state "FAILED"
+    p2b_lifecycle_die "BRINGUP_HANDOFF=FAIL worker identity publication failed"
   fi
 
   p2b_emit_handoff "$run_id" "$pid" "$logf"
@@ -568,7 +577,7 @@ main() {
     [[ -n "$VENDOR_BRINGUP" && -f "$VENDOR_BRINGUP" ]] \
       || p2b_lifecycle_die "vendor bringup missing in worker mode"
     # Filter passthru: drop our meta flags already consumed
-    p2b_worker_main "$VENDOR_BRINGUP" "${PASSTHRU[@]}"
+    p2b_worker_main "$VENDOR_BRINGUP" --version "$TARGET_VERSION" "${PASSTHRU[@]}"
     exit $?
   fi
 

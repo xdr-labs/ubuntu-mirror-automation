@@ -207,9 +207,15 @@ WRAP_EQ_RC=0
   source "$WRAPPER"
   parse_args --version 6.6.0 --worker-password=--dashpass --detach
   [[ "$ATTACH_MONITOR" -eq 0 ]]
-  [[ "${PASSTHRU[2]}" == --worker-password-file ]]
-  [[ -f "${PASSTHRU[3]}" ]]
-  [[ "$(<"${PASSTHRU[3]}")" == --dashpass ]]
+  pw_file=""
+  for ((i = 0; i < ${#PASSTHRU[@]}; i++)); do
+    if [[ "${PASSTHRU[$i]}" == --worker-password-file ]]; then
+      pw_file="${PASSTHRU[$((i + 1))]:-}"
+      break
+    fi
+  done
+  [[ -n "$pw_file" && -f "$pw_file" ]]
+  [[ "$(<"$pw_file")" == --dashpass ]]
 ) || WRAP_EQ_RC=$?
 set -e
 [[ "$WRAP_EQ_RC" -eq 0 ]] && pass "lifecycle equals-form password preserves detach via password file" \
