@@ -128,6 +128,58 @@ if p2b_pid_alive_and_matches "$$" pgrep; then
 fi
 pass "stale and self-matching worker identities are rejected"
 
+# STARTING without a published identity is allowed only during a finite handoff
+# grace. This preserves the real pre-handoff window without allowing an
+# abandoned starter record to report IN_PROGRESS forever.
+PHASE2_BRINGUP_STARTING_GRACE_SECONDS=08
+[[ "$(p2b_starting_grace_seconds)" == 8 ]] \
+  || fail "leading-zero grace 08 was not normalized as decimal"
+PHASE2_BRINGUP_STARTING_GRACE_SECONDS=010
+[[ "$(p2b_starting_grace_seconds)" == 10 ]] \
+  || fail "leading-zero grace 010 was not normalized as decimal"
+PHASE2_BRINGUP_STARTING_GRACE_SECONDS=9999999
+[[ "$(p2b_starting_grace_seconds)" == 15 ]] \
+  || fail "oversized grace did not fall back to safe default"
+pass "STARTING grace configuration is decimal-normalized and bounded"
+
+PHASE2_BRINGUP_STARTING_GRACE_SECONDS=5
+write_file "$(p2b_dir)/state" STARTING
+write_file "$(p2b_dir)/run-id" starting-grace-run
+rm -f "$(p2b_dir)/worker.pid" "$(p2b_dir)/worker-start-ticks" "$(p2b_dir)/result.env"
+write_file "$(p2b_dir)/started-at" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+p2b_status_snapshot
+[[ "$BRINGUP_STATE" == STARTING ]] || fail "fresh no-pid STARTING state=$BRINGUP_STATE"
+[[ "$BRINGUP_WORKER_ALIVE" == NO ]] || fail "fresh no-pid STARTING unexpectedly alive"
+pass "fresh no-pid STARTING remains in handoff grace"
+
+write_file "$(p2b_dir)/started-at" "$(date -u -d '1 minute ago' +%Y-%m-%dT%H:%M:%SZ)"
+p2b_status_snapshot
+[[ "$BRINGUP_STATE" == STALE_OR_UNKNOWN ]] \
+  || fail "aged no-pid STARTING state=$BRINGUP_STATE"
+pass "aged no-pid STARTING fails closed as stale"
+
+rm -f "$(p2b_dir)/started-at"
+p2b_status_snapshot
+[[ "$BRINGUP_STATE" == STALE_OR_UNKNOWN ]] \
+  || fail "missing-time no-pid STARTING state=$BRINGUP_STATE"
+write_file "$(p2b_dir)/started-at" not-a-time
+p2b_status_snapshot
+[[ "$BRINGUP_STATE" == STALE_OR_UNKNOWN ]] \
+  || fail "invalid-time no-pid STARTING state=$BRINGUP_STATE"
+
+for RELATIVE_STARTED in now today '15 seconds ago'; do
+  write_file "$(p2b_dir)/started-at" "$RELATIVE_STARTED"
+  p2b_status_snapshot
+  [[ "$BRINGUP_STATE" == STALE_OR_UNKNOWN ]] \
+    || fail "relative-time '$RELATIVE_STARTED' no-pid STARTING state=$BRINGUP_STATE"
+done
+write_file "$(p2b_dir)/started-at" '2026-02-30T12:00:00Z'
+p2b_status_snapshot
+[[ "$BRINGUP_STATE" == STALE_OR_UNKNOWN ]] \
+  || fail "invalid-calendar no-pid STARTING state=$BRINGUP_STATE"
+pass "unverifiable or non-canonical no-pid STARTING fails closed as stale"
+write_file "$(p2b_dir)/started-at" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
 # If the PID is alive but belongs to a different process identity, diagnostics
 # must not lie that the worker is GONE. This was visible in the original AWS
 # incident and is important for operator recovery decisions.
