@@ -63,6 +63,7 @@ env -i \
   MM_WORKFLOW_FILE="$MM_WORKFLOW_FILE" \
   MM_CONFIG_DIR="$MM_CONFIG_DIR" \
   LOG_CAPTURE="$LOG_CAPTURE" \
+  PREPARATION_MODE=PHASE2_ONLY \
   bash --noprofile --norc -c '
 set -euo pipefail
 mm_info() { printf "INFO:%s\n" "$*" >>"$LOG_CAPTURE"; }
