@@ -59,6 +59,7 @@ TEST_LIST=(
   test_phase1_retry_resume_regression.sh
   test_xenial_legacy_state_reconciliation.sh
   test_xenial_package_transition_evidence.sh
+  test_hop_reconciliation_meta.sh
   test_phase1_finalize.sh
   test_ntp_pre_transition_quiesce.sh
   test_ntp_dns_postboot_policy.sh
