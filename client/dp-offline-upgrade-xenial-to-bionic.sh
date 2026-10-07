@@ -1070,20 +1070,64 @@ require_cmds() {
 
 http_code() {
   local url="$1"
+  local code="" attempt=1 max_attempts=3
   if [[ -n "$TEST_ROOT" && -f "$(hostpath /tmp/http-map.tsv)" ]]; then
     local mapped
     mapped="$(awk -F'\t' -v u="$url" '$1==u {print $2; exit}' "$(hostpath /tmp/http-map.tsv)" || true)"
     if [[ -n "$mapped" ]]; then
-      printf '%s' "$mapped"
+      if [[ "$mapped" =~ ^[0-9][0-9][0-9]$ ]]; then
+        printf '%s' "$mapped"
+      else
+        printf '000'
+      fi
       return 0
     fi
   fi
-  curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 10 --max-time 30 "$url" 2>/dev/null || printf '000'
+
+  while [[ "$attempt" -le "$max_attempts" ]]; do
+    # curl emits HTTP code 000 on transport failure. Capture once and normalize
+    # instead of appending a fallback 000 (which previously produced 000000).
+    code="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 10 --max-time 30 "$url" 2>/dev/null || true)"
+    if [[ ! "$code" =~ ^[0-9][0-9][0-9]$ ]]; then
+      code="000"
+    fi
+    case "$code" in
+      000|408|429|5??)
+        if [[ "$attempt" -lt "$max_attempts" ]]; then
+          log WARN "HTTP_PROBE_RETRY attempt=${attempt}/${max_attempts} code=${code} url=${url}"
+          sleep "$attempt"
+          attempt=$((attempt + 1))
+          continue
+        fi
+        ;;
+    esac
+    printf '%s' "$code"
+    return 0
+  done
+
+  printf '%s' "${code:-000}"
 }
 
 http_fetch() {
   local url="$1" dest="$2"
-  curl -fsS --connect-timeout 10 --max-time 120 -o "$dest" "$url"
+  local attempt=1 max_attempts=3 rc=1 tmp
+  tmp="${dest}.part.$$"
+  while [[ "$attempt" -le "$max_attempts" ]]; do
+    rm -f "$tmp" 2>/dev/null || true
+    if curl -fsS --connect-timeout 10 --max-time 120 -o "$tmp" "$url"; then
+      mv -f "$tmp" "$dest"
+      return 0
+    else
+      rc=$?
+    fi
+    rm -f "$tmp" 2>/dev/null || true
+    if [[ "$attempt" -lt "$max_attempts" ]]; then
+      log WARN "HTTP_FETCH_RETRY attempt=${attempt}/${max_attempts} curl_rc=${rc} url=${url}"
+      sleep "$attempt"
+    fi
+    attempt=$((attempt + 1))
+  done
+  return "$rc"
 }
 
 read_os_field() {
@@ -11184,7 +11228,7 @@ state_is_in_progress_or_configuring() {
 state_is_stale_candidate() {
   local st="$1"
   case "$st" in
-    CONFIGURING|PREPARING_XENIAL)
+    CONFIGURING|PREPARING_XENIAL|UPGRADING_XENIAL_TO_BIONIC)
       return 0
       ;;
     *)
@@ -11374,8 +11418,14 @@ state_user_message() {
     REBOOTING)
       printf '%s' "The host is rebooting. This SSH session will disconnect."
       ;;
-    FAILED|FAILED_PRE_DRO|FAILED_BEFORE_PACKAGE_TRANSITION|FAILED_AFTER_PACKAGE_TRANSITION|FAILED_PRE_DRO_STALE|FAILED_POST_TRANSACTION)
-      printf '%s' "The background upgrade reported a failure. Do not rerun the client."
+    FAILED_PRE_DRO|FAILED_PRE_DRO_STALE|FAILED_BEFORE_PACKAGE_TRANSITION)
+      printf '%s' "The upgrade stopped before package transition. Re-run the same client; it will revalidate before continuing."
+      ;;
+    FAILED_AFTER_PACKAGE_TRANSITION|FAILED_POST_TRANSACTION)
+      printf '%s' "The package transition had already started. Do not rerun the client; manual review is required."
+      ;;
+    FAILED)
+      printf '%s' "The upgrade reported a failure. Re-run the same client to revalidate state; it will continue only if the pre-transition safety gates pass."
       ;;
     POST_BOOT_VERIFY)
       printf '%s' "Post-boot validation is in progress."
@@ -11668,10 +11718,29 @@ EOF
   else
     echo "(persistent log missing)"
   fi
-  cat <<EOF
-Do not rerun the client until the failure is reviewed.
+  case "${st:-UNKNOWN}" in
+    FAILED_PRE_DRO|FAILED_PRE_DRO_STALE|FAILED_BEFORE_PACKAGE_TRANSITION)
+      cat <<EOF
+The package transition did not start.
+Re-run the same client. It will revalidate the host before continuing.
 ============================================================
 EOF
+      ;;
+    FAILED_AFTER_PACKAGE_TRANSITION|FAILED_POST_TRANSACTION)
+      cat <<EOF
+The package transition had already started.
+Do not rerun the client. Manual review is required.
+============================================================
+EOF
+      ;;
+    *)
+      cat <<EOF
+Re-run the same client to revalidate state.
+It will continue only if the pre-transition safety gates pass; otherwise it stops for manual review.
+============================================================
+EOF
+      ;;
+  esac
 }
 
 print_already_running_banner() {
@@ -12340,7 +12409,7 @@ handle_existing_state() {
 
   case "$st" in
     ""|PREFLIGHT|READY_FOR_CONFIRMATION) return 0 ;;
-    CONFIGURING|PREPARING_XENIAL)
+    CONFIGURING|PREPARING_XENIAL|UPGRADING_XENIAL_TO_BIONIC)
       # Stale preparing/configuring without live runner/service/DRO → diagnose, do not MONITOR_ONLY.
       if allow_live_systemctl && ! live_upgrade_evidence_present; then
         handle_stale_pre_dro_state "$st"
@@ -12360,7 +12429,7 @@ handle_existing_state() {
       fi
       refuse_duplicate_upgrade
       ;;
-    UPGRADING_XENIAL_TO_BIONIC|REBOOT_PENDING|REBOOTING|POST_BOOT_VERIFY|POST_UPGRADE_VERIFY)
+    REBOOT_PENDING|REBOOTING|POST_BOOT_VERIFY|POST_UPGRADE_VERIFY)
       refuse_duplicate_upgrade
       ;;
     FAILED_AFTER_PACKAGE_TRANSITION|FAILED_POST_TRANSACTION)
