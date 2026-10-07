@@ -10,6 +10,9 @@ trap 'rm -rf "$WORKDIR"' EXIT
 # Must be set before sourcing mirror_manager_common → mirror_workflow_state.
 export MM_CONFIG_DIR="${WORKDIR}/etc-ubuntu-mirror"
 export MM_WORKFLOW_FILE="${MM_CONFIG_DIR}/dp-upgrade-workflow.state"
+export MM_LOG_DIR="${WORKDIR}/mirror-logs"
+export MM_STATE_ROOT="${WORKDIR}/mirror-runs"
+export MM_LOCK_FILE="${WORKDIR}/publication.lock"
 mkdir -p "$MM_CONFIG_DIR"
 # shellcheck source=../lib/common.sh
 source "${ROOT}/lib/common.sh"
@@ -297,7 +300,7 @@ awk '
 pass "GUI menu items 1-7"
 grep -qE 'Enter R2 URL|Set R2 URL|install-standard|Roll Back|Mode 1|Mode 2' "$INST" \
   && fail "GUI has forbidden menus" || pass "GUI no URL/mode/rollback"
-grep -q 'passwordbox' "$INST" && pass "passwordbox present" || fail "passwordbox"
+! grep -q 'passwordbox' "$INST" && pass "Mirror password input absent" || fail "retired passwordbox remains"
 # Config save + redaction
 export MM_CONFIG_FILE="${WORKDIR}/gui.conf"
 export MM_STATUS_FILE="${WORKDIR}/status.env"

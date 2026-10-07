@@ -15,30 +15,8 @@ source "${UM_PROJECT_ROOT}/lib/state.sh"
 # shellcheck source=lib/bootstrap.sh
 source "${UM_PROJECT_ROOT}/lib/bootstrap.sh"
 
-# Bootstrap installs the authoritative runtime first. Replace only the public
-# /usr/local/bin entrypoint afterward with the small Menu 7 presentation wrapper.
-# The core runtime remains under /usr/local/lib and all non-GUI commands delegate
-# to it unchanged.
-eval "$(
-  declare -f um_bootstrap_install_runtime \
-    | sed '1s/^um_bootstrap_install_runtime[[:space:]]*()/_um_bootstrap_install_runtime_core ()/'
-)"
-um_bootstrap_install_runtime() {
-  _um_bootstrap_install_runtime_core
-  local bindir="${INSTALL_BIN_DIR:-/usr/local/bin}"
-  local wrapper="${UM_PROJECT_ROOT}/scripts/ubuntu-offline-mirror-entrypoint.sh"
-  local tmp
-  [[ -f "$wrapper" ]] || um_die "RUNTIME_SOURCE_FILE_MISSING=${wrapper}"
-  if [[ "${UM_DRY_RUN:-0}" == "1" ]]; then
-    um_dry "Would install Menu 7 normal-width entrypoint at ${bindir}/ubuntu-offline-mirror"
-    return 0
-  fi
-  mkdir -p "$bindir"
-  tmp="${bindir}/.ubuntu-offline-mirror.tmp.$$"
-  install -m 0755 "$wrapper" "$tmp"
-  mv -f "$tmp" "${bindir}/ubuntu-offline-mirror"
-  um_ok "MENU7_NORMAL_WIDTH_ENTRYPOINT=PASS path=${bindir}/ubuntu-offline-mirror"
-}
+# um_bootstrap_install_runtime installs and binds the public entrypoint as
+# part of the authoritative runtime install; do not overwrite it afterward.
 
 UM_DRY_RUN=0
 UM_FORCE=0

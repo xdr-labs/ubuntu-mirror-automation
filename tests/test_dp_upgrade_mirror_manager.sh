@@ -407,7 +407,7 @@ else
 fi
 grep -qE 'Mode 1|Mode 2|Mode 3|Fully Offline|Online Bootstrap|install-standard|Roll Back' "$INSTALLER" \
   && fail "A obsolete menu text" || pass "A no obsolete menus"
-grep -q 'passwordbox' "$INSTALLER" && grep -q '"1" "Preparation Mode"' "$INSTALLER" \
+! grep -q 'passwordbox' "$INSTALLER" && grep -q '"1" "Preparation Mode"' "$INSTALLER" \
   && pass "B configuration fields" || fail "B config"
 grep -qE 'Current DP Version|Target DP Version|"DP Version"' "$INSTALLER" \
   && fail "B DP version config labels present" || pass "B no DP version config labels"

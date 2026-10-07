@@ -87,14 +87,14 @@ GUI fields:
 - Preparation Mode (`FULL` or `PHASE2_ONLY`)
 - Mirror Server IP
 - DL Worker IP addresses / DA Worker IP addresses
-- Worker SSH Password (aella) — required when any worker IP is set
 - Test R2 Connection
 - Save Configuration
 
 Save is an **authoritative full save**: clearing a field and saving persists
-empty (workers/`WORKER_SSH_PASSWORD` do not resurrect from disk). Internal
-URL-only persistence uses a separate merge save so unrelated credentials are
-not wiped.
+empty worker lists (cleared workers do not resurrect from disk). Internal
+URL-only persistence uses a separate merge save so unrelated worker routing is
+not wiped. Failed configuration writes show a failure, preserve prior state,
+and must not be reported as saved.
 
 Exact Configuration footer:
 
@@ -117,7 +117,7 @@ Invalidation is dependency-scoped (not “any save resets everything”):
 | Change | Earliest demotion | Preserved | Next action |
 | --- | --- | --- | --- |
 | No semantic change | none | everything | none |
-| Worker IPs / worker password only | commands | artifacts, client set, HTTP, readiness | Menu 7 regenerate |
+| Worker IPs only | commands | artifacts, client set, HTTP, readiness | Menu 7 regenerate |
 | Mirror Server IP / HTTP URL | PREPARED (client/HTTP/readiness) | validated OS Core + Phase 2 release | Menu 3 Enable HTTP Distribution (atomic endpoint-bound client/helper republish only; no heavy download) |
 | Preparation Mode FULL ↔ PHASE2_ONLY | CONFIGURED | on-disk cache files | Download and Prepare |
 
@@ -132,7 +132,20 @@ against the same published bundle, prerequisite identity, and helper generation.
 
 Single/AIO (no worker IPs) bringup commands omit `--worker-ips` and
 `--worker-password`. Cluster commands attach only the relevant DL or DA worker
-list with a safely shell-quoted password (never logged).
+list and `--prompt-worker-password`. The operator enters the password at the
+masked prompt on that master, not on the Mirror Server. No password is embedded
+in Menu 7 output or stored in Mirror configuration. The DP owns a private
+mode-0600 temporary credential while its worker runs and cleans it up at exit.
+
+Legacy `WORKER_SSH_PASSWORD` settings are ignored and removed on an explicit
+configuration Save (including merge saves) or bootstrap config rewrite. Existing
+external backups are not automatically deleted. A retired password value does
+not affect command/readiness identity or force artifact downloads.
+
+For asymmetric DL/DA deployments, Menu 7 also gives a conditional master-only
+command for the role with an empty worker list. Run it only when that master
+actually exists; skip that role otherwise. A master-only command does not prompt
+for a worker password.
 
 Read-only:
 

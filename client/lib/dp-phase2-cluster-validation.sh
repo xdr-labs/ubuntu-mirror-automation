@@ -407,35 +407,57 @@ p2b_run_cluster_validation_surface() {
 }
 
 p2b_record_cluster_validation() {
-  local result="${1-}" dest
+  local result="${1-}" dest run_id target rc=0
   case "$result" in
     PASS|FAIL|PENDING) ;;
-    *)
-      echo "ERROR: --record-cluster-validation requires PASS, FAIL, or PENDING" >&2
-      return 1
-      ;;
+    *) echo "ERROR: --record-cluster-validation requires PASS, FAIL, or PENDING" >&2; return 1 ;;
   esac
+  # Serialize receipt capture with new-run creation. The receipt confirms this
+  # run/target only; it cannot be used as a standing approval for future runs.
+  if ! declare -F p2b_acquire_lock >/dev/null || ! p2b_acquire_lock; then
+    echo "ERROR: cluster validation lifecycle lock unavailable" >&2
+    return 1
+  fi
+  p2b_status_snapshot
+  run_id="${BRINGUP_RUN_ID:-}"
+  target="$(p2b_read_file "$(p2b_dir)/target-version")"
+  if [[ -z "$run_id" || -z "$target" ]] \
+    || { [[ "$result" == PASS ]] && { ! p2b_current_run_completion_coherent || [[ "${AELLA_CLI_AVAILABLE:-NO}" != YES ]]; }; }; then
+    p2b_release_lock
+    echo "ERROR: cluster confirmation requires the current completed run and available CLI" >&2
+    return 1
+  fi
   dest="$(p2b_cluster_validation_env_path)"
-  mkdir -p "$(dirname "$dest")"
-  {
-    echo "CLUSTER_VALIDATION=${result}"
-    echo "CLUSTER_VALIDATION_RECORDED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  } >"${dest}.tmp.$$"
-  chmod 0600 "${dest}.tmp.$$" 2>/dev/null || true
-  mv -f "${dest}.tmp.$$" "$dest"
+  if ! {
+    printf 'CLUSTER_VALIDATION=%s\n' "$result"
+    printf 'BRINGUP_RUN_ID=%s\nBRINGUP_TARGET_VERSION=%s\n' "$run_id" "$target"
+    printf 'CLUSTER_VALIDATION_RECORDED_AT=%s\n' "$(p2b_utc_now)"
+  } | p2b_atomic_write "$dest"; then
+    rc=1
+  fi
+  p2b_release_lock
+  [[ "$rc" -eq 0 ]] || return "$rc"
   CLUSTER_VALIDATION="$result"
   echo "CLUSTER_VALIDATION=${result}"
-  if [[ "$result" != "PASS" ]]; then
-    echo "DP_UPGRADE_COMPLETE=NO"
-  fi
+  if [[ "$result" != PASS ]]; then echo "DP_UPGRADE_COMPLETE=NO"; fi
   return 0
 }
 
 p2b_load_cluster_validation() {
-  local dest
+  local dest run_id target receipt_run receipt_target result
+  CLUSTER_VALIDATION=PENDING
   dest="$(p2b_cluster_validation_env_path)"
-  CLUSTER_VALIDATION="${CLUSTER_VALIDATION:-PENDING}"
   [[ -f "$dest" ]] || return 1
-  CLUSTER_VALIDATION="$(awk -F= '$1=="CLUSTER_VALIDATION"{print substr($0,index($0,"=")+1);exit}' "$dest" 2>/dev/null || echo PENDING)"
+  run_id="$(p2b_read_file "$(p2b_dir)/run-id")"
+  target="$(p2b_read_file "$(p2b_dir)/target-version")"
+  [[ -n "$run_id" && -n "$target" ]] || return 1
+  [[ -z "${BRINGUP_RUN_ID:-}" || "$run_id" == "$BRINGUP_RUN_ID" ]] || return 1
+  receipt_run="$(awk -F= '$1=="BRINGUP_RUN_ID"{print $2;exit}' "$dest")"
+  receipt_target="$(awk -F= '$1=="BRINGUP_TARGET_VERSION"{print $2;exit}' "$dest")"
+  [[ "$receipt_run" == "$run_id" && "$receipt_target" == "$target" ]] || return 1
+  result="$(awk -F= '$1=="CLUSTER_VALIDATION"{print $2;exit}' "$dest")"
+  case "$result" in PASS|FAIL|PENDING) ;; *) return 1 ;; esac
+  [[ "$(p2b_read_file "$(p2b_dir)/run-id")" == "$run_id" ]] || return 1
+  CLUSTER_VALIDATION="$result"
   return 0
 }

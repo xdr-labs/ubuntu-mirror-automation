@@ -63,6 +63,13 @@ run_step "python_compile_os_core" python3 -m py_compile scripts/lib/os_core_pack
 run_step "python_compile_field_fix" python3 -m py_compile tests/test_aws_os_core_completeness_field_fix.py
 run_step "python_compile_cross_hop" python3 -m py_compile tests/test_cross_hop_shared_package.py
 
+# Permanent audit regressions: lifecycle ownership, public config/prompt flow,
+# recovery exclusion, and all-hop evidence/reentry boundaries (hermetic only).
+run_step "audit99_boundary_regressions" python3 -m unittest \
+  tests.test_audit99_lifecycle tests.test_audit99_phase1 tests.test_audit99_operator
+run_step "menu7_cached_open_fixture" bash tests/test_menu7_cached_open.sh
+run_step "login_shell_partial_rollback" bash tests/test_login_shell_partial_rollback.sh
+
 # Core PR #20 gates (authoritative)
 run_step "aws_field_fix" \
   python3 -m unittest tests.test_aws_os_core_completeness_field_fix

@@ -113,12 +113,12 @@ expect_pass full-single "$TMP/full-single.txt" FULL 1 4
 
 gui_build_client_commands "$MIRROR_HTTP_URL" cluster "192.0.2.21,192.0.2.22" "" "$SYN_PW" \
   >"$TMP/full-dl.txt"
-expect_pass full-dl "$TMP/full-dl.txt" FULL 1 4
+expect_pass full-dl "$TMP/full-dl.txt" FULL 2 4
 grep -Fq "$SYN_PW" "$TMP/full-dl.txt" && fail "full-dl leaked password" || pass "full-dl password not embedded"
 
 gui_build_client_commands "$MIRROR_HTTP_URL" cluster "" "198.51.100.21,198.51.100.22" "$SYN_PW" \
   >"$TMP/full-da.txt"
-expect_pass full-da "$TMP/full-da.txt" FULL 1 4
+expect_pass full-da "$TMP/full-da.txt" FULL 2 4
 
 gui_build_client_commands "$MIRROR_HTTP_URL" cluster \
   "192.0.2.21,192.0.2.22" "198.51.100.21,198.51.100.22" "$SYN_PW" \
@@ -131,10 +131,10 @@ gui_build_client_commands "$MIRROR_HTTP_URL" single "" "" "" >"$TMP/p2-single.tx
 expect_pass p2-single "$TMP/p2-single.txt" PHASE2_ONLY 1 0
 
 gui_build_client_commands "$MIRROR_HTTP_URL" cluster "192.0.2.21" "" "$SYN_PW" >"$TMP/p2-dl.txt"
-expect_pass p2-dl "$TMP/p2-dl.txt" PHASE2_ONLY 1 0
+expect_pass p2-dl "$TMP/p2-dl.txt" PHASE2_ONLY 2 0
 
 gui_build_client_commands "$MIRROR_HTTP_URL" cluster "" "198.51.100.21" "$SYN_PW" >"$TMP/p2-da.txt"
-expect_pass p2-da "$TMP/p2-da.txt" PHASE2_ONLY 1 0
+expect_pass p2-da "$TMP/p2-da.txt" PHASE2_ONLY 2 0
 
 gui_build_client_commands "$MIRROR_HTTP_URL" cluster "192.0.2.21" "198.51.100.21" "$SYN_PW" \
   >"$TMP/p2-dual.txt"
@@ -246,8 +246,13 @@ gui_build_client_commands "$MIRROR_HTTP_URL" cluster "192.0.2.21" "" "" \
 no_pw_rc=$?
 set -e
 [[ "$bad_ip_rc" -ne 0 ]] && pass "invalid worker IPs rejected" || fail "invalid worker IPs accepted"
-[[ "$no_pw_rc" -ne 0 ]] && pass "missing cluster password rejected" \
-  || fail "missing cluster password accepted"
+[[ "$no_pw_rc" -eq 0 ]] && pass "cluster needs no stored mirror password" \
+  || fail "cluster generation wrongly requires a stored password"
+grep -q -- '--prompt-worker-password' "$TMP/no-pw.txt" || fail "runtime prompt absent"
+grep -qx 'Only if a DA master exists with no DA workers:' "$TMP/full-dl.txt" \
+  || fail "conditional DA master-only guidance missing"
+grep -qx 'Only if a DL master exists with no DL workers:' "$TMP/full-da.txt" \
+  || fail "conditional DL master-only guidance missing"
 
 # Role-specific bringup binding (not merely total executable count).
 # DL_DA + two DL sections / zero DA must FAIL even when executable count == 2.

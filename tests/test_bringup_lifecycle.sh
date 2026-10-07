@@ -223,7 +223,9 @@ MONITOR_RC=$?
 set -e
 [[ "$MONITOR_RC" -ne 0 ]] || fail "missing post-completion CLI passed"
 grep -q '^BRINGUP_RESULT=FAIL_POSTCONDITION$' "${TMP}/monitor.out" || fail "postcondition failure missing"
-grep -q '^BRINGUP_STATE=FAILED$' "${TMP}/monitor.out" || fail "postcondition state missing"
+grep -q '^BRINGUP_STATE=COMPLETED$' "${TMP}/monitor.out" || fail "original completion state not preserved"
+[[ "$(cat "$(p2b_dir)/state")" == COMPLETED ]] || fail "monitor rewrote worker state"
+grep -q '^BRINGUP_RESULT=PASS$' "$(p2b_dir)/result.env" || fail "monitor overwrote worker result"
 pass "missing CLI is only terminal failure after completion"
 
 # Status/diagnose snapshot has no lifecycle mutation.

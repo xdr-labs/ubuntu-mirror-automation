@@ -99,7 +99,7 @@ DA_WORKER_IPS=192.0.2.31
 WORKER_SSH_PASSWORD='Clu$ter!Pass'
 mm_save_gui_config_full >/dev/null
 load_conf
-expect "C01a seeded workers present" test -n "${DL_WORKER_IPS}" -a -n "${DA_WORKER_IPS}" -a -n "${WORKER_SSH_PASSWORD}"
+expect "C01a seeded workers present" test -n "${DL_WORKER_IPS}" -a -n "${DA_WORKER_IPS}" -a -z "${WORKER_SSH_PASSWORD:-}"
 
 DL_WORKER_IPS=""
 DA_WORKER_IPS=""
@@ -108,7 +108,7 @@ mm_save_gui_config_full >/dev/null
 unset DL_WORKER_IPS DA_WORKER_IPS WORKER_SSH_PASSWORD
 mm_load_gui_config
 expect "C01 clear all remains empty" \
-  test -z "${DL_WORKER_IPS}" -a -z "${DA_WORKER_IPS}" -a -z "${WORKER_SSH_PASSWORD}"
+  test -z "${DL_WORKER_IPS}" -a -z "${DA_WORKER_IPS}" -a -z "${WORKER_SSH_PASSWORD:-}"
 
 # --- C02 clear DL only ---
 DL_WORKER_IPS=192.0.2.21
@@ -140,11 +140,11 @@ mm_save_gui_config_full >/dev/null
 WORKER_SSH_PASSWORD=""
 mm_save_gui_config_full >/dev/null
 mm_load_gui_config
-expect "C04 password cleared for AIO" test -z "${WORKER_SSH_PASSWORD}"
+expect "C04 password cleared for AIO" test -z "${WORKER_SSH_PASSWORD:-}"
 
-# --- C05 worker IP + empty password rejected at validation helper ---
-expect "C05 password required with workers" \
-  bash -c 'source "'"$ROOT"'/scripts/lib/mirror_manager_common.sh"; ! mm_validate_worker_ssh_password "" "192.0.2.21"'
+# --- C05 credentials are no longer a Mirror-side requirement ---
+expect "C05 retired password validation helper absent" \
+  bash -c 'source "'"$ROOT"'/scripts/lib/mirror_manager_common.sh"; ! declare -F mm_validate_worker_ssh_password'
 
 # --- C06 cancel edit: in-memory change without save leaves disk ---
 DL_WORKER_IPS=192.0.2.21
@@ -162,7 +162,7 @@ DA_WORKER_IPS=""
 WORKER_SSH_PASSWORD='p$ss"wo'\''rd`!'
 mm_save_gui_config_full >/dev/null
 mm_load_gui_config
-expect "C07 special password roundtrip" test "${WORKER_SSH_PASSWORD}" = 'p$ss"wo'\''rd`!'
+expect "C07 legacy password ignored" test -z "${WORKER_SSH_PASSWORD:-}"
 if grep -F 'p$ss' "$MM_WORKFLOW_FILE" "$MM_STATUS_FILE" 2>/dev/null; then
   fail "C07 password leaked into workflow/status"
 else
@@ -185,7 +185,7 @@ MIRROR_HTTP_URL=http://192.0.2.10
 mm_merge_gui_config >/dev/null
 mm_load_gui_config
 expect "merge preserves DL workers" test "${DL_WORKER_IPS}" = "192.0.2.21"
-expect "merge preserves worker password" test "${WORKER_SSH_PASSWORD}" = "KeepCluster"
+expect "merge does not resurrect worker password" test -z "${WORKER_SSH_PASSWORD:-}"
 
 # --- I01 no-op save preserves generations ---
 PREPARATION_MODE=PHASE2_ONLY
@@ -245,9 +245,9 @@ mm_save_gui_config_full >/dev/null
 seed_ready_workflow COMMANDS_GENERATED
 WORKER_SSH_PASSWORD='NewPass!99'
 mm_save_gui_config_full >/dev/null
-expect "I04 class COMMAND_ROUTING" test "$(mm_wf_get CONFIG_CHANGE_CLASS)" = "COMMAND_ROUTING"
+expect "I04 retired password has no identity effect" test "$(mm_wf_get CONFIG_CHANGE_CLASS)" = "NONE"
 expect "I04 readiness preserved" test "$(mm_wf_get READINESS_VERIFIED_GENERATION_ID)" = "gen-ready-1"
-expect "I04 commands cleared" test -z "$(mm_wf_get COMMAND_FILE_GENERATION_ID)"
+expect "I04 commands preserved" test "$(mm_wf_get COMMAND_FILE_GENERATION_ID)" = "gen-ready-1"
 
 # --- I05 cluster -> single ---
 DL_WORKER_IPS=192.0.2.21

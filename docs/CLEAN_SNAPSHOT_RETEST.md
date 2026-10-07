@@ -201,7 +201,7 @@ Menu **1 Configuration**:
 
 1. Preparation Mode = **Full OS Upgrade + Phase 2**
 2. Confirm **Mirror Server IP** (operator-confirmed; do not rely on auto-detect alone)
-3. Configure DL/DA worker IPs and Worker SSH Password only when testing a cluster
+3. Configure DL/DA worker IPs only when testing a cluster; enter the worker password later at the DP bringup prompt (never in Mirror configuration)
 4. Run **Test R2 Connection**
 5. Save
 

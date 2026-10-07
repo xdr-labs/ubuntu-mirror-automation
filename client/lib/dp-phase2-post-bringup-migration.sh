@@ -112,60 +112,79 @@ p2b_persist_post_bringup_migration_decision() {
 }
 
 p2b_load_post_bringup_migration() {
-  local dest line key val
+  local dest line key val receipt_run="" active_run="" active_target=""
   dest="$(p2b_migration_env_path)"
-  POST_BRINGUP_MIGRATION="${POST_BRINGUP_MIGRATION:-NOT_CHECKED}"
-  REQUIRED_POST_BRINGUP_ACTION="${REQUIRED_POST_BRINGUP_ACTION:-UNKNOWN}"
-  POST_BRINGUP_MIGRATION_SOURCE="${POST_BRINGUP_MIGRATION_SOURCE:-}"
-  POST_BRINGUP_MIGRATION_TARGET="${POST_BRINGUP_MIGRATION_TARGET:-}"
+  POST_BRINGUP_MIGRATION=NOT_CHECKED
+  REQUIRED_POST_BRINGUP_ACTION=UNKNOWN
+  POST_BRINGUP_MIGRATION_SOURCE=""
+  POST_BRINGUP_MIGRATION_TARGET=""
   [[ -f "$dest" ]] || return 1
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ "$line" == *=* ]] || continue
-    key="${line%%=*}"
-    val="${line#*=}"
+    key="${line%%=*}"; val="${line#*=}"
     case "$key" in
       POST_BRINGUP_MIGRATION) POST_BRINGUP_MIGRATION="$val" ;;
       REQUIRED_POST_BRINGUP_ACTION) REQUIRED_POST_BRINGUP_ACTION="$val" ;;
       SOURCE_DP_VERSION) POST_BRINGUP_MIGRATION_SOURCE="$val" ;;
       TARGET_DP_VERSION) POST_BRINGUP_MIGRATION_TARGET="$val" ;;
+      BRINGUP_RUN_ID) receipt_run="$val" ;;
     esac
   done <"$dest"
+  if declare -F p2b_dir >/dev/null; then
+    active_run="$(p2b_read_file "$(p2b_dir)/run-id")"
+    active_target="$(p2b_read_file "$(p2b_dir)/target-version")"
+  fi
+  # Staging's source/target decision can predate bringup, but an operator PASS
+  # must be explicitly tied to the current run. Legacy unbound PASS is stale.
+  if { [[ -n "$active_run" && "$POST_BRINGUP_MIGRATION_TARGET" != "$active_target" ]]; } \
+    || { [[ "$POST_BRINGUP_MIGRATION" == PASS ]] && [[ -z "$active_run" || "$receipt_run" != "$active_run" ]]; }; then
+    POST_BRINGUP_MIGRATION=REQUIRED
+    REQUIRED_POST_BRINGUP_ACTION=YES
+    return 1
+  fi
+  case "$POST_BRINGUP_MIGRATION" in
+    NOT_REQUIRED|REQUIRED|PASS|FAIL) ;;
+    *) POST_BRINGUP_MIGRATION=NOT_CHECKED; REQUIRED_POST_BRINGUP_ACTION=UNKNOWN; return 1 ;;
+  esac
   return 0
 }
 
 p2b_record_post_bringup_migration() {
-  local result="${1-}" dest
+  local result="${1-}" dest source target run_id req_action=YES rc=0
   case "$result" in
     PASS|FAIL) ;;
-    *)
-      echo "ERROR: --record-post-bringup-migration requires PASS or FAIL" >&2
-      return 1
-      ;;
+    *) echo "ERROR: --record-post-bringup-migration requires PASS or FAIL" >&2; return 1 ;;
   esac
-  p2b_load_post_bringup_migration || true
-  dest="$(p2b_migration_env_path)"
-  if [[ ! -f "$dest" ]]; then
-    echo "ERROR: migration decision file missing: ${dest}" >&2
+  if ! declare -F p2b_acquire_lock >/dev/null || ! p2b_acquire_lock; then
+    echo "ERROR: migration lifecycle lock unavailable" >&2
     return 1
   fi
-  # Preserve source/target; update status only.
-  local source target
+  p2b_load_post_bringup_migration || true
+  dest="$(p2b_migration_env_path)"
   source="${POST_BRINGUP_MIGRATION_SOURCE:-}"
   target="${POST_BRINGUP_MIGRATION_TARGET:-}"
-  local req_action=YES
-  [[ "$result" == "PASS" ]] && req_action=NO
-  {
-    echo "SOURCE_DP_VERSION=${source}"
-    echo "TARGET_DP_VERSION=${target}"
-    echo "POST_BRINGUP_MIGRATION=${result}"
-    echo "POST_BRINGUP_MIGRATION_RECORDED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    echo "POST_BRINGUP_MIGRATION_EXECUTION=OPERATOR_REQUIRED"
-    echo "REQUIRED_POST_BRINGUP_ACTION=${req_action}"
-    echo "POST_BRINGUP_MIGRATION_OPERATOR_COMMAND=sudo bash /opt/aelladata/da-upgrade/scripts/upgrade_script.sh ${target}"
-    echo "POST_BRINGUP_MIGRATION_RECORD_COMMAND=sudo bash /home/aella/bringup_py3_dp_after_os_upgrade.sh --record-post-bringup-migration PASS|FAIL"
-  } >"${dest}.tmp.$$"
-  chmod 0600 "${dest}.tmp.$$" 2>/dev/null || true
-  mv -f "${dest}.tmp.$$" "$dest"
+  p2b_status_snapshot
+  run_id="${BRINGUP_RUN_ID:-}"
+  if [[ ! -f "$dest" || -z "$run_id" || -z "$target" \
+      || "$target" != "$(p2b_read_file "$(p2b_dir)/target-version")" ]] \
+      || { [[ "$result" == PASS ]] && ! p2b_current_run_completion_coherent; }; then
+    p2b_release_lock
+    echo "ERROR: migration confirmation requires a matching decision and completed current run" >&2
+    return 1
+  fi
+  [[ "$result" == PASS ]] && req_action=NO
+  if ! {
+    printf 'SOURCE_DP_VERSION=%s\nTARGET_DP_VERSION=%s\n' "$source" "$target"
+    printf 'BRINGUP_RUN_ID=%s\n' "$run_id"
+    printf 'POST_BRINGUP_MIGRATION=%s\nPOST_BRINGUP_MIGRATION_RECORDED_AT=%s\n' "$result" "$(p2b_utc_now)"
+    printf 'POST_BRINGUP_MIGRATION_EXECUTION=OPERATOR_REQUIRED\nREQUIRED_POST_BRINGUP_ACTION=%s\n' "$req_action"
+    printf 'POST_BRINGUP_MIGRATION_OPERATOR_COMMAND=sudo bash /opt/aelladata/da-upgrade/scripts/upgrade_script.sh %s\n' "$target"
+    printf '%s\n' 'POST_BRINGUP_MIGRATION_RECORD_COMMAND=sudo bash /home/aella/bringup_py3_dp_after_os_upgrade.sh --record-post-bringup-migration PASS|FAIL'
+  } | p2b_atomic_write "$dest"; then
+    rc=1
+  fi
+  p2b_release_lock
+  [[ "$rc" -eq 0 ]] || return "$rc"
   POST_BRINGUP_MIGRATION="$result"
   REQUIRED_POST_BRINGUP_ACTION="$req_action"
   echo "POST_BRINGUP_MIGRATION=${result}"

@@ -4019,24 +4019,49 @@ recon_slice_log_after_baseline() {
   fi
   if [[ "$rotated" -eq 1 ]]; then
     if [[ -n "${RECON_BASE_STARTED_UTC:-}" ]]; then
-      awk -v start="${RECON_BASE_STARTED_UTC}" '
-        BEGIN {
-          gsub(/[-:TZ]/ "", start)
-        }
-        {
-          line=$0
-          ts=substr($0,1,19)
-          gsub(/[-:TZ]/ "", ts)
-          if (length(start) > 0 && length(ts) > 0 && ts >= start) print line
-        }
-      ' "$logfile" 2>/dev/null || true
+      # Baseline is UTC; dpkg/APT timestamps are host-local. Parse both
+      # explicitly, preserving only dated current-run records after rotation.
+      python3 - "$RECON_BASE_STARTED_UTC" "$logfile" <<'RECON_ROTATED_LOG' || return 2
+import calendar
+import datetime
+import re
+import sys
+import time
+try:
+    start = calendar.timegm(datetime.datetime.strptime(
+        sys.argv[1], "%Y-%m-%dT%H:%M:%SZ").timetuple())
+except ValueError:
+    sys.exit(2)
+apt_record = False
+with open(sys.argv[2], "r", errors="replace") as stream:
+    for line in stream:
+        match = re.match(r"^(?:Start-Date:\s*)?(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})", line)
+        if match:
+            try:
+                ts = time.mktime(time.strptime(" ".join(match.groups()), "%Y-%m-%d %H:%M:%S"))
+            except (ValueError, OverflowError):
+                apt_record = False
+                continue
+            if line.startswith("Start-Date:"):
+                apt_record = ts >= start
+            if ts >= start:
+                sys.stdout.write(line)
+        elif apt_record:
+            sys.stdout.write(line)
+        if line.startswith("End-Date:"):
+            apt_record = False
+RECON_ROTATED_LOG
+    else
+      return 2
     fi
     return 0
   fi
-  if [[ "${base_off:-0}" =~ ^[0-9]+$ ]] && [[ "$base_off" -gt 0 ]]; then
+  if [[ "${base_off:-}" =~ ^[0-9]+$ ]]; then
     if [[ "$cur_size" -gt "$base_off" ]]; then
-      tail -c +"$((base_off + 1))" "$logfile" 2>/dev/null || true
+      tail -c +"$((base_off + 1))" "$logfile" 2>/dev/null || return 2
     fi
+  else
+    return 2
   fi
 }
 
@@ -4160,7 +4185,10 @@ collect_package_transition_evidence() {
   aptlog="$(hostpath /var/log/dist-upgrade/apt.log)"
 
   if [[ "$RECON_BASELINE_LOADED" == "YES" ]]; then
-    slice="$(recon_slice_log_after_baseline "$dpkglog" "${RECON_BASE_DPKG_INODE}" "${RECON_BASE_DPKG_OFFSET}" "${RECON_BASE_DPKG_PREFIX_SHA}")"
+    if ! slice="$(recon_slice_log_after_baseline "$dpkglog" "${RECON_BASE_DPKG_INODE}" "${RECON_BASE_DPKG_OFFSET}" "${RECON_BASE_DPKG_PREFIX_SHA}")"; then
+      recon_append_evidence "AMBIGUOUS_LOG_EVIDENCE" "dpkg.log" "$dpkglog" "current-run log evidence unavailable" "unknown"
+      slice=""
+    fi
     if printf '%s' "$slice" | grep -q 'startup archives unpack'; then
       recon_append_evidence "AUTHORITATIVE_PACKAGE_TRANSITION" "dpkg.log" "$dpkglog" \
         "startup archives unpack (post-baseline)" "yes"
@@ -4169,7 +4197,10 @@ collect_package_transition_evidence() {
       recon_append_evidence "AUTHORITATIVE_PACKAGE_TRANSITION" "dpkg.log" "$dpkglog" \
         "status unpack/install core (post-baseline)" "yes"
     fi
-    slice="$(recon_slice_log_after_baseline "$apthist" "${RECON_BASE_APT_HIST_INODE}" "${RECON_BASE_APT_HIST_OFFSET}" "${RECON_BASE_APT_HIST_PREFIX_SHA}")"
+    if ! slice="$(recon_slice_log_after_baseline "$apthist" "${RECON_BASE_APT_HIST_INODE}" "${RECON_BASE_APT_HIST_OFFSET}" "${RECON_BASE_APT_HIST_PREFIX_SHA}")"; then
+      recon_append_evidence "AMBIGUOUS_LOG_EVIDENCE" "apt/history.log" "$apthist" "current-run log evidence unavailable" "unknown"
+      slice=""
+    fi
     if printf '%s' "$slice" | grep -qiE "^(Install|Upgrade|Remove):"; then
       recon_append_evidence "AUTHORITATIVE_PACKAGE_TRANSITION" "apt/history.log" "$apthist" \
         "Install/Upgrade/Remove (post-baseline)" "yes"
@@ -4254,6 +4285,14 @@ classify_package_transition_evidence() {
     class="AMBIGUOUS_LEGACY_EVIDENCE"
   fi
 
+  # A failed evidence read is not evidence that no package mutation occurred.
+  # Preserve stronger live/target outcomes, otherwise require manual review.
+  if grep -q '^EVIDENCE_TYPE=AMBIGUOUS_LOG_EVIDENCE' <<<"$PACKAGE_TRANSITION_EVIDENCE_LINES"; then
+    case "$class" in
+      ACTIVE_RELEASE_UPGRADE_PROCESS|TARGET_RELEASE_REACHED) ;;
+      *) class=AMBIGUOUS_LEGACY_EVIDENCE ;;
+    esac
+  fi
   PACKAGE_TRANSITION_CLASS="$class"
   case "$class" in
     AUTHORITATIVE_PACKAGE_TRANSITION|MIXED_SOURCE_TARGET_PACKAGES|INTERRUPTED_DPKG_TRANSACTION)
@@ -4307,7 +4346,7 @@ recon_write_diagnostic_bundle() {
 package_transition_evidence_present() {
   classify_package_transition_evidence
   case "$PACKAGE_TRANSITION_CLASS" in
-    AUTHORITATIVE_PACKAGE_TRANSITION|MIXED_SOURCE_TARGET_PACKAGES|INTERRUPTED_DPKG_TRANSACTION)
+    AUTHORITATIVE_PACKAGE_TRANSITION|MIXED_SOURCE_TARGET_PACKAGES|INTERRUPTED_DPKG_TRANSACTION|AMBIGUOUS_LEGACY_EVIDENCE)
       return 0
       ;;
     TARGET_RELEASE_REACHED)
@@ -16412,6 +16451,20 @@ handle_existing_state() {
   local st ver
   st="$(read_state)"
   ver="$(read_os_field VERSION_ID)"
+  # Target-OS recovery must exclude real live owners before running any
+  # postboot repair. Stale state alone must not prevent idle recovery.
+  if [[ "$ver" == "20.04" ]]; then
+    if live_upgrade_evidence_present; then
+      refuse_duplicate_upgrade
+    fi
+    local postboot_active=""
+    if allow_live_systemctl; then
+      postboot_active="$(systemctl_show_prop ActiveState "$POSTBOOT_UNIT_NAME" || true)"
+    fi
+    case "$postboot_active" in active|activating) refuse_duplicate_upgrade ;; esac
+  elif detect_upgrade_already_running; then
+    refuse_duplicate_upgrade
+  fi
   case "$ver" in
     22.04|24.04)
       die "$EC_OS" "this one-hop script refuses OS ${ver}; use a later hop tool after validation"
@@ -16443,10 +16496,6 @@ handle_existing_state() {
     die "$EC_STATE" "Focal host but post-boot helper missing; manual validation required"
   fi
 
-  # Live systemd/process evidence wins even if state file is stale.
-  if detect_upgrade_already_running; then
-    refuse_duplicate_upgrade
-  fi
 
   # Case B: blank/missing live state + quarantined COMPLETED_BIONIC evidence.
   if [[ -z "$st" ]]; then

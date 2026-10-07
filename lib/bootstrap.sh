@@ -492,7 +492,21 @@ um_bootstrap_install_runtime() {
   if [[ -f "${runtime}/scripts/ubuntu-offline-mirror-entrypoint.sh" ]]; then
     local tmp_bin
     tmp_bin="${bindir}/.ubuntu-offline-mirror.tmp.$$"
-    install -m 0755 "${runtime}/scripts/ubuntu-offline-mirror-entrypoint.sh" "$tmp_bin"
+    python3 - "${runtime}/scripts/ubuntu-offline-mirror-entrypoint.sh" "$tmp_bin" "$runtime" "$confdir" <<'BIND_ENTRYPOINT'
+from pathlib import Path
+import shlex
+import sys
+text = Path(sys.argv[1]).read_text()
+for name, default, value in (("UOM_RUNTIME_ROOT", "/usr/local/lib/ubuntu-mirror", sys.argv[3]),
+                             ("UOM_CONFIG_ROOT", "/etc/ubuntu-mirror", sys.argv[4])):
+    old = name + '=\"${' + name + ':-' + default + '}\"'
+    if text.count(old) != 1:
+        raise SystemExit("entrypoint path anchor missing: " + name)
+    text = text.replace(old, name + '=${' + name + ':-' + shlex.quote(value) + '}')
+Path(sys.argv[2]).write_text(text)
+BIND_ENTRYPOINT
+    chmod 0755 "$tmp_bin"
+    bash -n "$tmp_bin"
     mv -f "$tmp_bin" "${bindir}/ubuntu-offline-mirror"
   else
     ln -sfn "${runtime}/scripts/ubuntu-offline-mirror.sh" "${bindir}/ubuntu-offline-mirror"
@@ -500,10 +514,27 @@ um_bootstrap_install_runtime() {
   ln -sfn "${runtime}/scripts/mirrorctl" "${bindir}/mirrorctl"
   ln -sfn "${runtime}/scripts/mirror-dashboard.sh" "${bindir}/mirror-dashboard"
 
-  # Minimal mirror.conf for path defaults (no secrets)
+  # Persist the selected config, plus effective paths (including caller path
+  # defaults), not the checkout's defaults. Existing config stays on reinstall
+  # unless --force explicitly requests replacement.
   if [[ ! -f "${confdir}/mirror.conf" ]] || [[ "${UM_FORCE:-0}" == "1" ]]; then
-    if [[ -f "${src_root}/mirror.conf" ]]; then
-      um_bootstrap_install_file "${src_root}/mirror.conf" "${confdir}/mirror.conf" 0644
+    local selected_conf="${UM_CONFIG_PATH:-${src_root}/mirror.conf}" config_tmp key
+    [[ -f "$selected_conf" ]] || um_die "INSTALL_CONFIG=FAIL selected_config_missing"
+    config_tmp="$(mktemp "${confdir}/.mirror-conf.XXXXXX")" || um_die "INSTALL_CONFIG=FAIL mktemp"
+    if ! sed '/^WORKER_SSH_PASSWORD=/d' "$selected_conf" >"$config_tmp"; then
+      rm -f "$config_tmp"
+      um_die "INSTALL_CONFIG=FAIL read_selected_config"
+    fi
+    {
+      printf '\n# Effective installation paths (managed by installer).\n'
+      for key in BASE_PATH SELECTIVE_MIRROR_ROOT SELECTIVE_NGINX_ROOT DP_PHASE2_ROOT \
+        INSTALL_LIB_DIR INSTALL_BIN_DIR INSTALL_CONF_DIR LOG_DIR BACKUP_DIR; do
+        if [[ -n "${!key:-}" ]]; then printf '%s=%q\n' "$key" "${!key}"; fi
+      done
+    } >>"$config_tmp" || { rm -f "$config_tmp"; um_die "INSTALL_CONFIG=FAIL write_effective_paths"; }
+    if ! bash -n "$config_tmp" || ! chmod 0644 "$config_tmp" || ! mv -f "$config_tmp" "${confdir}/mirror.conf"; then
+      rm -f "$config_tmp"
+      um_die "INSTALL_CONFIG=FAIL publish_effective_config"
     fi
   fi
 
@@ -547,10 +578,9 @@ um_bootstrap_persist_local_mirror_url() {
   local confdir="${INSTALL_CONF_DIR:-/etc/ubuntu-mirror}"
   local conf="${confdir}/dp-upgrade-mirror.conf"
   local mirror_base="${1:-}"
-  local tmp prep worker_pass dl_worker_ips da_worker_ips server_ip
+  local tmp prep dl_worker_ips da_worker_ips server_ip
   mkdir -p "$confdir"
   prep="FULL"
-  worker_pass=""
   dl_worker_ips=""
   da_worker_ips=""
   server_ip=""
@@ -561,7 +591,7 @@ um_bootstrap_persist_local_mirror_url() {
     source "$conf"
     set +a
     prep="${PREPARATION_MODE:-FULL}"
-    worker_pass="${WORKER_SSH_PASSWORD:-}"
+    unset WORKER_SSH_PASSWORD
     dl_worker_ips="${DL_WORKER_IPS:-}"
     da_worker_ips="${DA_WORKER_IPS:-}"
     server_ip="${MIRROR_SERVER_IP:-}"
@@ -575,7 +605,6 @@ um_bootstrap_persist_local_mirror_url() {
 # Phase 2 target is fixed at 6.6.0 (not user-editable).
 # Phase 2 production source is immutable Cloudflare R2 (no ACPS credentials).
 PREPARATION_MODE=$(printf '%q' "${prep}")
-WORKER_SSH_PASSWORD=$(printf '%q' "${worker_pass}")
 DL_WORKER_IPS=$(printf '%q' "${dl_worker_ips}")
 DA_WORKER_IPS=$(printf '%q' "${da_worker_ips}")
 MIRROR_SERVER_IP=$(printf '%q' "${server_ip}")
