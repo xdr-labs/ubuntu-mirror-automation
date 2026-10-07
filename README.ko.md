@@ -140,3 +140,7 @@ RECOVERY_METHOD=HYPERVISOR_SNAPSHOT
 <p align="center">
   <strong>Prepare once. Verify before upgrade. Keep the DP isolated.</strong>
 </p>
+
+### Worker 비밀번호 입력
+
+미러 서버 설정에는 Worker 비밀번호를 입력하거나 저장하지 않습니다. Menu 7에서 생성한 클러스터 bringup 명령을 해당 DP master에서 실행하면 마스킹된 프롬프트로 입력합니다. 명령문에는 비밀번호가 포함되지 않습니다. DP는 worker 실행 중에만 권한 0600의 비밀번호 파일을 유지하고 종료 시 정리합니다. AIO 또는 worker가 없는 master-only 명령에는 비밀번호 입력이 필요하지 않습니다. 기존 설정의 `WORKER_SSH_PASSWORD`는 사용하지 않으며 다음 설정 저장 또는 bootstrap 설정 갱신 시 제거됩니다.

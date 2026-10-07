@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scripts/install-dp-upgrade-mirror.sh — DP Ubuntu Upgrade Mirror Manager (whiptail TUI)
 # Single workflow: R2 OS Core + immutable R2 Phase 2 → one HTTP artifact set.
-# Sensor-Installer style: dynamic sizing, --fb, inputbox/passwordbox/msgbox/textbox.
+# Sensor-Installer style: dynamic sizing, --fb, inputbox/msgbox/textbox.
 set -euo pipefail
 set +x
 
@@ -37,10 +37,10 @@ load_mirror_defaults() {
     source "${PROJECT_ROOT}/mirror.conf"
     set +a
   fi
-  if [[ -f /etc/ubuntu-mirror/mirror.conf ]]; then
+  if [[ -f "${MM_CONFIG_DIR:-/etc/ubuntu-mirror}/mirror.conf" ]]; then
     set -a
     # shellcheck source=/dev/null
-    source /etc/ubuntu-mirror/mirror.conf
+    source "${MM_CONFIG_DIR:-/etc/ubuntu-mirror}/mirror.conf"
     set +a
   fi
   MM_MIRROR_ROOT="${MM_MIRROR_ROOT:-${BASE_PATH:-/var/spool/apt-mirror}}"
@@ -197,32 +197,6 @@ mm_whiptail_input() {
   return 0
 }
 
-mm_whiptail_password() {
-  local title="$1" text="$2"
-  if ! mm_has_whiptail; then
-    printf '%s\n%b\n> ' "$title" "$text"
-    local val; read -r -s val || true
-    printf '\n'
-    printf '%s\n' "$val"
-    return 0
-  fi
-  local body line_count dims h w result rc
-  body="$(printf '%b' "$text")"
-  line_count="$(printf '%b' "$body" | wc -l)"
-  dims="$(mm_calc_dialog_size "${line_count}" 70 8)"
-  read -r h w <<< "$dims"
-  result="$(whiptail --title "${title}" --fb \
-    --ok-button "OK" --cancel-button "Cancel" \
-    --passwordbox "${body}" "${h}" "${w}" \
-    3>&1 1>&2 2>&3)" || rc=$?
-  rc="${rc:-0}"
-  if [[ "$rc" -ne 0 ]]; then
-    echo ""
-    return 1
-  fi
-  echo "${result}"
-  return 0
-}
 
 mm_whiptail_textbox() {
   local title="$1" file="$2"
@@ -448,7 +422,7 @@ Mirror Server IP: ${ip_label}
 After changing Mirror Server IP, run Menu 3 → 4 → 7.
 DL Worker IPs: ${DL_WORKER_IPS:-(not set)}
 DA Worker IPs: ${DA_WORKER_IPS:-(not set)}
-Worker SSH Password (aella): $(mm_configured_label "$WORKER_SSH_PASSWORD")
+Worker SSH password: entered on each master at bringup execution (not stored here).
 OS Core Source: Cloudflare R2
 Phase 2 Source: Cloudflare R2
 
@@ -458,9 +432,8 @@ ${footer}
       "2" "Mirror Server IP" \
       "3" "DL Worker IP addresses" \
       "4" "DA Worker IP addresses" \
-      "5" "Worker SSH Password (aella)" \
-      "6" "Test R2 Connection" \
-      "7" "Save Configuration" \
+      "5" "Test R2 Connection" \
+      "6" "Save Configuration" \
       "0" "Back")" || return 0
     case "$choice" in
       1)
@@ -569,15 +542,6 @@ Do not include the DA master IP, trailing commas, duplicates, or shell metachara
         DA_WORKER_IPS="$da_clean"
         ;;
       5)
-        local wp
-        wp="$(mm_whiptail_password "Worker SSH Password (aella)" \
-          "Common aella SSH password used by each cluster master to access its workers.
-
-Required when DL Worker IPs or DA Worker IPs are configured.
-May be left empty for AIO/single-node deployments.")" || continue
-        WORKER_SSH_PASSWORD="$wp"
-        ;;
-      6)
         load_mirror_defaults
         engine_resolve_paths
         if acps_test_connection; then
@@ -588,7 +552,7 @@ May be left empty for AIO/single-node deployments.")" || continue
           mm_whiptail_msg "Cloudflare R2" "R2_CONNECTION=FAIL\n\nSource: ${PHASE2_R2_BASE_URL_CONSTANT}"
         fi
         ;;
-      7)
+      6)
         local normalized_dl="" normalized_da=""
         if [[ -n "${DL_WORKER_IPS:-}" ]]; then
           normalized_dl="$(mm_validate_worker_ips "${DL_WORKER_IPS}")" || {
@@ -604,14 +568,6 @@ May be left empty for AIO/single-node deployments.")" || continue
         fi
         DL_WORKER_IPS="$normalized_dl"
         DA_WORKER_IPS="$normalized_da"
-        if [[ -n "${DL_WORKER_IPS}${DA_WORKER_IPS}" ]] \
-          && ! mm_validate_worker_ssh_password "${WORKER_SSH_PASSWORD:-}" "${DL_WORKER_IPS}${DA_WORKER_IPS}"; then
-          mm_whiptail_msg "Configuration" \
-            "Worker SSH Password (aella) is required when DL or DA worker IPs are configured.
-
-Set it with menu 5 before saving."
-          continue
-        fi
         mm_force_phase2_target
         if [[ -z "${MIRROR_SERVER_IP:-}" ]]; then
           mm_whiptail_msg "Configuration" \
@@ -630,8 +586,8 @@ Re-enter a usable IPv4 present on this host."
         fi
         MIRROR_HTTP_URL="$(mirror_base_url_from_ipv4 "${MIRROR_SERVER_IP}")"
         # Acquire the shared publication/configuration lock explicitly here so
-        # contention can return to the GUI without wrapping the save function in
-        # a negated conditional, which would disable Bash errexit inside it.
+        # contention can return to the GUI. The save transaction explicitly
+        # propagates failures; it never depends on nested Bash errexit.
         if ! publication_lock_acquire; then
           mm_whiptail_msg "Configuration" \
             "CONFIGURATION_SAVED=NO
@@ -641,10 +597,14 @@ Another Configuration / Download / Enable HTTP / Menu 7 transaction is active.
 Wait for it to finish, then Save Configuration again."
           continue
         fi
-        mm_save_gui_config_full
-        mm_record_config_validated
-        mm_status_set PREPARATION_MODE "${PREPARATION_MODE}"
-        mm_status_set PHASE2_TARGET_VERSION "${PHASE2_TARGET_VERSION}"
+        if ! mm_save_gui_config_full validated; then
+          publication_lock_release
+          mm_whiptail_msg "Configuration — Save failed" \
+            "CONFIGURATION_SAVED=NO
+The configuration or its workflow receipt could not be saved.
+Review permissions/free space and retry. Do not use unsaved settings."
+          continue
+        fi
         publication_lock_release
         local save_msg
         if declare -F mm_wf_operator_save_message >/dev/null 2>&1; then
@@ -1297,10 +1257,8 @@ EOF
 }
 
 # Cluster bringup one-liner that prompts for the worker SSH password at runtime.
-# The Mirror Manager config still requires WORKER_SSH_PASSWORD to be set (proves
-# credentials were configured), but the published command file must never contain
-# the plaintext password. The staged lifecycle wrapper owns prompting and
-# credential cleanup via --prompt-worker-password (never a Menu 7 mktemp orphan).
+# Worker credentials are never collected or persisted on the Mirror Server.
+# The DP lifecycle prompts at execution and owns the private file's cleanup.
 gui_cluster_bringup_command_line() {
   local ver="$1"
   local worker_ips="$2"
@@ -1342,8 +1300,13 @@ ${bringup_cmd}
 EOF
   else
     cat <<EOF
-${role} cluster bringup command was not generated because
-${role} Worker IPs are not configured.
+Only if a ${role} master exists with no ${role} workers:
+Run this command on the ${role} MASTER ONLY.
+If this deployment has no ${role} master, skip this section entirely.
+Do not run this command on another role or on a worker.
+No worker password is needed for this master-only command.
+
+sudo bash /home/aella/bringup_py3_dp_after_os_upgrade.sh --version ${PHASE2_TARGET_VERSION} --skip-download
 
 EOF
   fi
@@ -1351,16 +1314,12 @@ EOF
 
 gui_build_client_commands() {
   # Writes command text to stdout.
-  # Args: mirror topology dl_worker_ips da_worker_ips [worker_password]
+  # Args: mirror topology dl_worker_ips da_worker_ips (no credentials).
   # Uses PREPARATION_MODE from config (FULL or PHASE2_ONLY).
   # OS-hop commands are one physical WRAPPER_V1 line each.
   # Phase 2 stage is shared by DL/DA and is one WRAPPER_V1 line; inner
   # SUBSHELL_V2 helper bootstrap lives inside upgrade-phase2.sh.
   local mirror="$1" topology="$2" dl_worker_ips="${3:-}" da_worker_ips="${4:-}"
-  local worker_password="${WORKER_SSH_PASSWORD:-}"
-  if [[ $# -ge 5 ]]; then
-    worker_password="$5"
-  fi
   mm_normalize_preparation_mode
   mm_force_phase2_target
   local ver="${PHASE2_TARGET_VERSION}"
@@ -1396,12 +1355,6 @@ gui_build_client_commands() {
         echo "DA_WORKER_IPS_INVALID=YES" >&2
         return 1
       }
-    fi
-    # Password must be configured in Mirror Manager, but is never written into
-    # the published command file (runtime prompt instead).
-    if ! mm_validate_worker_ssh_password "$worker_password" "${dl_worker_ips}${da_worker_ips}"; then
-      echo "WORKER_SSH_PASSWORD_REQUIRED=YES" >&2
-      return 1
     fi
     if [[ -n "$dl_worker_ips" ]]; then
       dl_bringup_cmd="$(gui_cluster_bringup_command_line "$ver" "$dl_worker_ips")"
@@ -1947,21 +1900,13 @@ New commands will be generated for: $(mm_preparation_mode_label)"
   fi
   if [[ -n "${dl_worker_ips}${da_worker_ips}" ]]; then
     topology="cluster"
-    if ! mm_validate_worker_ssh_password "${WORKER_SSH_PASSWORD:-}" "${dl_worker_ips}${da_worker_ips}"; then
-      if [[ "$menu7_publication_lock_acquired" -eq 1 ]]; then
-        publication_lock_release
-      fi
-      mm_whiptail_msg "Worker SSH Password required" \
-        "Set Worker SSH Password (aella) in Configuration before generating cluster Phase 2 commands."
-      return 0
-    fi
   else
     topology="single"
   fi
 
   tmp="$(mktemp)"
   export MENU7_CACHED_OPEN_PATH=MISS
-  gui_build_client_commands "$mirror" "$topology" "$dl_worker_ips" "$da_worker_ips" "${WORKER_SSH_PASSWORD:-}" >"$tmp"
+  gui_build_client_commands "$mirror" "$topology" "$dl_worker_ips" "$da_worker_ips" >"$tmp"
   ready_gen="$(mm_wf_get READINESS_VERIFIED_GENERATION_ID)"
   if ! mm_wf_atomic_publish_command_file "$tmp" "$out_file" "${PREPARATION_MODE}" "$ready_gen"; then
     # Candidate never replaces live; delete after validation evidence is logged.

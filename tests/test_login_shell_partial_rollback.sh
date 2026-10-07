@@ -33,7 +33,8 @@ EOS
     if (/^install_runner_and_units/) exit
     print
   }' "$SCRIPT_IN_RAW"
-  printf '%s\n' 'change_login_shells "stamp1"'
+  printf 'source %q\n' "${ROOT}/client/lib/dp-offline-hermetic-escapes.sh"
+  printf '%s\n' 'export MM_HERMETIC_TEST_MODE=1' 'change_login_shells "stamp1"'
 } >"$HARNESS"
 chmod +x "$HARNESS"
 

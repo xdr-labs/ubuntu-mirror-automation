@@ -23,6 +23,7 @@ export MM_CONFIG_DIR="$TMP/config"
 export MM_CONFIG_FILE="$TMP/config/dp-upgrade-mirror.conf"
 export MM_STATUS_FILE="$TMP/config/status"
 export MM_WORKFLOW_FILE="$TMP/config/workflow.env"
+export MM_MIRROR_ROOT="$TMP"
 export MM_CLIENT_ROOT="$TMP/client"
 export SCRIPT_DIR="${ROOT}/scripts"
 export PREPARATION_MODE=PHASE2_ONLY

@@ -194,3 +194,7 @@ Repository references:
 <p align="center">
   <strong>Prepare once. Verify before upgrade. Keep the DP isolated.</strong>
 </p>
+
+### Worker credentials
+
+Mirror configuration never asks for or stores worker SSH passwords. Run the Menu 7 cluster bringup command on its designated DP master and enter the password at the masked runtime prompt. The command contains no password; the DP owns a private mode-0600 credential file only while needed by its worker and removes it at exit. AIO/master-only commands need no worker password. Legacy Mirror password values are ignored and removed on the next explicit config save or bootstrap config rewrite.

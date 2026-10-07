@@ -8129,6 +8129,20 @@ handle_existing_state() {
   local st ver
   st="$(read_state)"
   ver="$(read_os_field VERSION_ID)"
+  # Target-OS recovery must exclude real live owners before running any
+  # postboot repair. Stale state alone must not prevent idle recovery.
+  if [[ "$ver" == "18.04" ]]; then
+    if live_upgrade_evidence_present; then
+      refuse_duplicate_upgrade
+    fi
+    local postboot_active=""
+    if allow_live_systemctl; then
+      postboot_active="$(systemctl_show_prop ActiveState "$POSTBOOT_UNIT_NAME" || true)"
+    fi
+    case "$postboot_active" in active|activating) refuse_duplicate_upgrade ;; esac
+  elif detect_upgrade_already_running; then
+    refuse_duplicate_upgrade
+  fi
   case "$ver" in
     20.04|22.04|24.04)
       die "$EC_OS" "this one-hop script refuses OS ${ver}; use a later hop tool after validation"
@@ -8147,10 +8161,6 @@ handle_existing_state() {
     die "$EC_STATE" "Bionic host but post-boot helper missing; manual validation required"
   fi
 
-  # Live systemd/process evidence wins even if state file is stale.
-  if detect_upgrade_already_running; then
-    refuse_duplicate_upgrade
-  fi
 
   case "$st" in
     ""|PREFLIGHT|READY_FOR_CONFIRMATION) return 0 ;;

@@ -73,6 +73,7 @@ RUN_CLUSTER_VALIDATION=0
 TARGET_VERSION=""
 WORKER_PASSWORD_FILE=""
 WORKER_PASSWORD_FILE_OWNED=NO
+P2B_PASSWORD_OWNER_ID=""
 PENDING_WORKER_PASSWORD=""
 PROMPT_WORKER_PASSWORD=0
 P2B_PASSWORD_HANDOFF_VERIFIED=NO
@@ -90,13 +91,14 @@ p2b_store_worker_password() {
   printf '%s' "$pw" | p2b_atomic_write "$f" || return 1
   WORKER_PASSWORD_FILE="$f"
   WORKER_PASSWORD_FILE_OWNED=YES
+  P2B_PASSWORD_OWNER_ID="$(stat -Lc '%d:%i' "$f")" || return 1
   P2B_PASSWORD_HANDOFF_VERIFIED=NO
   p2b_install_parent_pre_handoff_trap
   if [[ "${P2B_TEST_FAIL_PASSWORD_OWNED_MARKER:-0}" == "1" ]]; then
     p2b_cleanup_lifecycle_owned_worker_password
     return 1
   fi
-  if ! printf '%s\n' "$f" | p2b_atomic_write "$marker"; then
+  if ! printf '%s\nOWNER_ID=%s\n' "$f" "$P2B_PASSWORD_OWNER_ID" | p2b_atomic_write "$marker"; then
     p2b_cleanup_lifecycle_owned_worker_password
     return 1
   fi
@@ -363,6 +365,17 @@ start_or_monitor() {
   p2b_install_parent_pre_handoff_trap
 
   p2b_status_snapshot
+  local existing_target
+  existing_target="$(p2b_read_file "${d}/target-version")"
+  if [[ -n "$TARGET_VERSION" && -n "${BRINGUP_RUN_ID}" \
+     && -n "$existing_target" && "$TARGET_VERSION" != "$existing_target" ]]; then
+    printf '%s\n' "BRINGUP_RETRY_BLOCKED=YES" "ACTION=BLOCK_TARGET_MISMATCH" \
+      "FAILURE_REASON=LIFECYCLE_TARGET_MISMATCH" \
+      "REQUESTED_TARGET=${TARGET_VERSION}" "EXISTING_TARGET=${existing_target}"
+    p2b_release_lock
+    trap - EXIT
+    return 1
+  fi
   if [[ "${BRINGUP_STATE}" == "RUNNING" || "${BRINGUP_STATE}" == "STARTING" ]] \
     && [[ "${BRINGUP_WORKER_ALIVE}" == "YES" && "${BRINGUP_PROCESS_IDENTITY_MATCH}" == "YES" ]]; then
     echo "BRINGUP_ALREADY_RUNNING=YES"
@@ -382,7 +395,6 @@ start_or_monitor() {
   if p2b_current_run_completion_coherent; then
     echo "BRINGUP_ALREADY_COMPLETED=YES"
     p2b_print_status
-    p2b_cleanup_lifecycle_owned_worker_password
     if p2b_discover_aella_cli; then
       echo "AELLA_CLI_AVAILABLE=YES"
       echo "AELLA_CLI_PATH=${AELLA_CLI_PATH}"

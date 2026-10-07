@@ -479,6 +479,8 @@ BRINGUP_RESULT=PASS
 BRINGUP_TERMINAL_STATE=COMPLETED
 BRINGUP_RUN_ID=run-e2e-1
 EOF
+printf '6.6.0\n' >"${BR_DIR}/target-version"
+: >"${BR_DIR}/lock"
 # Snapshot before failed validation
 cp -a "$BR_DIR" "${WORKDIR}/bringup-before"
 export CLUSTER_VALIDATION_ENV="${WORKDIR}/cluster-validation.env"
@@ -504,6 +506,7 @@ grep -q 'CLUSTER_VALIDATION=PENDING' "${WORKDIR}/val-fail.txt" \
   && pass "failed validation leaves CLUSTER_VALIDATION=PENDING" \
   || fail "validation pending missing"
 # record FAIL must also leave bringup untouched
+source "$LIFE"
 p2b_record_cluster_validation FAIL >/dev/null
 if diff -qr "${WORKDIR}/bringup-before" "$BR_DIR" >/dev/null; then
   pass "record-cluster-validation FAIL preserves bringup state"

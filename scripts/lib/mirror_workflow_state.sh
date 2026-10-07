@@ -128,20 +128,16 @@ mm_wf_transition_cleanup() {
 }
 
 mm_wf_atomic_write_file() {
-  local dest="$1"
-  local src="$2"
-  local dir mode old_umask tmp
+  local dest="$1" src="$2" dir mode tmp
   dir="$(dirname "$dest")"
-  mkdir -p "$dir"
+  mkdir -p "$dir" || return 1
   mode="$(stat -c '%a' "$dest" 2>/dev/null || printf '600')"
-  tmp="$(mktemp "${dir}/.wf.XXXXXX")"
-  old_umask="$(umask)"
-  umask 077
-  cat "$src" >"$tmp"
-  umask "$old_umask"
-  chmod "$mode" "$tmp" 2>/dev/null || chmod 600 "$tmp" 2>/dev/null || true
-  mv -f "$tmp" "$dest"
-  chmod "$mode" "$dest" 2>/dev/null || chmod 600 "$dest" 2>/dev/null || true
+  tmp="$(mktemp "${dir}/.wf.XXXXXX")" || return 1
+  if ! cat "$src" >"$tmp" || ! chmod "$mode" "$tmp" || ! mv -f "$tmp" "$dest"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  return 0
 }
 
 mm_wf_ensure_file() {
@@ -218,7 +214,7 @@ mm_wf_set_many() {
   # Atomic multi-key update of the workflow state file.
   # Exclusive flock is held on a dedicated stable lock file (not the state
   # inode). Atomic rename of workflow.state must not replace the lock inode.
-  local f lockf tmp line key val k2 lockfd old_umask
+  local f lockf tmp line key val k2 lockfd old_umask rc=0
   local -A updates=()
   local -A cur=()
   mm_wf_ensure_file || return 1
@@ -272,8 +268,12 @@ mm_wf_set_many() {
   for k2 in "${!updates[@]}"; do
     cur["$k2"]="${updates[$k2]}"
   done
-  tmp="$(mktemp "$(dirname "$f")/.wfset.XXXXXX")"
-  {
+  tmp="$(mktemp "$(dirname "$f")/.wfset.XXXXXX")" || {
+    flock -u "$lockfd" 2>/dev/null || true
+    exec {lockfd}>&-
+    return 1
+  }
+  if ! {
     for k2 in \
       WORKFLOW_STATE WORKFLOW_GENERATION_ID CONFIG_SHA256 \
       CONFIG_PREPARE_SHA256 CONFIG_PUBLICATION_SHA256 CONFIG_COMMAND_SHA256 \
@@ -302,11 +302,15 @@ mm_wf_set_many() {
     for k2 in "${!cur[@]}"; do
       printf '%s=%s\n' "$k2" "${cur[$k2]}"
     done
-  } >"$tmp"
-  mm_wf_atomic_write_file "$f" "$tmp"
+  } >"$tmp"; then
+    rc=1
+  elif ! mm_wf_atomic_write_file "$f" "$tmp"; then
+    rc=1
+  fi
   rm -f "$tmp"
   flock -u "$lockfd" 2>/dev/null || true
   exec {lockfd}>&-
+  return "$rc"
 }
 
 mm_wf_set() {
@@ -367,8 +371,6 @@ mm_wf_command_identity_sha256() {
   {
     printf 'DL_WORKER_IPS=%s\n' "${DL_WORKER_IPS:-}"
     printf 'DA_WORKER_IPS=%s\n' "${DA_WORKER_IPS:-}"
-    printf 'WORKER_SSH_PASSWORD_SHA256=%s\n' \
-      "$(mm_wf_password_sha256_or_empty "${WORKER_SSH_PASSWORD:-}")"
   } | sha256sum | awk '{print $1}'
 }
 
@@ -415,8 +417,6 @@ mm_wf_config_sha256() {
     printf 'ACPS_USERNAME=%s\n' "${ACPS_USERNAME:-}"
     printf 'ACPS_PASSWORD_SHA256=%s\n' \
       "$(mm_wf_password_sha256_or_empty "${ACPS_PASSWORD:-}")"
-    printf 'WORKER_SSH_PASSWORD_SHA256=%s\n' \
-      "$(mm_wf_password_sha256_or_empty "${WORKER_SSH_PASSWORD:-}")"
     printf 'DL_WORKER_IPS=%s\n' "${DL_WORKER_IPS:-}"
     printf 'DA_WORKER_IPS=%s\n' "${DA_WORKER_IPS:-}"
   ) | sha256sum | awk '{print $1}'
@@ -628,9 +628,9 @@ mm_wf_state() {
 # ---------------------------------------------------------------------------
 mm_wf_mark_configured() {
   local gen sha mode ip url prep pub cmd auth
-  mm_wf_ensure_file
+  mm_wf_ensure_file || return 1
   gen="$(mm_wf_new_generation_id)"
-  sha="$(mm_wf_config_sha256 || true)"
+  sha="$(mm_wf_config_sha256 || return 1)"
   prep="$(mm_wf_prepare_identity_sha256)"
   pub="$(mm_wf_publication_identity_sha256)"
   cmd="$(mm_wf_command_identity_sha256)"
@@ -667,16 +667,16 @@ mm_wf_mark_configured() {
     "COMMAND_FILE_GENERATION_ID=" \
     "CREATED_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     "VERIFIED_UTC=" \
-    "HTTP_REENABLE_REQUIRED="
+    "HTTP_REENABLE_REQUIRED=" || return 1
   if declare -F mm_status_set >/dev/null 2>&1; then
-    mm_status_set WORKFLOW_STATE CONFIGURED
-    mm_status_set WORKFLOW_GENERATION_ID "$gen"
-    mm_status_set CONFIG_SHA256 "$sha"
-    mm_status_set CONFIG_CHANGE_CLASS PREPARE_INPUT
-    mm_status_set NEXT_REQUIRED_ACTION "Download and Prepare"
-    mm_status_set UPGRADE_READINESS FAIL
-    mm_status_set READINESS_RESULT ""
-    mm_status_set CLIENT_COMMANDS_MODE ""
+    mm_status_set WORKFLOW_STATE CONFIGURED || return 1
+    mm_status_set WORKFLOW_GENERATION_ID "$gen" || return 1
+    mm_status_set CONFIG_SHA256 "$sha" || return 1
+    mm_status_set CONFIG_CHANGE_CLASS PREPARE_INPUT || return 1
+    mm_status_set NEXT_REQUIRED_ACTION "Download and Prepare" || return 1
+    mm_status_set UPGRADE_READINESS FAIL || return 1
+    mm_status_set READINESS_RESULT "" || return 1
+    mm_status_set CLIENT_COMMANDS_MODE "" || return 1
   fi
   mm_wf_info "WORKFLOW_STATE=CONFIGURED WORKFLOW_GENERATION_ID=${gen} CONFIG_SHA256=${sha}"
 }
@@ -686,7 +686,7 @@ mm_wf_invalidate_after_config_change() {
   local cls state os_gen p2_gen client_gen fpr cmd_file
   if ! mm_wf_ensure_file; then
     mm_wf_warn "WORKFLOW_STATE_UPDATE=SKIPPED reason=unreadable_or_unwritable"
-    return 0
+    return 1
   fi
 
   mm_wf_classify_config_change
@@ -694,16 +694,16 @@ mm_wf_invalidate_after_config_change() {
 
   case "$cls" in
     NONE)
-      mm_wf_store_layer_identities || true
+      mm_wf_store_layer_identities || return 1
       mm_wf_set_many \
         "CONFIG_CHANGE_CLASS=NONE" \
         "STALE_REASON=" \
         "NEXT_REQUIRED_ACTION=NONE" \
-        || true
+        || return 1
       if declare -F mm_status_set >/dev/null 2>&1; then
-        mm_status_set CONFIG_CHANGE_CLASS NONE
-        mm_status_set NEXT_REQUIRED_ACTION NONE
-        mm_status_set STALE_REASON ""
+        mm_status_set CONFIG_CHANGE_CLASS NONE || return 1
+        mm_status_set NEXT_REQUIRED_ACTION NONE || return 1
+        mm_status_set STALE_REASON "" || return 1
       fi
       mm_wf_info "WORKFLOW_CONFIG_UNCHANGED class=NONE"
       return 0
@@ -714,49 +714,49 @@ mm_wf_invalidate_after_config_change() {
       state="$(mm_wf_state)"
       case "$state" in
         COMMANDS_GENERATED)
-          mm_wf_set_many "WORKFLOW_STATE=READINESS_VERIFIED" || true
+          mm_wf_set_many "WORKFLOW_STATE=READINESS_VERIFIED" || return 1
           if declare -F mm_status_set >/dev/null 2>&1; then
-            mm_status_set WORKFLOW_STATE READINESS_VERIFIED
+            mm_status_set WORKFLOW_STATE READINESS_VERIFIED || return 1
           fi
           ;;
       esac
-      mm_wf_set_many "COMMAND_FILE_GENERATION_ID=" || true
+      mm_wf_set_many "COMMAND_FILE_GENERATION_ID=" || return 1
       cmd_file=""
       if declare -F mm_client_commands_file >/dev/null 2>&1; then
         cmd_file="$(mm_client_commands_file)"
-        rm -f "$cmd_file" 2>/dev/null || true
+        rm -f "$cmd_file" 2>/dev/null || return 1
       fi
       if declare -F mm_status_set >/dev/null 2>&1; then
-        mm_status_set CLIENT_COMMANDS_MODE ""
-        mm_status_set CONFIG_CHANGE_CLASS "$cls"
-        mm_status_set NEXT_REQUIRED_ACTION "${MM_WF_NEXT_REQUIRED_ACTION}"
-        mm_status_set STALE_REASON "${MM_WF_STALE_REASON}"
+        mm_status_set CLIENT_COMMANDS_MODE "" || return 1
+        mm_status_set CONFIG_CHANGE_CLASS "$cls" || return 1
+        mm_status_set NEXT_REQUIRED_ACTION "${MM_WF_NEXT_REQUIRED_ACTION}" || return 1
+        mm_status_set STALE_REASON "${MM_WF_STALE_REASON}" || return 1
         if [[ "$cls" == "COMMAND_AND_AUTH" || "$cls" == "AUTH_CREDENTIAL" ]]; then
-          mm_status_set ACPS_CONNECTION ""
+          mm_status_set ACPS_CONNECTION "" || return 1
         fi
       fi
-      mm_wf_store_layer_identities || true
+      mm_wf_store_layer_identities || return 1
       mm_wf_set_many \
         "CONFIG_CHANGE_CLASS=${cls}" \
         "STALE_REASON=${MM_WF_STALE_REASON}" \
         "NEXT_REQUIRED_ACTION=${MM_WF_NEXT_REQUIRED_ACTION}" \
-        || true
+        || return 1
       mm_wf_info "WORKFLOW_STALE class=${cls} demote=commands_only"
       return 0
       ;;
     AUTH_CREDENTIAL)
       # Credentials are acquisition inputs, not artifact identity.
-      mm_wf_store_layer_identities || true
+      mm_wf_store_layer_identities || return 1
       mm_wf_set_many \
         "CONFIG_CHANGE_CLASS=AUTH_CREDENTIAL" \
         "STALE_REASON=${MM_WF_STALE_REASON}" \
         "NEXT_REQUIRED_ACTION=NONE" \
-        || true
+        || return 1
       if declare -F mm_status_set >/dev/null 2>&1; then
-        mm_status_set ACPS_CONNECTION ""
-        mm_status_set CONFIG_CHANGE_CLASS AUTH_CREDENTIAL
-        mm_status_set NEXT_REQUIRED_ACTION NONE
-        mm_status_set STALE_REASON "${MM_WF_STALE_REASON}"
+        mm_status_set ACPS_CONNECTION "" || return 1
+        mm_status_set CONFIG_CHANGE_CLASS AUTH_CREDENTIAL || return 1
+        mm_status_set NEXT_REQUIRED_ACTION NONE || return 1
+        mm_status_set STALE_REASON "${MM_WF_STALE_REASON}" || return 1
       fi
       mm_wf_info "WORKFLOW_STALE class=AUTH_CREDENTIAL demote=auth_status_only"
       return 0
@@ -767,27 +767,27 @@ mm_wf_invalidate_after_config_change() {
       state="$(mm_wf_state)"
       case "$state" in
         COMMANDS_GENERATED)
-          mm_wf_set_many "WORKFLOW_STATE=READINESS_VERIFIED" || true
+          mm_wf_set_many "WORKFLOW_STATE=READINESS_VERIFIED" || return 1
           if declare -F mm_status_set >/dev/null 2>&1; then
-            mm_status_set WORKFLOW_STATE READINESS_VERIFIED
+            mm_status_set WORKFLOW_STATE READINESS_VERIFIED || return 1
           fi
           ;;
       esac
-      mm_wf_set_many "COMMAND_FILE_GENERATION_ID=" || true
+      mm_wf_set_many "COMMAND_FILE_GENERATION_ID=" || return 1
       if declare -F mm_client_commands_file >/dev/null 2>&1; then
-        rm -f "$(mm_client_commands_file)" 2>/dev/null || true
+        rm -f "$(mm_client_commands_file)" 2>/dev/null || return 1
       fi
-      mm_wf_store_layer_identities || true
+      mm_wf_store_layer_identities || return 1
       mm_wf_set_many \
         "CONFIG_CHANGE_CLASS=LEGACY_UNKNOWN" \
         "STALE_REASON=${MM_WF_STALE_REASON}" \
         "NEXT_REQUIRED_ACTION=${MM_WF_NEXT_REQUIRED_ACTION}" \
-        || true
+        || return 1
       if declare -F mm_status_set >/dev/null 2>&1; then
-        mm_status_set CLIENT_COMMANDS_MODE ""
-        mm_status_set CONFIG_CHANGE_CLASS LEGACY_UNKNOWN
-        mm_status_set NEXT_REQUIRED_ACTION "${MM_WF_NEXT_REQUIRED_ACTION}"
-        mm_status_set STALE_REASON "${MM_WF_STALE_REASON}"
+        mm_status_set CLIENT_COMMANDS_MODE "" || return 1
+        mm_status_set CONFIG_CHANGE_CLASS LEGACY_UNKNOWN || return 1
+        mm_status_set NEXT_REQUIRED_ACTION "${MM_WF_NEXT_REQUIRED_ACTION}" || return 1
+        mm_status_set STALE_REASON "${MM_WF_STALE_REASON}" || return 1
       fi
       mm_wf_info "WORKFLOW_STALE class=LEGACY_UNKNOWN demote=commands_only preserve_artifacts=YES"
       return 0
@@ -816,23 +816,23 @@ mm_wf_invalidate_after_config_change() {
         "CONFIG_CHANGE_CLASS=PUBLICATION_ENDPOINT" \
         "STALE_REASON=${MM_WF_STALE_REASON}" \
         "NEXT_REQUIRED_ACTION=${MM_WF_NEXT_REQUIRED_ACTION}" \
-        || true
+        || return 1
       if declare -F mm_status_set >/dev/null 2>&1; then
-        mm_status_set WORKFLOW_STATE PREPARED
-        mm_status_set UPGRADE_READINESS FAIL
-        mm_status_set READINESS_RESULT ""
-        mm_status_set READINESS_CONFIG_FINGERPRINT ""
-        mm_status_set HTTP_DISTRIBUTION ""
-        mm_status_set HTTP_CONFIGURATION_READY ""
-        mm_status_set CLIENT_COMMANDS_MODE ""
-        mm_status_set CONFIG_CHANGE_CLASS PUBLICATION_ENDPOINT
-        mm_status_set NEXT_REQUIRED_ACTION "${MM_WF_NEXT_REQUIRED_ACTION}"
-        mm_status_set STALE_REASON "${MM_WF_STALE_REASON}"
+        mm_status_set WORKFLOW_STATE PREPARED || return 1
+        mm_status_set UPGRADE_READINESS FAIL || return 1
+        mm_status_set READINESS_RESULT "" || return 1
+        mm_status_set READINESS_CONFIG_FINGERPRINT "" || return 1
+        mm_status_set HTTP_DISTRIBUTION "" || return 1
+        mm_status_set HTTP_CONFIGURATION_READY "" || return 1
+        mm_status_set CLIENT_COMMANDS_MODE "" || return 1
+        mm_status_set CONFIG_CHANGE_CLASS PUBLICATION_ENDPOINT || return 1
+        mm_status_set NEXT_REQUIRED_ACTION "${MM_WF_NEXT_REQUIRED_ACTION}" || return 1
+        mm_status_set STALE_REASON "${MM_WF_STALE_REASON}" || return 1
       fi
       if declare -F mm_client_commands_file >/dev/null 2>&1; then
-        rm -f "$(mm_client_commands_file)" 2>/dev/null || true
+        rm -f "$(mm_client_commands_file)" 2>/dev/null || return 1
       fi
-      mm_wf_store_layer_identities || true
+      mm_wf_store_layer_identities || return 1
       mm_wf_info "WORKFLOW_STALE class=PUBLICATION_ENDPOINT demote=PREPARED preserve_artifacts=YES"
       return 0
       ;;
@@ -872,37 +872,37 @@ mm_wf_invalidate_after_config_change() {
           "STALE_REASON=${MM_WF_STALE_REASON}" \
           "NEXT_REQUIRED_ACTION=${MM_WF_NEXT_REQUIRED_ACTION}" \
           "PREPARATION_MODE=${PREPARATION_MODE:-FULL}" \
-          || true
-        mm_wf_store_layer_identities || true
+          || return 1
+        mm_wf_store_layer_identities || return 1
         if declare -F mm_status_set >/dev/null 2>&1; then
-          mm_status_set WORKFLOW_STATE PREPARED
-          mm_status_set UPGRADE_READINESS FAIL
-          mm_status_set READINESS_RESULT ""
-          mm_status_set READINESS_CONFIG_FINGERPRINT ""
-          mm_status_set HTTP_DISTRIBUTION ""
-          mm_status_set HTTP_CONFIGURATION_READY ""
-          mm_status_set CLIENT_COMMANDS_MODE ""
-          mm_status_set CONFIG_CHANGE_CLASS "$cls"
-          mm_status_set NEXT_REQUIRED_ACTION "${MM_WF_NEXT_REQUIRED_ACTION}"
-          mm_status_set STALE_REASON "${MM_WF_STALE_REASON}"
+          mm_status_set WORKFLOW_STATE PREPARED || return 1
+          mm_status_set UPGRADE_READINESS FAIL || return 1
+          mm_status_set READINESS_RESULT "" || return 1
+          mm_status_set READINESS_CONFIG_FINGERPRINT "" || return 1
+          mm_status_set HTTP_DISTRIBUTION "" || return 1
+          mm_status_set HTTP_CONFIGURATION_READY "" || return 1
+          mm_status_set CLIENT_COMMANDS_MODE "" || return 1
+          mm_status_set CONFIG_CHANGE_CLASS "$cls" || return 1
+          mm_status_set NEXT_REQUIRED_ACTION "${MM_WF_NEXT_REQUIRED_ACTION}" || return 1
+          mm_status_set STALE_REASON "${MM_WF_STALE_REASON}" || return 1
         fi
         if declare -F mm_client_commands_file >/dev/null 2>&1; then
-          rm -f "$(mm_client_commands_file)" 2>/dev/null || true
+          rm -f "$(mm_client_commands_file)" 2>/dev/null || return 1
         fi
         mm_wf_info "WORKFLOW_STALE class=${cls} demote=PREPARED preserve_artifacts=YES"
         return 0
       fi
       # No heavy artifact generations yet — full demotion to CONFIGURED.
-      mm_wf_mark_configured || return 0
+      mm_wf_mark_configured || return 1
       mm_wf_set_many \
         "CONFIG_CHANGE_CLASS=${cls}" \
         "STALE_REASON=${MM_WF_STALE_REASON}" \
         "NEXT_REQUIRED_ACTION=${MM_WF_NEXT_REQUIRED_ACTION}" \
-        || true
+        || return 1
       if declare -F mm_status_set >/dev/null 2>&1; then
-        mm_status_set CONFIG_CHANGE_CLASS "$cls"
-        mm_status_set NEXT_REQUIRED_ACTION "${MM_WF_NEXT_REQUIRED_ACTION}"
-        mm_status_set STALE_REASON "${MM_WF_STALE_REASON}"
+        mm_status_set CONFIG_CHANGE_CLASS "$cls" || return 1
+        mm_status_set NEXT_REQUIRED_ACTION "${MM_WF_NEXT_REQUIRED_ACTION}" || return 1
+        mm_status_set STALE_REASON "${MM_WF_STALE_REASON}" || return 1
       fi
       mm_wf_info "WORKFLOW_STALE class=${cls} demote=CONFIGURED"
       return 0
@@ -1775,10 +1775,18 @@ mm_wf_validate_command_file_content() {
         bringup_max="$configured_masters"
       fi
       if [[ -n "${DL_WORKER_IPS:-}" || -n "${DA_WORKER_IPS:-}" ]]; then
-        expect_dl=0
-        expect_da=0
-        [[ -n "${DL_WORKER_IPS:-}" ]] && expect_dl=1
-        [[ -n "${DA_WORKER_IPS:-}" ]] && expect_da=1
+        expect_dl=1
+        expect_da=1
+        # Both role sections are present. A workerless role is conditional on
+        # that master actually existing; it does not imply master presence.
+        if [[ -z "${DL_WORKER_IPS:-}" ]] && ! grep -qx 'Only if a DL master exists with no DL workers:' "$file"; then
+          mm_wf_command_file_fail BRINGUP_ROLE_MISMATCH
+          return 1
+        fi
+        if [[ -z "${DA_WORKER_IPS:-}" ]] && ! grep -qx 'Only if a DA master exists with no DA workers:' "$file"; then
+          mm_wf_command_file_fail BRINGUP_ROLE_MISMATCH
+          return 1
+        fi
         if [[ "$dl_sections" -ne "$expect_dl" || "$da_sections" -ne "$expect_da" ]]; then
           mm_wf_command_file_fail BRINGUP_ROLE_MISMATCH \
             "COMMAND_FILE_BRINGUP_DL_SECTION_COUNT=${dl_sections}" \
@@ -1876,10 +1884,18 @@ mm_wf_validate_command_file_content() {
         bringup_max="$configured_masters"
       fi
       if [[ -n "${DL_WORKER_IPS:-}" || -n "${DA_WORKER_IPS:-}" ]]; then
-        expect_dl=0
-        expect_da=0
-        [[ -n "${DL_WORKER_IPS:-}" ]] && expect_dl=1
-        [[ -n "${DA_WORKER_IPS:-}" ]] && expect_da=1
+        expect_dl=1
+        expect_da=1
+        # Both role sections are present. A workerless role is conditional on
+        # that master actually existing; it does not imply master presence.
+        if [[ -z "${DL_WORKER_IPS:-}" ]] && ! grep -qx 'Only if a DL master exists with no DL workers:' "$file"; then
+          mm_wf_command_file_fail BRINGUP_ROLE_MISMATCH
+          return 1
+        fi
+        if [[ -z "${DA_WORKER_IPS:-}" ]] && ! grep -qx 'Only if a DA master exists with no DA workers:' "$file"; then
+          mm_wf_command_file_fail BRINGUP_ROLE_MISMATCH
+          return 1
+        fi
         if [[ "$dl_sections" -ne "$expect_dl" || "$da_sections" -ne "$expect_da" ]]; then
           mm_wf_command_file_fail BRINGUP_ROLE_MISMATCH \
             "COMMAND_FILE_BRINGUP_DL_SECTION_COUNT=${dl_sections}" \

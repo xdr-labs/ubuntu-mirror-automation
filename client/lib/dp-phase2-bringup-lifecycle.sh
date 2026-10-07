@@ -60,16 +60,22 @@ p2b_lifecycle_owned_worker_password_marker_path() {
 # Delete only the lifecycle-owned worker password copy. Never delete an
 # externally supplied --worker-password-file path. Idempotent if absent.
 p2b_cleanup_lifecycle_owned_worker_password() {
-  local d f marker marked
-  d="$(p2b_dir)"
+  # Ownership is invocation-local, not inferred from another run's marker.
+  # Bind cleanup to the exact file created/adopted by this parent or worker;
+  # an old process must never remove a replacement credential for a new run.
+  [[ "${WORKER_PASSWORD_FILE_OWNED:-NO}" == "YES" ]] || return 0
+  local f marker marked current_id marker_id
   f="$(p2b_lifecycle_owned_worker_password_path)"
   marker="$(p2b_lifecycle_owned_worker_password_marker_path)"
+  [[ "${WORKER_PASSWORD_FILE:-}" == "$f" && -n "${P2B_PASSWORD_OWNER_ID:-}" ]] || return 0
   marked="$(p2b_read_file "$marker" 2>/dev/null || true)"
-  if [[ "${WORKER_PASSWORD_FILE_OWNED:-NO}" == "YES" ]] || [[ -f "$marker" ]] \
-    || [[ "${WORKER_PASSWORD_FILE:-}" == "$f" ]]; then
-    if [[ -z "$marked" || "$marked" == "$f" ]]; then
-      rm -f "$f" 2>/dev/null || true
-    fi
+  [[ -z "$marked" || "$marked" == "$f" ]] || return 0
+  marker_id="$(sed -n 's/^OWNER_ID=//p' "$marker" 2>/dev/null | head -1 || true)"
+  [[ -z "$marker_id" || "$marker_id" == "$P2B_PASSWORD_OWNER_ID" ]] || return 0
+  current_id="$(stat -Lc '%d:%i' "$f" 2>/dev/null || true)"
+  if [[ "$current_id" == "$P2B_PASSWORD_OWNER_ID" ]]; then
+    rm -f "$f" "$marker" 2>/dev/null || true
+  elif [[ -z "$current_id" && "$marker_id" == "$P2B_PASSWORD_OWNER_ID" ]]; then
     rm -f "$marker" 2>/dev/null || true
   fi
   return 0
@@ -120,15 +126,18 @@ p2b_lifecycle_die() {
 }
 
 p2b_resolve_lifecycle_password_ownership() {
-  local d f marker marked
-  d="$(p2b_dir)"
+  local f marker marked
   f="$(p2b_lifecycle_owned_worker_password_path)"
   marker="$(p2b_lifecycle_owned_worker_password_marker_path)"
   marked="$(p2b_read_file "$marker" 2>/dev/null || true)"
-  if [[ "${WORKER_PASSWORD_FILE:-}" == "$f" ]] \
-    || [[ -f "$marker" && ( -z "$marked" || "$marked" == "$f" || "$marked" == "${WORKER_PASSWORD_FILE:-}" ) ]]; then
-    WORKER_PASSWORD_FILE_OWNED=YES
+  WORKER_PASSWORD_FILE_OWNED=NO
+  P2B_PASSWORD_OWNER_ID=""
+  if [[ "${WORKER_PASSWORD_FILE:-}" == "$f" && -f "$f" ]] \
+    && [[ -z "$marked" || "$marked" == "$f" ]]; then
+    P2B_PASSWORD_OWNER_ID="$(stat -Lc '%d:%i' "$f" 2>/dev/null || true)"
+    [[ -n "$P2B_PASSWORD_OWNER_ID" ]] && WORKER_PASSWORD_FILE_OWNED=YES
   fi
+  return 0
 }
 
 p2b_read_file() {
@@ -1262,6 +1271,12 @@ EOF
     fi
 
     p2b_status_snapshot
+    if [[ "${BRINGUP_RUN_ID}" != "$run_id" ]]; then
+      printf '%s\n' "BRINGUP_RESULT=FAIL_RUN_CHANGED" \
+        "FAILURE_REASON=MONITORED_RUN_REPLACED" \
+        "MONITORED_RUN_ID=${run_id}" "ACTIVE_RUN_ID=${BRINGUP_RUN_ID}"
+      return 1
+    fi
     state="${BRINGUP_STATE}"
     pid="${BRINGUP_WORKER_PID}"
     elapsed="${BRINGUP_ELAPSED_SECONDS:-0}"
@@ -1331,16 +1346,10 @@ EOF
         fi
         return 0
       fi
-      p2b_write_state "FAILED"
-      {
-        echo "BRINGUP_TERMINAL_STATE=FAILED"
-        echo "BRINGUP_RESULT=FAIL_POSTCONDITION"
-        echo "FAILURE_REASON=AELLA_CLI_MISSING_AFTER_BRINGUP_COMPLETE"
-        echo "BRINGUP_RUN_ID=${run_id}"
-      } | p2b_atomic_write "${d}/result.env"
+      # Observation never overwrites worker-owned terminal evidence.
       cat <<EOF
 BRINGUP_RESULT=FAIL_POSTCONDITION
-BRINGUP_STATE=FAILED
+BRINGUP_STATE=COMPLETED
 AELLA_CLI_AVAILABLE=NO
 FAILURE_REASON=AELLA_CLI_MISSING_AFTER_BRINGUP_COMPLETE
 EXPECTED_PACKAGE_STATUS=aella_cli not found in PATH or known install paths

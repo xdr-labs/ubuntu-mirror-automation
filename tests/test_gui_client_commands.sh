@@ -80,65 +80,35 @@ mm_validate_worker_ips '' >/dev/null 2>&1 && fail "empty worker ips accepted" ||
 mm_validate_worker_ips '192.0.2.1;rm -rf /' >/dev/null 2>&1 && fail "metachar accepted" || true
 pass "worker IP validation"
 
-mm_validate_worker_ssh_password '' '' \
-  || fail "empty password should be allowed with no worker IPs"
-mm_validate_worker_ssh_password '' '192.0.2.23' \
-  && fail "empty password accepted with worker IPs" || true
-mm_validate_worker_ssh_password 'customer-password' '192.0.2.23' \
-  || fail "non-empty password rejected with worker IPs"
-mm_validate_worker_ssh_password 'Abc$123!' '192.0.2.23,192.0.2.25' \
-  || fail "special-character password rejected"
-pass "worker SSH password validation"
-
-# Persist / reload / update worker password
+# No Mirror-side password input/storage. Legacy config fields are ignored and
+# removed on save; routing still round-trips without any password.
+! declare -F mm_validate_worker_ssh_password >/dev/null || fail "retired password validator remains"
 PREPARATION_MODE=FULL
 MIRROR_HTTP_URL="http://192.0.2.10"
-WORKER_SSH_PASSWORD='customer-password'
+WORKER_SSH_PASSWORD='synthetic-legacy-password'
 DL_WORKER_IPS='192.0.2.23,192.0.2.25'
 DA_WORKER_IPS='192.0.2.24,192.0.2.26'
 mm_save_gui_config >/dev/null
-grep -q 'WORKER_SSH_PASSWORD=' "$MM_CONFIG_FILE" || fail "WORKER_SSH_PASSWORD not written"
-grep -q 'DL_WORKER_IPS=' "$MM_CONFIG_FILE" || fail "DL_WORKER_IPS not written"
-grep -q 'DA_WORKER_IPS=' "$MM_CONFIG_FILE" || fail "DA_WORKER_IPS not written"
-grep -qE 'ACPS_USERNAME=|ACPS_PASSWORD=' "$MM_CONFIG_FILE" \
-  && fail "ACPS credentials must not be persisted" || true
-WORKER_SSH_PASSWORD=""
-DL_WORKER_IPS=""
-DA_WORKER_IPS=""
+! grep -q 'WORKER_SSH_PASSWORD=' "$MM_CONFIG_FILE" || fail "worker password persisted"
+DL_WORKER_IPS=""; DA_WORKER_IPS=""
 mm_load_gui_config
-[[ "$WORKER_SSH_PASSWORD" == "customer-password" ]] || fail "worker password not reloaded"
+[[ -z "${WORKER_SSH_PASSWORD:-}" ]] || fail "legacy password remains loaded"
 [[ "$DL_WORKER_IPS" == '192.0.2.23,192.0.2.25' ]] || fail "DL worker IPs not reloaded"
 [[ "$DA_WORKER_IPS" == '192.0.2.24,192.0.2.26' ]] || fail "DA worker IPs not reloaded"
-WORKER_SSH_PASSWORD='Abc$123!'
-mm_save_gui_config >/dev/null
-WORKER_SSH_PASSWORD=""
-mm_load_gui_config
-[[ "$WORKER_SSH_PASSWORD" == 'Abc$123!' ]] || fail "updated worker password not reloaded"
-# Empty password remains allowed when no worker IPs are configured.
-WORKER_SSH_PASSWORD=""
-rm -f "$MM_CONFIG_FILE"
-MIRROR_HTTP_URL="http://192.0.2.10"
-mm_save_gui_config >/dev/null
-WORKER_SSH_PASSWORD="stale"
-mm_load_gui_config
-[[ -z "${WORKER_SSH_PASSWORD}" ]] || fail "empty worker password not reloaded as empty"
-pass "worker SSH password save/reload/update"
-echo "DL_WORKER_IP_PERSISTENCE=PASS"
-echo "DA_WORKER_IP_PERSISTENCE=PASS"
-echo "WORKER_PASSWORD_PERSISTENCE=PASS"
+echo 'WORKER_PASSWORD_STORAGE=ABSENT'
+pass "routing persists without worker passwords"
 
 # --- Configuration: Preparation Mode only; no DP version fields ---
 grep -q '"1" "Preparation Mode"' "$INSTALLER" || fail "Preparation Mode menu missing"
 grep -q '"3" "DL Worker IP addresses"' "$INSTALLER" || fail "DL Worker IP menu item missing"
 grep -q '"4" "DA Worker IP addresses"' "$INSTALLER" || fail "DA Worker IP menu item missing"
-grep -q '"5" "Worker SSH Password (aella)"' "$INSTALLER" \
-  || fail "Worker SSH Password menu item missing"
-grep -q '"6" "Test R2 Connection"' "$INSTALLER" || fail "R2 connection test menu item missing"
-grep -q '"7" "Save Configuration"' "$INSTALLER" || fail "Save Configuration menu item missing"
+! grep -q 'Worker SSH Password (aella)' "$INSTALLER" || fail "retired password menu remains"
+grep -q '"5" "Test R2 Connection"' "$INSTALLER" || fail "R2 connection test menu item missing"
+grep -q '"6" "Save Configuration"' "$INSTALLER" || fail "Save Configuration menu item missing"
 grep -q 'ACPS Username\|ACPS Password\|Test ACPS Connection' "$INSTALLER" \
   && fail "ACPS credential UI still present" || true
-grep -q 'Common aella SSH password used by each cluster master to access its workers' "$INSTALLER" \
-  || fail "Worker SSH Password help text missing"
+grep -q 'entered on each master at bringup execution' "$INSTALLER" \
+  || fail "runtime-only credential help missing"
 grep -qE 'Current DP Version|Starting DP Version"|Target DP Version|"DP Version"' "$INSTALLER" \
   && fail "DP version config fields still present" || true
 footer="$(mm_config_footer_text)"
@@ -158,7 +128,7 @@ config_text="Preparation Mode: Full OS Upgrade + Phase 2
 Mirror Server IP: 192.0.2.10
 DL Worker IPs: 192.0.2.23,192.0.2.25
 DA Worker IPs: 192.0.2.24,192.0.2.26
-Worker SSH Password (aella): configured
+Worker SSH password: entered on the DP at runtime
 OS Core Source: Cloudflare R2
 Phase 2 Source: Cloudflare R2
 
@@ -484,16 +454,15 @@ pass "dual DL/DA cluster bringup commands"
 assert_single_bringup_no_workers "$OUT"
 pass "single-node bringup omits worker flags"
 
-# Cluster without password is rejected
+# Cluster command generation uses no stored password
 set +e
 gui_build_client_commands "http://192.0.2.10" "cluster" "192.0.2.23" "" "" \
   >"$TMP/cluster-nopass.txt" 2>"$TMP/cluster-nopass.err"
 nopass_rc=$?
 set -e
-[[ "$nopass_rc" -ne 0 ]] || fail "cluster without password should fail"
-grep -q 'WORKER_SSH_PASSWORD_REQUIRED=YES' "$TMP/cluster-nopass.err" \
-  || fail "missing WORKER_SSH_PASSWORD_REQUIRED"
-pass "cluster without password rejected"
+[[ "$nopass_rc" -eq 0 ]] || fail "cluster should generate without a stored password"
+grep -q -- '--prompt-worker-password' "$TMP/cluster-nopass.txt" || fail "runtime prompt missing"
+pass "cluster generation uses runtime-only password"
 
 # Special-character passwords must NOT appear in generated command output
 for spec_pass in 'Test123!' 'Abc$123!' 'worker@Pass#2026' 'A&b!c$123'; do
@@ -808,9 +777,8 @@ echo "CONFIG_HAS_DL_WORKER_IP_FIELD=YES"
 grep -q '"4" "DA Worker IP addresses"' "$INSTALLER" \
   || fail "CONFIG_HAS_DA_WORKER_IP_FIELD missing"
 echo "CONFIG_HAS_DA_WORKER_IP_FIELD=YES"
-grep -q '"5" "Worker SSH Password (aella)"' "$INSTALLER" \
-  || fail "CONFIG_HAS_COMMON_WORKER_PASSWORD missing"
-echo "CONFIG_HAS_COMMON_WORKER_PASSWORD=YES"
+! grep -q '"Worker SSH Password (aella)"' "$INSTALLER" || fail "password config remains"
+echo "CONFIG_HAS_COMMON_WORKER_PASSWORD=NO"
 
 if sed -n '/^gui_client_instructions()/,/^cmd_mirror_manager()/p' "$INSTALLER" \
   | grep -q 'mm_whiptail_input'; then
@@ -920,12 +888,12 @@ grep -q -- '--worker-ips' "$REG_DL_ONLY" || fail "DL-only missing --worker-ips"
 grep -Fq '198.51.100.21' "$REG_DL_ONLY" && grep -Fq '198.51.100.22' "$REG_DL_ONLY" \
   || fail "DL-only missing DL workers"
 grep -F "$REG_DA_IPS" "$REG_DL_ONLY" && fail "DL-only contains DA workers" || true
-grep -q 'DA cluster bringup command was not generated because' "$REG_DL_ONLY" \
-  || fail "DL-only missing DA not-configured message"
-grep -q 'DA Worker IPs are not configured' "$REG_DL_ONLY" \
-  || fail "DL-only missing DA Worker IPs reason"
-[[ "$(grep -cE '^sudo bash /home/aella/bringup_py3_dp_after_os_upgrade\.sh --version .* --skip-download' "$REG_DL_ONLY" || true)" -eq 1 ]] \
-  || fail "DL-only should emit exactly one bringup command"
+grep -qx 'Only if a DA master exists with no DA workers:' "$REG_DL_ONLY" \
+  || fail "DL-only missing conditional DA master-only guidance"
+grep -q 'If this deployment has no DA master, skip this section entirely' "$REG_DL_ONLY" \
+  || fail "DL-only missing absent-master skip guidance"
+[[ "$(grep -cE '^sudo bash /home/aella/bringup_py3_dp_after_os_upgrade\.sh --version .* --skip-download' "$REG_DL_ONLY" || true)" -eq 2 ]] \
+  || fail "DL-only should include its conditional workerless-master command"
 echo "DL_ONLY_CONFIGURATION=PASS"
 
 REG_DA_ONLY="$TMP/reg-da-only.txt"
@@ -935,12 +903,12 @@ grep -q -- '--worker-ips' "$REG_DA_ONLY" || fail "DA-only missing --worker-ips"
 grep -Fq '203.0.113.21' "$REG_DA_ONLY" && grep -Fq '203.0.113.22' "$REG_DA_ONLY" \
   || fail "DA-only missing DA workers"
 grep -F "$REG_DL_IPS" "$REG_DA_ONLY" && fail "DA-only contains DL workers" || true
-grep -q 'DL cluster bringup command was not generated because' "$REG_DA_ONLY" \
-  || fail "DA-only missing DL not-configured message"
-grep -q 'DL Worker IPs are not configured' "$REG_DA_ONLY" \
-  || fail "DA-only missing DL Worker IPs reason"
-[[ "$(grep -cE '^sudo bash /home/aella/bringup_py3_dp_after_os_upgrade\.sh --version .* --skip-download' "$REG_DA_ONLY" || true)" -eq 1 ]] \
-  || fail "DA-only should emit exactly one bringup command"
+grep -qx 'Only if a DL master exists with no DL workers:' "$REG_DA_ONLY" \
+  || fail "DA-only missing conditional DL master-only guidance"
+grep -q 'If this deployment has no DL master, skip this section entirely' "$REG_DA_ONLY" \
+  || fail "DA-only missing absent-master skip guidance"
+[[ "$(grep -cE '^sudo bash /home/aella/bringup_py3_dp_after_os_upgrade\.sh --version .* --skip-download' "$REG_DA_ONLY" || true)" -eq 2 ]] \
+  || fail "DA-only should include its conditional workerless-master command"
 echo "DA_ONLY_CONFIGURATION=PASS"
 
 PREPARATION_MODE=PHASE2_ONLY

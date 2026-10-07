@@ -61,6 +61,13 @@ jobs:
           bash tests/test_menu7_bringup_semantic_validation.sh
           bash tests/test_dp_exact_generation_binding.sh
 
+      - name: Audit ownership, operator configuration and runtime password regressions
+        run: |
+          set -euo pipefail
+          python3 -m unittest tests.test_audit99_lifecycle tests.test_audit99_phase1 tests.test_audit99_operator
+          bash tests/test_menu7_cached_open.sh
+          bash tests/test_login_shell_partial_rollback.sh
+
       - name: Transaction and lock race regressions
         run: |
           set -euo pipefail

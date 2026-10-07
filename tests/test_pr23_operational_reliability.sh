@@ -30,6 +30,15 @@ grep -q '^POST_BRINGUP_MIGRATION=REQUIRED$' "$POST_BRINGUP_MIGRATION_ENV" \
   && pass "persist REQUIRED" || fail "persist REQUIRED"
 grep -q '^POST_BRINGUP_MIGRATION_EXECUTION=OPERATOR_REQUIRED$' "$POST_BRINGUP_MIGRATION_ENV" \
   && pass "SCHEMA_MIGRATION_EXECUTION=OPERATOR_REQUIRED" || fail "execution mode"
+source "${ROOT}/client/lib/dp-phase2-bringup-lifecycle.sh"
+export PHASE2_BRINGUP_DIR="${TMP}/lifecycle"
+mkdir -p "$PHASE2_BRINGUP_DIR"
+printf 'run-migration-fixture\n' >"$PHASE2_BRINGUP_DIR/run-id"
+printf '6.6.0\n' >"$PHASE2_BRINGUP_DIR/target-version"
+printf 'COMPLETED\n' >"$PHASE2_BRINGUP_DIR/state"
+printf '0\n' >"$PHASE2_BRINGUP_DIR/exit-code"
+printf '%s\n' 'BRINGUP_RUN_ID=run-migration-fixture' 'BRINGUP_TERMINAL_STATE=COMPLETED' \
+  'BRINGUP_RESULT=PASS' 'BRINGUP_COMPLETION_SENTINEL=PASS' >"$PHASE2_BRINGUP_DIR/result.env"
 p2b_record_post_bringup_migration PASS >/dev/null
 grep -q '^POST_BRINGUP_MIGRATION=PASS$' "$POST_BRINGUP_MIGRATION_ENV" \
   && pass "record PASS" || fail "record PASS"
@@ -453,7 +462,7 @@ p2b_run_cluster_validation_surface >/dev/null
 
 # Field usability
 MENU="${ROOT}/scripts/install-dp-upgrade-mirror.sh"
-grep -q 'DO NOT RUN OS-HOP UPGRADES ON MULTIPLE DP NODES IN PARALLEL' "$MENU" \
+grep -q 'Upgrade only ONE DP node at a time' "$MENU" \
   && pass "serial cluster OS-hop guidance" || fail "serial guidance"
 grep -q 'PHASE2_MTU_PREFLIGHT\|p2b_emit_mtu_warning' \
   "${ROOT}/client/lib/dp-phase2-cluster-validation.sh" \

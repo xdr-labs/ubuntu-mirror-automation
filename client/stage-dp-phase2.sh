@@ -1691,6 +1691,14 @@ stage_main() {
   RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
   CACHE_DIR="/opt/aelladata/.dp-phase2-cache/${TARGET_DP_VERSION}"
   acquire_stage_lock
+  # Recovery can rename/remove live artifacts too. Hold the same lifecycle and
+  # consumer locks through recovery, staging, commit and EXIT rollback/cleanup.
+  # Mutual exclusion with a live bringup worker (and start-handoff parent):
+  # fail closed before invalidating the contract or mutating artifacts/controller.
+  if ! p2b_assert_staging_may_mutate_artifacts; then
+    ARTIFACT_MUTATION_ATTEMPTED="NO"
+    die "Phase 2 staging blocked: live bringup worker or lifecycle lock holds artifact trees (re-run staging after bringup completes or clears)"
+  fi
   recover_interrupted_artifact_transaction \
     || die "Phase 2 artifact crash recovery failed; inspect retained .bak trees before retry"
 
@@ -1711,12 +1719,6 @@ stage_main() {
   # Extract verified bundle directly into the candidate artifact tree (NEW_ART).
   # Live ARTIFACT_DIR stays intact until atomic rename.
   ARTIFACT_MUTATION_ATTEMPTED="YES"
-  # Mutual exclusion with a live bringup worker (and start-handoff parent):
-  # fail closed before invalidating the contract or mutating artifacts/controller.
-  if ! p2b_assert_staging_may_mutate_artifacts; then
-    ARTIFACT_MUTATION_ATTEMPTED="NO"
-    die "Phase 2 staging blocked: live bringup worker or lifecycle lock holds artifact trees (re-run staging after bringup completes or clears)"
-  fi
   # Invalidate prior PASS so bringup cannot launch against an in-progress/partial
   # restage. Retract live controller until this run publishes after success.
   if declare -F dp_phase2_invalidate_staging_contract >/dev/null 2>&1; then

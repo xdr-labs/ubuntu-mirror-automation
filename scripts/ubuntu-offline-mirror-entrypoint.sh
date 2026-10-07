@@ -6,8 +6,25 @@ set -euo pipefail
 set +x
 
 UOM_RUNTIME_ROOT="${UOM_RUNTIME_ROOT:-/usr/local/lib/ubuntu-mirror}"
+UOM_CONFIG_ROOT="${UOM_CONFIG_ROOT:-/etc/ubuntu-mirror}"
 UOM_CORE_ENTRY="${UOM_CORE_ENTRY:-${UOM_RUNTIME_ROOT}/scripts/ubuntu-offline-mirror.sh}"
 UOM_MANAGER_ENTRY="${UOM_MANAGER_ENTRY:-${UOM_RUNTIME_ROOT}/scripts/install-dp-upgrade-mirror.sh}"
+
+uom_load_installed_config() {
+  # Bind reopening to the same effective path configuration used at install.
+  local conf="${UOM_CONFIG_ROOT}/mirror.conf"
+  if [[ -r "$conf" ]]; then
+    set -a
+    source "$conf" || return 1
+    set +a
+  fi
+  export MM_CONFIG_DIR="${MM_CONFIG_DIR:-$UOM_CONFIG_ROOT}"
+  export MM_MIRROR_ROOT="${MM_MIRROR_ROOT:-${BASE_PATH:-/var/spool/apt-mirror}}"
+  export MM_SELECTIVE_ROOT="${MM_SELECTIVE_ROOT:-${SELECTIVE_MIRROR_ROOT:-$MM_MIRROR_ROOT/selective}}"
+  export MM_DP_PHASE2_ROOT="${MM_DP_PHASE2_ROOT:-${DP_PHASE2_ROOT:-$MM_MIRROR_ROOT/dp-phase2}}"
+  export MM_CLIENT_ROOT="${MM_CLIENT_ROOT:-$MM_MIRROR_ROOT/client}"
+  unset WORKER_SSH_PASSWORD
+}
 
 uom_public_help() {
   cat <<EOF
@@ -396,9 +413,11 @@ uom_main() {
       uom_public_help
       ;;
     mirror-manager|install-menu)
+      uom_load_installed_config
       uom_run_mirror_manager "$@"
       ;;
     enable-http|verify-readiness|diagnose-mirror-runtime)
+      uom_load_installed_config
       uom_exec_core "$@"
       ;;
     *)

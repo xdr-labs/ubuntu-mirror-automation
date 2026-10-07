@@ -120,16 +120,11 @@ for spec_pass in 'Test123!' 'Abc$123!' 'worker@Pass#2026' 'A&b!c$123' 'p$ss"wo'\
 done
 pass "special-character passwords absent from command output"
 
-# --- Config still requires password for cluster generation ---
-set +e
-gui_build_client_commands "http://192.0.2.10" "cluster" "192.0.2.23" "" "" \
-  >"$TMP/nopass.txt" 2>"$TMP/nopass.err"
-nopass_rc=$?
-set -e
-[[ "$nopass_rc" -ne 0 ]] || fail "cluster without password should fail"
-grep -q 'WORKER_SSH_PASSWORD_REQUIRED=YES' "$TMP/nopass.err" \
-  || fail "missing WORKER_SSH_PASSWORD_REQUIRED"
-pass "config still requires password for cluster generation"
+# --- Cluster command generation requires no stored Mirror credentials ---
+gui_build_client_commands "$MIRROR_HTTP_URL" cluster "192.0.2.23" "" "" \
+  >"$TMP/nopass.txt" 2>"$TMP/nopass.err" || fail "cluster should generate without stored password"
+grep -q -- '--prompt-worker-password' "$TMP/nopass.txt" || fail "runtime prompt missing"
+pass "cluster generates with runtime-only password prompt"
 
 # --- mm_wf_atomic_publish_command_file → mode 0600 ---
 mm_wf_ensure_file
