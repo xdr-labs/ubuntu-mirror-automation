@@ -56,6 +56,7 @@ run_step "bash_n_roundtrip" bash -n tests/test_os_core_r2_roundtrip_integration.
 run_step "bash_n_client_finalization" bash -n tests/test_client_finalization_local_fs_integration.sh
 run_step "bash_n_run_pr_gate" bash -n tests/run_pr_gate.sh
 run_step "bash_n_engineering_state_backup" bash -n scripts/engineering-state-backup.sh tests/test_engineering_state_backup.sh
+run_step "bash_n_phase1_retry_resume" bash -n tests/test_phase1_retry_resume_regression.sh
 run_step "engineering_state_backup" bash tests/test_engineering_state_backup.sh
 run_step "phase2_detached_handoff_identity" bash tests/test_phase2_detached_handoff_identity.sh
 run_step "python_compile_fixture" python3 -m py_compile tests/lib/build_tiny_os_core_lifecycle_fixture.py
@@ -69,6 +70,7 @@ run_step "audit99_boundary_regressions" python3 -m unittest \
   tests.test_audit99_lifecycle tests.test_audit99_phase1 tests.test_audit99_operator
 run_step "menu7_cached_open_fixture" bash tests/test_menu7_cached_open.sh
 run_step "login_shell_partial_rollback" bash tests/test_login_shell_partial_rollback.sh
+run_step "phase1_retry_resume" bash tests/test_phase1_retry_resume_regression.sh
 
 # Core PR #20 gates (authoritative)
 run_step "aws_field_fix" \

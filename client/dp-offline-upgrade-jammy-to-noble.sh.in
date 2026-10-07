@@ -938,20 +938,64 @@ require_cmds() {
 
 http_code() {
   local url="$1"
+  local code="" attempt=1 max_attempts=3
   if [[ -n "$TEST_ROOT" && -f "$(hostpath /tmp/http-map.tsv)" ]]; then
     local mapped
     mapped="$(awk -F'\t' -v u="$url" '$1==u {print $2; exit}' "$(hostpath /tmp/http-map.tsv)" || true)"
     if [[ -n "$mapped" ]]; then
-      printf '%s' "$mapped"
+      if [[ "$mapped" =~ ^[0-9][0-9][0-9]$ ]]; then
+        printf '%s' "$mapped"
+      else
+        printf '000'
+      fi
       return 0
     fi
   fi
-  curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 10 --max-time 30 "$url" 2>/dev/null || printf '000'
+
+  while [[ "$attempt" -le "$max_attempts" ]]; do
+    # curl emits HTTP code 000 on transport failure. Capture once and normalize
+    # instead of appending a fallback 000 (which previously produced 000000).
+    code="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 10 --max-time 30 "$url" 2>/dev/null || true)"
+    if [[ ! "$code" =~ ^[0-9][0-9][0-9]$ ]]; then
+      code="000"
+    fi
+    case "$code" in
+      000|408|429|5??)
+        if [[ "$attempt" -lt "$max_attempts" ]]; then
+          log WARN "HTTP_PROBE_RETRY attempt=${attempt}/${max_attempts} code=${code} url=${url}"
+          sleep "$attempt"
+          attempt=$((attempt + 1))
+          continue
+        fi
+        ;;
+    esac
+    printf '%s' "$code"
+    return 0
+  done
+
+  printf '%s' "${code:-000}"
 }
 
 http_fetch() {
   local url="$1" dest="$2"
-  curl -fsS --connect-timeout 10 --max-time 120 -o "$dest" "$url"
+  local attempt=1 max_attempts=3 rc=1 tmp
+  tmp="${dest}.part.$$"
+  while [[ "$attempt" -le "$max_attempts" ]]; do
+    rm -f "$tmp" 2>/dev/null || true
+    if curl -fsS --connect-timeout 10 --max-time 120 -o "$tmp" "$url"; then
+      mv -f "$tmp" "$dest"
+      return 0
+    else
+      rc=$?
+    fi
+    rm -f "$tmp" 2>/dev/null || true
+    if [[ "$attempt" -lt "$max_attempts" ]]; then
+      log WARN "HTTP_FETCH_RETRY attempt=${attempt}/${max_attempts} curl_rc=${rc} url=${url}"
+      sleep "$attempt"
+    fi
+    attempt=$((attempt + 1))
+  done
+  return "$rc"
 }
 
 read_os_field() {
@@ -8053,7 +8097,7 @@ state_is_in_progress_or_configuring() {
 state_is_stale_candidate() {
   local st="$1"
   case "$st" in
-    CONFIGURING|PREPARING_JAMMY)
+    CONFIGURING|PREPARING_JAMMY|UPGRADING_JAMMY_TO_NOBLE)
       return 0
       ;;
     *)
@@ -8102,23 +8146,28 @@ live_upgrade_evidence_present() {
 }
 
 transaction_markers_any_true() {
-  # Package-mutation markers only, and only when owned by the current hop.
+  # Package mutation only. Invocation/process-spawn markers are lifecycle
+  # evidence and must not block a deterministic pre-transition re-run.
+  local actual_transition=0
+  if transition_marker_true; then
+    actual_transition=1
+  elif declare -F package_transition_evidence_present >/dev/null 2>&1 \
+    && package_transition_evidence_present; then
+    actual_transition=1
+  fi
+
+  [[ "$actual_transition" -eq 1 ]] || return 1
+
+  # When hop ownership is available, fail closed for current or ambiguous
+  # mutation evidence, but do not let previous-hop evidence poison re-entry.
   if declare -F classify_mutation_evidence_ownership >/dev/null 2>&1; then
     classify_mutation_evidence_ownership || true
-    [[ "${MUTATION_EVIDENCE_CLASS}" == "CURRENT_HOP_MUTATION" ]]
-    return $?
+    case "${MUTATION_EVIDENCE_CLASS}" in
+      CURRENT_HOP_MUTATION|AMBIGUOUS_MUTATION_EVIDENCE) return 0 ;;
+      *) return 1 ;;
+    esac
   fi
-  # Legacy fallback for partial test harnesses that do not embed hop ownership helpers.
-  local dir
-  dir="$(hostpath ${HOLDS_DIR})"
-  if [[ -f "${dir}/release_upgrade_package_transition_started" ]] \
-    && grep -qx 'true' "${dir}/release_upgrade_package_transition_started"; then
-    return 0
-  fi
-  if declare -F package_transition_evidence_present >/dev/null 2>&1; then
-    package_transition_evidence_present && return 0
-  fi
-  return 1
+  return 0
 }
 
 preserve_stale_state_evidence() {
@@ -8249,8 +8298,14 @@ state_user_message() {
     REBOOTING)
       printf '%s' "The host is rebooting. This SSH session will disconnect."
       ;;
-    FAILED|FAILED_PRE_DRO|FAILED_BEFORE_PACKAGE_TRANSITION|FAILED_AFTER_PACKAGE_TRANSITION|FAILED_PRE_DRO_STALE|FAILED_POST_TRANSACTION)
-      printf '%s' "The background upgrade reported a failure. Do not rerun the client."
+    FAILED_PRE_DRO|FAILED_PRE_DRO_STALE|FAILED_BEFORE_PACKAGE_TRANSITION)
+      printf '%s' "The upgrade stopped before package transition. Re-run the same client; it will revalidate before continuing."
+      ;;
+    FAILED_AFTER_PACKAGE_TRANSITION|FAILED_POST_TRANSACTION)
+      printf '%s' "The package transition had already started. Do not rerun the client; manual review is required."
+      ;;
+    FAILED)
+      printf '%s' "The upgrade reported a failure. Re-run the same client to revalidate state; it will continue only if the pre-transition safety gates pass."
       ;;
     POST_BOOT_VERIFY)
       printf '%s' "Post-boot validation is in progress."
@@ -8543,10 +8598,29 @@ EOF
   else
     echo "(persistent log missing)"
   fi
-  cat <<EOF
-Do not rerun the client until the failure is reviewed.
+  case "${st:-UNKNOWN}" in
+    FAILED_PRE_DRO|FAILED_PRE_DRO_STALE|FAILED_BEFORE_PACKAGE_TRANSITION)
+      cat <<EOF
+The package transition did not start.
+Re-run the same client. It will revalidate the host before continuing.
 ============================================================
 EOF
+      ;;
+    FAILED_AFTER_PACKAGE_TRANSITION|FAILED_POST_TRANSACTION)
+      cat <<EOF
+The package transition had already started.
+Do not rerun the client. Manual review is required.
+============================================================
+EOF
+      ;;
+    *)
+      cat <<EOF
+Re-run the same client to revalidate state.
+It will continue only if the pre-transition safety gates pass; otherwise it stops for manual review.
+============================================================
+EOF
+      ;;
+  esac
 }
 
 print_already_running_banner() {
@@ -9394,6 +9468,23 @@ classify_mutation_evidence_ownership() {
       fi
       ;;
   esac
+
+  # Invocation/process-spawn markers are lifecycle evidence, not package
+  # mutation. A Ctrl+C before the first package transition may leave them
+  # behind. If this is clearly the current hop and no transition evidence
+  # exists, classify as NO_MUTATION so the safe-resume gate can re-enter.
+  if [[ "$has_transition" -eq 0 ]]; then
+    case "$st" in
+      PREFLIGHT|READY_FOR_CONFIRMATION|READY_FOR_RESUME|CONFIGURING|PREPARING_*|UPGRADING_*)
+        if ! package_transition_evidence_present 2>/dev/null; then
+          if [[ "$current_hop" == "$PIN_HOP" || "$pins_hop" == "$PIN_HOP" || "$manifest_hop" == "$PIN_HOP" ]]; then
+            MUTATION_EVIDENCE_CLASS="NO_MUTATION"
+            return 0
+          fi
+        fi
+        ;;
+    esac
+  fi
 
   if [[ "$has_transition" -eq 0 && "$has_any_marker" -eq 0 ]]; then
     MUTATION_EVIDENCE_CLASS="NO_MUTATION"
@@ -10886,7 +10977,7 @@ handle_existing_state() {
 
   case "$st" in
     ""|PREFLIGHT|READY_FOR_CONFIRMATION) return 0 ;;
-    CONFIGURING|PREPARING_JAMMY)
+    CONFIGURING|PREPARING_JAMMY|UPGRADING_JAMMY_TO_NOBLE)
       # Stale preparing/configuring without live runner/service/DRO → diagnose, do not MONITOR_ONLY.
       if allow_live_systemctl && ! live_upgrade_evidence_present; then
         handle_stale_pre_dro_state "$st"
@@ -10906,7 +10997,7 @@ handle_existing_state() {
       fi
       refuse_duplicate_upgrade
       ;;
-    UPGRADING_JAMMY_TO_NOBLE|REBOOT_PENDING|REBOOTING|POST_BOOT_VERIFY|POST_UPGRADE_VERIFY)
+    REBOOT_PENDING|REBOOTING|POST_BOOT_VERIFY|POST_UPGRADE_VERIFY)
       refuse_duplicate_upgrade
       ;;
     FAILED_AFTER_PACKAGE_TRANSITION|FAILED_POST_TRANSACTION)
