@@ -45,6 +45,8 @@ for entry in "${HOPS[@]}"; do
   extract_function "$template" http_code "$funcs"
   extract_function "$template" http_fetch "$fx/fetch-function.sh"
   cat "$fx/fetch-function.sh" >>"$funcs"
+  extract_function "$template" runner_http_fetch_with_retry "$fx/runner-fetch-function.sh"
+  cat "$fx/runner-fetch-function.sh" >>"$funcs"
 
   cat >"$fx/bin/curl" <<'SH'
 #!/usr/bin/env bash
@@ -53,6 +55,8 @@ state_dir="${FAKE_CURL_STATE:?}"
 url="${!#}"
 key=unknown
 case "$url" in
+  *runner-retry*) key=runner ;;
+  *runner-404*) key=runner404 ;;
   *probe*) key=probe ;;
   *partial*) key=partial ;;
   *dead*) key=dead ;;
@@ -94,6 +98,25 @@ case "$key" in
     printf 'payload-ok\n' >"$out"
     exit 0
     ;;
+  runner)
+    [[ -n "$out" ]] || exit 64
+    if [[ "$count" -eq 1 ]]; then
+      printf 'partial\n' >"$out"
+      printf '200'
+      exit 18
+    fi
+    if [[ "$count" -eq 2 ]]; then
+      printf '503'
+      exit 22
+    fi
+    printf 'runner-payload-ok\n' >"$out"
+    printf '200'
+    exit 0
+    ;;
+  runner404)
+    printf '404'
+    exit 22
+    ;;
 esac
 exit 1
 SH
@@ -130,6 +153,16 @@ grep -qx 'payload-ok' "$dest" || exit 17
 
 [[ "$(grep -c 'HTTP_PROBE_RETRY' "$LOG")" -eq 6 ]] || exit 19
 [[ "$(grep -c 'HTTP_FETCH_RETRY' "$LOG")" -eq 2 ]] || exit 20
+
+runner_dest="${FAKE_CURL_STATE}/runner-index"
+runner_http_fetch_with_retry http://mirror.invalid/runner-retry "$runner_dest" || exit 21
+grep -qx 'runner-payload-ok' "$runner_dest" || exit 22
+[[ "$(cat "$FAKE_CURL_STATE/runner.count")" == "3" ]] || exit 23
+if runner_http_fetch_with_retry http://mirror.invalid/runner-404 "${FAKE_CURL_STATE}/runner-404-index"; then
+  exit 24
+fi
+[[ "$(cat "$FAKE_CURL_STATE/runner404.count")" == "1" ]] || exit 25
+[[ "$(grep -c 'TARGET_POCKET_FETCH_RETRY' "$LOG")" -eq 2 ]] || exit 26
 SH
   chmod +x "$fx/run.sh"
   mkdir -p "$fx/state"
@@ -143,7 +176,7 @@ SH
       cat "$fx/retry.log" >&2 || true
       fail "${hop}: HTTP retry/000 normalization regression"
     }
-  pass "${hop}: transient HTTP retry + exact 000 normalization"
+  pass "${hop}: transient HTTP retry + exact 000 normalization + runner pocket retry"
 done
 
 # ---------------------------------------------------------------------------

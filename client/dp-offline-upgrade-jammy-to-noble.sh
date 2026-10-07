@@ -15704,6 +15704,51 @@ assert_no_external_apt() {
   fi
 }
 
+runner_http_fetch_with_retry() {
+  # Bounded retry for target-pocket reads immediately before do-release-upgrade.
+  # 404/other non-transient 4xx returns immediately so Packages.gz -> Packages
+  # fallback remains fast. Any curl transport failure is retryable even if curl
+  # already parsed an HTTP status (for example 200 + CURLE_PARTIAL_FILE).
+  local url="$1" dest="$2"
+  local attempt=1 max_attempts=3 rc=1 code="" retryable=0 tmp
+  tmp="${dest}.part.$$"
+  while [[ "$attempt" -le "$max_attempts" ]]; do
+    rm -f "$tmp" 2>/dev/null || true
+    code=""
+    if code="$(curl -fsS --connect-timeout 5 --max-time 60 -o "$tmp" -w '%{http_code}' "$url" 2>/dev/null)"; then
+      rc=0
+    else
+      rc=$?
+    fi
+    if [[ ! "$code" =~ ^[0-9][0-9][0-9]$ ]]; then
+      code="000"
+    fi
+    if [[ "$rc" -eq 0 && "$code" == "200" ]]; then
+      mv -f "$tmp" "$dest"
+      return 0
+    fi
+    rm -f "$tmp" 2>/dev/null || true
+
+    retryable=0
+    if [[ "$rc" -ne 0 && "$code" == "200" ]]; then
+      retryable=1
+    else
+      case "$code" in
+        000|408|429|5??) retryable=1 ;;
+      esac
+    fi
+
+    if [[ "$retryable" -eq 1 && "$attempt" -lt "$max_attempts" ]]; then
+      log WARN "TARGET_POCKET_FETCH_RETRY attempt=${attempt}/${max_attempts} code=${code} curl_rc=${rc} url=${url}"
+      sleep "$attempt"
+      attempt=$((attempt + 1))
+      continue
+    fi
+    return 1
+  done
+  return 1
+}
+
 runner_pre_dro_semantic_gate() {
   local dro_sources="${DISTUPGRADE_SOURCES_PATH}"
   local keyring="${LEGACY_APT_KEYRING_PATH}"
@@ -15757,7 +15802,7 @@ runner_pre_dro_semantic_gate() {
     local url="$1"
     local tmp sz
     tmp="$(mktemp)"
-    if ! curl -fsS --connect-timeout 5 --max-time 60 -o "$tmp" "$url"; then
+    if ! runner_http_fetch_with_retry "$url" "$tmp"; then
       rm -f "$tmp"
       return 1
     fi
