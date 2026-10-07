@@ -71,6 +71,9 @@ run_step "audit99_boundary_regressions" python3 -m unittest \
 run_step "menu7_cached_open_fixture" bash tests/test_menu7_cached_open.sh
 run_step "login_shell_partial_rollback" bash tests/test_login_shell_partial_rollback.sh
 run_step "phase1_retry_resume" bash tests/test_phase1_retry_resume_regression.sh
+run_step "legacy_reconciliation" bash tests/test_xenial_legacy_state_reconciliation.sh
+run_step "package_transition_evidence" bash tests/test_xenial_package_transition_evidence.sh
+run_step "hop_reconciliation_meta" bash tests/test_hop_reconciliation_meta.sh
 
 # Core PR #20 gates (authoritative)
 run_step "aws_field_fix" \
