@@ -1195,7 +1195,7 @@ require_cmds() {
 
 http_code() {
   local url="$1"
-  local code="" attempt=1 max_attempts=3
+  local code="" curl_rc=0 attempt=1 max_attempts=3
   if [[ -n "$TEST_ROOT" && -f "$(hostpath /tmp/http-map.tsv)" ]]; then
     local mapped
     mapped="$(awk -F'\t' -v u="$url" '$1==u {print $2; exit}' "$(hostpath /tmp/http-map.tsv)" || true)"
@@ -1212,14 +1212,20 @@ http_code() {
   while [[ "$attempt" -le "$max_attempts" ]]; do
     # curl emits HTTP code 000 on transport failure. Capture once and normalize
     # instead of appending a fallback 000 (which previously produced 000000).
-    code="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 10 --max-time 30 "$url" 2>/dev/null || true)"
-    if [[ ! "$code" =~ ^[0-9][0-9][0-9]$ ]]; then
+    if code="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 10 --max-time 30 "$url" 2>/dev/null)"; then
+      curl_rc=0
+    else
+      curl_rc=$?
+    fi
+    # Any transport-level curl failure is not a successful HTTP probe even if
+    # curl already parsed a status line (for example HTTP 200 + CURLE_PARTIAL_FILE).
+    if [[ "$curl_rc" -ne 0 || ! "$code" =~ ^[0-9][0-9][0-9]$ ]]; then
       code="000"
     fi
     case "$code" in
       000|408|429|5??)
         if [[ "$attempt" -lt "$max_attempts" ]]; then
-          log WARN "HTTP_PROBE_RETRY attempt=${attempt}/${max_attempts} code=${code} url=${url}"
+          log WARN "HTTP_PROBE_RETRY attempt=${attempt}/${max_attempts} code=${code} curl_rc=${curl_rc} url=${url}"
           sleep "$attempt"
           attempt=$((attempt + 1))
           continue
@@ -17325,18 +17331,22 @@ detect_upgrade_already_running() {
   # Return 0 when a second client must not start/mutate again.
   # CONFIGURING is owned by the current client commit/handoff path - re-entry is
   # refused by handle_existing_state, not here (would block our own start).
-  # PREPARING_JAMMY without live process/service evidence is stale, not running.
+  # PREPARING_JAMMY / UPGRADING_JAMMY_TO_NOBLE without live
+  # process/service evidence may be stale after interruption before package
+  # transition. Let handle_existing_state classify mutation evidence first.
   local st active main_pid runner_pid dro_pid
   st="$(read_state)"
   if [[ "$st" == "CONFIGURING" ]]; then
     return 1
   fi
-  if [[ "$st" == "PREPARING_JAMMY" ]]; then
-    if allow_live_systemctl && live_upgrade_evidence_present; then
-      return 0
-    fi
-    return 1
-  fi
+  case "$st" in
+    PREPARING_JAMMY|UPGRADING_JAMMY_TO_NOBLE)
+      if allow_live_systemctl && live_upgrade_evidence_present; then
+        return 0
+      fi
+      return 1
+      ;;
+  esac
   if state_is_upgrade_running "$st"; then
     return 0
   fi

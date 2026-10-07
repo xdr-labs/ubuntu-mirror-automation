@@ -54,6 +54,7 @@ url="${!#}"
 key=unknown
 case "$url" in
   *probe*) key=probe ;;
+  *partial*) key=partial ;;
   *dead*) key=dead ;;
   *fetch*) key=fetch ;;
 esac
@@ -78,6 +79,10 @@ case "$key" in
   probe)
     if [[ "$count" -eq 1 ]]; then printf '000'; exit 28; fi
     if [[ "$count" -eq 2 ]]; then printf '503'; exit 0; fi
+    printf '200'; exit 0
+    ;;
+  partial)
+    if [[ "$count" -lt 3 ]]; then printf '200'; exit 18; fi
     printf '200'; exit 0
     ;;
   dead)
@@ -109,18 +114,22 @@ probe="$(http_code http://mirror.invalid/probe)"
 [[ "$probe" == "200" ]] || { echo "probe=$probe" >&2; exit 10; }
 [[ "$(cat "$FAKE_CURL_STATE/probe.count")" == "3" ]] || exit 11
 
+partial="$(http_code http://mirror.invalid/partial)"
+[[ "$partial" == "200" ]] || { echo "partial=$partial" >&2; exit 12; }
+[[ "$(cat "$FAKE_CURL_STATE/partial.count")" == "3" ]] || exit 13
+
 dead="$(http_code http://mirror.invalid/dead)"
-[[ "$dead" == "000" ]] || { echo "dead=$dead" >&2; exit 12; }
-[[ "${#dead}" -eq 3 ]] || exit 13
-[[ "$(cat "$FAKE_CURL_STATE/dead.count")" == "3" ]] || exit 14
+[[ "$dead" == "000" ]] || { echo "dead=$dead" >&2; exit 14; }
+[[ "${#dead}" -eq 3 ]] || exit 15
+[[ "$(cat "$FAKE_CURL_STATE/dead.count")" == "3" ]] || exit 16
 
 dest="${FAKE_CURL_STATE}/artifact.bin"
 http_fetch http://mirror.invalid/fetch "$dest"
-grep -qx 'payload-ok' "$dest" || exit 15
-[[ "$(cat "$FAKE_CURL_STATE/fetch.count")" == "3" ]] || exit 16
+grep -qx 'payload-ok' "$dest" || exit 17
+[[ "$(cat "$FAKE_CURL_STATE/fetch.count")" == "3" ]] || exit 18
 
-[[ "$(grep -c 'HTTP_PROBE_RETRY' "$LOG")" -eq 4 ]] || exit 17
-[[ "$(grep -c 'HTTP_FETCH_RETRY' "$LOG")" -eq 2 ]] || exit 18
+[[ "$(grep -c 'HTTP_PROBE_RETRY' "$LOG")" -eq 6 ]] || exit 19
+[[ "$(grep -c 'HTTP_FETCH_RETRY' "$LOG")" -eq 2 ]] || exit 20
 SH
   chmod +x "$fx/run.sh"
   mkdir -p "$fx/state"
@@ -153,6 +162,36 @@ for entry in "${HOPS[@]}"; do
     || fail "${hop}: safe pre-transition rerun guidance missing"
   grep -Fq 'The package transition had already started. Do not rerun the client' "$template" \
     || fail "${hop}: post-transition fail-closed guidance missing"
+
+  # A stale UPGRADING_* state must not be treated as live solely because of the
+  # state token. Liveness wins; if no service/runner/DRO exists, the caller must
+  # reach stale-state reconciliation where package-transition evidence decides.
+  livefx="${TMP}/${hop}-liveness"
+  mkdir -p "$livefx"
+  extract_function "$template" detect_upgrade_already_running "$livefx/detect.sh"
+  cat >"$livefx/run.sh" <<SH
+#!/usr/bin/env bash
+set -euo pipefail
+source "$livefx/detect.sh"
+STATE="UPGRADING_${src}_TO_${tgt}"
+LIVE=0
+read_state() { printf '%s' "\$STATE"; }
+allow_live_systemctl() { return 0; }
+live_upgrade_evidence_present() { [[ "\$LIVE" -eq 1 ]]; }
+state_is_upgrade_running() { return 0; }
+if detect_upgrade_already_running; then
+  echo "stale UPGRADING state was treated as live" >&2
+  exit 30
+fi
+LIVE=1
+detect_upgrade_already_running || {
+  echo "live UPGRADING state was not protected" >&2
+  exit 31
+}
+SH
+  chmod +x "$livefx/run.sh"
+  bash "$livefx/run.sh" || fail "${hop}: stale UPGRADING liveness routing"
+  pass "${hop}: stale UPGRADING reaches reconciliation; live UPGRADING remains protected"
 
   if [[ "$hop" == "xenial-to-bionic" ]]; then
     grep -Fq 'Invocation/spawn alone is not a transaction' "$template" \
