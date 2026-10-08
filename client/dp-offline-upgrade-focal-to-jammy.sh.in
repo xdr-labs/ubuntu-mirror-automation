@@ -5187,13 +5187,33 @@ reclassify_false_empty_dpkg_updates_transition() {
   return 0
 }
 # END_DPKG_UPDATES_LISTING_COMPARE
+_write_log_identity_baseline() {
+  # Record an existing log's inode/size before this hop. Consumers use these
+  # values to inspect only bytes created after the snapshot, avoiding
+  # wall-clock-second ambiguity between previous-hop and current-hop logs.
+  # If an existing log cannot be stat'ed, fail closed instead of pretending
+  # it was absent (0/0), which could misclassify historical text as new.
+  local logf="$1" prefix="$2" inode size
+  if [[ -f "$logf" ]]; then
+    inode="$(stat -c '%i' "$logf" 2>/dev/null)" || return 1
+    size="$(stat -c '%s' "$logf" 2>/dev/null)" || return 1
+    [[ "$inode" =~ ^[0-9]+$ && "$size" =~ ^[0-9]+$ ]] || return 1
+    printf '%s\n' "$inode" >"${HOLDS_DIR}/${prefix}_inode_before" || return 1
+    printf '%s\n' "$size" >"${HOLDS_DIR}/${prefix}_size_before" || return 1
+  else
+    printf '0\n' >"${HOLDS_DIR}/${prefix}_inode_before" || return 1
+    printf '0\n' >"${HOLDS_DIR}/${prefix}_size_before" || return 1
+  fi
+}
 snapshot_pre_dro_package_state() {
   # Capture baselines used by the realtime package transition watcher.
   # Baseline members are trusted only after the completion marker is atomically published.
-  local status dpkglog updates_dir pkg ver
+  local status dpkglog mainlog aptlog updates_dir pkg ver
   local run_epoch started_at baseline_complete baseline_tmp
   status="$(_hp /var/lib/dpkg/status)"
   dpkglog="$(_hp /var/log/dpkg.log)"
+  mainlog="$(_hp /var/log/dist-upgrade/main.log)"
+  aptlog="$(_hp /var/log/dist-upgrade/apt.log)"
   updates_dir="$(_hp /var/lib/dpkg/updates)"
   mkdir -p "$HOLDS_DIR" 2>/dev/null || true
   baseline_complete="${HOLDS_DIR}/package_transition_baseline.complete"
@@ -5222,6 +5242,12 @@ snapshot_pre_dro_package_state() {
     echo 0 >"${HOLDS_DIR}/dpkg_log_inode_before"
     echo 0 >"${HOLDS_DIR}/dpkg_log_mtime_before"
     echo 0 >"${HOLDS_DIR}/dpkg_log_size_before"
+  fi
+  if ! _write_log_identity_baseline "$mainlog" distupgrade_main \
+    || ! _write_log_identity_baseline "$aptlog" distupgrade_apt; then
+    log ERROR "DISTUPGRADE_LOG_BASELINE=UNREADABLE"
+    log ERROR "PACKAGE_TRANSITION_STARTED=NO"
+    fail_stage 1 "DISTUPGRADE_LOG_BASELINE=UNREADABLE"
   fi
   if ! _write_dpkg_updates_listing "$updates_dir" "${HOLDS_DIR}/dpkg_updates_listing_before"; then
     rm -f "${HOLDS_DIR}/dpkg_updates_listing_before"
@@ -5371,26 +5397,48 @@ _dpkg_process_from_this_run() {
   return 1
 }
 
-_distupgrade_log_current_run() {
+_distupgrade_log_slice_after_baseline() {
+  # Print only bytes created after this hop's complete baseline. This avoids
+  # treating previous-hop log text written in the same wall-clock second as
+  # current-hop mutation evidence.
+  local logf="$1" prefix="$2"
+  local before_inode before_size cur_inode cur_size
   package_transition_baseline_complete || return 1
-  # DistUpgrade logs can survive a previous hop. Accept them as mutation
-  # evidence only when the file was written at/after this hop's package
-  # transition baseline. Without a baseline, historical logs are not current-run
-  # package mutation evidence.
-  local logf="$1" baseline_epoch mtime
+  [[ -f "${HOLDS_DIR}/${prefix}_inode_before" && -f "${HOLDS_DIR}/${prefix}_size_before" ]] || return 1
+  before_inode="$(cat "${HOLDS_DIR}/${prefix}_inode_before" 2>/dev/null || echo "")"
+  before_size="$(cat "${HOLDS_DIR}/${prefix}_size_before" 2>/dev/null || echo "")"
+  [[ "$before_inode" =~ ^[0-9]+$ && "$before_size" =~ ^[0-9]+$ ]] || return 1
   [[ -f "$logf" ]] || return 1
-  baseline_epoch="$(cat "${HOLDS_DIR}/package_transition_run_epoch" 2>/dev/null || echo 0)"
-  [[ "${baseline_epoch:-0}" =~ ^[0-9]+$ ]] || return 1
-  [[ "$baseline_epoch" -gt 0 ]] || return 1
-  mtime="$(stat -c '%Y' "$logf" 2>/dev/null || echo 0)"
-  [[ "${mtime:-0}" =~ ^[0-9]+$ ]] || return 1
-  [[ "$mtime" -ge "$baseline_epoch" ]]
+  cur_inode="$(stat -c '%i' "$logf" 2>/dev/null || echo 0)"
+  cur_size="$(stat -c '%s' "$logf" 2>/dev/null || echo 0)"
+  [[ "$cur_inode" =~ ^[0-9]+$ && "$cur_size" =~ ^[0-9]+$ ]] || return 1
+
+  if [[ "$before_inode" -eq 0 && "$before_size" -eq 0 ]]; then
+    cat "$logf" 2>/dev/null
+    return $?
+  fi
+  if [[ "$cur_inode" != "$before_inode" ]]; then
+    cat "$logf" 2>/dev/null
+    return $?
+  fi
+  if [[ "$cur_size" -lt "$before_size" ]]; then
+    cat "$logf" 2>/dev/null
+    return $?
+  fi
+  if [[ "$cur_size" -eq "$before_size" ]]; then
+    return 0
+  fi
+  if [[ "$before_size" -gt 0 ]]; then
+    tail -c +"$((before_size + 1))" "$logf" 2>/dev/null
+  else
+    cat "$logf" 2>/dev/null
+  fi
 }
 
 detect_package_transition_evidence() {
   # Sets PACKAGE_TRANSITION_DETECTION_SOURCE/EVIDENCE. Return 0 on mutation.
   local ver status dpkglog mainlog aptlog before_mtime before_sha now_mtime now_sha
-  local status_tail slice updates_dir pkg now_ver
+  local status_tail slice main_slice apt_slice updates_dir pkg now_ver
   PACKAGE_TRANSITION_DETECTION_SOURCE=""
   PACKAGE_TRANSITION_DETECTION_EVIDENCE=""
 
@@ -5471,14 +5519,16 @@ detect_package_transition_evidence() {
 
   mainlog="$(_hp /var/log/dist-upgrade/main.log)"
   aptlog="$(_hp /var/log/dist-upgrade/apt.log)"
-  if _distupgrade_log_current_run "$mainlog" \
-    && grep -qiE 'apt\.distupgrade\.(install|doTheInstall)|installing packages|about to install|DistUpgrade\.install' "$mainlog" 2>/dev/null; then
+  main_slice="$(_distupgrade_log_slice_after_baseline "$mainlog" distupgrade_main 2>/dev/null || true)"
+  if [[ -n "$main_slice" ]] \
+    && printf '%s\n' "$main_slice" | grep -qiE 'apt\.distupgrade\.(install|doTheInstall)|installing packages|about to install|DistUpgrade\.install'; then
     PACKAGE_TRANSITION_DETECTION_SOURCE="distupgrade_install_phase"
     PACKAGE_TRANSITION_DETECTION_EVIDENCE="dist-upgrade/main.log install phase"
     return 0
   fi
-  if _distupgrade_log_current_run "$aptlog" \
-    && grep -qiE '^(Install|Upgrade|Remove):' "$aptlog" 2>/dev/null; then
+  apt_slice="$(_distupgrade_log_slice_after_baseline "$aptlog" distupgrade_apt 2>/dev/null || true)"
+  if [[ -n "$apt_slice" ]] \
+    && printf '%s\n' "$apt_slice" | grep -qiE '^(Install|Upgrade|Remove):'; then
     PACKAGE_TRANSITION_DETECTION_SOURCE="distupgrade_install_phase"
     PACKAGE_TRANSITION_DETECTION_EVIDENCE="dist-upgrade/apt.log transaction"
     return 0
@@ -9906,6 +9956,10 @@ retire_previous_hop_runtime_evidence() {
       dpkg_log_inode_before \
       dpkg_log_mtime_before \
       dpkg_log_size_before \
+      distupgrade_main_inode_before \
+      distupgrade_main_size_before \
+      distupgrade_apt_inode_before \
+      distupgrade_apt_size_before \
       dpkg_updates_listing_before \
       core_package_versions_before \
       release_upgrade_package_transition_started.meta \

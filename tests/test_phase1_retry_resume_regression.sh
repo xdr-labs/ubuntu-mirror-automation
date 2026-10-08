@@ -204,36 +204,44 @@ SH
 
   distfx="${TMP}/${hop}-distlog"
   mkdir -p "$distfx/holds"
-  extract_function "$template" package_transition_baseline_complete "$distfx/function.sh"
-  extract_function "$template" _distupgrade_log_current_run "$distfx/distlog.sh"
-  cat "$distfx/distlog.sh" >>"$distfx/function.sh"
+  extract_function "$template" package_transition_baseline_complete "$distfx/functions.sh"
+  extract_function "$template" _distupgrade_log_slice_after_baseline "$distfx/slice.sh"
+  cat "$distfx/slice.sh" >>"$distfx/functions.sh"
   cat >"$distfx/run.sh" <<SH
 #!/usr/bin/env bash
 set -euo pipefail
-source "$distfx/function.sh"
+source "$distfx/functions.sh"
 HOLDS_DIR="$distfx/holds"
 logf="$distfx/main.log"
-printf 'installing packages\n' >"\$logf"
-if _distupgrade_log_current_run "\$logf"; then
-  echo "missing baseline accepted historical dist-upgrade log" >&2
-  exit 70
-fi
+printf 'installing packages from previous hop\n' >"\$logf"
+inode="\$(stat -c '%i' "\$logf")"
+size="\$(stat -c '%s' "\$logf")"
+printf '%s\n' "\$inode" >"\$HOLDS_DIR/distupgrade_main_inode_before"
+printf '%s\n' "\$size" >"\$HOLDS_DIR/distupgrade_main_size_before"
 printf '200\n' >"\$HOLDS_DIR/package_transition_run_epoch"
 printf '200\n' >"\$HOLDS_DIR/package_transition_baseline.complete"
-touch -d '@199' "\$logf"
-if _distupgrade_log_current_run "\$logf"; then
-  echo "pre-baseline dist-upgrade log accepted" >&2
-  exit 71
-fi
 touch -d '@200' "\$logf"
-_distupgrade_log_current_run "\$logf" || {
-  echo "current-run dist-upgrade log rejected" >&2
-  exit 72
+old_slice="\$(_distupgrade_log_slice_after_baseline "\$logf" distupgrade_main || true)"
+[[ -z "\$old_slice" ]] || {
+  echo "pre-baseline DistUpgrade text leaked: \$old_slice" >&2
+  exit 70
 }
+printf 'installing packages from current hop\n' >>"\$logf"
+# Force the same whole-second timestamp as the baseline. Inode/size slicing
+# must still isolate only bytes appended after the snapshot.
+touch -d '@200' "\$logf"
+new_slice="\$(_distupgrade_log_slice_after_baseline "\$logf" distupgrade_main || true)"
+printf '%s\n' "\$new_slice" | grep -q 'current hop' || exit 71
+if printf '%s\n' "\$new_slice" | grep -q 'previous hop'; then
+  echo "previous-hop DistUpgrade text leaked into current slice" >&2
+  exit 72
+fi
 SH
   chmod +x "$distfx/run.sh"
-  bash "$distfx/run.sh" || fail "${hop}: dist-upgrade log baseline scoping"
-  pass "${hop}: baseline precedes UPGRADING; historical DistUpgrade logs ignored"
+  bash "$distfx/run.sh" || fail "${hop}: same-second DistUpgrade log baseline scoping"
+  grep -Fq '_write_log_identity_baseline "$mainlog" distupgrade_main' "$template" \
+    || fail "${hop}: DistUpgrade inode/size baseline missing"
+  pass "${hop}: baseline precedes UPGRADING; same-second historical DistUpgrade logs ignored"
 
   atomicfx="${TMP}/${hop}-atomic-baseline"
   mkdir -p "$atomicfx/holds" "$atomicfx/root/var/log"
