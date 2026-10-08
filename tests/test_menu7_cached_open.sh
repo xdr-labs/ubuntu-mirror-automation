@@ -166,8 +166,13 @@ COMMAND_REBUILD_COUNT="$(wc -l <"$TMP/counts/command_rebuild" | tr -d ' ')"
   || fail "COMMAND_REBUILD_COUNT=${COMMAND_REBUILD_COUNT}"
 
 # Static contract: default Menu 7 path must not call smoke unless opted in.
-if awk '/^gui_client_instructions\(\)/,/^}/' "$INSTALLER" | grep -q 'engine_http_local_smoke'; then
-  awk '/^gui_client_instructions\(\)/,/^}/' "$INSTALLER" | grep -q 'MM_MENU7_HTTP_SMOKE' \
+# Materialize the function before grep -q. Under set -o pipefail, a direct
+# awk|grep -q pipeline can intermittently report failure when grep exits after
+# the first match and awk receives SIGPIPE while emitting the remaining body.
+menu7_function="$TMP/menu7-function.sh"
+awk '/^gui_client_instructions\(\)/,/^}/' "$INSTALLER" >"$menu7_function"
+if grep -q 'engine_http_local_smoke' "$menu7_function"; then
+  grep -q 'MM_MENU7_HTTP_SMOKE' "$menu7_function" \
     && pass "HTTP smoke gated behind MM_MENU7_HTTP_SMOKE" \
     || fail "HTTP smoke not gated"
 else
