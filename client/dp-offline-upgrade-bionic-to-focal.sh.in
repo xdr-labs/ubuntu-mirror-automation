@@ -6186,11 +6186,23 @@ runner_http_fetch_with_retry() {
   # 404/other non-transient 4xx returns immediately so Packages.gz -> Packages
   # fallback remains fast. Any curl transport failure is retryable even if curl
   # already parsed an HTTP status (for example 200 + CURLE_PARTIAL_FILE).
+  #
+  # The runner executes as root. Keep retry payloads inside a private 0700
+  # directory so an unprivileged local user cannot pre-place/replace a
+  # predictable symlink between cleanup and curl opening the output path.
   local url="$1" dest="$2"
-  local attempt=1 max_attempts=3 rc=1 code="" retryable=0 tmp
-  tmp="${dest}.part.$$"
+  local attempt=1 max_attempts=3 rc=1 code="" retryable=0 retry_dir="" tmp=""
+  retry_dir="$(mktemp -d /tmp/stellar-target-pocket.XXXXXX)" || return 1
+  chmod 0700 "$retry_dir" 2>/dev/null || {
+    rm -rf "$retry_dir" 2>/dev/null || true
+    return 1
+  }
+
   while [[ "$attempt" -le "$max_attempts" ]]; do
-    rm -f "$tmp" 2>/dev/null || true
+    tmp="$(mktemp "${retry_dir}/payload.XXXXXX")" || {
+      rm -rf "$retry_dir" 2>/dev/null || true
+      return 1
+    }
     code=""
     if code="$(curl -fsS --connect-timeout 5 --max-time 60 -o "$tmp" -w '%{http_code}' "$url" 2>/dev/null)"; then
       rc=0
@@ -6201,8 +6213,13 @@ runner_http_fetch_with_retry() {
       code="000"
     fi
     if [[ "$rc" -eq 0 && "$code" == "200" ]]; then
-      mv -f "$tmp" "$dest"
-      return 0
+      if mv -f "$tmp" "$dest"; then
+        rm -rf "$retry_dir" 2>/dev/null || true
+        return 0
+      fi
+      rm -f "$tmp" 2>/dev/null || true
+      rm -rf "$retry_dir" 2>/dev/null || true
+      return 1
     fi
     rm -f "$tmp" 2>/dev/null || true
 
@@ -6221,8 +6238,10 @@ runner_http_fetch_with_retry() {
       attempt=$((attempt + 1))
       continue
     fi
+    rm -rf "$retry_dir" 2>/dev/null || true
     return 1
   done
+  rm -rf "$retry_dir" 2>/dev/null || true
   return 1
 }
 

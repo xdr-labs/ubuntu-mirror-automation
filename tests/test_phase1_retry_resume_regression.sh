@@ -100,6 +100,11 @@ case "$key" in
     ;;
   runner)
     [[ -n "$out" ]] || exit 64
+    case "$out" in
+      /tmp/stellar-target-pocket.*/payload.*) ;;
+      *) exit 65 ;;
+    esac
+    [[ "$(stat -c '%a' "$(dirname "$out")" 2>/dev/null || true)" == "700" ]] || exit 66
     if [[ "$count" -eq 1 ]]; then
       printf 'partial\n' >"$out"
       printf '200'
@@ -114,6 +119,12 @@ case "$key" in
     exit 0
     ;;
   runner404)
+    [[ -n "$out" ]] || exit 67
+    case "$out" in
+      /tmp/stellar-target-pocket.*/payload.*) ;;
+      *) exit 68 ;;
+    esac
+    [[ "$(stat -c '%a' "$(dirname "$out")" 2>/dev/null || true)" == "700" ]] || exit 69
     printf '404'
     exit 22
     ;;
@@ -176,7 +187,13 @@ SH
       cat "$fx/retry.log" >&2 || true
       fail "${hop}: HTTP retry/000 normalization regression"
     }
-  pass "${hop}: transient HTTP retry + exact 000 normalization + runner pocket retry"
+  grep -Fq 'mktemp -d /tmp/stellar-target-pocket.XXXXXX' "$template" \
+    || fail "${hop}: root runner retry directory is not private mktemp"
+  if extract_function "$template" runner_http_fetch_with_retry "$fx/security-function.sh" \
+    && grep -Fq '${dest}.part.$$' "$fx/security-function.sh"; then
+    fail "${hop}: predictable root retry path remains"
+  fi
+  pass "${hop}: transient HTTP retry + exact 000 normalization + secure runner pocket retry"
 done
 
 # ---------------------------------------------------------------------------
@@ -225,6 +242,50 @@ SH
   chmod +x "$livefx/run.sh"
   bash "$livefx/run.sh" || fail "${hop}: stale UPGRADING liveness routing"
   pass "${hop}: stale UPGRADING reaches reconciliation; live UPGRADING remains protected"
+
+  case "$hop" in
+    xenial-to-bionic) source_version="16.04" ;;
+    bionic-to-focal) source_version="18.04" ;;
+    focal-to-jammy) source_version="20.04" ;;
+    jammy-to-noble) source_version="22.04" ;;
+    *) fail "${hop}: unknown source version" ;;
+  esac
+  routefx="${TMP}/${hop}-integrated-route"
+  mkdir -p "$routefx"
+  extract_function "$template" detect_upgrade_already_running "$routefx/functions.sh"
+  extract_function "$template" handle_existing_state "$routefx/handle.sh"
+  cat "$routefx/handle.sh" >>"$routefx/functions.sh"
+  cat >"$routefx/run.sh" <<SH
+#!/usr/bin/env bash
+set -euo pipefail
+source "$routefx/functions.sh"
+STATE="UPGRADING_${src}_TO_${tgt}"
+SOURCE_VERSION="$source_version"
+LIVE=0
+read_state() { printf '%s' "\$STATE"; }
+write_state() { STATE="\$1"; }
+read_os_field() { printf '%s' "\$SOURCE_VERSION"; }
+allow_live_systemctl() { return 0; }
+live_upgrade_evidence_present() { [[ "\$LIVE" -eq 1 ]]; }
+state_is_upgrade_running() { return 0; }
+systemctl_show_prop() { printf ''; }
+find_runner_pid_via_ps() { return 1; }
+find_dro_pid_via_ps() { return 1; }
+handle_stale_pre_dro_state() { STATE="FAILED_PRE_DRO_STALE"; }
+assess_safe_resume_from_failed() { return 0; }
+refuse_duplicate_upgrade() { echo "unexpected duplicate refusal" >&2; exit 41; }
+reclassify_false_empty_dpkg_updates_transition() { return 1; }
+log() { :; }
+die() { echo "unexpected die: \$*" >&2; exit 42; }
+handle_existing_state
+[[ "\$STATE" == "READY_FOR_RESUME" ]] || {
+  echo "integrated stale route ended at \$STATE" >&2
+  exit 43
+}
+SH
+  chmod +x "$routefx/run.sh"
+  bash "$routefx/run.sh" || fail "${hop}: integrated stale UPGRADING safe-resume route"
+  pass "${hop}: integrated stale UPGRADING -> READY_FOR_RESUME"
 
   if [[ "$hop" == "xenial-to-bionic" ]]; then
     grep -Fq 'Invocation/spawn alone is not a transaction' "$template" \
