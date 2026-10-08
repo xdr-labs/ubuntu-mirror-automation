@@ -39,6 +39,12 @@ OSU_LOG_FILE=""
 OSU_LOCK_FD=""
 OSU_TMP_DIR=""
 OSU_OWNED_TMP=0
+# Paths produced by the most recent live precheck. Initial install runs the
+# precheck before STATE_DIR exists, so successful evidence starts in OSU_TMP_DIR
+# and is promoted into the durable state directory only after all safety gates pass.
+OSU_LIVE_PRECHECK_JSON=""
+OSU_LIVE_PRECHECK_TXT=""
+OSU_LIVE_PRECHECK_NTP_RAW=""
 OSU_PREFLIGHT_ROOT=""
 OSU_PREFLIGHT_INPUT_TYPE=""
 # Default deny. Never clobber a caller-exported value on source; persistent
@@ -2860,6 +2866,9 @@ osu_live_precheck() {
   fi
   out_json="${out_dir}/live-precheck-${ts}.json"
   out_txt="${out_dir}/live-precheck-${ts}.txt"
+  OSU_LIVE_PRECHECK_JSON="$out_json"
+  OSU_LIVE_PRECHECK_TXT="$out_txt"
+  OSU_LIVE_PRECHECK_NTP_RAW="${out_dir}/live-precheck-${ts}-ntp-evidence.txt"
 
   local host osver code root_b boot_b inode_pct
   local expect_host expect_os
@@ -2916,7 +2925,7 @@ osu_live_precheck() {
   if osu_apt_lock_active; then reasons+=("apt_lock"); rc=1; fi
   if osu_upgrade_process_active; then reasons+=("upgrade_process_active"); rc=1; fi
 
-  OSU_NTP_RAW_FILE="${out_dir}/live-precheck-${ts}-ntp-evidence.txt"
+  OSU_NTP_RAW_FILE="$OSU_LIVE_PRECHECK_NTP_RAW"
   : >"$OSU_NTP_RAW_FILE"
   if ! osu_ntp_synchronized; then
     reasons+=("ntp_unsynchronized"); rc=1
@@ -3009,6 +3018,35 @@ EOF
   LIVE_PRECHECK_STATUS="$status"
   LIVE_PRECHECK_REASONS="$(osu_join_array reasons ',')"
   return "$rc"
+}
+
+# Persist a successful initial-install live precheck after the durable state
+# boundary opens. Read-only check/plan paths keep their evidence temporary.
+osu_persist_live_precheck_evidence() {
+  local dest_dir="${1:-$OSU_STATE_DIR}" src dest copied=0
+  [[ -n "$dest_dir" && -d "$dest_dir" ]] || return 1
+
+  for src in \
+    "${OSU_LIVE_PRECHECK_JSON:-}" \
+    "${OSU_LIVE_PRECHECK_TXT:-}" \
+    "${OSU_LIVE_PRECHECK_NTP_RAW:-}"
+  do
+    [[ -n "$src" && -f "$src" ]] || {
+      osu_log ERROR "live precheck evidence missing before durable promotion: ${src:-unset}"
+      return 1
+    }
+    dest="${dest_dir}/$(basename "$src")"
+    # Runner/resume paths may have written directly into STATE_DIR already.
+    if [[ "$(readlink -f "$src" 2>/dev/null || printf '%s' "$src")" \
+       != "$(readlink -f "$dest" 2>/dev/null || printf '%s' "$dest")" ]]; then
+      cp -a "$src" "$dest" || return 1
+    fi
+    chmod 0640 "$dest" 2>/dev/null || true
+    copied=$((copied + 1))
+  done
+  [[ "$copied" -eq 3 ]] || return 1
+  osu_log INFO "LIVE_PRECHECK_EVIDENCE_PERSISTED=YES dir=${dest_dir}"
+  return 0
 }
 
 # ---------------------------------------------------------------------------

@@ -26,6 +26,17 @@ fi
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
 
+# Use the repository policy verbatim except for disk/inode thresholds. The
+# fake roots live on the developer host filesystem, whose free space is not a
+# property of this hermetic test and must not make unrelated scenarios flaky.
+TEST_CONF="$WORKDIR/dp-os-upgrade-test.conf"
+cp -a "$CONF" "$TEST_CONF"
+sed -i \
+  -e 's/^MIN_ROOT_AVAILABLE_BYTES=.*/MIN_ROOT_AVAILABLE_BYTES=1/' \
+  -e 's/^MIN_BOOT_AVAILABLE_BYTES=.*/MIN_BOOT_AVAILABLE_BYTES=1/' \
+  -e 's/^MIN_INODE_AVAILABLE_PERCENT=.*/MIN_INODE_AVAILABLE_PERCENT=0/' \
+  "$TEST_CONF"
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -201,8 +212,16 @@ STUB
 }
 
 run_cli() {
+  local arg has_config=0
+  for arg in "$@"; do
+    [[ "$arg" == "--config" ]] && has_config=1
+  done
   set +e
-  bash "$CLI" "$@" >"$WORKDIR/stdout" 2>"$WORKDIR/stderr"
+  if [[ "$has_config" -eq 1 ]]; then
+    bash "$CLI" "$@" >"$WORKDIR/stdout" 2>"$WORKDIR/stderr"
+  else
+    bash "$CLI" "$@" --config "$TEST_CONF" >"$WORKDIR/stdout" 2>"$WORKDIR/stderr"
+  fi
   RC=$?
   set -e
 }
@@ -690,6 +709,31 @@ echo "e2e install rc=$RC"
 cat "$WORKDIR/stderr" | tail -20 || true
 H_AFTER="$(hash_tree "$WORKDIR/pf-e2e")"
 [[ "$H_BEFORE" == "$H_AFTER" ]] && pass "e2e preflight immutable" || fail "e2e preflight changed"
+# First successful install must preserve its temporary live-precheck results
+# under the durable state directory; the evidence must survive temp cleanup.
+if python3 - "$FAKE/opt/aelladata/os-upgrade" <<'PYLIVE'
+import json
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+candidates = sorted(root.glob("live-precheck-*.json"))
+assert candidates, "no durable live precheck JSON after install"
+record = candidates[-1]
+data = json.loads(record.read_text())
+assert data["status"] == "PASS", data["status"]
+stem = record.name.removesuffix(".json")
+txt = root / (stem + ".txt")
+raw = root / (stem + "-ntp-evidence.txt")
+assert txt.is_file() and raw.is_file(), (txt, raw)
+assert "live_precheck_status=PASS" in txt.read_text()
+assert "ntp" in data, "missing ntp evidence section"
+PYLIVE
+then
+  pass "first install persists live precheck JSON/text/NTP raw evidence"
+else
+  fail "first install lost live precheck evidence after tmp cleanup"
+fi
+
 
 if [[ -f "$FAKE/opt/aelladata/os-upgrade/state.json" ]]; then
   st="$(python3 -c "import json;print(json.load(open('$FAKE/opt/aelladata/os-upgrade/state.json'))['current_state'])")"

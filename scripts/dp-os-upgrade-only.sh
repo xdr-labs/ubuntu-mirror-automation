@@ -427,6 +427,12 @@ cmd_install() {
     exit "$EXIT_INTEGRITY"
   fi
   trap 'osu_release_lock; osu_cleanup_tmp' EXIT
+  # The successful install precheck ran before STATE_DIR existed. Promote its
+  # audit evidence only now, after all no-mutation safety gates have passed.
+  if ! osu_persist_live_precheck_evidence "$OSU_STATE_DIR"; then
+    osu_log ERROR "failed to persist live precheck evidence"
+    exit "$EXIT_INTEGRITY"
+  fi
 
   local hops_text total effective_hops effective_total
   hops_text="$(osu_plan_hops "$PF_OS_VERSION")"
