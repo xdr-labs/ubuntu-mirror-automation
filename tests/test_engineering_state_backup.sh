@@ -71,6 +71,15 @@ if ENGINEERING_STATE_ROOT="$state" bash "$SCRIPT" verify "$tmp/truncated.tgz" >/
 fi
 
 # The root-owned backup must never reopen a predictable ${archive}.tmp.$$ path.
-grep -Fq 'mktemp "$archive.tmp.XXXXXXXX"' "$SCRIPT"
-! grep -Fq 'tmp="${archive}.tmp.$$"' "$SCRIPT"
+# These are literal source-code strings, not shell variables to expand here.
+# shellcheck disable=SC2016
+if ! grep -Fq 'mktemp "$archive.tmp.XXXXXXXX"' "$SCRIPT"; then
+  echo "FAIL: secure mktemp staging is absent" >&2
+  exit 1
+fi
+# shellcheck disable=SC2016
+if grep -Fq 'tmp="${archive}.tmp.$$"' "$SCRIPT"; then
+  echo "FAIL: predictable staging filename returned" >&2
+  exit 1
+fi
 echo "ENGINEERING_STATE_BACKUP_TEST=PASS"
