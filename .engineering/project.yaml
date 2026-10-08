@@ -1,8 +1,8 @@
 engineering_system:
   version: 1.7.0
-  policy_epoch: 19
+  policy_epoch: 20
   mode: adopted
-  baseline: 2c73cdd52b98db4143b379730ee0c69d284f80e8
+  baseline: 2ff260a6fcde71ee5e97e12a76b1bb2f7c099998
   ci_mode: shared
   native_ci_workflows: []
   merge_gate_status: advisory
