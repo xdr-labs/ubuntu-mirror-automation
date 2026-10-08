@@ -338,6 +338,23 @@ sudo ./scripts/deploy-client-bionic-to-focal-atomic.sh
 - Repository: `http://192.0.2.10/hops/bionic-to-focal/ubuntu`
 - Integration tests must use a **clean** Bionic VM (never the Xenial→Bionic success evidence VM)
 
+## Supplemental durable-state backup and restore probe
+
+**Authoritative recovery remains a full, pre-upgrade hypervisor snapshot and change-control procedure.** A project-native archive is only a supplemental backup of DP OS-upgrade state, never a bootable image, DP application backup, or replacement for snapshots.
+
+- **Non-reproducible control state:** `/opt/aelladata/os-upgrade/` (including offline hop state, confirmation/transition evidence, recovery backups, and local upgrade metadata) is captured by `scripts/engineering-state-backup.sh`. Save the archive on operator-controlled **external** storage, not inside the source tree. The backup is created mode 0600, is never overwritten, and is checked for archive integrity.
+- **Mirror control metadata:** `/var/lib/ubuntu-mirror-automation/runs` and `/var/lib/ubuntu-mirror/` carry local manager/run markers, separately from package payloads. They are **not** in the default DP-state archive. Where this local state must be retained, archive the relevant root explicitly with `ENGINEERING_STATE_ROOT` or use the mirror host snapshot; preserve customer-specific configuration under the host backup/change-control procedure.
+- **Reproducible material:** mirror package caches under `/var/spool/apt-mirror`, downloaded Ubuntu artifacts and generated client bundles can be reacquired or regenerated through normal signed mirror preparation/publication; this supplemental DP-state archive is not a bulk mirror or application-data backup. DP identity, databases and product data require the separate snapshot/product recovery contract.
+
+Example from a reviewed repository checkout on an authorized DP host with external storage mounted (the Phase 1 client does **not** deploy these helper scripts):
+
+```bash
+sudo bash scripts/engineering-state-backup.sh backup /external-backup/dp-os-state.tgz
+sudo bash scripts/engineering-state-backup.sh verify /external-backup/dp-os-state.tgz
+```
+
+`verify` checks the compressed archive and performs a bounded **non-destructive representative restore**: one regular archived file of up to 4 MiB is read and copied to an unnamed temporary file, then re-read and hash-compared. It emits `ENGINEERING_STATE_RESTORE_PROBE=PASS` only after the content check. No live DP file is replaced. This proves **one sample can be extracted**, not a complete operational rollback; never infer full restore readiness from this probe alone.
+
 ## Failure recovery
 
 | Symptom | Action |
