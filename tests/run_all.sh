@@ -56,6 +56,10 @@ TEST_LIST=(
   test_dp_os_upgrade_retry_and_validate.sh
   test_discover_upgrade_requirements.sh
   test_destructive_confirmation.sh
+  test_phase1_retry_resume_regression.sh
+  test_xenial_legacy_state_reconciliation.sh
+  test_xenial_package_transition_evidence.sh
+  test_hop_reconciliation_meta.sh
   test_phase1_finalize.sh
   test_ntp_pre_transition_quiesce.sh
   test_ntp_dns_postboot_policy.sh
@@ -80,6 +84,7 @@ TEST_LIST=(
   test_acps_resume_disk_preflight.sh
   test_dp_phase2_process_detect.sh
   test_dp_upgrade_mirror_manager.sh
+  test_run_all_orphan_cleanup.sh
   test_gui_client_commands.sh
   test_secret_safety_hardening.sh
   test_config_clear_and_scoped_invalidation.sh
@@ -221,14 +226,18 @@ clear_test_fixture_orphans() {
   # Orphan local HTTP fixtures (discover-upgrade origin.port / phase2 http-counts)
   # accumulate across interrupted suites and can thrash a low-RAM host enough for
   # test_selective_mirror.py to exceed LONG_TIMEOUT_SECS under run_all.
-  local pid cmd signal
+  local pid cmd signal parent_pid
   for signal in TERM KILL; do
     while IFS= read -r pid; do
       pid="${pid#"${pid%%[![:space:]]*}"}"
       pid="${pid%"${pid##*[![:space:]]}"}"
       [[ -n "$pid" && "$pid" =~ ^[0-9]+$ ]] || continue
       [[ "$pid" == "$$" || "$pid" == "$PPID" ]] && continue
-      [[ -r "/proc/${pid}/cmdline" ]] || continue
+      [[ -r "/proc/${pid}/cmdline" && -r "/proc/${pid}/status" ]] || continue
+      # Clean up actual orphans only. Another concurrent suite can own a live
+      # HTTP fixture with the same command signature; never kill its child.
+      parent_pid="$(awk '/^PPid:/ {print $2; exit}' "/proc/${pid}/status" 2>/dev/null || true)"
+      [[ "$parent_pid" == 1 ]] || continue
       cmd="$(tr '\0' ' ' <"/proc/${pid}/cmdline" 2>/dev/null || true)"
       if [[ "$cmd" == *fixture-dp-offline-upgrade* || "$cmd" == */fake-*upgrade* || "$cmd" == *worktree-isolation-child* ]]; then
         kill "-${signal}" "$pid" 2>/dev/null || true

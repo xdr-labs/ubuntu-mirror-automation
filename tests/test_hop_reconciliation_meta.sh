@@ -301,7 +301,7 @@ EOF
   before_flag="$(cat "$fx/opt/aelladata/os-upgrade/offline/critical-holds/release_upgrade_started")"
   built="${ARTIFACTS}/${hop}/$(script_name "$hop")"
   set +e
-  DP_OFFLINE_TEST_ROOT="$fx" bash "$built" --diagnose-state \
+  MM_HERMETIC_TEST_MODE=1 DP_OFFLINE_TEST_ROOT="$fx" bash "$built" --diagnose-state \
     >"$fx/diag.out" 2>"$fx/diag.err"
   drc=$?
   set -e

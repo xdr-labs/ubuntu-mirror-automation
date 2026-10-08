@@ -459,7 +459,8 @@ set +e
   [[ "$PROMPT_WORKER_PASSWORD" -eq 1 ]]
   [[ ! -f "$(p2b_dir)/worker-password" ]]
   p2b_prepare_worker_credentials_for_start
-) >"${TMP}/prompt-parse.out" 2>&1
+# A tmux/PTY-backed full suite still has a terminal: force the no-TTY case.
+) </dev/null >"${TMP}/prompt-parse.out" 2>&1
 prompt_rc=$?
 set -e
 [[ "$prompt_rc" -ne 0 ]] || fail "prompt without tty should fail"

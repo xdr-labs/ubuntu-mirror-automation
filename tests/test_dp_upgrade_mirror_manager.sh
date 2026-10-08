@@ -1361,16 +1361,42 @@ grep -q 'mv -f "$payload" "$final_tmp"' "$ENGINE" \
   && pass "T disk-copy optimization present" \
   || fail "T disk-copy optimization missing"
 
-# umask restored after config save
-if awk '
-  /^mm_save_gui_config\(\)/ { in_fn=1 }
-  in_fn && /old_umask=/ { save=1 }
-  in_fn && /umask "\$old_umask"/ { restore=1 }
-  in_fn && /^}/ { exit((save && restore) ? 0 : 1) }
-' "${ROOT}/scripts/lib/mirror_manager_common.sh"; then
-  pass "T UMASK_RESTORED after config save"
+# Behavioral scope oracle: the manager uses private mktemp + chmod 0600
+# rather than temporarily changing process umask. Check both successful and
+# rejected GUI saves, so source refactors cannot create stale false failures.
+UMASK_SCOPE_DIR="${WORKDIR}/umask-scope"
+if env \
+  MM_PROJECT_ROOT="$ROOT" \
+  MM_CONFIG_DIR="$UMASK_SCOPE_DIR" \
+  MM_CONFIG_FILE="${UMASK_SCOPE_DIR}/dp-upgrade-mirror.conf" \
+  MM_STATUS_FILE="${UMASK_SCOPE_DIR}/dp-upgrade-mirror.status" \
+  MM_WORKFLOW_FILE="${UMASK_SCOPE_DIR}/dp-upgrade-workflow.state" \
+  MM_STATE_ROOT="${UMASK_SCOPE_DIR}/state" \
+  MM_LOG_DIR="${UMASK_SCOPE_DIR}/logs" \
+  MM_SKIP_ROOT_CHECK=1 \
+  bash -c '
+    set -euo pipefail
+    mkdir -p "$MM_CONFIG_DIR" "$MM_STATE_ROOT" "$MM_LOG_DIR"
+    source "$MM_PROJECT_ROOT/scripts/lib/mirror_manager_common.sh"
+    PREPARATION_MODE=FULL
+    DL_WORKER_IPS=""
+    DA_WORKER_IPS=""
+    MIRROR_SERVER_IP="192.0.2.10"
+    MIRROR_HTTP_URL="http://192.0.2.10"
+    umask 0027
+    before="$(umask)"
+    mm_save_gui_config >/dev/null
+    [[ "$(umask)" == "$before" ]]
+    [[ "$(stat -c "%a" "$MM_CONFIG_FILE")" == "600" ]]
+    rm -f "$MM_CONFIG_FILE"
+    ln -s /dev/null "$MM_CONFIG_FILE"
+    if mm_save_gui_config >/dev/null 2>&1; then exit 1; fi
+    [[ "$(umask)" == "$before" ]]
+  '
+then
+  pass "T UMASK_UNCHANGED for successful and rejected GUI saves"
 else
-  fail "T umask not restored after mm_save_gui_config"
+  fail "T GUI config save changed process umask or bypassed file-mode guard"
 fi
 
 # umask restored after workflow.state create (both success and failure paths)

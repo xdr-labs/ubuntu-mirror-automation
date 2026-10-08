@@ -59,9 +59,11 @@ setup_fake_root() {
   : >"$FAKE/run/ntp-synchronized"
   printf 'deb http://archive.ubuntu.com/ubuntu xenial main\n' >"$FAKE/etc/apt/sources.list"
 
-  # Large fake free space via overlay markers read by live check — we rely on
-  # real df of /tmp which is typically large enough. For insufficient-disk tests
-  # we force via env.
+  # Keep filesystem-capacity checks hermetic. The product live-check resolves
+  # fake-root paths but still invokes df through PATH; use a deterministic df
+  # stub so host disk pressure cannot turn normal fixtures into root_space/
+  # inode_low failures. Low-space policy behavior is covered separately by the
+  # preflight test suite.
 
   # Mirror tree for HTTP checks
   mkdir -p "$FAKE/mirror"
@@ -69,7 +71,7 @@ setup_fake_root() {
 
   # Command stubs
   # Do not stub flock/timeout — real implementations required for lock tests
-  for cmd in apt-get apt dpkg apt-mark do-release-upgrade systemctl reboot curl timedatectl; do
+  for cmd in apt-get apt dpkg apt-mark do-release-upgrade systemctl reboot curl timedatectl df; do
     cat >"$STUBS/$cmd" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -158,6 +160,23 @@ EOF
     ;;
   timedatectl)
     echo yes
+    exit 0
+    ;;
+  df)
+    case "${1:-}" in
+      -PB1)
+        printf 'Filesystem 1-blocks Used Available Use%% Mounted on\n'
+        printf 'fakefs 214748364800 1073741824 213674622976 1%% %s\n' "${@: -1}"
+        ;;
+      -Pi)
+        printf 'Filesystem Inodes IUsed IFree IUse%% Mounted on\n'
+        printf 'fakefs 1000000 10000 990000 1%% %s\n' "${@: -1}"
+        ;;
+      *)
+        echo "unexpected df args: $*" >&2
+        exit 64
+        ;;
+    esac
     exit 0
     ;;
   *) exit 0 ;;

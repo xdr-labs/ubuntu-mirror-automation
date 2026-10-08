@@ -405,7 +405,11 @@ for tmpl in \
   grep -q 'REASON=legacy_flag_with_package_transition_evidence' "${ROOT}/${tmpl}" \
     && fail "old boolean exit reason still in ${tmpl}" || true
 done
-for b in scripts/lib/build_client_*.py; do
+for b in \
+  scripts/lib/build_client_xenial_to_bionic.py \
+  scripts/lib/build_client_bionic_to_focal.py \
+  scripts/lib/build_client_focal_to_jammy.py \
+  scripts/lib/build_client_jammy_to_noble.py; do
   grep -q 'RELEASE_UPGRADE_RECONCILIATION_HELPER' "${ROOT}/${b}" \
     || fail "build script missing recon inject: $b"
 done

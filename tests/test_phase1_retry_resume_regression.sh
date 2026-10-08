@@ -45,6 +45,8 @@ for entry in "${HOPS[@]}"; do
   extract_function "$template" http_code "$funcs"
   extract_function "$template" http_fetch "$fx/fetch-function.sh"
   cat "$fx/fetch-function.sh" >>"$funcs"
+  extract_function "$template" runner_http_fetch_with_retry "$fx/runner-fetch-function.sh"
+  cat "$fx/runner-fetch-function.sh" >>"$funcs"
 
   cat >"$fx/bin/curl" <<'SH'
 #!/usr/bin/env bash
@@ -53,7 +55,10 @@ state_dir="${FAKE_CURL_STATE:?}"
 url="${!#}"
 key=unknown
 case "$url" in
+  *runner-retry*) key=runner ;;
+  *runner-404*) key=runner404 ;;
   *probe*) key=probe ;;
+  *partial*) key=partial ;;
   *dead*) key=dead ;;
   *fetch*) key=fetch ;;
 esac
@@ -80,6 +85,10 @@ case "$key" in
     if [[ "$count" -eq 2 ]]; then printf '503'; exit 0; fi
     printf '200'; exit 0
     ;;
+  partial)
+    if [[ "$count" -lt 3 ]]; then printf '200'; exit 18; fi
+    printf '200'; exit 0
+    ;;
   dead)
     printf '000'; exit 7
     ;;
@@ -88,6 +97,36 @@ case "$key" in
     [[ -n "$out" ]] || exit 64
     printf 'payload-ok\n' >"$out"
     exit 0
+    ;;
+  runner)
+    [[ -n "$out" ]] || exit 64
+    case "$out" in
+      /tmp/stellar-target-pocket.*/payload.*) ;;
+      *) exit 65 ;;
+    esac
+    [[ "$(stat -c '%a' "$(dirname "$out")" 2>/dev/null || true)" == "700" ]] || exit 66
+    if [[ "$count" -eq 1 ]]; then
+      printf 'partial\n' >"$out"
+      printf '200'
+      exit 18
+    fi
+    if [[ "$count" -eq 2 ]]; then
+      printf '503'
+      exit 22
+    fi
+    printf 'runner-payload-ok\n' >"$out"
+    printf '200'
+    exit 0
+    ;;
+  runner404)
+    [[ -n "$out" ]] || exit 67
+    case "$out" in
+      /tmp/stellar-target-pocket.*/payload.*) ;;
+      *) exit 68 ;;
+    esac
+    [[ "$(stat -c '%a' "$(dirname "$out")" 2>/dev/null || true)" == "700" ]] || exit 69
+    printf '404'
+    exit 22
     ;;
 esac
 exit 1
@@ -109,18 +148,32 @@ probe="$(http_code http://mirror.invalid/probe)"
 [[ "$probe" == "200" ]] || { echo "probe=$probe" >&2; exit 10; }
 [[ "$(cat "$FAKE_CURL_STATE/probe.count")" == "3" ]] || exit 11
 
+partial="$(http_code http://mirror.invalid/partial)"
+[[ "$partial" == "200" ]] || { echo "partial=$partial" >&2; exit 12; }
+[[ "$(cat "$FAKE_CURL_STATE/partial.count")" == "3" ]] || exit 13
+
 dead="$(http_code http://mirror.invalid/dead)"
-[[ "$dead" == "000" ]] || { echo "dead=$dead" >&2; exit 12; }
-[[ "${#dead}" -eq 3 ]] || exit 13
-[[ "$(cat "$FAKE_CURL_STATE/dead.count")" == "3" ]] || exit 14
+[[ "$dead" == "000" ]] || { echo "dead=$dead" >&2; exit 14; }
+[[ "${#dead}" -eq 3 ]] || exit 15
+[[ "$(cat "$FAKE_CURL_STATE/dead.count")" == "3" ]] || exit 16
 
 dest="${FAKE_CURL_STATE}/artifact.bin"
 http_fetch http://mirror.invalid/fetch "$dest"
-grep -qx 'payload-ok' "$dest" || exit 15
-[[ "$(cat "$FAKE_CURL_STATE/fetch.count")" == "3" ]] || exit 16
+grep -qx 'payload-ok' "$dest" || exit 17
+[[ "$(cat "$FAKE_CURL_STATE/fetch.count")" == "3" ]] || exit 18
 
-[[ "$(grep -c 'HTTP_PROBE_RETRY' "$LOG")" -eq 4 ]] || exit 17
-[[ "$(grep -c 'HTTP_FETCH_RETRY' "$LOG")" -eq 2 ]] || exit 18
+[[ "$(grep -c 'HTTP_PROBE_RETRY' "$LOG")" -eq 6 ]] || exit 19
+[[ "$(grep -c 'HTTP_FETCH_RETRY' "$LOG")" -eq 2 ]] || exit 20
+
+runner_dest="${FAKE_CURL_STATE}/runner-index"
+runner_http_fetch_with_retry http://mirror.invalid/runner-retry "$runner_dest" || exit 21
+grep -qx 'runner-payload-ok' "$runner_dest" || exit 22
+[[ "$(cat "$FAKE_CURL_STATE/runner.count")" == "3" ]] || exit 23
+if runner_http_fetch_with_retry http://mirror.invalid/runner-404 "${FAKE_CURL_STATE}/runner-404-index"; then
+  exit 24
+fi
+[[ "$(cat "$FAKE_CURL_STATE/runner404.count")" == "1" ]] || exit 25
+[[ "$(grep -c 'TARGET_POCKET_FETCH_RETRY' "$LOG")" -eq 2 ]] || exit 26
 SH
   chmod +x "$fx/run.sh"
   mkdir -p "$fx/state"
@@ -134,7 +187,139 @@ SH
       cat "$fx/retry.log" >&2 || true
       fail "${hop}: HTTP retry/000 normalization regression"
     }
-  pass "${hop}: transient HTTP retry + exact 000 normalization"
+  grep -Fq 'mktemp -d /tmp/stellar-target-pocket.XXXXXX' "$template" \
+    || fail "${hop}: root runner retry directory is not private mktemp"
+  if extract_function "$template" runner_http_fetch_with_retry "$fx/security-function.sh" \
+    && grep -Fq '${dest}.part.$$' "$fx/security-function.sh"; then
+    fail "${hop}: predictable root retry path remains"
+  fi
+  pass "${hop}: transient HTTP retry + exact 000 normalization + secure runner pocket retry"
+
+  baseline_call_line="$(grep -n '^[[:space:]]*snapshot_pre_dro_package_state$' "$template" | tail -1 | cut -d: -f1)"
+  upgrading_state_line="$(grep -n '^[[:space:]]*write_state UPGRADING_' "$template" | tail -1 | cut -d: -f1)"
+  [[ "$baseline_call_line" =~ ^[0-9]+$ && "$upgrading_state_line" =~ ^[0-9]+$ ]] \
+    || fail "${hop}: baseline/state line discovery failed"
+  [[ "$baseline_call_line" -lt "$upgrading_state_line" ]] \
+    || fail "${hop}: UPGRADING state is published before package-transition baseline"
+
+  distfx="${TMP}/${hop}-distlog"
+  mkdir -p "$distfx/holds"
+  extract_function "$template" package_transition_baseline_complete "$distfx/functions.sh"
+  extract_function "$template" _distupgrade_log_slice_after_baseline "$distfx/slice.sh"
+  cat "$distfx/slice.sh" >>"$distfx/functions.sh"
+  cat >"$distfx/run.sh" <<SH
+#!/usr/bin/env bash
+set -euo pipefail
+source "$distfx/functions.sh"
+HOLDS_DIR="$distfx/holds"
+logf="$distfx/main.log"
+printf 'installing packages from previous hop\n' >"\$logf"
+inode="\$(stat -c '%i' "\$logf")"
+size="\$(stat -c '%s' "\$logf")"
+printf '%s\n' "\$inode" >"\$HOLDS_DIR/distupgrade_main_inode_before"
+printf '%s\n' "\$size" >"\$HOLDS_DIR/distupgrade_main_size_before"
+printf '200\n' >"\$HOLDS_DIR/package_transition_run_epoch"
+printf '200\n' >"\$HOLDS_DIR/package_transition_baseline.complete"
+touch -d '@200' "\$logf"
+old_slice="\$(_distupgrade_log_slice_after_baseline "\$logf" distupgrade_main || true)"
+[[ -z "\$old_slice" ]] || {
+  echo "pre-baseline DistUpgrade text leaked: \$old_slice" >&2
+  exit 70
+}
+printf 'installing packages from current hop\n' >>"\$logf"
+# Force the same whole-second timestamp as the baseline. Inode/size slicing
+# must still isolate only bytes appended after the snapshot.
+touch -d '@200' "\$logf"
+new_slice="\$(_distupgrade_log_slice_after_baseline "\$logf" distupgrade_main || true)"
+printf '%s\n' "\$new_slice" | grep -q 'current hop' || exit 71
+if printf '%s\n' "\$new_slice" | grep -q 'previous hop'; then
+  echo "previous-hop DistUpgrade text leaked into current slice" >&2
+  exit 72
+fi
+SH
+  chmod +x "$distfx/run.sh"
+  bash "$distfx/run.sh" || fail "${hop}: same-second DistUpgrade log baseline scoping"
+  grep -Fq '_write_log_identity_baseline "$mainlog" distupgrade_main' "$template" \
+    || fail "${hop}: DistUpgrade inode/size baseline missing"
+  pass "${hop}: baseline precedes UPGRADING; same-second historical DistUpgrade logs ignored"
+
+  atomicfx="${TMP}/${hop}-atomic-baseline"
+  mkdir -p "$atomicfx/holds" "$atomicfx/root/var/log"
+  extract_function "$template" package_transition_baseline_complete "$atomicfx/functions.sh"
+  extract_function "$template" _dpkg_log_slice_after_baseline "$atomicfx/slice.sh"
+  cat "$atomicfx/slice.sh" >>"$atomicfx/functions.sh"
+  cat >"$atomicfx/run.sh" <<SH
+#!/usr/bin/env bash
+set -euo pipefail
+source "$atomicfx/functions.sh"
+HOLDS_DIR="$atomicfx/holds"
+TEST_ROOT="$atomicfx/root"
+_hp() { printf '%s%s' "\$TEST_ROOT" "\$1"; }
+printf '100\n' >"\$HOLDS_DIR/package_transition_run_epoch"
+printf '1\n' >"\$HOLDS_DIR/dpkg_log_offset_before"
+printf '1\n' >"\$HOLDS_DIR/dpkg_log_inode_before"
+printf '1\n' >"\$HOLDS_DIR/dpkg_log_size_before"
+printf 'old historical install\n' >"\$TEST_ROOT/var/log/dpkg.log"
+if package_transition_baseline_complete; then
+  echo "partial baseline unexpectedly complete" >&2
+  exit 73
+fi
+if _dpkg_log_slice_after_baseline >/dev/null 2>&1; then
+  echo "partial baseline exposed historical dpkg log" >&2
+  exit 74
+fi
+printf '100\n' >"\$HOLDS_DIR/package_transition_baseline.complete"
+package_transition_baseline_complete || exit 75
+SH
+  chmod +x "$atomicfx/run.sh"
+  bash "$atomicfx/run.sh" || fail "${hop}: incomplete baseline atomicity guard"
+  grep -Fq 'PACKAGE_TRANSITION_BASELINE_COMPLETE=YES' "$template"     || fail "${hop}: baseline completion publication marker missing"
+  pass "${hop}: incomplete/mixed baseline is ignored until atomic completion marker"
+
+  validatefx="${TMP}/${hop}-baseline-validation"
+  mkdir -p "$validatefx/holds" "$validatefx/root/var/lib/dpkg"
+  extract_function "$template" validate_package_transition_baseline_members "$validatefx/function.sh"
+  cat >"$validatefx/run.sh" <<SH
+#!/usr/bin/env bash
+set -euo pipefail
+source "$validatefx/function.sh"
+HOLDS_DIR="$validatefx/holds"
+TEST_ROOT="$validatefx/root"
+_hp() { printf '%s%s' "\$TEST_ROOT" "\$1"; }
+if validate_package_transition_baseline_members; then
+  echo "empty baseline unexpectedly validated" >&2
+  exit 76
+fi
+printf '100\n' >"\$HOLDS_DIR/package_transition_run_epoch"
+printf '123\n' >"\$HOLDS_DIR/package_transition_runner_pid"
+for f in \
+  dpkg_status_mtime_before \
+  dpkg_log_offset_before \
+  dpkg_log_inode_before \
+  dpkg_log_mtime_before \
+  dpkg_log_size_before \
+  distupgrade_main_inode_before \
+  distupgrade_main_size_before \
+  distupgrade_apt_inode_before \
+  distupgrade_apt_size_before; do
+  printf '0\n' >"\$HOLDS_DIR/\$f"
+done
+printf '2026-10-08T00:00:00Z\n' >"\$HOLDS_DIR/package_transition_baseline_at"
+: >"\$HOLDS_DIR/dpkg_status_sha_before"
+: >"\$HOLDS_DIR/dpkg_updates_listing_before"
+printf 'base-files=\nlibc6=\nlibc-bin=\napt=\ndpkg=\n' >"\$HOLDS_DIR/core_package_versions_before"
+validate_package_transition_baseline_members || {
+  echo "complete structural baseline rejected" >&2
+  exit 77
+}
+SH
+  chmod +x "$validatefx/run.sh"
+  bash "$validatefx/run.sh" || fail "${hop}: baseline member validation"
+  grep -Fq 'PACKAGE_TRANSITION_BASELINE_RESET=PASS' "$template" \
+    || fail "${hop}: baseline generation reset is not fail-closed"
+  grep -Fq 'PACKAGE_TRANSITION_BASELINE_VALIDATE=PASS' "$template" \
+    || fail "${hop}: baseline member validation marker missing"
+  pass "${hop}: stale generation cleared; incomplete baseline cannot publish"
 done
 
 # ---------------------------------------------------------------------------
@@ -153,6 +338,80 @@ for entry in "${HOPS[@]}"; do
     || fail "${hop}: safe pre-transition rerun guidance missing"
   grep -Fq 'The package transition had already started. Do not rerun the client' "$template" \
     || fail "${hop}: post-transition fail-closed guidance missing"
+
+  # A stale UPGRADING_* state must not be treated as live solely because of the
+  # state token. Liveness wins; if no service/runner/DRO exists, the caller must
+  # reach stale-state reconciliation where package-transition evidence decides.
+  livefx="${TMP}/${hop}-liveness"
+  mkdir -p "$livefx"
+  extract_function "$template" detect_upgrade_already_running "$livefx/detect.sh"
+  cat >"$livefx/run.sh" <<SH
+#!/usr/bin/env bash
+set -euo pipefail
+source "$livefx/detect.sh"
+STATE="UPGRADING_${src}_TO_${tgt}"
+LIVE=0
+read_state() { printf '%s' "\$STATE"; }
+allow_live_systemctl() { return 0; }
+live_upgrade_evidence_present() { [[ "\$LIVE" -eq 1 ]]; }
+state_is_upgrade_running() { return 0; }
+if detect_upgrade_already_running; then
+  echo "stale UPGRADING state was treated as live" >&2
+  exit 30
+fi
+LIVE=1
+detect_upgrade_already_running || {
+  echo "live UPGRADING state was not protected" >&2
+  exit 31
+}
+SH
+  chmod +x "$livefx/run.sh"
+  bash "$livefx/run.sh" || fail "${hop}: stale UPGRADING liveness routing"
+  pass "${hop}: stale UPGRADING reaches reconciliation; live UPGRADING remains protected"
+
+  case "$hop" in
+    xenial-to-bionic) source_version="16.04" ;;
+    bionic-to-focal) source_version="18.04" ;;
+    focal-to-jammy) source_version="20.04" ;;
+    jammy-to-noble) source_version="22.04" ;;
+    *) fail "${hop}: unknown source version" ;;
+  esac
+  routefx="${TMP}/${hop}-integrated-route"
+  mkdir -p "$routefx"
+  extract_function "$template" detect_upgrade_already_running "$routefx/functions.sh"
+  extract_function "$template" handle_existing_state "$routefx/handle.sh"
+  cat "$routefx/handle.sh" >>"$routefx/functions.sh"
+  cat >"$routefx/run.sh" <<SH
+#!/usr/bin/env bash
+set -euo pipefail
+source "$routefx/functions.sh"
+STATE="UPGRADING_${src}_TO_${tgt}"
+SOURCE_VERSION="$source_version"
+LIVE=0
+read_state() { printf '%s' "\$STATE"; }
+write_state() { STATE="\$1"; }
+read_os_field() { printf '%s' "\$SOURCE_VERSION"; }
+allow_live_systemctl() { return 0; }
+live_upgrade_evidence_present() { [[ "\$LIVE" -eq 1 ]]; }
+state_is_upgrade_running() { return 0; }
+systemctl_show_prop() { printf ''; }
+find_runner_pid_via_ps() { return 1; }
+find_dro_pid_via_ps() { return 1; }
+handle_stale_pre_dro_state() { STATE="FAILED_PRE_DRO_STALE"; }
+assess_safe_resume_from_failed() { return 0; }
+refuse_duplicate_upgrade() { echo "unexpected duplicate refusal" >&2; exit 41; }
+reclassify_false_empty_dpkg_updates_transition() { return 1; }
+log() { :; }
+die() { echo "unexpected die: \$*" >&2; exit 42; }
+handle_existing_state
+[[ "\$STATE" == "READY_FOR_RESUME" ]] || {
+  echo "integrated stale route ended at \$STATE" >&2
+  exit 43
+}
+SH
+  chmod +x "$routefx/run.sh"
+  bash "$routefx/run.sh" || fail "${hop}: integrated stale UPGRADING safe-resume route"
+  pass "${hop}: integrated stale UPGRADING -> READY_FOR_RESUME"
 
   if [[ "$hop" == "xenial-to-bionic" ]]; then
     grep -Fq 'Invocation/spawn alone is not a transaction' "$template" \

@@ -1195,7 +1195,7 @@ require_cmds() {
 
 http_code() {
   local url="$1"
-  local code="" attempt=1 max_attempts=3
+  local code="" curl_rc=0 attempt=1 max_attempts=3
   if [[ -n "$TEST_ROOT" && -f "$(hostpath /tmp/http-map.tsv)" ]]; then
     local mapped
     mapped="$(awk -F'\t' -v u="$url" '$1==u {print $2; exit}' "$(hostpath /tmp/http-map.tsv)" || true)"
@@ -1212,14 +1212,20 @@ http_code() {
   while [[ "$attempt" -le "$max_attempts" ]]; do
     # curl emits HTTP code 000 on transport failure. Capture once and normalize
     # instead of appending a fallback 000 (which previously produced 000000).
-    code="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 10 --max-time 30 "$url" 2>/dev/null || true)"
-    if [[ ! "$code" =~ ^[0-9][0-9][0-9]$ ]]; then
+    if code="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 10 --max-time 30 "$url" 2>/dev/null)"; then
+      curl_rc=0
+    else
+      curl_rc=$?
+    fi
+    # Any transport-level curl failure is not a successful HTTP probe even if
+    # curl already parsed a status line (for example HTTP 200 + CURLE_PARTIAL_FILE).
+    if [[ "$curl_rc" -ne 0 || ! "$code" =~ ^[0-9][0-9][0-9]$ ]]; then
       code="000"
     fi
     case "$code" in
       000|408|429|5??)
         if [[ "$attempt" -lt "$max_attempts" ]]; then
-          log WARN "HTTP_PROBE_RETRY attempt=${attempt}/${max_attempts} code=${code} url=${url}"
+          log WARN "HTTP_PROBE_RETRY attempt=${attempt}/${max_attempts} code=${code} curl_rc=${curl_rc} url=${url}"
           sleep "$attempt"
           attempt=$((attempt + 1))
           continue
@@ -13951,10 +13957,24 @@ _write_dpkg_updates_listing() {
   mv -f "$tmp" "$dest"
 }
 
+package_transition_baseline_complete() {
+  # Baseline members are written first; this marker is published last.
+  # A missing/mismatched marker means interruption during snapshot capture, so
+  # baseline-dependent evidence must be ignored rather than mixed with history.
+  local epoch complete marker
+  marker="${HOLDS_DIR}/package_transition_baseline.complete"
+  [[ -f "$marker" ]] || return 1
+  epoch="$(cat "${HOLDS_DIR}/package_transition_run_epoch" 2>/dev/null || echo "")"
+  complete="$(cat "$marker" 2>/dev/null || echo "")"
+  [[ "$epoch" =~ ^[0-9]+$ && "$complete" =~ ^[0-9]+$ ]] || return 1
+  [[ "$epoch" == "$complete" ]]
+}
+
 _dpkg_updates_listing_differs() {
   local updates_dir="$1"
   local before="${HOLDS_DIR}/dpkg_updates_listing_before"
   local now
+  package_transition_baseline_complete || return 1
   [[ -f "$before" ]] || return 1
   now="$(mktemp "${TMPDIR:-/tmp}/dpkg-updates-listing.XXXXXX")" || return 0
   # Unreadable current listing is not "the same". Callers treat this as
@@ -13977,6 +13997,7 @@ reclassify_false_empty_dpkg_updates_transition() {
   # read, or a fresh real-mutation scan stays fail-closed. The transition
   # marker otherwise never regresses.
   local donef marker evid src ver before now
+  package_transition_baseline_complete || return 1
   donef="${HOLDS_DIR}/package_transition_detection.done"
   marker="${HOLDS_DIR}/release_upgrade_package_transition_started"
   [[ -f "$donef" && -f "$marker" ]] || return 1
@@ -14027,14 +14048,102 @@ reclassify_false_empty_dpkg_updates_transition() {
   return 0
 }
 # END_DPKG_UPDATES_LISTING_COMPARE
+_write_log_identity_baseline() {
+  # Record an existing log's inode/size before this hop. Consumers use these
+  # values to inspect only bytes created after the snapshot, avoiding
+  # wall-clock-second ambiguity between previous-hop and current-hop logs.
+  # If an existing log cannot be stat'ed, fail closed instead of pretending
+  # it was absent (0/0), which could misclassify historical text as new.
+  local logf="$1" prefix="$2" inode size
+  if [[ -f "$logf" ]]; then
+    inode="$(stat -c '%i' "$logf" 2>/dev/null)" || return 1
+    size="$(stat -c '%s' "$logf" 2>/dev/null)" || return 1
+    [[ "$inode" =~ ^[0-9]+$ && "$size" =~ ^[0-9]+$ ]] || return 1
+    printf '%s\n' "$inode" >"${HOLDS_DIR}/${prefix}_inode_before" || return 1
+    printf '%s\n' "$size" >"${HOLDS_DIR}/${prefix}_size_before" || return 1
+  else
+    printf '0\n' >"${HOLDS_DIR}/${prefix}_inode_before" || return 1
+    printf '0\n' >"${HOLDS_DIR}/${prefix}_size_before" || return 1
+  fi
+}
+validate_package_transition_baseline_members() {
+  local f status sha lines
+  for f in \
+    package_transition_run_epoch \
+    package_transition_runner_pid \
+    dpkg_status_mtime_before \
+    dpkg_log_offset_before \
+    dpkg_log_inode_before \
+    dpkg_log_mtime_before \
+    dpkg_log_size_before \
+    distupgrade_main_inode_before \
+    distupgrade_main_size_before \
+    distupgrade_apt_inode_before \
+    distupgrade_apt_size_before; do
+    [[ -f "${HOLDS_DIR}/${f}" ]] || return 1
+    grep -Eq '^[0-9]+$' "${HOLDS_DIR}/${f}" 2>/dev/null || return 1
+  done
+  [[ "$(cat "${HOLDS_DIR}/package_transition_run_epoch" 2>/dev/null || echo 0)" -gt 0 ]] || return 1
+  [[ "$(cat "${HOLDS_DIR}/package_transition_runner_pid" 2>/dev/null || echo 0)" -gt 0 ]] || return 1
+
+  for f in \
+    package_transition_baseline_at \
+    dpkg_status_sha_before \
+    dpkg_updates_listing_before \
+    core_package_versions_before; do
+    [[ -f "${HOLDS_DIR}/${f}" ]] || return 1
+  done
+  [[ -s "${HOLDS_DIR}/package_transition_baseline_at" ]] || return 1
+
+  status="$(_hp /var/lib/dpkg/status)"
+  if [[ -f "$status" ]]; then
+    sha="$(cat "${HOLDS_DIR}/dpkg_status_sha_before" 2>/dev/null || echo "")"
+    [[ "$sha" =~ ^[0-9a-fA-F]{64}$ ]] || return 1
+  fi
+
+  lines="$(wc -l <"${HOLDS_DIR}/core_package_versions_before" 2>/dev/null || echo 0)"
+  [[ "${lines:-0}" =~ ^[0-9]+$ && "$lines" -eq 5 ]] || return 1
+  return 0
+}
+
 snapshot_pre_dro_package_state() {
   # Capture baselines used by the realtime package transition watcher.
-  local status dpkglog updates_dir pkg ver
-  local run_epoch started_at
+  # Baseline members are trusted only after the completion marker is atomically published.
+  local status dpkglog mainlog aptlog updates_dir pkg ver
+  local run_epoch started_at baseline_complete baseline_tmp
   status="$(_hp /var/lib/dpkg/status)"
   dpkglog="$(_hp /var/log/dpkg.log)"
+  mainlog="$(_hp /var/log/dist-upgrade/main.log)"
+  aptlog="$(_hp /var/log/dist-upgrade/apt.log)"
   updates_dir="$(_hp /var/lib/dpkg/updates)"
-  mkdir -p "$HOLDS_DIR" 2>/dev/null || true
+  if ! mkdir -p "$HOLDS_DIR" 2>/dev/null; then
+    log ERROR "PACKAGE_TRANSITION_BASELINE_DIRECTORY=FAIL"
+    fail_stage 1 "PACKAGE_TRANSITION_BASELINE_DIRECTORY=FAIL"
+  fi
+  baseline_complete="${HOLDS_DIR}/package_transition_baseline.complete"
+  if ! rm -f \
+    "$baseline_complete" \
+    "${HOLDS_DIR}/package_transition_run_epoch" \
+    "${HOLDS_DIR}/package_transition_baseline_at" \
+    "${HOLDS_DIR}/package_transition_runner_pid" \
+    "${HOLDS_DIR}/dpkg_status_mtime_before" \
+    "${HOLDS_DIR}/dpkg_status_sha_before" \
+    "${HOLDS_DIR}/dpkg_log_offset_before" \
+    "${HOLDS_DIR}/dpkg_log_inode_before" \
+    "${HOLDS_DIR}/dpkg_log_mtime_before" \
+    "${HOLDS_DIR}/dpkg_log_size_before" \
+    "${HOLDS_DIR}/distupgrade_main_inode_before" \
+    "${HOLDS_DIR}/distupgrade_main_size_before" \
+    "${HOLDS_DIR}/distupgrade_apt_inode_before" \
+    "${HOLDS_DIR}/distupgrade_apt_size_before" \
+    "${HOLDS_DIR}/dpkg_updates_listing_before" \
+    "${HOLDS_DIR}/core_package_versions_before" \
+    "${HOLDS_DIR}/package_transition_detection.done" \
+    "${HOLDS_DIR}/package_transition_watcher.stop" 2>/dev/null; then
+    log ERROR "PACKAGE_TRANSITION_BASELINE_RESET=FAIL"
+    fail_stage 1 "PACKAGE_TRANSITION_BASELINE_RESET=FAIL"
+  fi
+  log INFO "PACKAGE_TRANSITION_BASELINE_RESET=PASS"
   run_epoch="$(date -u '+%s' 2>/dev/null || date '+%s')"
   started_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   printf '%s\n' "$run_epoch" >"${HOLDS_DIR}/package_transition_run_epoch"
@@ -14058,6 +14167,12 @@ snapshot_pre_dro_package_state() {
     echo 0 >"${HOLDS_DIR}/dpkg_log_mtime_before"
     echo 0 >"${HOLDS_DIR}/dpkg_log_size_before"
   fi
+  if ! _write_log_identity_baseline "$mainlog" distupgrade_main \
+    || ! _write_log_identity_baseline "$aptlog" distupgrade_apt; then
+    log ERROR "DISTUPGRADE_LOG_BASELINE=UNREADABLE"
+    log ERROR "PACKAGE_TRANSITION_STARTED=NO"
+    fail_stage 1 "DISTUPGRADE_LOG_BASELINE=UNREADABLE"
+  fi
   if ! _write_dpkg_updates_listing "$updates_dir" "${HOLDS_DIR}/dpkg_updates_listing_before"; then
     rm -f "${HOLDS_DIR}/dpkg_updates_listing_before"
     log ERROR "DPKG_UPDATES_LISTING_BASELINE=UNREADABLE"
@@ -14069,10 +14184,28 @@ snapshot_pre_dro_package_state() {
     ver="$(dpkg-query -W -f='${Version}' "$pkg" 2>/dev/null || true)"
     printf '%s=%s\n' "$pkg" "${ver:-}" >>"${HOLDS_DIR}/core_package_versions_before"
   done
-  rm -f "${HOLDS_DIR}/package_transition_detection.done" \
-    "${HOLDS_DIR}/package_transition_watcher.stop" 2>/dev/null || true
+  if ! validate_package_transition_baseline_members; then
+    log ERROR "PACKAGE_TRANSITION_BASELINE_VALIDATE=FAIL"
+    fail_stage 1 "PACKAGE_TRANSITION_BASELINE_VALIDATE=FAIL"
+  fi
+  log INFO "PACKAGE_TRANSITION_BASELINE_VALIDATE=PASS"
+  baseline_tmp="$(mktemp "${HOLDS_DIR}/.package-transition-baseline.XXXXXX")" || \
+    fail_stage 1 "PACKAGE_TRANSITION_BASELINE_PUBLISH=FAIL"
+  if ! printf '%s\n' "$run_epoch" >"$baseline_tmp"; then
+    rm -f "$baseline_tmp" 2>/dev/null || true
+    fail_stage 1 "PACKAGE_TRANSITION_BASELINE_PUBLISH=FAIL"
+  fi
+  if ! chmod 0600 "$baseline_tmp" 2>/dev/null; then
+    rm -f "$baseline_tmp" 2>/dev/null || true
+    fail_stage 1 "PACKAGE_TRANSITION_BASELINE_PUBLISH=FAIL"
+  fi
+  if ! mv -f "$baseline_tmp" "$baseline_complete"; then
+    rm -f "$baseline_tmp" 2>/dev/null || true
+    fail_stage 1 "PACKAGE_TRANSITION_BASELINE_PUBLISH=FAIL"
+  fi
   log INFO "PACKAGE_TRANSITION_BASELINE_AT=${started_at}"
   log INFO "PACKAGE_TRANSITION_BASELINE_EPOCH=${run_epoch}"
+  log INFO "PACKAGE_TRANSITION_BASELINE_COMPLETE=YES"
 }
 
 _sanitize_transition_evidence() {
@@ -14081,9 +14214,10 @@ _sanitize_transition_evidence() {
 }
 
 _dpkg_log_slice_after_baseline() {
-  # Print dpkg.log bytes after baseline; handle rotation/replacement.
+  # Print dpkg.log bytes only after a complete baseline; handle rotation/replacement.
   # Without an explicit baseline offset file for this hop run, refuse historical scan.
   local dpkglog offset inode size cur_inode cur_size
+  package_transition_baseline_complete || return 1
   [[ -f "${HOLDS_DIR}/dpkg_log_offset_before" ]] || return 1
   dpkglog="$(_hp /var/log/dpkg.log)"
   [[ -f "$dpkglog" ]] || return 1
@@ -14169,6 +14303,7 @@ _dpkg_process_from_this_run() {
   # True when a mutating dpkg process belongs to this run's process tree
   # and started at/after the package-transition baseline epoch.
   local baseline_epoch pid args start_epoch
+  package_transition_baseline_complete || return 1
   if [[ -n "${_TEST_PREFIX:-}" ]]; then
     [[ -f "${STATE_ROOT}/force-dpkg-process-evidence" ]] && return 0
     return 1
@@ -14192,10 +14327,48 @@ _dpkg_process_from_this_run() {
   return 1
 }
 
+_distupgrade_log_slice_after_baseline() {
+  # Print only bytes created after this hop's complete baseline. This avoids
+  # treating previous-hop log text written in the same wall-clock second as
+  # current-hop mutation evidence.
+  local logf="$1" prefix="$2"
+  local before_inode before_size cur_inode cur_size
+  package_transition_baseline_complete || return 1
+  [[ -f "${HOLDS_DIR}/${prefix}_inode_before" && -f "${HOLDS_DIR}/${prefix}_size_before" ]] || return 1
+  before_inode="$(cat "${HOLDS_DIR}/${prefix}_inode_before" 2>/dev/null || echo "")"
+  before_size="$(cat "${HOLDS_DIR}/${prefix}_size_before" 2>/dev/null || echo "")"
+  [[ "$before_inode" =~ ^[0-9]+$ && "$before_size" =~ ^[0-9]+$ ]] || return 1
+  [[ -f "$logf" ]] || return 1
+  cur_inode="$(stat -c '%i' "$logf" 2>/dev/null || echo 0)"
+  cur_size="$(stat -c '%s' "$logf" 2>/dev/null || echo 0)"
+  [[ "$cur_inode" =~ ^[0-9]+$ && "$cur_size" =~ ^[0-9]+$ ]] || return 1
+
+  if [[ "$before_inode" -eq 0 && "$before_size" -eq 0 ]]; then
+    cat "$logf" 2>/dev/null
+    return $?
+  fi
+  if [[ "$cur_inode" != "$before_inode" ]]; then
+    cat "$logf" 2>/dev/null
+    return $?
+  fi
+  if [[ "$cur_size" -lt "$before_size" ]]; then
+    cat "$logf" 2>/dev/null
+    return $?
+  fi
+  if [[ "$cur_size" -eq "$before_size" ]]; then
+    return 0
+  fi
+  if [[ "$before_size" -gt 0 ]]; then
+    tail -c +"$((before_size + 1))" "$logf" 2>/dev/null
+  else
+    cat "$logf" 2>/dev/null
+  fi
+}
+
 detect_package_transition_evidence() {
   # Sets PACKAGE_TRANSITION_DETECTION_SOURCE/EVIDENCE. Return 0 on mutation.
   local ver status dpkglog mainlog aptlog before_mtime before_sha now_mtime now_sha
-  local status_tail slice updates_dir pkg now_ver
+  local status_tail slice main_slice apt_slice updates_dir pkg now_ver
   PACKAGE_TRANSITION_DETECTION_SOURCE=""
   PACKAGE_TRANSITION_DETECTION_EVIDENCE=""
 
@@ -14228,7 +14401,7 @@ detect_package_transition_evidence() {
   status="$(_hp /var/lib/dpkg/status)"
   before_mtime="$(cat "${HOLDS_DIR}/dpkg_status_mtime_before" 2>/dev/null || echo "")"
   before_sha="$(cat "${HOLDS_DIR}/dpkg_status_sha_before" 2>/dev/null || echo "")"
-  if [[ -f "$status" && -n "$before_mtime" ]]; then
+  if package_transition_baseline_complete && [[ -f "$status" && -n "$before_mtime" ]]; then
     now_mtime="$(stat -c '%Y' "$status" 2>/dev/null || echo 0)"
     now_sha="$(sha256sum "$status" 2>/dev/null | awk '{print $1}' || true)"
     if [[ "$now_mtime" != "$before_mtime" ]] || { [[ -n "$before_sha" && -n "$now_sha" && "$now_sha" != "$before_sha" ]]; }; then
@@ -14262,7 +14435,7 @@ detect_package_transition_evidence() {
     fi
   fi
 
-  if [[ -f "${HOLDS_DIR}/core_package_versions_before" ]]; then
+  if package_transition_baseline_complete && [[ -f "${HOLDS_DIR}/core_package_versions_before" ]]; then
     while IFS='=' read -r pkg ver; do
       [[ -n "$pkg" ]] || continue
       now_ver="$(dpkg-query -W -f='${Version}' "$pkg" 2>/dev/null || true)"
@@ -14276,14 +14449,16 @@ detect_package_transition_evidence() {
 
   mainlog="$(_hp /var/log/dist-upgrade/main.log)"
   aptlog="$(_hp /var/log/dist-upgrade/apt.log)"
-  if [[ -f "$mainlog" ]] \
-    && grep -qiE 'apt\.distupgrade\.(install|doTheInstall)|installing packages|about to install|DistUpgrade\.install' "$mainlog" 2>/dev/null; then
+  main_slice="$(_distupgrade_log_slice_after_baseline "$mainlog" distupgrade_main 2>/dev/null || true)"
+  if [[ -n "$main_slice" ]] \
+    && printf '%s\n' "$main_slice" | grep -qiE 'apt\.distupgrade\.(install|doTheInstall)|installing packages|about to install|DistUpgrade\.install'; then
     PACKAGE_TRANSITION_DETECTION_SOURCE="distupgrade_install_phase"
     PACKAGE_TRANSITION_DETECTION_EVIDENCE="dist-upgrade/main.log install phase"
     return 0
   fi
-  if [[ -f "$aptlog" ]] \
-    && grep -qiE '^(Install|Upgrade|Remove):' "$aptlog" 2>/dev/null; then
+  apt_slice="$(_distupgrade_log_slice_after_baseline "$aptlog" distupgrade_apt 2>/dev/null || true)"
+  if [[ -n "$apt_slice" ]] \
+    && printf '%s\n' "$apt_slice" | grep -qiE '^(Install|Upgrade|Remove):'; then
     PACKAGE_TRANSITION_DETECTION_SOURCE="distupgrade_install_phase"
     PACKAGE_TRANSITION_DETECTION_EVIDENCE="dist-upgrade/apt.log transaction"
     return 0
@@ -14474,7 +14649,11 @@ mark_package_transition_detected() {
   fi
   detected_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   now_epoch="$(date -u '+%s' 2>/dev/null || date '+%s')"
-  baseline_epoch="$(cat "${HOLDS_DIR}/package_transition_run_epoch" 2>/dev/null || echo "$now_epoch")"
+  if package_transition_baseline_complete; then
+    baseline_epoch="$(cat "${HOLDS_DIR}/package_transition_run_epoch" 2>/dev/null || echo "$now_epoch")"
+  else
+    baseline_epoch="$now_epoch"
+  fi
   latency=0
   if [[ "${now_epoch:-}" =~ ^[0-9]+$ && "${baseline_epoch:-}" =~ ^[0-9]+$ ]]; then
     latency=$((now_epoch - baseline_epoch))
@@ -15698,6 +15877,70 @@ assert_no_external_apt() {
   fi
 }
 
+runner_http_fetch_with_retry() {
+  # Bounded retry for target-pocket reads immediately before do-release-upgrade.
+  # 404/other non-transient 4xx returns immediately so Packages.gz -> Packages
+  # fallback remains fast. Any curl transport failure is retryable even if curl
+  # already parsed an HTTP status (for example 200 + CURLE_PARTIAL_FILE).
+  #
+  # The runner executes as root. Keep retry payloads inside a private 0700
+  # directory so an unprivileged local user cannot pre-place/replace a
+  # predictable symlink between cleanup and curl opening the output path.
+  local url="$1" dest="$2"
+  local attempt=1 max_attempts=3 rc=1 code="" retryable=0 retry_dir="" tmp=""
+  retry_dir="$(mktemp -d /tmp/stellar-target-pocket.XXXXXX)" || return 1
+  chmod 0700 "$retry_dir" 2>/dev/null || {
+    rm -rf "$retry_dir" 2>/dev/null || true
+    return 1
+  }
+
+  while [[ "$attempt" -le "$max_attempts" ]]; do
+    tmp="$(mktemp "${retry_dir}/payload.XXXXXX")" || {
+      rm -rf "$retry_dir" 2>/dev/null || true
+      return 1
+    }
+    code=""
+    if code="$(curl -fsS --connect-timeout 5 --max-time 60 -o "$tmp" -w '%{http_code}' "$url" 2>/dev/null)"; then
+      rc=0
+    else
+      rc=$?
+    fi
+    if [[ ! "$code" =~ ^[0-9][0-9][0-9]$ ]]; then
+      code="000"
+    fi
+    if [[ "$rc" -eq 0 && "$code" == "200" ]]; then
+      if mv -f "$tmp" "$dest"; then
+        rm -rf "$retry_dir" 2>/dev/null || true
+        return 0
+      fi
+      rm -f "$tmp" 2>/dev/null || true
+      rm -rf "$retry_dir" 2>/dev/null || true
+      return 1
+    fi
+    rm -f "$tmp" 2>/dev/null || true
+
+    retryable=0
+    if [[ "$rc" -ne 0 && "$code" == "200" ]]; then
+      retryable=1
+    else
+      case "$code" in
+        000|408|429|5??) retryable=1 ;;
+      esac
+    fi
+
+    if [[ "$retryable" -eq 1 && "$attempt" -lt "$max_attempts" ]]; then
+      log WARN "TARGET_POCKET_FETCH_RETRY attempt=${attempt}/${max_attempts} code=${code} curl_rc=${rc} url=${url}"
+      sleep "$attempt"
+      attempt=$((attempt + 1))
+      continue
+    fi
+    rm -rf "$retry_dir" 2>/dev/null || true
+    return 1
+  done
+  rm -rf "$retry_dir" 2>/dev/null || true
+  return 1
+}
+
 runner_pre_dro_semantic_gate() {
   local dro_sources="${DISTUPGRADE_SOURCES_PATH}"
   local keyring="${LEGACY_APT_KEYRING_PATH}"
@@ -15751,7 +15994,7 @@ runner_pre_dro_semantic_gate() {
     local url="$1"
     local tmp sz
     tmp="$(mktemp)"
-    if ! curl -fsS --connect-timeout 5 --max-time 60 -o "$tmp" "$url"; then
+    if ! runner_http_fetch_with_retry "$url" "$tmp"; then
       rm -f "$tmp"
       return 1
     fi
@@ -15974,6 +16217,10 @@ main() {
   runner_collect_pre_dro_evidence
 
   set_stage "DO_RELEASE_UPGRADE"
+  # Publish a complete package-transition baseline before the durable UPGRADING
+  # state. If the runner is interrupted after the state write, rerun evidence
+  # can distinguish historical logs from mutations in this hop.
+  snapshot_pre_dro_package_state
   write_state UPGRADING_JAMMY_TO_NOBLE
   # Ensure DistUpgrade ValidMirrors override + effective-source gate are present.
   # Gate hook may already be installed (DISARMED); arm only now - after Jammy
@@ -15996,7 +16243,6 @@ main() {
   LAST_COMMAND="validate DistUpgrade config ASCII"
   validate_distupgrade_config_ascii_before_dro
   install_noninteractive_conffile_policy
-  snapshot_pre_dro_package_state
   # Prevent ntp userdel error 8: quiesce legacy ntp before any package mutation.
   set_stage "NTP_PRE_TRANSITION_QUIESCE"
   LAST_COMMAND="ensure_legacy_ntp_quiesced_before_package_transition"
@@ -17325,18 +17571,22 @@ detect_upgrade_already_running() {
   # Return 0 when a second client must not start/mutate again.
   # CONFIGURING is owned by the current client commit/handoff path - re-entry is
   # refused by handle_existing_state, not here (would block our own start).
-  # PREPARING_JAMMY without live process/service evidence is stale, not running.
+  # PREPARING_JAMMY / UPGRADING_JAMMY_TO_NOBLE without live
+  # process/service evidence may be stale after interruption before package
+  # transition. Let handle_existing_state classify mutation evidence first.
   local st active main_pid runner_pid dro_pid
   st="$(read_state)"
   if [[ "$st" == "CONFIGURING" ]]; then
     return 1
   fi
-  if [[ "$st" == "PREPARING_JAMMY" ]]; then
-    if allow_live_systemctl && live_upgrade_evidence_present; then
-      return 0
-    fi
-    return 1
-  fi
+  case "$st" in
+    PREPARING_JAMMY|UPGRADING_JAMMY_TO_NOBLE)
+      if allow_live_systemctl && live_upgrade_evidence_present; then
+        return 0
+      fi
+      return 1
+      ;;
+  esac
   if state_is_upgrade_running "$st"; then
     return 0
   fi
@@ -19720,6 +19970,7 @@ retire_previous_hop_runtime_evidence() {
       package_transition_detection.done \
       package_transition_run_epoch \
       package_transition_baseline_at \
+      package_transition_baseline.complete \
       package_transition_runner_pid \
       package_transition_watcher.stop \
       package_transition_watcher.pid \
@@ -19730,6 +19981,10 @@ retire_previous_hop_runtime_evidence() {
       dpkg_log_inode_before \
       dpkg_log_mtime_before \
       dpkg_log_size_before \
+      distupgrade_main_inode_before \
+      distupgrade_main_size_before \
+      distupgrade_apt_inode_before \
+      distupgrade_apt_size_before \
       dpkg_updates_listing_before \
       core_package_versions_before \
       release_upgrade_package_transition_started.meta \

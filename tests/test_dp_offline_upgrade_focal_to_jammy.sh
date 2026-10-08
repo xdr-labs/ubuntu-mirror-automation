@@ -2804,7 +2804,7 @@ set -e
 kill "$(cat "$hf/run/dro.pid")" 2>/dev/null || true
 rm -rf "$hf"
 
-# 12.17 state=UPGRADING → re-run blocked via STUB handle_existing_state
+# 12.17 stale state=UPGRADING with no live owner / package transition → safe re-entry
 hf="$(mktemp -d)"
 make_dp_fixture "$hf"
 mkdir -p "$hf/opt/aelladata/os-upgrade/offline" "$hf/var/log/aella"
@@ -2813,11 +2813,11 @@ set +e
 DP_OFFLINE_TEST_ROOT="$hf" bash "$STUB" --mirror-base http://127.0.0.1:9 --preflight-only >"$hf/out-upgrading.txt" 2>&1
 rc=$?
 set -e
-if [[ "$rc" -ne 0 ]] && grep -qE 'UPGRADE_ALREADY_RUNNING=YES|duplicate execution refused' "$hf/out-upgrading.txt"; then
-  pass "state UPGRADING → client re-run blocked"
+if [[ "$rc" -eq 0 ]]   && grep -q 'READY_FOR_RESUME' "$hf/out-upgrading.txt"   && grep -q 'os_upgrade_result=READY_FOR_CONFIRMATION' "$hf/out-upgrading.txt"   && ! grep -q 'FAIL_PARTIAL_RELEASE_TRANSITION_DETECTED' "$hf/out-upgrading.txt"; then
+  pass "stale UPGRADING pre-transition → safe re-entry"
 else
-  fail "UPGRADING re-run not blocked (rc=${rc})"
-  tail -30 "$hf/out-upgrading.txt" || true
+  fail "stale UPGRADING pre-transition re-entry failed (rc=${rc})"
+  tail -50 "$hf/out-upgrading.txt" || true
 fi
 rm -rf "$hf"
 
@@ -3415,11 +3415,14 @@ set -euo pipefail
 ROOT="${STELLAR_OFFLINE_TEST_ROOT:-}"
 mkdir -p "$ROOT/run"
 printf 'curl %s\n' "$*" >>"$ROOT/run/curl.log"
-# Write a fake nonempty Packages index to -o dest
+# Write a fake nonempty Packages index to -o dest. The production target-pocket
+# helper also requests %{http_code} via -w, so emulate curl's stdout contract.
 out=""
 prev=""
+want_code=0
 for a in "$@"; do
   if [[ "$prev" == "-o" ]]; then out="$a"; fi
+  [[ "$a" == "-w" ]] && want_code=1
   prev="$a"
 done
 if [[ -n "$out" ]]; then
@@ -3432,6 +3435,7 @@ if [[ -n "$out" ]]; then
     dd if=/dev/zero bs=1 count=80 2>/dev/null | tr '\0' 'x'
   } >"$out"
 fi
+[[ "$want_code" -eq 1 ]] && printf '200'
 exit 0
 EOF
   cat >"$root/bin/dpkg" <<'EOF'
@@ -3964,6 +3968,8 @@ RELEASE_UPGRADE_PACKAGE_TRANSITION_STARTED="false"
 persist_flags
 mkdir -p "$HOLDS_DIR" "$(_hp /var/log)"
 printf '0\n' >"${HOLDS_DIR}/dpkg_log_offset_before"
+printf '%s\n' "$(date -u '+%s')" >"${HOLDS_DIR}/package_transition_run_epoch"
+cp -a "${HOLDS_DIR}/package_transition_run_epoch" "${HOLDS_DIR}/package_transition_baseline.complete"
 printf '2026-07-23 01:00:00 startup archives unpack\n2026-07-23 01:00:01 status half-installed libc-bin:amd64 2.31-0ubuntu9.18\n' \
   >"$(_hp /var/log/dpkg.log)"
 printf 'deb http://archive.ubuntu.com/ubuntu jammy main\n' >"$(_hp /etc/apt/sources.list)"
@@ -4775,6 +4781,7 @@ printf '0\n' >"${HOLDS_DIR}/dpkg_log_offset_before"
 printf '0\n' >"${HOLDS_DIR}/dpkg_log_inode_before"
 printf '0\n' >"${HOLDS_DIR}/dpkg_log_size_before"
 printf '%s\n' "$(date -u '+%s')" >"${HOLDS_DIR}/package_transition_run_epoch"
+cp -a "${HOLDS_DIR}/package_transition_run_epoch" "${HOLDS_DIR}/package_transition_baseline.complete"
 : >"${STATE_ROOT}/force-dpkg-process-evidence"
 detect_package_transition_evidence
 mark_package_transition_detected "$PACKAGE_TRANSITION_DETECTION_SOURCE" "$PACKAGE_TRANSITION_DETECTION_EVIDENCE"
@@ -4867,6 +4874,7 @@ printf '0\n' >"${HOLDS_DIR}/dpkg_log_offset_before"
 printf '0\n' >"${HOLDS_DIR}/dpkg_log_inode_before"
 printf '0\n' >"${HOLDS_DIR}/dpkg_log_size_before"
 printf '%s\n' "$(date -u '+%s')" >"${HOLDS_DIR}/package_transition_run_epoch"
+cp -a "${HOLDS_DIR}/package_transition_run_epoch" "${HOLDS_DIR}/package_transition_baseline.complete"
 printf '2026-07-23 07:01:41 startup archives unpack\n' >"$(_hp /var/log/dpkg.log)"
 printf 'deb http://archive.ubuntu.com/ubuntu jammy main\n' >"$(_hp /etc/apt/sources.list)"
 fail_stage 1 "race immediate failure after mutation"
@@ -4911,6 +4919,7 @@ printf '0\n' >"${HOLDS_DIR}/dpkg_log_offset_before"
 printf '0\n' >"${HOLDS_DIR}/dpkg_log_inode_before"
 printf '0\n' >"${HOLDS_DIR}/dpkg_log_size_before"
 printf '%s\n' "$(date -u '+%s')" >"${HOLDS_DIR}/package_transition_run_epoch"
+cp -a "${HOLDS_DIR}/package_transition_run_epoch" "${HOLDS_DIR}/package_transition_baseline.complete"
 printf '2026-07-23 07:01:41 startup archives unpack\n' >"$(_hp /var/log/dpkg.log)"
 detect_package_transition_evidence
 mark_package_transition_detected "$PACKAGE_TRANSITION_DETECTION_SOURCE" "$PACKAGE_TRANSITION_DETECTION_EVIDENCE"

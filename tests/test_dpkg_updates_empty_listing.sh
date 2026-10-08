@@ -49,6 +49,11 @@ RELEASE_UPGRADE_PACKAGE_TRANSITION_STARTED="true"
 mkdir -p "$HOLDS_DIR" "${FIX}/etc" "${FIX}/var/lib/dpkg/updates"
 printf 'VERSION_ID=16.04\n' >"${FIX}/etc/os-release"
 
+# Listing comparison/reclassification is valid only for a fully published
+# current-run transition baseline. Model that production contract explicitly.
+printf '100\n' >"${HOLDS_DIR}/package_transition_run_epoch"
+printf '100\n' >"${HOLDS_DIR}/package_transition_baseline.complete"
+
 _write_dpkg_updates_listing "${FIX}/var/lib/dpkg/updates" "${HOLDS_DIR}/dpkg_updates_listing_before"
 [[ ! -s "${HOLDS_DIR}/dpkg_updates_listing_before" ]] || fail "empty listing was not zero bytes"
 if _dpkg_updates_listing_differs "${FIX}/var/lib/dpkg/updates"; then
@@ -163,14 +168,14 @@ pass "listing enumeration failure stays fail-closed"
 
 # Unreadable pre-DRO baseline aborts before do-release-upgrade.
 SNAP="$(awk '
-  /^snapshot_pre_dro_package_state\(\)/ { p=1 }
+  /^_write_log_identity_baseline\(\)/ { p=1 }
   /^_sanitize_transition_evidence\(\)/ { exit }
   p
 ' "$XENIAL")"
 [[ -n "$SNAP" ]] || fail "snapshot function missing"
 for hop in bionic-to-focal focal-to-jammy jammy-to-noble; do
   other="$(awk '
-    /^snapshot_pre_dro_package_state\(\)/ { p=1 }
+    /^_write_log_identity_baseline\(\)/ { p=1 }
     /^_sanitize_transition_evidence\(\)/ { exit }
     p
   ' "${ROOT}/client/dp-offline-upgrade-${hop}.sh.in")"
