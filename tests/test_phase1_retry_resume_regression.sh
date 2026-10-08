@@ -204,7 +204,9 @@ SH
 
   distfx="${TMP}/${hop}-distlog"
   mkdir -p "$distfx/holds"
-  extract_function "$template" _distupgrade_log_current_run "$distfx/function.sh"
+  extract_function "$template" package_transition_baseline_complete "$distfx/function.sh"
+  extract_function "$template" _distupgrade_log_current_run "$distfx/distlog.sh"
+  cat "$distfx/distlog.sh" >>"$distfx/function.sh"
   cat >"$distfx/run.sh" <<SH
 #!/usr/bin/env bash
 set -euo pipefail
@@ -217,6 +219,7 @@ if _distupgrade_log_current_run "\$logf"; then
   exit 70
 fi
 printf '200\n' >"\$HOLDS_DIR/package_transition_run_epoch"
+printf '200\n' >"\$HOLDS_DIR/package_transition_baseline.complete"
 touch -d '@199' "\$logf"
 if _distupgrade_log_current_run "\$logf"; then
   echo "pre-baseline dist-upgrade log accepted" >&2
@@ -231,6 +234,39 @@ SH
   chmod +x "$distfx/run.sh"
   bash "$distfx/run.sh" || fail "${hop}: dist-upgrade log baseline scoping"
   pass "${hop}: baseline precedes UPGRADING; historical DistUpgrade logs ignored"
+
+  atomicfx="${TMP}/${hop}-atomic-baseline"
+  mkdir -p "$atomicfx/holds" "$atomicfx/root/var/log"
+  extract_function "$template" package_transition_baseline_complete "$atomicfx/functions.sh"
+  extract_function "$template" _dpkg_log_slice_after_baseline "$atomicfx/slice.sh"
+  cat "$atomicfx/slice.sh" >>"$atomicfx/functions.sh"
+  cat >"$atomicfx/run.sh" <<SH
+#!/usr/bin/env bash
+set -euo pipefail
+source "$atomicfx/functions.sh"
+HOLDS_DIR="$atomicfx/holds"
+TEST_ROOT="$atomicfx/root"
+_hp() { printf '%s%s' "\$TEST_ROOT" "\$1"; }
+printf '100\n' >"\$HOLDS_DIR/package_transition_run_epoch"
+printf '1\n' >"\$HOLDS_DIR/dpkg_log_offset_before"
+printf '1\n' >"\$HOLDS_DIR/dpkg_log_inode_before"
+printf '1\n' >"\$HOLDS_DIR/dpkg_log_size_before"
+printf 'old historical install\n' >"\$TEST_ROOT/var/log/dpkg.log"
+if package_transition_baseline_complete; then
+  echo "partial baseline unexpectedly complete" >&2
+  exit 73
+fi
+if _dpkg_log_slice_after_baseline >/dev/null 2>&1; then
+  echo "partial baseline exposed historical dpkg log" >&2
+  exit 74
+fi
+printf '100\n' >"\$HOLDS_DIR/package_transition_baseline.complete"
+package_transition_baseline_complete || exit 75
+SH
+  chmod +x "$atomicfx/run.sh"
+  bash "$atomicfx/run.sh" || fail "${hop}: incomplete baseline atomicity guard"
+  grep -Fq 'PACKAGE_TRANSITION_BASELINE_COMPLETE=YES' "$template"     || fail "${hop}: baseline completion publication marker missing"
+  pass "${hop}: incomplete/mixed baseline is ignored until atomic completion marker"
 done
 
 # ---------------------------------------------------------------------------

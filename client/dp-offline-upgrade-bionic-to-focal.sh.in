@@ -4831,10 +4831,24 @@ _write_dpkg_updates_listing() {
   mv -f "$tmp" "$dest"
 }
 
+package_transition_baseline_complete() {
+  # Baseline members are written first; this marker is published last.
+  # A missing/mismatched marker means interruption during snapshot capture, so
+  # baseline-dependent evidence must be ignored rather than mixed with history.
+  local epoch complete marker
+  marker="${HOLDS_DIR}/package_transition_baseline.complete"
+  [[ -f "$marker" ]] || return 1
+  epoch="$(cat "${HOLDS_DIR}/package_transition_run_epoch" 2>/dev/null || echo "")"
+  complete="$(cat "$marker" 2>/dev/null || echo "")"
+  [[ "$epoch" =~ ^[0-9]+$ && "$complete" =~ ^[0-9]+$ ]] || return 1
+  [[ "$epoch" == "$complete" ]]
+}
+
 _dpkg_updates_listing_differs() {
   local updates_dir="$1"
   local before="${HOLDS_DIR}/dpkg_updates_listing_before"
   local now
+  package_transition_baseline_complete || return 1
   [[ -f "$before" ]] || return 1
   now="$(mktemp "${TMPDIR:-/tmp}/dpkg-updates-listing.XXXXXX")" || return 0
   # Unreadable current listing is not "the same". Callers treat this as
@@ -4857,6 +4871,7 @@ reclassify_false_empty_dpkg_updates_transition() {
   # read, or a fresh real-mutation scan stays fail-closed. The transition
   # marker otherwise never regresses.
   local donef marker evid src ver before now
+  package_transition_baseline_complete || return 1
   donef="${HOLDS_DIR}/package_transition_detection.done"
   marker="${HOLDS_DIR}/release_upgrade_package_transition_started"
   [[ -f "$donef" && -f "$marker" ]] || return 1
@@ -4909,12 +4924,17 @@ reclassify_false_empty_dpkg_updates_transition() {
 # END_DPKG_UPDATES_LISTING_COMPARE
 snapshot_pre_dro_package_state() {
   # Capture baselines used by the realtime package transition watcher.
+  # Baseline members are trusted only after the completion marker is atomically published.
   local status dpkglog updates_dir pkg ver
-  local run_epoch started_at
+  local run_epoch started_at baseline_complete baseline_tmp
   status="$(_hp /var/lib/dpkg/status)"
   dpkglog="$(_hp /var/log/dpkg.log)"
   updates_dir="$(_hp /var/lib/dpkg/updates)"
   mkdir -p "$HOLDS_DIR" 2>/dev/null || true
+  baseline_complete="${HOLDS_DIR}/package_transition_baseline.complete"
+  # Invalidate the prior generation first. A crash during capture leaves
+  # no completion marker, so consumers ignore all partial/mixed files.
+  rm -f "$baseline_complete" 2>/dev/null || true
   run_epoch="$(date -u '+%s' 2>/dev/null || date '+%s')"
   started_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   printf '%s\n' "$run_epoch" >"${HOLDS_DIR}/package_transition_run_epoch"
@@ -4951,8 +4971,20 @@ snapshot_pre_dro_package_state() {
   done
   rm -f "${HOLDS_DIR}/package_transition_detection.done" \
     "${HOLDS_DIR}/package_transition_watcher.stop" 2>/dev/null || true
+  baseline_tmp="$(mktemp "${HOLDS_DIR}/.package-transition-baseline.XXXXXX")" || \
+    fail_stage 1 "PACKAGE_TRANSITION_BASELINE_PUBLISH=FAIL"
+  if ! printf '%s\n' "$run_epoch" >"$baseline_tmp"; then
+    rm -f "$baseline_tmp" 2>/dev/null || true
+    fail_stage 1 "PACKAGE_TRANSITION_BASELINE_PUBLISH=FAIL"
+  fi
+  chmod 0600 "$baseline_tmp" 2>/dev/null || true
+  if ! mv -f "$baseline_tmp" "$baseline_complete"; then
+    rm -f "$baseline_tmp" 2>/dev/null || true
+    fail_stage 1 "PACKAGE_TRANSITION_BASELINE_PUBLISH=FAIL"
+  fi
   log INFO "PACKAGE_TRANSITION_BASELINE_AT=${started_at}"
   log INFO "PACKAGE_TRANSITION_BASELINE_EPOCH=${run_epoch}"
+  log INFO "PACKAGE_TRANSITION_BASELINE_COMPLETE=YES"
 }
 
 _sanitize_transition_evidence() {
@@ -4961,8 +4993,9 @@ _sanitize_transition_evidence() {
 }
 
 _dpkg_log_slice_after_baseline() {
-  # Print dpkg.log bytes after baseline; handle rotation/replacement.
+  # Print dpkg.log bytes only after a complete baseline; handle rotation/replacement.
   local dpkglog offset inode size cur_inode cur_size
+  package_transition_baseline_complete || return 1
   dpkglog="$(_hp /var/log/dpkg.log)"
   [[ -f "$dpkglog" ]] || return 1
   offset="$(cat "${HOLDS_DIR}/dpkg_log_offset_before" 2>/dev/null || echo 0)"
@@ -5032,6 +5065,7 @@ _dpkg_process_from_this_run() {
   # True when a mutating dpkg process belongs to this run's process tree
   # and started at/after the package-transition baseline epoch.
   local baseline_epoch pid args start_epoch
+  package_transition_baseline_complete || return 1
   if [[ -n "${_TEST_PREFIX:-}" ]]; then
     [[ -f "${STATE_ROOT}/force-dpkg-process-evidence" ]] && return 0
     return 1
@@ -5056,6 +5090,7 @@ _dpkg_process_from_this_run() {
 }
 
 _distupgrade_log_current_run() {
+  package_transition_baseline_complete || return 1
   # DistUpgrade logs can survive a previous hop. Accept them as mutation
   # evidence only when the file was written at/after this hop's package
   # transition baseline. Without a baseline, historical logs are not current-run
@@ -5106,7 +5141,7 @@ detect_package_transition_evidence() {
   status="$(_hp /var/lib/dpkg/status)"
   before_mtime="$(cat "${HOLDS_DIR}/dpkg_status_mtime_before" 2>/dev/null || echo "")"
   before_sha="$(cat "${HOLDS_DIR}/dpkg_status_sha_before" 2>/dev/null || echo "")"
-  if [[ -f "$status" && -n "$before_mtime" ]]; then
+  if package_transition_baseline_complete && [[ -f "$status" && -n "$before_mtime" ]]; then
     now_mtime="$(stat -c '%Y' "$status" 2>/dev/null || echo 0)"
     now_sha="$(sha256sum "$status" 2>/dev/null | awk '{print $1}' || true)"
     if [[ "$now_mtime" != "$before_mtime" ]] || { [[ -n "$before_sha" && -n "$now_sha" && "$now_sha" != "$before_sha" ]]; }; then
@@ -5140,7 +5175,7 @@ detect_package_transition_evidence() {
     fi
   fi
 
-  if [[ -f "${HOLDS_DIR}/core_package_versions_before" ]]; then
+  if package_transition_baseline_complete && [[ -f "${HOLDS_DIR}/core_package_versions_before" ]]; then
     while IFS='=' read -r pkg ver; do
       [[ -n "$pkg" ]] || continue
       now_ver="$(dpkg-query -W -f='${Version}' "$pkg" 2>/dev/null || true)"
@@ -5352,7 +5387,11 @@ mark_package_transition_detected() {
   fi
   detected_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   now_epoch="$(date -u '+%s' 2>/dev/null || date '+%s')"
-  baseline_epoch="$(cat "${HOLDS_DIR}/package_transition_run_epoch" 2>/dev/null || echo "$now_epoch")"
+  if package_transition_baseline_complete; then
+    baseline_epoch="$(cat "${HOLDS_DIR}/package_transition_run_epoch" 2>/dev/null || echo "$now_epoch")"
+  else
+    baseline_epoch="$now_epoch"
+  fi
   latency=0
   if [[ "${now_epoch:-}" =~ ^[0-9]+$ && "${baseline_epoch:-}" =~ ^[0-9]+$ ]]; then
     latency=$((now_epoch - baseline_epoch))
@@ -9548,6 +9587,7 @@ retire_previous_hop_runtime_evidence() {
       package_transition_detection.done \
       package_transition_run_epoch \
       package_transition_baseline_at \
+      package_transition_baseline.complete \
       package_transition_runner_pid \
       package_transition_watcher.stop \
       package_transition_watcher.pid \
