@@ -24,11 +24,16 @@ if [[ "$mode" == "backup" ]]; then
   [[ ! -e "$archive" && ! -L "$archive" ]] || { echo "ERROR: archive already exists" >&2; exit 3; }
   parent="$(dirname "$archive")"
   [[ -d "$parent" ]] || { echo "ERROR: archive parent missing: $parent" >&2; exit 3; }
-  tmp="${archive}.tmp.$$"
-  trap 'rm -f "$tmp"' EXIT
+  case "$archive" in
+    "$state_root"/*) echo "ERROR: refusing archive inside backed-up state root" >&2; exit 3 ;;
+  esac
+  tmp="$(mktemp "$archive.tmp.XXXXXXXX")"
+  trap 'rm -f -- "$tmp"' EXIT
   tar --one-file-system --numeric-owner -czf "$tmp" -C / "$state_rel"
   tar -tzf "$tmp" >/dev/null
-  mv "$tmp" "$archive"
+  # Link without replacing an archive created concurrently by another operator.
+  ln -- "$tmp" "$archive"
+  rm -f -- "$tmp"
   trap - EXIT
   echo "ENGINEERING_STATE_BACKUP=PASS archive=$archive state_root=$state_root"
   exit 0
@@ -36,12 +41,5 @@ fi
 
 [[ -f "$archive" && ! -L "$archive" ]] || { echo "ERROR: backup archive missing or unsafe" >&2; exit 3; }
 tar -tzf "$archive" >/dev/null
-found=0
-while IFS= read -r entry; do
-  if [[ "$entry" == "$state_rel" || "$entry" == "$state_rel/"* ]]; then
-    found=1
-    break
-  fi
-done < <(tar -tzf "$archive")
-[[ "$found" -eq 1 ]] || { echo "ERROR: archive does not contain expected durable state root" >&2; exit 3; }
+python3 "$(dirname "$0")/engineering-state-restore-check.py" "$archive" "$state_rel"
 echo "ENGINEERING_STATE_RESTORE_TEST=PASS archive=$archive state_root=$state_root"
