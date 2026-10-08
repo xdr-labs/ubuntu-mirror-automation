@@ -57,6 +57,8 @@ run_step "bash_n_client_finalization" bash -n tests/test_client_finalization_loc
 run_step "bash_n_run_pr_gate" bash -n tests/run_pr_gate.sh
 run_step "bash_n_engineering_state_backup" bash -n scripts/engineering-state-backup.sh tests/test_engineering_state_backup.sh
 run_step "bash_n_phase1_retry_resume" bash -n tests/test_phase1_retry_resume_regression.sh
+run_step "bash_n_orphan_cleanup" bash -n tests/test_run_all_orphan_cleanup.sh
+run_step "run_all_orphan_cleanup" bash tests/test_run_all_orphan_cleanup.sh
 run_step "engineering_state_backup" bash tests/test_engineering_state_backup.sh
 run_step "phase2_detached_handoff_identity" bash tests/test_phase2_detached_handoff_identity.sh
 run_step "python_compile_fixture" python3 -m py_compile tests/lib/build_tiny_os_core_lifecycle_fixture.py
