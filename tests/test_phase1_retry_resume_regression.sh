@@ -194,6 +194,43 @@ SH
     fail "${hop}: predictable root retry path remains"
   fi
   pass "${hop}: transient HTTP retry + exact 000 normalization + secure runner pocket retry"
+
+  baseline_call_line="$(grep -n '^[[:space:]]*snapshot_pre_dro_package_state$' "$template" | tail -1 | cut -d: -f1)"
+  upgrading_state_line="$(grep -n '^[[:space:]]*write_state UPGRADING_' "$template" | tail -1 | cut -d: -f1)"
+  [[ "$baseline_call_line" =~ ^[0-9]+$ && "$upgrading_state_line" =~ ^[0-9]+$ ]] \
+    || fail "${hop}: baseline/state line discovery failed"
+  [[ "$baseline_call_line" -lt "$upgrading_state_line" ]] \
+    || fail "${hop}: UPGRADING state is published before package-transition baseline"
+
+  distfx="${TMP}/${hop}-distlog"
+  mkdir -p "$distfx/holds"
+  extract_function "$template" _distupgrade_log_current_run "$distfx/function.sh"
+  cat >"$distfx/run.sh" <<SH
+#!/usr/bin/env bash
+set -euo pipefail
+source "$distfx/function.sh"
+HOLDS_DIR="$distfx/holds"
+logf="$distfx/main.log"
+printf 'installing packages\n' >"\$logf"
+if _distupgrade_log_current_run "\$logf"; then
+  echo "missing baseline accepted historical dist-upgrade log" >&2
+  exit 70
+fi
+printf '200\n' >"\$HOLDS_DIR/package_transition_run_epoch"
+touch -d '@199' "\$logf"
+if _distupgrade_log_current_run "\$logf"; then
+  echo "pre-baseline dist-upgrade log accepted" >&2
+  exit 71
+fi
+touch -d '@200' "\$logf"
+_distupgrade_log_current_run "\$logf" || {
+  echo "current-run dist-upgrade log rejected" >&2
+  exit 72
+}
+SH
+  chmod +x "$distfx/run.sh"
+  bash "$distfx/run.sh" || fail "${hop}: dist-upgrade log baseline scoping"
+  pass "${hop}: baseline precedes UPGRADING; historical DistUpgrade logs ignored"
 done
 
 # ---------------------------------------------------------------------------

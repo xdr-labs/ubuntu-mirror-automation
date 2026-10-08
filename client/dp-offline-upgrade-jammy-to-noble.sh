@@ -14198,6 +14198,21 @@ _dpkg_process_from_this_run() {
   return 1
 }
 
+_distupgrade_log_current_run() {
+  # DistUpgrade logs can survive a previous hop. Accept them as mutation
+  # evidence only when the file was written at/after this hop's package
+  # transition baseline. Without a baseline, historical logs are not current-run
+  # package mutation evidence.
+  local logf="$1" baseline_epoch mtime
+  [[ -f "$logf" ]] || return 1
+  baseline_epoch="$(cat "${HOLDS_DIR}/package_transition_run_epoch" 2>/dev/null || echo 0)"
+  [[ "${baseline_epoch:-0}" =~ ^[0-9]+$ ]] || return 1
+  [[ "$baseline_epoch" -gt 0 ]] || return 1
+  mtime="$(stat -c '%Y' "$logf" 2>/dev/null || echo 0)"
+  [[ "${mtime:-0}" =~ ^[0-9]+$ ]] || return 1
+  [[ "$mtime" -ge "$baseline_epoch" ]]
+}
+
 detect_package_transition_evidence() {
   # Sets PACKAGE_TRANSITION_DETECTION_SOURCE/EVIDENCE. Return 0 on mutation.
   local ver status dpkglog mainlog aptlog before_mtime before_sha now_mtime now_sha
@@ -14282,13 +14297,13 @@ detect_package_transition_evidence() {
 
   mainlog="$(_hp /var/log/dist-upgrade/main.log)"
   aptlog="$(_hp /var/log/dist-upgrade/apt.log)"
-  if [[ -f "$mainlog" ]] \
+  if _distupgrade_log_current_run "$mainlog" \
     && grep -qiE 'apt\.distupgrade\.(install|doTheInstall)|installing packages|about to install|DistUpgrade\.install' "$mainlog" 2>/dev/null; then
     PACKAGE_TRANSITION_DETECTION_SOURCE="distupgrade_install_phase"
     PACKAGE_TRANSITION_DETECTION_EVIDENCE="dist-upgrade/main.log install phase"
     return 0
   fi
-  if [[ -f "$aptlog" ]] \
+  if _distupgrade_log_current_run "$aptlog" \
     && grep -qiE '^(Install|Upgrade|Remove):' "$aptlog" 2>/dev/null; then
     PACKAGE_TRANSITION_DETECTION_SOURCE="distupgrade_install_phase"
     PACKAGE_TRANSITION_DETECTION_EVIDENCE="dist-upgrade/apt.log transaction"
@@ -16044,6 +16059,10 @@ main() {
   runner_collect_pre_dro_evidence
 
   set_stage "DO_RELEASE_UPGRADE"
+  # Publish a complete package-transition baseline before the durable UPGRADING
+  # state. If the runner is interrupted after the state write, rerun evidence
+  # can distinguish historical logs from mutations in this hop.
+  snapshot_pre_dro_package_state
   write_state UPGRADING_JAMMY_TO_NOBLE
   # Ensure DistUpgrade ValidMirrors override + effective-source gate are present.
   # Gate hook may already be installed (DISARMED); arm only now - after Jammy
@@ -16066,7 +16085,6 @@ main() {
   LAST_COMMAND="validate DistUpgrade config ASCII"
   validate_distupgrade_config_ascii_before_dro
   install_noninteractive_conffile_policy
-  snapshot_pre_dro_package_state
   # Prevent ntp userdel error 8: quiesce legacy ntp before any package mutation.
   set_stage "NTP_PRE_TRANSITION_QUIESCE"
   LAST_COMMAND="ensure_legacy_ntp_quiesced_before_package_transition"
