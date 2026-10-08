@@ -297,12 +297,24 @@ else
   cat "$OUT/case-idem1.out" "$OUT/case-idem2.out" || true
 fi
 
-# Call site wired before do-release-upgrade
-if grep -A6 'snapshot_pre_dro_package_state' "$J2N_IN" \
-  | grep -q 'ensure_legacy_ntp_quiesced_before_package_transition'; then
-  pass "call-site. quiesce invoked after snapshot, before DRO"
+# Call site order: transition baseline is captured first, then legacy NTP is
+# quiesced before the invocation marker / watcher / do-release-upgrade. Do not
+# assume these calls remain within a fixed number of source lines; source-gate
+# and config checks may legitimately sit between them.
+snapshot_line="$(grep -n '^[[:space:]]*snapshot_pre_dro_package_state$' "$J2N_IN" | tail -1 | cut -d: -f1)"
+quiesce_line="$(grep -n '^[[:space:]]*ensure_legacy_ntp_quiesced_before_package_transition$' "$J2N_IN" | tail -1 | cut -d: -f1)"
+invoke_line="$(grep -n '^[[:space:]]*mark_release_upgrade_invocation_started$' "$J2N_IN" | tail -1 | cut -d: -f1)"
+dro_line="$(grep -n '^[[:space:]]*do-release-upgrade -f DistUpgradeViewNonInteractive$' "$J2N_IN" | tail -1 | cut -d: -f1)"
+if [[ "$snapshot_line" =~ ^[0-9]+$ \
+   && "$quiesce_line" =~ ^[0-9]+$ \
+   && "$invoke_line" =~ ^[0-9]+$ \
+   && "$dro_line" =~ ^[0-9]+$ \
+   && "$snapshot_line" -lt "$quiesce_line" \
+   && "$quiesce_line" -lt "$invoke_line" \
+   && "$invoke_line" -lt "$dro_line" ]]; then
+  pass "call-site. snapshot < NTP quiesce < invocation < DRO"
 else
-  fail "call-site. quiesce not wired before package transition"
+  fail "call-site. unsafe ordering snapshot=${snapshot_line:-?} quiesce=${quiesce_line:-?} invoke=${invoke_line:-?} dro=${dro_line:-?}"
 fi
 
 echo
