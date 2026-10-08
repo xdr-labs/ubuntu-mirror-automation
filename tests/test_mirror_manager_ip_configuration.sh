@@ -61,6 +61,11 @@ make_ip_mock "$BIN" eth0 "eth0 192.0.2.10/24" "eth0 198.51.100.10/24" "ens160 20
 CONF="${WORKDIR}/mm.conf"
 STATUS="${WORKDIR}/status.env"
 export PATH="${BIN}:/usr/bin:/bin"
+# Isolate workflow snapshots, command receipts, and locks from live mirror data.
+export MM_CONFIG_DIR="$WORKDIR"
+export MM_LOG_DIR="$WORKDIR/logs"
+export MM_STATE_ROOT="$WORKDIR/runs"
+export MM_LOCK_FILE="$WORKDIR/publication.lock"
 export MM_CONFIG_FILE="$CONF"
 export MM_STATUS_FILE="$STATUS"
 export MM_SKIP_ROOT_CHECK=1
