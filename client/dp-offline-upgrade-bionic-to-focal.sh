@@ -10602,6 +10602,46 @@ _write_log_identity_baseline() {
     printf '0\n' >"${HOLDS_DIR}/${prefix}_size_before" || return 1
   fi
 }
+validate_package_transition_baseline_members() {
+  local f status sha lines
+  for f in \
+    package_transition_run_epoch \
+    package_transition_runner_pid \
+    dpkg_status_mtime_before \
+    dpkg_log_offset_before \
+    dpkg_log_inode_before \
+    dpkg_log_mtime_before \
+    dpkg_log_size_before \
+    distupgrade_main_inode_before \
+    distupgrade_main_size_before \
+    distupgrade_apt_inode_before \
+    distupgrade_apt_size_before; do
+    [[ -f "${HOLDS_DIR}/${f}" ]] || return 1
+    grep -Eq '^[0-9]+$' "${HOLDS_DIR}/${f}" 2>/dev/null || return 1
+  done
+  [[ "$(cat "${HOLDS_DIR}/package_transition_run_epoch" 2>/dev/null || echo 0)" -gt 0 ]] || return 1
+  [[ "$(cat "${HOLDS_DIR}/package_transition_runner_pid" 2>/dev/null || echo 0)" -gt 0 ]] || return 1
+
+  for f in \
+    package_transition_baseline_at \
+    dpkg_status_sha_before \
+    dpkg_updates_listing_before \
+    core_package_versions_before; do
+    [[ -f "${HOLDS_DIR}/${f}" ]] || return 1
+  done
+  [[ -s "${HOLDS_DIR}/package_transition_baseline_at" ]] || return 1
+
+  status="$(_hp /var/lib/dpkg/status)"
+  if [[ -f "$status" ]]; then
+    sha="$(cat "${HOLDS_DIR}/dpkg_status_sha_before" 2>/dev/null || echo "")"
+    [[ "$sha" =~ ^[0-9a-fA-F]{64}$ ]] || return 1
+  fi
+
+  lines="$(wc -l <"${HOLDS_DIR}/core_package_versions_before" 2>/dev/null || echo 0)"
+  [[ "${lines:-0}" =~ ^[0-9]+$ && "$lines" -eq 5 ]] || return 1
+  return 0
+}
+
 snapshot_pre_dro_package_state() {
   # Capture baselines used by the realtime package transition watcher.
   # Baseline members are trusted only after the completion marker is atomically published.
@@ -10612,11 +10652,34 @@ snapshot_pre_dro_package_state() {
   mainlog="$(_hp /var/log/dist-upgrade/main.log)"
   aptlog="$(_hp /var/log/dist-upgrade/apt.log)"
   updates_dir="$(_hp /var/lib/dpkg/updates)"
-  mkdir -p "$HOLDS_DIR" 2>/dev/null || true
+  if ! mkdir -p "$HOLDS_DIR" 2>/dev/null; then
+    log ERROR "PACKAGE_TRANSITION_BASELINE_DIRECTORY=FAIL"
+    fail_stage 1 "PACKAGE_TRANSITION_BASELINE_DIRECTORY=FAIL"
+  fi
   baseline_complete="${HOLDS_DIR}/package_transition_baseline.complete"
-  # Invalidate the prior generation first. A crash during capture leaves
-  # no completion marker, so consumers ignore all partial/mixed files.
-  rm -f "$baseline_complete" 2>/dev/null || true
+  if ! rm -f \
+    "$baseline_complete" \
+    "${HOLDS_DIR}/package_transition_run_epoch" \
+    "${HOLDS_DIR}/package_transition_baseline_at" \
+    "${HOLDS_DIR}/package_transition_runner_pid" \
+    "${HOLDS_DIR}/dpkg_status_mtime_before" \
+    "${HOLDS_DIR}/dpkg_status_sha_before" \
+    "${HOLDS_DIR}/dpkg_log_offset_before" \
+    "${HOLDS_DIR}/dpkg_log_inode_before" \
+    "${HOLDS_DIR}/dpkg_log_mtime_before" \
+    "${HOLDS_DIR}/dpkg_log_size_before" \
+    "${HOLDS_DIR}/distupgrade_main_inode_before" \
+    "${HOLDS_DIR}/distupgrade_main_size_before" \
+    "${HOLDS_DIR}/distupgrade_apt_inode_before" \
+    "${HOLDS_DIR}/distupgrade_apt_size_before" \
+    "${HOLDS_DIR}/dpkg_updates_listing_before" \
+    "${HOLDS_DIR}/core_package_versions_before" \
+    "${HOLDS_DIR}/package_transition_detection.done" \
+    "${HOLDS_DIR}/package_transition_watcher.stop" 2>/dev/null; then
+    log ERROR "PACKAGE_TRANSITION_BASELINE_RESET=FAIL"
+    fail_stage 1 "PACKAGE_TRANSITION_BASELINE_RESET=FAIL"
+  fi
+  log INFO "PACKAGE_TRANSITION_BASELINE_RESET=PASS"
   run_epoch="$(date -u '+%s' 2>/dev/null || date '+%s')"
   started_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   printf '%s\n' "$run_epoch" >"${HOLDS_DIR}/package_transition_run_epoch"
@@ -10657,15 +10720,21 @@ snapshot_pre_dro_package_state() {
     ver="$(dpkg-query -W -f='${Version}' "$pkg" 2>/dev/null || true)"
     printf '%s=%s\n' "$pkg" "${ver:-}" >>"${HOLDS_DIR}/core_package_versions_before"
   done
-  rm -f "${HOLDS_DIR}/package_transition_detection.done" \
-    "${HOLDS_DIR}/package_transition_watcher.stop" 2>/dev/null || true
+  if ! validate_package_transition_baseline_members; then
+    log ERROR "PACKAGE_TRANSITION_BASELINE_VALIDATE=FAIL"
+    fail_stage 1 "PACKAGE_TRANSITION_BASELINE_VALIDATE=FAIL"
+  fi
+  log INFO "PACKAGE_TRANSITION_BASELINE_VALIDATE=PASS"
   baseline_tmp="$(mktemp "${HOLDS_DIR}/.package-transition-baseline.XXXXXX")" || \
     fail_stage 1 "PACKAGE_TRANSITION_BASELINE_PUBLISH=FAIL"
   if ! printf '%s\n' "$run_epoch" >"$baseline_tmp"; then
     rm -f "$baseline_tmp" 2>/dev/null || true
     fail_stage 1 "PACKAGE_TRANSITION_BASELINE_PUBLISH=FAIL"
   fi
-  chmod 0600 "$baseline_tmp" 2>/dev/null || true
+  if ! chmod 0600 "$baseline_tmp" 2>/dev/null; then
+    rm -f "$baseline_tmp" 2>/dev/null || true
+    fail_stage 1 "PACKAGE_TRANSITION_BASELINE_PUBLISH=FAIL"
+  fi
   if ! mv -f "$baseline_tmp" "$baseline_complete"; then
     rm -f "$baseline_tmp" 2>/dev/null || true
     fail_stage 1 "PACKAGE_TRANSITION_BASELINE_PUBLISH=FAIL"

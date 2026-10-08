@@ -275,6 +275,51 @@ SH
   bash "$atomicfx/run.sh" || fail "${hop}: incomplete baseline atomicity guard"
   grep -Fq 'PACKAGE_TRANSITION_BASELINE_COMPLETE=YES' "$template"     || fail "${hop}: baseline completion publication marker missing"
   pass "${hop}: incomplete/mixed baseline is ignored until atomic completion marker"
+
+  validatefx="${TMP}/${hop}-baseline-validation"
+  mkdir -p "$validatefx/holds" "$validatefx/root/var/lib/dpkg"
+  extract_function "$template" validate_package_transition_baseline_members "$validatefx/function.sh"
+  cat >"$validatefx/run.sh" <<SH
+#!/usr/bin/env bash
+set -euo pipefail
+source "$validatefx/function.sh"
+HOLDS_DIR="$validatefx/holds"
+TEST_ROOT="$validatefx/root"
+_hp() { printf '%s%s' "\$TEST_ROOT" "\$1"; }
+if validate_package_transition_baseline_members; then
+  echo "empty baseline unexpectedly validated" >&2
+  exit 76
+fi
+printf '100\n' >"\$HOLDS_DIR/package_transition_run_epoch"
+printf '123\n' >"\$HOLDS_DIR/package_transition_runner_pid"
+for f in \
+  dpkg_status_mtime_before \
+  dpkg_log_offset_before \
+  dpkg_log_inode_before \
+  dpkg_log_mtime_before \
+  dpkg_log_size_before \
+  distupgrade_main_inode_before \
+  distupgrade_main_size_before \
+  distupgrade_apt_inode_before \
+  distupgrade_apt_size_before; do
+  printf '0\n' >"\$HOLDS_DIR/\$f"
+done
+printf '2026-10-08T00:00:00Z\n' >"\$HOLDS_DIR/package_transition_baseline_at"
+: >"\$HOLDS_DIR/dpkg_status_sha_before"
+: >"\$HOLDS_DIR/dpkg_updates_listing_before"
+printf 'base-files=\nlibc6=\nlibc-bin=\napt=\ndpkg=\n' >"\$HOLDS_DIR/core_package_versions_before"
+validate_package_transition_baseline_members || {
+  echo "complete structural baseline rejected" >&2
+  exit 77
+}
+SH
+  chmod +x "$validatefx/run.sh"
+  bash "$validatefx/run.sh" || fail "${hop}: baseline member validation"
+  grep -Fq 'PACKAGE_TRANSITION_BASELINE_RESET=PASS' "$template" \
+    || fail "${hop}: baseline generation reset is not fail-closed"
+  grep -Fq 'PACKAGE_TRANSITION_BASELINE_VALIDATE=PASS' "$template" \
+    || fail "${hop}: baseline member validation marker missing"
+  pass "${hop}: stale generation cleared; incomplete baseline cannot publish"
 done
 
 # ---------------------------------------------------------------------------
