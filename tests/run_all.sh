@@ -85,6 +85,7 @@ TEST_LIST=(
   test_dp_phase2_process_detect.sh
   test_dp_upgrade_mirror_manager.sh
   test_run_all_orphan_cleanup.sh
+  test_owner_notification_exact_line.py
   test_gui_client_commands.sh
   test_secret_safety_hardening.sh
   test_config_clear_and_scoped_invalidation.sh
