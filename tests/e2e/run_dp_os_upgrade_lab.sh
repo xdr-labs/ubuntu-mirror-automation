@@ -18,7 +18,7 @@ usage() {
   cat <<'EOF'
 Usage: sudo tests/e2e/run_dp_os_upgrade_lab.sh \
   --preflight PATH \
-  --snapshot-reference TEXT \
+  [--snapshot-reference TEXT] \
   --approval-reference TEXT \
   --execute \
   --acknowledge-destructive-upgrade 'I_UNDERSTAND_THIS_OS_UPGRADE_IS_DESTRUCTIVE'
@@ -59,7 +59,6 @@ if ! grep -qxF "$host" "$ALLOWLIST"; then
   exit 20
 fi
 [[ -n "$PREFLIGHT" ]] || { echo "ERROR: --preflight required" >&2; exit 2; }
-[[ -n "$SNAPSHOT" ]] || { echo "ERROR: --snapshot-reference required" >&2; exit 2; }
 [[ -n "$APPROVAL" ]] || { echo "ERROR: --approval-reference required" >&2; exit 2; }
 [[ "$EXECUTE" -eq 1 ]] || { echo "ERROR: --execute required" >&2; exit 2; }
 [[ "$ACK" == "I_UNDERSTAND_THIS_OS_UPGRADE_IS_DESTRUCTIVE" ]] || {
@@ -69,9 +68,12 @@ fi
 
 echo "Lab E2E: running check then install on disposable host $host"
 bash "$CLI" check --preflight "$PREFLIGHT"
+# Snapshot notes are optional, never inspected or treated as proof by us.
+snapshot_args=()
+[[ -z "$SNAPSHOT" ]] || snapshot_args=(--snapshot-reference "$SNAPSHOT")
 bash "$CLI" install \
   --preflight "$PREFLIGHT" \
-  --snapshot-reference "$SNAPSHOT" \
+  "${snapshot_args[@]}" \
   --approval-reference "$APPROVAL" \
   --execute \
   --acknowledge-destructive-upgrade "$ACK"

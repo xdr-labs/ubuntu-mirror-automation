@@ -64,8 +64,9 @@ Collector schema: **1.0**, script versions **1.0.1** and **1.0.2** (configurable
 ```
 
 - `cache` / `mirror` require `--package-source-url`
-- For any upgrade action other than `NONE`, at least one non-placeholder
-  `--snapshot-reference` or `--backup-reference` is required for READY
+- Snapshot/backup references are optional operator notes. The tool neither
+  verifies their contents nor infers snapshot existence, and they never affect
+  READY/BLOCKED. Operators manage backups and recovery outside the tool.
 
 ### Package source modes
 
@@ -149,7 +150,7 @@ Plus `dp-upgrade-preflight-<hostname>-<UTC>.tar.gz`.
 | Change | Re-collect? | Preflight-only OK? |
 |--------|-------------|--------------------|
 | Shell / holds / disk / APT / NTP / repos on host | Yes | No |
-| Add snapshot/backup reference | No | Yes |
+| Change optional snapshot/backup note | No | Yes (operator records only) |
 | Mirror contents / live reachability | Re-collect or `--live-check` | Often `--live-check` |
 
 ## Examples
@@ -205,7 +206,6 @@ sudo ./scripts/dp-upgrade-preflight.sh \
 
 ## Typical blockers
 
-- Missing snapshot/backup reference (when upgrade is required)
 - `aella` login shell is unsupported (recognized sources: `/usr/bin/aella_cli`, `/bin/bash`, `/usr/bin/bash`; the OS hop client auto-converts `aella_cli`→`/bin/bash` during commit — do not manually `chsh` as a prerequisite)
 - `root` login shell is not bash when policy requires it
 - Critical APT holds (`systemd`, `udev`, …) without project unhold/restore logic
@@ -219,7 +219,8 @@ sudo ./scripts/dp-upgrade-preflight.sh \
 
 ## Limitations
 
-- Snapshot/backup **existence** is not verified—only operator references
+- Snapshot/backup existence, absence, and restorability are outside the tool's checks;
+  supplied references are optional operator annotations, not validated evidence
 - Mirror/cache completeness without `--live-check` or collector HTTP evidence is blocked by default
 - This repository currently has **no** OS-hop unhold/restore implementation; critical holds are blockers unless policy sets `PROJECT_MANAGES_CRITICAL_HOLDS=true`
 - Online bringup artifact endpoints are not invented; confirm them in your bringup process

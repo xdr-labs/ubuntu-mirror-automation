@@ -6,7 +6,7 @@ DP product install, topology, containers, and service health are **not** Phase 1
 **separate** workflow and is never executed by these tools.
 
 Execution profiles:
-- `production` (default): snapshot/backup required; may run the full remaining hop chain
+- `production` (default): operator owns snapshot/backup decisions outside this tool; may run the full remaining hop chain
 - `discovery`: disposable investigation VM; snapshot optional; default one hop (`max-hops=1`); ends in `CHECKPOINT_REACHED` until a new collector/preflight is supplied
 
 
@@ -44,8 +44,8 @@ Collector (1.0.2)
 This tool can rewrite APT sources, run `do-release-upgrade`, and reboot.
 
 - Default CLI paths (`check`, `plan`, `status`, `validate`, `logs`) are read-only.
-- `install` requires **root**, a valid fresh preflight, snapshot/backup reference,
-  live safety checks, `--execute`, and the exact phrase:
+- `install` requires **root**, a valid fresh preflight, live safety checks,
+  `--execute`, and the exact phrase (snapshot decisions are operator-only):
 
   `I_UNDERSTAND_THIS_OS_UPGRADE_IS_DESTRUCTIVE`
 
@@ -114,7 +114,8 @@ Default `PREFLIGHT_MAX_AGE_SECONDS=3600` from `completed_at_utc`.
 Missing/invalid/future/stale timestamps block execution.
 There is **no** `--allow-stale-preflight`. Re-collect and re-run preflight.
 
-Also blocked on hostname, OS, package-source mode/URL, or snapshot mismatch.
+Also blocked on hostname, OS, or package-source mode/URL mismatch.
+Snapshot/backup note presence or mismatch is never an automatic gate.
 
 ## Live safety check
 

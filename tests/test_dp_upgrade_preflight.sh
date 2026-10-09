@@ -223,16 +223,26 @@ assert d["upgrade_plan"]["recommended_action"]=="RUN_OS_UPGRADE"
 assert d["upgrade_plan"]["phase2_required"] is False
 PY
 
-# 20. no snapshot → BLOCKED
+# 20. No snapshot reference: off-host snapshots are NOT judged by our code.
 run_pf "$WORKDIR/nosnap" \
   --collection "$FIX/xenial-aio-ready" --package-source-mode direct --bringup-mode offline || true
-[[ "$RC" -eq 20 ]] && grep SNAPSHOT_OR_BACKUP_CONFIRMED "$RESDIR/checks.tsv" | grep -q FAIL && pass "no snapshot blocked" || fail "no snapshot"
+if [[ "$RC" -eq 0 || "$RC" -eq 10 ]] \
+  && grep SNAPSHOT_OPERATOR_ONLY "$RESDIR/checks.tsv" | grep -q NOT_EVALUATED_BY_TOOL; then
+  pass "missing snapshot reference does not block readiness or imply absence"
+else
+  fail "snapshot cannot block OS readiness rc=$RC"
+fi
 
-# 21. placeholder snapshot rejected
+# 21. An arbitrary operator reference is NEVER evidence of snapshot existence.
 run_pf "$WORKDIR/phsnap" \
   --collection "$FIX/xenial-aio-ready" --package-source-mode direct --bringup-mode offline \
   --snapshot-reference "n/a" || true
-[[ "$RC" -eq 20 ]] && grep SNAPSHOT_OR_BACKUP_CONFIRMED "$RESDIR/checks.tsv" | grep -q FAIL && pass "placeholder snapshot rejected" || fail "placeholder"
+if [[ "$RC" -eq 0 || "$RC" -eq 10 ]] \
+  && grep SNAPSHOT_OPERATOR_ONLY "$RESDIR/checks.tsv" | grep -q NOT_EVALUATED_BY_TOOL; then
+  pass "placeholder snapshot note is inert, not a success/failure proof"
+else
+  fail "placeholder reference affected OS readiness rc=$RC"
+fi
 
 # 22. aella aella_cli → PASS (expected Stellar shell; OS hop auto-converts)
 run_pf "$WORKDIR/aellashell" \
@@ -415,7 +425,9 @@ assert d["upgrade_plan"]["phase2_evaluated"] is False
 assert d["upgrade_plan"]["recommended_action"]=="RUN_OS_UPGRADE"
 ids={c["check_id"]:c for c in d["checks"]}
 assert ids["LOGIN_SHELL_AELLA"]["status"]=="PASS"
-assert ids["SNAPSHOT_OR_BACKUP_CONFIRMED"]["status"]=="FAIL"
+assert ids["SNAPSHOT_OPERATOR_ONLY"]["status"]=="PASS"
+assert ids["SNAPSHOT_OPERATOR_ONLY"]["observed"]=="NOT_EVALUATED_BY_TOOL"
+assert "SNAPSHOT_OR_BACKUP_CONFIRMED" not in ids
 assert ids["CRITICAL_HELD_PACKAGES"]["status"]=="FAIL"
 assert ids["PACKAGE_SOURCE_SELECTED"]["status"]=="FAIL"
 assert ids["AELLADATA_SEPARATE_MOUNT"]["status"]=="WARN"
@@ -438,13 +450,21 @@ run_pf "$WORKDIR/bringupdep" --collection "$FIX/noble-650-noop" --package-source
 grep -qi 'DEPRECATED.*bringup-mode' "$WORKDIR/bringupdep/stderr" && pass "bringup-mode deprecation warning" || fail "bringup deprecation"
 
 run_pf "$WORKDIR/prodnosnap" --collection "$FIX/xenial-aio-ready" --package-source-mode direct --execution-profile production || true
-[[ "$RC" -eq 20 ]] && grep SNAPSHOT_OR_BACKUP_CONFIRMED "$RESDIR/checks.tsv" | grep -q FAIL && pass "production no snapshot BLOCKED" || fail "prod nosnap"
+python3 - "$RESDIR/preflight-summary.json" <<'PY' && pass "production snapshot is operator-only, never an automatic blocker" || fail "prod snapshot code judgement"
+import json,sys
+d=json.load(open(sys.argv[1]))
+checks={c["check_id"]: c for c in d["checks"]}
+assert checks["SNAPSHOT_OPERATOR_ONLY"]["status"]=="PASS"
+assert checks["SNAPSHOT_OPERATOR_ONLY"]["observed"]=="NOT_EVALUATED_BY_TOOL"
+assert d["upgrade_plan"]["snapshot_required"] is False
+assert d["rollback"]["snapshot_verification"]=="NOT_PERFORMED_BY_TOOL"
+PY
 
 run_pf "$WORKDIR/discnosnap" --collection "$FIX/xenial-aio-ready" --package-source-mode direct --execution-profile discovery || true
 python3 - "$RESDIR/preflight-summary.json" "$RESDIR/checks.tsv" <<'PY' && pass "discovery no snapshot not BLOCKED for snapshot" || fail "disc nosnap"
 import sys, json
 rows=open(sys.argv[2]).read().splitlines()
-snap=[r for r in rows if r.startswith("SNAPSHOT_OR_BACKUP_CONFIRMED")]
+snap=[r for r in rows if r.startswith("SNAPSHOT_OPERATOR_ONLY")]
 assert snap, "missing snapshot check"
 cols=snap[0].split("\t")
 assert not (cols[2] == "FAIL" and cols[3] == "BLOCKER"), snap[0]

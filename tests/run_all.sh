@@ -128,6 +128,7 @@ TEST_LIST=(
   test_patch_dp_phase2_bringup.py
   test_phase2_bringup_fresh_upstream.sh
   test_bringup_lifecycle.sh
+  test_audit99_lifecycle.py
   test_bringup_lifecycle_run_contract.sh
   test_bringup_lifecycle_failed_retry.sh
   test_phase2_detached_handoff_identity.sh

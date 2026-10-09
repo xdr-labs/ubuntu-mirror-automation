@@ -50,7 +50,12 @@ echo APT_DEPENDENCY_CHECK=PASS
 echo WORKER_ORCHESTRATION=PASS
 ''')
         cli = self.p / "bin/aella_cli"
-        cli.write_text("#!/bin/sh\nexit 0\n")
+        cli.write_text(
+            "#!/bin/sh\n"
+            "printf '%s\\n' 'DataProcessor(DL-master)> show status' "
+            "'All cluster nodes are ready' 'All host services are ready' "
+            "'License is valid'\n"
+            "exit 0\n")
         cli.chmod(0o700)
         self.env = dict(os.environ)
         self.env.pop("DP_PHASE2_BRINGUP_LIB_ONLY", None)
@@ -185,6 +190,36 @@ echo WORKER_ORCHESTRATION=PASS
         self.assertEqual(q.returncode, 0, q.stdout + q.stderr)
         q = self.call("--status")
         self.assertIn("DP_UPGRADE_COMPLETE=YES", q.stdout)
+
+    def test_cluster_pass_refuses_cli_without_authoritative_readiness(self):
+        self.seed()
+        before = (self.d / "cluster-validation.env")
+        (self.p / "bin/aella_cli").write_text("#!/bin/sh\necho '5 pods running, at least 43 expected'\nexit 0\n")
+        q = self.call("--record-cluster-validation", "PASS")
+        self.assertNotEqual(q.returncode, 0, q.stdout + q.stderr)
+        self.assertIn("CLUSTER_VALIDATION=REFUSED reason=native_status_not_ready", q.stderr)
+        self.assertFalse(before.exists())
+
+    def test_cluster_pass_refuses_paused_native_status(self):
+        self.seed()
+        (self.p / "bin/aella_cli").write_text(
+            "#!/bin/sh\nprintf '%s\\n' "
+            "'DataProcessor(DL-master)> show status' "
+            "'All cluster nodes are ready' 'All host services are ready' "
+            "'License is valid' 'System paused. Type resume in cli'\nexit 0\n")
+        q = self.call("--record-cluster-validation", "PASS")
+        self.assertNotEqual(q.returncode, 0, q.stdout + q.stderr)
+        self.assertIn("CLUSTER_VALIDATION=REFUSED reason=native_status_not_ready", q.stderr)
+        self.assertFalse((self.d / "cluster-validation.env").exists())
+
+    def test_cluster_pass_persists_native_status_evidence(self):
+        self.seed()
+        q = self.call("--record-cluster-validation", "PASS")
+        self.assertEqual(q.returncode, 0, q.stdout + q.stderr)
+        receipt = (self.d / "cluster-validation.env").read_text()
+        self.assertIn("CLUSTER_VALIDATION_NATIVE_SIGNAL_SUMMARY=AUTHORITATIVE_SIGNALS_PRESENT", receipt)
+        self.assertRegex(receipt, r"CLUSTER_VALIDATION_NATIVE_STATUS_SHA256=[0-9a-f]{64}")
+        self.assertIn("CLUSTER_VALIDATION_NATIVE_STATUS_CHECKED_AT=", receipt)
 
     def test_unbound_legacy_cluster_pass_is_not_reused(self):
         self.seed()

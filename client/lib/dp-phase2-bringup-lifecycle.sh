@@ -591,6 +591,12 @@ p2b_parse_image_import_progress() {
     fi
     if [[ "$line" =~ IMAGE_IMPORT_END|IMAGE_IMPORT_COMPLETE ]]; then
       IMAGE_IMPORT_STATE="DONE"
+      # The final in-flight percentage is not a completed import's progress.
+      # Never replay an old 81% (or 99%) while unrelated bringup work runs.
+      last_prog=""
+      if [[ "$line" =~ namespace=([^[:space:]]+) ]]; then
+        last_ns="${BASH_REMATCH[1]}"
+      fi
     fi
   done <"$scoped_log"
   rm -f "$scoped_log"
@@ -1413,7 +1419,7 @@ AELLA_CLI_AVAILABLE=NOT_CHECKED
 AELLA_CLI_READY=NO
 DO_NOT_RUN_AELLA_CLI_YET=YES
 EOF
-    if [[ "${IMAGE_IMPORT_STATE:-}" == "RUNNING" || -n "${IMAGE_IMPORT_PROGRESS:-}" ]]; then
+    if [[ "${IMAGE_IMPORT_STATE:-}" == "RUNNING" ]]; then
       cat <<EOF
 IMAGE_IMPORT_PROGRESS namespace=${IMAGE_IMPORT_NAMESPACE:-UNKNOWN} progress=${IMAGE_IMPORT_PROGRESS:-UNKNOWN} process_alive=${worker_flag}
 IMAGE_IMPORT_STATE=${IMAGE_IMPORT_STATE:-RUNNING}

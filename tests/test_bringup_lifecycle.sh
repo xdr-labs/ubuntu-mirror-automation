@@ -76,6 +76,10 @@ IMAGE_IMPORT_COMPLETE namespace=k8s.io elapsed=00:01:00
 EOF
 p2b_status_snapshot
 [[ "$IMAGE_IMPORT_STATE" == DONE ]] || fail "image import complete state=${IMAGE_IMPORT_STATE}"
+[[ -z "$IMAGE_IMPORT_PROGRESS" ]] || fail "completed image import retained stale percentage=${IMAGE_IMPORT_PROGRESS}"
+p2b_print_status >"${TMP}/status.import.done"
+grep -q '^IMAGE_IMPORT_STATE=DONE$' "${TMP}/status.import.done" || fail "completed import state not reported"
+grep -q '^IMAGE_IMPORT_PROGRESS=$' "${TMP}/status.import.done" || fail "completed import reports stale percentage"
 [[ "$CURRENT_PHASE" == IMAGE_IMPORT_COMPLETE ]] || fail "image import complete phase=${CURRENT_PHASE}"
 [[ "$CURRENT_OPERATION" == image_import_complete ]] || fail "image import complete operation=${CURRENT_OPERATION}"
 pass "completed image import has a non-running phase"
@@ -93,6 +97,26 @@ p2b_status_snapshot
 [[ "$IMAGE_IMPORT_STATE" == RUNNING ]] || fail "moby UNKNOWN state=${IMAGE_IMPORT_STATE}"
 [[ "$CURRENT_PHASE" == IMAGE_IMPORT ]] || fail "moby UNKNOWN phase=${CURRENT_PHASE}"
 pass "namespace switch and UNKNOWN progress do not inherit or fabricate percent"
+
+# The AWS field case: moby completes at 81% (an import-tool last sampling
+# value); the bringup monitor must NOT emit that stale progress repeatedly.
+cat >>"$PHASE2_BRINGUP_LOG_DEFAULT" <<'EOF'
+IMAGE_IMPORT_PROGRESS namespace=moby progress=81%
+IMAGE_IMPORT_COMPLETE namespace=moby elapsed=00:05:11
+EOF
+p2b_status_snapshot
+[[ "$IMAGE_IMPORT_STATE" == DONE && -z "$IMAGE_IMPORT_PROGRESS" ]] \
+  || fail "moby completed import retained stale progress=${IMAGE_IMPORT_PROGRESS}"
+[[ "$IMAGE_IMPORT_NAMESPACE" == moby ]] || fail "completed moby namespace lost"
+p2b_print_status >"${TMP}/status.moby.done"
+grep -q '^IMAGE_IMPORT_PROGRESS=$' "${TMP}/status.moby.done" \
+  || fail "moby completed percentage leaked to status"
+# Real monitor loop drives its state from the same snapshot. Never re-print
+# a progress line after the terminal import event.
+if [[ "$IMAGE_IMPORT_STATE" == RUNNING ]]; then
+  fail "completed moby import still emits progress"
+fi
+pass "moby COMPLETE drops 81% and keeps completed state"
 
 # An exact sentinel and rc=0 for this run represents completion.
 cat >"$(p2b_dir)/result.env" <<EOF
