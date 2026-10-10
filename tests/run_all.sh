@@ -175,6 +175,7 @@ TEST_LIST=(
   test_os_orphan_log_scan_pipefail.sh
   test_os_python_inventory_report_pipefail.sh
   test_os_ntp_large_output_pipefail.sh
+  test_os_critical_holds_pipefail.sh
   test_phase2_remote_orchestration_semantics.sh
   test_phase2_remote_hardening.sh
   test_client_manifest_signing.sh

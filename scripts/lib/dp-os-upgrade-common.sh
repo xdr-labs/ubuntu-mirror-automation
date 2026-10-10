@@ -2587,7 +2587,7 @@ osu_critical_holds_present() {
   for pkg in "${crit[@]+"${crit[@]}"}"; do
     pkg="$(printf '%s' "$pkg" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
     [[ -z "$pkg" ]] && continue
-    if printf '%s\n' "$held" | grep -qxF "$pkg"; then
+    if grep -qxF "$pkg" <<<"$held"; then
       printf '%s\n' "$pkg"
     fi
   done
