@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Keep the Xenial→Bionic upgrader off the glibc 2.23 getenv/setenv race.
 
 Live RCA (Ubuntu 16.04, glibc 2.23): do-release-upgrade exited 139 before

@@ -137,6 +137,15 @@ class EnvOrderPatchTests(unittest.TestCase):
         got = open(os.path.join(focal, "DistUpgradeController.py"), encoding="utf-8").read()
         self.assertEqual(got, original)
 
+    def test_sitecustomize_declares_utf8_for_python2_maintainers(self):
+        # Python 2 defaults to ASCII for source files. The inherited PYTHONPATH
+        # must not cause a SyntaxError on the Unicode arrows in this module.
+        with open(MODULE_PATH, "rb") as fh:
+            first = fh.readline()
+            rest = fh.read()
+        self.assertIn(b"coding: utf-8", first)
+        self.assertTrue(any(char >= 128 for char in rest))
+
     def test_python2_maintainer_subprocess_skips_python3_hook(self):
         # Python 2 maintainer subprocesses inherit PYTHONPATH from the upgrader.
         original_sys = self.mod.sys
