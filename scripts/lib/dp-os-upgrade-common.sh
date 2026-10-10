@@ -2632,7 +2632,7 @@ osu_ntp_parse_ntpq_output() {
   OSU_NTP_PARSE_OFFSET=""
 
   [[ -n "$text" ]] || return 2
-  if printf '%s\n' "$text" | grep -qiE 'no association ID'; then
+  if grep -qiE 'no association ID' <<<"$text"; then
     return 1
   fi
 
@@ -2715,14 +2715,14 @@ osu_ntp_probe_chronyc() {
       printf '=== chronyc sources ===\n%s\n' "$sources"
     } >>"$OSU_NTP_RAW_FILE"
   fi
-  if printf '%s\n' "$tracking" | grep -qiE 'Leap status[[:space:]]*:[[:space:]]*Normal'; then
+  if grep -qiE 'Leap status[[:space:]]*:[[:space:]]*Normal' <<<"$tracking"; then
     local ref
     ref="$(printf '%s\n' "$tracking" | awk -F: '/Reference ID/ {sub(/^[[:space:]]+/,"",$2); print $2; exit}')"
     osu_ntp_set_evidence "chronyc" "true" "${ref:-chronyc}" "" "" "leap_status=Normal"
     return 0
   fi
   # chronyc sources: "^*" = current sync source (mode + '*')
-  if printf '%s\n' "$sources" | grep -qE '^\^\*'; then
+  if grep -qE '^\^\*' <<<"$sources"; then
     local peer
     peer="$(printf '%s\n' "$sources" | awk '/^\^\*/ {print $2; exit}')"
     if [[ -n "$peer" ]]; then
@@ -2730,7 +2730,7 @@ osu_ntp_probe_chronyc() {
       return 0
     fi
   fi
-  if printf '%s\n' "$tracking" | grep -qiE 'Leap status[[:space:]]*:[[:space:]]*(Not synchronised|Not synchronized)'; then
+  if grep -qiE 'Leap status[[:space:]]*:[[:space:]]*(Not synchronised|Not synchronized)' <<<"$tracking"; then
     osu_ntp_set_evidence "chronyc" "false" "" "" "" "leap_not_synchronised"
     return 1
   fi
@@ -2751,12 +2751,12 @@ osu_ntp_probe_timedatectl() {
     } >>"$OSU_NTP_RAW_FILE"
   fi
   if [[ "$show_val" =~ ^[Yy][Ee][Ss]$ ]] || \
-     printf '%s\n' "$status" | grep -qiE 'System clock synchronized:[[:space:]]*yes|NTP synchronized:[[:space:]]*yes'; then
+     grep -qiE 'System clock synchronized:[[:space:]]*yes|NTP synchronized:[[:space:]]*yes' <<<"$status"; then
     osu_ntp_set_evidence "timedatectl" "true" "" "" "" "timedatectl_synchronized=yes"
     return 0
   fi
   if [[ "$show_val" =~ ^[Nn][Oo]$ ]] || \
-     printf '%s\n' "$status" | grep -qiE 'System clock synchronized:[[:space:]]*no|NTP synchronized:[[:space:]]*no'; then
+     grep -qiE 'System clock synchronized:[[:space:]]*no|NTP synchronized:[[:space:]]*no' <<<"$status"; then
     # Weak on Ubuntu 16.04 when ntpd is used; only authoritative if no higher source existed.
     osu_ntp_set_evidence "timedatectl" "false" "" "" "" "timedatectl_synchronized=no"
     return 1

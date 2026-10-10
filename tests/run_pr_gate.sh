@@ -80,6 +80,7 @@ run_step "audit_mirror_private_key_tree" bash tests/test_mirror_client_private_k
 run_step "audit_os_artifact_private_scan" bash tests/test_os_artifact_secret_scan_pipefail.sh
 run_step "audit_os_orphan_log_scan" bash tests/test_os_orphan_log_scan_pipefail.sh
 run_step "audit_os_python_inventory_report" bash tests/test_os_python_inventory_report_pipefail.sh
+run_step "audit_phase1_ntp_long_output" bash tests/test_os_ntp_large_output_pipefail.sh
 run_step "audit_local_signing_large" bash tests/test_per_mirror_local_signing.sh
 run_step "audit_mirror_prereq_secret_scan" bash tests/test_mirror_prereq_private_scan_pipefail.sh
 run_step "xenial_bionic_early_sitecustomize" python3 -m unittest tests.test_xenial_bionic_upgrader_env_order
