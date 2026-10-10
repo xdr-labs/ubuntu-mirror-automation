@@ -408,6 +408,7 @@ p2b_run_cluster_validation_surface() {
 
 p2b_record_cluster_validation() {
   local result="${1-}" dest run_id target rc=0
+  local status_text="" status_signals="" status_sha="" status_checked_at=""
   case "$result" in
     PASS|FAIL|PENDING) ;;
     *) echo "ERROR: --record-cluster-validation requires PASS, FAIL, or PENDING" >&2; return 1 ;;
@@ -427,11 +428,40 @@ p2b_record_cluster_validation() {
     echo "ERROR: cluster confirmation requires the current completed run and available CLI" >&2
     return 1
   fi
+  if [[ "$result" == PASS ]]; then
+    # --validate-cluster is advisory; re-read native status at the moment
+    # PASS is recorded. A CLI binary merely existing is not evidence of health.
+    # Never auto-PASS: the operator must still explicitly record PASS.
+    if [[ -z "${AELLA_CLI_PATH:-}" || ! -x "${AELLA_CLI_PATH}" ]]; then
+      p2b_release_lock
+      echo "ERROR: CLUSTER_VALIDATION=REFUSED reason=cli_unavailable" >&2
+      return 1
+    fi
+    if ! status_text="$(p2b_aella_cli_show_status_bounded "${AELLA_CLI_PATH}" "${P2B_AELLA_CLI_STATUS_TIMEOUT_SEC}")"; then
+      p2b_release_lock
+      echo "ERROR: CLUSTER_VALIDATION=REFUSED reason=native_status_collection_failed" >&2
+      return 1
+    fi
+    status_signals="$(p2b_analyze_aella_status_text "$status_text")"
+    if ! printf '%s\n' "$status_signals" | grep -qx 'CLUSTER_VALIDATION_RECORDABLE_PASS=OPERATOR_JUDGEMENT'; then
+      p2b_release_lock
+      echo "ERROR: CLUSTER_VALIDATION=REFUSED reason=native_status_not_ready" >&2
+      printf '%s\n' "$status_signals" | grep -E '^CLUSTER_(STATUS_|SIGNAL_|VALIDATION_RECORDABLE_PASS=)' >&2 || true
+      return 1
+    fi
+    status_sha="$(printf '%s' "$status_text" | sha256sum | awk '{print $1}')"
+    status_checked_at="$(p2b_utc_now)"
+  fi
   dest="$(p2b_cluster_validation_env_path)"
   if ! {
     printf 'CLUSTER_VALIDATION=%s\n' "$result"
     printf 'BRINGUP_RUN_ID=%s\nBRINGUP_TARGET_VERSION=%s\n' "$run_id" "$target"
     printf 'CLUSTER_VALIDATION_RECORDED_AT=%s\n' "$(p2b_utc_now)"
+    if [[ "$result" == PASS ]]; then
+      printf 'CLUSTER_VALIDATION_NATIVE_STATUS_CHECKED_AT=%s\n' "$status_checked_at"
+      printf 'CLUSTER_VALIDATION_NATIVE_STATUS_SHA256=%s\n' "$status_sha"
+      printf 'CLUSTER_VALIDATION_NATIVE_SIGNAL_SUMMARY=AUTHORITATIVE_SIGNALS_PRESENT\n'
+    fi
   } | p2b_atomic_write "$dest"; then
     rc=1
   fi

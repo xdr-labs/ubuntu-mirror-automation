@@ -5,7 +5,8 @@ This runbook is **not** part of `tests/run_all.sh`.
 ## Requirements
 
 - Disposable VM (marker file required)
-- Hypervisor snapshot reference
+- Hypervisor snapshot/backup decisions remain an operator responsibility; this
+  lab runner does not check snapshot existence or require a reference string
 - Root
 - Fresh READY preflight (collector 1.0.2 → preflight)
 - Exact destructive acknowledgment
@@ -34,10 +35,12 @@ If `/etc/dp-os-upgrade-lab-allowed` is missing, the lab script refuses to run.
 
 ## Command
 
+The operator may optionally add `--snapshot-reference "lab-snap-id"` as a note;
+the lab runner does not inspect or verify external snapshots.
+
 ```bash
 sudo tests/e2e/run_dp_os_upgrade_lab.sh \
   --preflight /var/tmp/dp-upgrade-preflight-....tar.gz \
-  --snapshot-reference "lab-snap-id" \
   --approval-reference "CHG-LAB-001" \
   --execute \
   --acknowledge-destructive-upgrade \

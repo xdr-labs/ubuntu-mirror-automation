@@ -187,7 +187,7 @@ cmd_check() {
     osu_gate_recommended_action || rc=$EXIT_BLOCKED
   fi
   if [[ "$rc" -eq 0 ]]; then
-    osu_gate_snapshot_present || rc=$EXIT_BLOCKED
+    osu_note_snapshot_operator_responsibility
   fi
   if [[ "$PF_OVERALL" == "READY_WITH_WARNINGS" ]]; then
     if ! osu_validate_warning_acceptances; then
@@ -351,9 +351,9 @@ cmd_install() {
   mode="${PKG_MODE_OVERRIDE:-$PF_PACKAGE_SOURCE_MODE}"
   url="${PKG_URL_OVERRIDE:-$PF_PACKAGE_SOURCE_URL}"
   osu_gate_package_source_match "${PKG_MODE_OVERRIDE}" "${PKG_URL_OVERRIDE}" || exit "$EXIT_BLOCKED"
-  if [[ -n "$SNAPSHOT_OVERRIDE" && "$SNAPSHOT_OVERRIDE" != "$PF_SNAPSHOT_REF" ]]; then
-    osu_die_blocked "snapshot reference mismatch with preflight"
-  fi
+  # Snapshot notes are external; their values cannot gate this upgrade.
+  # A CLI note differing from a preflight note proves nothing about
+  # hypervisor snapshot existence or restore safety.
 
   # Profile must match preflight (default production on legacy fixtures)
   if [[ -z "${PF_EXECUTION_PROFILE:-}" ]]; then
@@ -380,7 +380,7 @@ cmd_install() {
   osu_check_preflight_freshness || exit "$EXIT_BLOCKED"
   osu_gate_identity_match || exit "$EXIT_BLOCKED"
   osu_gate_recommended_action || exit "$EXIT_BLOCKED"
-  osu_gate_snapshot_present || exit "$EXIT_BLOCKED"
+  osu_note_snapshot_operator_responsibility
 
   if [[ "$PF_RECOMMENDED" == "RUN_PHASE2" ]]; then
     osu_die_blocked "Phase 2 only — this orchestrator will not run Phase 2"
@@ -472,8 +472,8 @@ cmd_install() {
   ST_STOP_AFTER_OS="$STOP_AFTER_OS"
   ST_MAX_HOPS="$MAX_HOPS"
   ST_DISCOVERY_ACKNOWLEDGED="$( [[ "$EXECUTION_PROFILE" == "discovery" && "$DISCOVERY_ACK" == "$POLICY_DISCOVERY_DISPOSABLE_VM_ACK_PHRASE" ]] && echo true || echo false )"
-  ST_SNAPSHOT_REQUIRED="$( [[ "$EXECUTION_PROFILE" == "production" ]] && echo true || echo false )"
-  ST_SNAPSHOT_PRESENT="$( [[ -n "${PF_SNAPSHOT_REF}" || -n "${PF_BACKUP_REF}" ]] && echo true || echo false )"
+  ST_SNAPSHOT_REQUIRED=false
+  ST_SNAPSHOT_PRESENT=false # No code-verified off-host snapshot fact exists.
   ST_CURRENT_RUN_HOP_LIMIT="${MAX_HOPS:-$effective_total}"
   ST_CHECKPOINT_REASON=""
   ST_NEW_PREFLIGHT_REQUIRED=false
@@ -681,7 +681,7 @@ cmd_resume() {
       osu_die_blocked "resume --preflight requires a new preflight_id (got same ${PF_ID})"
     fi
     osu_gate_recommended_action || exit "$EXIT_BLOCKED"
-    osu_gate_snapshot_present || exit "$EXIT_BLOCKED"
+    osu_note_snapshot_operator_responsibility
     if [[ "$PF_OVERALL" == "READY_WITH_WARNINGS" ]]; then
       if ! osu_validate_warning_acceptances; then
         osu_log ERROR "resume --preflight: warning acceptance required"
@@ -951,7 +951,7 @@ cmd_continue() {
     osu_die_blocked "continue requires a new preflight_id (got same ${PF_ID})"
   fi
   osu_gate_recommended_action || exit "$EXIT_BLOCKED"
-  osu_gate_snapshot_present || exit "$EXIT_BLOCKED"
+  osu_note_snapshot_operator_responsibility
 
   if [[ -n "$STOP_AFTER_OS" && -n "$MAX_HOPS" ]]; then
     osu_die_cli "--stop-after-os and --max-hops are mutually exclusive"

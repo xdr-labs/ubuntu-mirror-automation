@@ -120,9 +120,9 @@ POLICY_MIN_AELLADATA_AVAILABLE_BYTES="5368709120"
 POLICY_MIN_INODE_AVAILABLE_PERCENT="10"
 POLICY_REQUIRE_AELLA_BASH="true"
 POLICY_REQUIRE_ROOT_BASH="true"
-POLICY_REQUIRE_SNAPSHOT_OR_BACKUP="true"
+POLICY_REQUIRE_SNAPSHOT_OR_BACKUP="false"
 POLICY_DEFAULT_EXECUTION_PROFILE="production"
-POLICY_PRODUCTION_REQUIRE_SNAPSHOT_OR_BACKUP="true"
+POLICY_PRODUCTION_REQUIRE_SNAPSHOT_OR_BACKUP="false"
 POLICY_DISCOVERY_REQUIRE_SNAPSHOT_OR_BACKUP="false"
 POLICY_DISCOVERY_REQUIRE_DISPOSABLE_VM_ACK="true"
 POLICY_DISCOVERY_DEFAULT_MAX_HOPS="1"
@@ -197,11 +197,12 @@ Required when MODE is cache or mirror:
 Execution profile (default: production):
   --execution-profile PROFILE    production | discovery
 
-Production READY when OS upgrade required:
+Optional operator notes (not a safety gate or verification):
   --snapshot-reference TEXT and/or --backup-reference TEXT
 
-Discovery: snapshot/backup optional (INFO/WARNING if absent). Disposable VM
-acknowledgment is enforced by the OS upgrade orchestrator at install time.
+Snapshot existence/restorability is NEVER assessed by this program. Operators
+are responsible for rollback preparation separately. Discovery disposable-VM
+acknowledgment remains enforced at installation.
 
 Options:
   --output-dir DIR               Parent for results (default: .)
@@ -320,13 +321,12 @@ validate_cli() {
 }
 
 apply_profile_snapshot_policy() {
-  if [[ "$EXECUTION_PROFILE" == "discovery" ]]; then
-    POLICY_REQUIRE_SNAPSHOT_OR_BACKUP="${POLICY_DISCOVERY_REQUIRE_SNAPSHOT_OR_BACKUP}"
-    SNAPSHOT_REQUIRED=false
-  else
-    POLICY_REQUIRE_SNAPSHOT_OR_BACKUP="${POLICY_PRODUCTION_REQUIRE_SNAPSHOT_OR_BACKUP}"
-    SNAPSHOT_REQUIRED=true
-  fi
+  # Hypervisor/backup snapshots are external operator responsibilities.
+  # A reference string is not evidence that a usable snapshot exists, and
+  # absence of a reference is not evidence that no snapshot exists.
+  # Preserve profile compatibility but never make OS readiness depend on it.
+  POLICY_REQUIRE_SNAPSHOT_OR_BACKUP=false
+  SNAPSHOT_REQUIRED=false
 }
 
 # ---------------------------------------------------------------------------
@@ -932,82 +932,14 @@ is_placeholder_reference() {
 }
 
 check_snapshot() {
-  if [[ "${OS_UPGRADE_REQUIRED:-$UPGRADE_REQUIRED}" == "false" ]]; then
-    add_check SNAPSHOT_OR_BACKUP_CONFIRMED safety PASS INFO \
-      "not_required_for_noop" "optional when no OS upgrade" \
-      "No OS upgrade recommended; snapshot gate not required" \
-      "none" "cli" "snapshot_reference"
-    return
-  fi
-
-  local snap_ok=0 bak_ok=0
-  if [[ -n "$SNAPSHOT_REFERENCE" ]] && ! is_placeholder_reference "$SNAPSHOT_REFERENCE"; then
-    snap_ok=1
-  elif [[ -n "$SNAPSHOT_REFERENCE" ]]; then
-    if [[ "$EXECUTION_PROFILE" == "discovery" ]]; then
-      add_check SNAPSHOT_OR_BACKUP_CONFIRMED safety WARN WARNING \
-        "placeholder:$(printf '%s' "$SNAPSHOT_REFERENCE" | tr '\t' ' ')" "non-placeholder or omit" \
-        "Snapshot reference looks like a placeholder; discovery allows omitting snapshot" \
-        "Provide a real reference or omit for disposable discovery VMs" \
-        "cli" "snapshot_reference"
-      return
-    fi
-    add_check SNAPSHOT_OR_BACKUP_CONFIRMED safety FAIL BLOCKER \
-      "placeholder:$(printf '%s' "$SNAPSHOT_REFERENCE" | tr '\t' ' ')" "non-placeholder reference" \
-      "Snapshot reference looks like a placeholder and is rejected" \
-      "Provide a real hypervisor snapshot ID/name/ticket, or a verified backup reference" \
-      "cli" "snapshot_reference"
-    return
-  fi
-  if [[ -n "$BACKUP_REFERENCE" ]] && ! is_placeholder_reference "$BACKUP_REFERENCE"; then
-    bak_ok=1
-  elif [[ -n "$BACKUP_REFERENCE" ]]; then
-    if [[ "$EXECUTION_PROFILE" == "discovery" ]]; then
-      add_check SNAPSHOT_OR_BACKUP_CONFIRMED safety WARN WARNING \
-        "placeholder" "non-placeholder or omit" \
-        "Backup reference looks like a placeholder; discovery allows omitting backup" \
-        "Provide a verified backup reference or omit for disposable discovery VMs" \
-        "cli" "backup_reference"
-      return
-    fi
-    add_check SNAPSHOT_OR_BACKUP_CONFIRMED safety FAIL BLOCKER \
-      "placeholder" "non-placeholder reference" \
-      "Backup reference looks like a placeholder and is rejected" \
-      "Provide a verified full-backup reference" \
-      "cli" "backup_reference"
-    return
-  fi
-
-  if [[ "$snap_ok" -eq 0 && "$bak_ok" -eq 0 ]]; then
-    if [[ "$EXECUTION_PROFILE" == "discovery" || "$POLICY_REQUIRE_SNAPSHOT_OR_BACKUP" != "true" ]]; then
-      add_check SNAPSHOT_OR_BACKUP_CONFIRMED safety WARN WARNING \
-        "none" "optional in discovery" \
-        "No VM snapshot or backup reference supplied; discovery allows disposable VMs without rollback" \
-        "Orchestrator install still requires --acknowledge-disposable-discovery-vm. Preflight does not create snapshots." \
-        "cli" "snapshot_reference"
-      return
-    fi
-    add_check SNAPSHOT_OR_BACKUP_CONFIRMED safety FAIL BLOCKER \
-      "none" "snapshot-reference or backup-reference" \
-      "No VM snapshot or verified full backup reference was supplied" \
-      "Create and verify a restorable VM snapshot (or full backup), then re-run preflight with --snapshot-reference or --backup-reference. Preflight does not create snapshots." \
-      "cli" "snapshot_reference"
-    return
-  fi
-
-  if [[ "$ROLE_CANON" != "AIO" && "$ROLE_CANON" != "WORKER" && -n "$WORKER_IPS_CSV" ]]; then
-    add_check SNAPSHOT_OR_BACKUP_CONFIRMED safety WARN WARNING \
-      "single_reference_with_workers" "per-node or cluster-wide confirmation" \
-      "External workers are listed; one reference does not prove every node is snapshotted" \
-      "Confirm master and all worker snapshots/backups in the hypervisor/backup system before upgrade" \
-      "cli" "snapshot_reference"
-  else
-    add_check SNAPSHOT_OR_BACKUP_CONFIRMED safety PASS INFO \
-      "provided" "operator-confirmed reference" \
-      "Snapshot or backup reference supplied (existence not verified by preflight)" \
-      "Operator must verify restore capability in hypervisor/backup system" \
-      "cli" "snapshot_reference"
-  fi
+  # Diagnostic compatibility: keep the historical check ID for report readers,
+  # but NEVER infer an external snapshot's existence/absence from CLI text.
+  # Neither missing nor placeholder references are upgrade blockers/warnings.
+  add_check SNAPSHOT_OPERATOR_ONLY safety PASS INFO \
+    "NOT_EVALUATED_BY_TOOL" "external operator responsibility" \
+    "Snapshot and backup existence/restorability are not assessed by this program" \
+    "Operator should separately follow approved maintenance/rollback procedures; no snapshot evidence is checked by this code" \
+    "operator" "snapshot_reference"
 }
 
 check_shells() {
@@ -2228,10 +2160,11 @@ ${CHECKS_JSON_PARTS[$i]}"
     "recommended_action": "$(pf_json_escape "$RECOMMENDED_ACTION")",
     "upgrade_required": $(pf_json_bool "$UPGRADE_REQUIRED"),
     "execution_profile": "$(pf_json_escape "$EXECUTION_PROFILE")",
-    "snapshot_required": $(pf_json_bool "$SNAPSHOT_REQUIRED")
+    "snapshot_required": false
   },
   "rollback": {
-    "required": $(pf_json_bool "$SNAPSHOT_REQUIRED"),
+    "required": false,
+    "snapshot_verification": "NOT_PERFORMED_BY_TOOL",
     "snapshot_reference": $(pf_json_str_or_null "$SNAPSHOT_REFERENCE"),
     "backup_reference": $(pf_json_str_or_null "$BACKUP_REFERENCE"),
     "disposable_vm_acknowledged": false,

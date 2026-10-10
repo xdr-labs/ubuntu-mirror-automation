@@ -32,8 +32,8 @@ Collector
 
 | Profile | Snapshot/backup | Default hop scope |
 |---------|-----------------|-------------------|
-| `production` (default) | Required when OS upgrade needed | Full remaining LTS chain |
-| `discovery` | Optional (INFO/WARNING if absent) | One hop (`max-hops=1`) |
+| `production` (default) | Operator-only, not assessed by code | Full remaining LTS chain |
+| `discovery` | Operator-only, not assessed by code | One hop (`max-hops=1`) |
 
 Disposable VM acknowledgment is enforced by the **orchestrator** at `install`
 time for discovery, not by this preflight.
@@ -79,5 +79,7 @@ sudo ./scripts/dp-os-upgrade-preflight.sh \
 ## Notes
 
 - Read-only: does not mutate the host or collector input.
-- Snapshot existence is not verified by this tool.
+- Snapshot existence/absence and restorability are **not judged** by the tool.
+  Missing, placeholder, or conflicting reference strings never determine readiness.
+  Rollback preparation remains the operator's responsibility.
 - Intermediate DP application health is not a Phase 1 criterion.

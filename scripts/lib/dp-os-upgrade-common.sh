@@ -93,7 +93,7 @@ POLICY_ALL_WARNINGS_ACK_PHRASE="$OSU_ALL_WARNINGS_ACK_DEFAULT"
 POLICY_DISCOVERY_DISPOSABLE_VM_ACK_PHRASE="$OSU_DISCOVERY_ACK_DEFAULT"
 POLICY_ORPHAN_ARCHIVE_ACK_PHRASE="$OSU_ORPHAN_ARCHIVE_ACK_DEFAULT"
 POLICY_DEFAULT_EXECUTION_PROFILE="production"
-POLICY_PRODUCTION_REQUIRE_SNAPSHOT_OR_BACKUP="true"
+POLICY_PRODUCTION_REQUIRE_SNAPSHOT_OR_BACKUP="false"
 POLICY_DISCOVERY_REQUIRE_SNAPSHOT_OR_BACKUP="false"
 POLICY_DISCOVERY_REQUIRE_DISPOSABLE_VM_ACK="true"
 POLICY_DISCOVERY_DEFAULT_MAX_HOPS="1"
@@ -1558,7 +1558,7 @@ osu_build_state_json() {
   "stop_after_os": $(osu_json_str_or_null "${ST_STOP_AFTER_OS:-}"),
   "max_hops": $(osu_json_num_or_null "${ST_MAX_HOPS:-}"),
   "discovery_acknowledged": $(osu_json_bool "${ST_DISCOVERY_ACKNOWLEDGED:-false}"),
-  "snapshot_required": $(osu_json_bool "${ST_SNAPSHOT_REQUIRED:-true}"),
+  "snapshot_required": $(osu_json_bool "${ST_SNAPSHOT_REQUIRED:-false}"),
   "snapshot_present": $(osu_json_bool "${ST_SNAPSHOT_PRESENT:-false}"),
   "current_run_hop_limit": $(osu_json_num_or_null "${ST_CURRENT_RUN_HOP_LIMIT:-}"),
   "checkpoint_reason": $(osu_json_str_or_null "${ST_CHECKPOINT_REASON:-}"),
@@ -2315,22 +2315,11 @@ osu_gate_package_source_match() {
   return 0
 }
 
-osu_gate_snapshot_present() {
-  local snap="$PF_SNAPSHOT_REF" bak="$PF_BACKUP_REF"
-  local profile="${OSU_EXECUTION_PROFILE:-${PF_EXECUTION_PROFILE:-production}}"
-  if osu_is_placeholder "$snap"; then snap=""; fi
-  if osu_is_placeholder "$bak"; then bak=""; fi
-  if [[ -z "$snap" && -z "$bak" ]]; then
-    if [[ "$PF_RECOMMENDED" == "NONE" || "$PF_RECOMMENDED" == "NO_OS_UPGRADE_REQUIRED" ]]; then
-      return 0
-    fi
-    if [[ "$profile" == "discovery" ]]; then
-      osu_log WARN "discovery profile: snapshot/backup optional (not blocking)"
-      return 0
-    fi
-    osu_log ERROR "snapshot or backup reference required for production"
-    return 1
-  fi
+osu_note_snapshot_operator_responsibility() {
+  # An operator may include an arbitrary reference for their own records.
+  # Software cannot attest to off-host snapshot existence or restorability.
+  # Never block/approve an OS upgrade based on this reference.
+  osu_log INFO "SNAPSHOT_VERIFICATION=NOT_PERFORMED_BY_TOOL"
   return 0
 }
 
@@ -4088,7 +4077,7 @@ osu_generate_reports() {
   "preflight_id": $(osu_json_str_or_null "${ST_PREFLIGHT_ID:-}"),
   "snapshot_reference": $(osu_json_str_or_null "${ST_SNAPSHOT_REF:-}"),
   "backup_reference": $(osu_json_str_or_null "${ST_BACKUP_REF:-}"),
-  "snapshot_required": $(osu_json_bool "${ST_SNAPSHOT_REQUIRED:-true}"),
+  "snapshot_required": $(osu_json_bool "${ST_SNAPSHOT_REQUIRED:-false}"),
   "package_source_mode": $(osu_json_str_or_null "${ST_PKG_MODE:-}"),
   "package_source_url": $(osu_json_str_or_null "$(osu_redact_url "${ST_PKG_URL:-}")"),
   "warning_acceptances": ${ST_WARNING_ACCEPTANCES:-[]},
