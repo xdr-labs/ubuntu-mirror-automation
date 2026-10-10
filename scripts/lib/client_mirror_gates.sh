@@ -160,6 +160,30 @@ client_gate_all_mirror_flags_match() {
   return 0
 }
 
+# An exact runtime --mirror-base pin is insufficient if the operator line
+# downloads the executable from another origin. Inspect every literal HTTP(S)
+# source, including URLs assigned to operator shell variables, without executing
+# the command or treating IPv4/FQDN dots as regular-expression wildcards.
+client_gate_all_literal_urls_match() {
+  local text="$1" expected="$2" urls url nonflag_text
+  # Runtime flags are independently checked below. Do not allow their
+  # correct URLs to masquerade as an independently verified curl source.
+  nonflag_text="$(sed -E 's/(^|[[:space:]])--mirror-(base|url)[[:space:]]+[^[:space:]]+//g' <<<"$text")"
+  urls="$(grep -oE "https?://[^[:space:]\"'<>;()]+" <<<"$nonflag_text" || true)"
+  if [[ -z "$urls" ]]; then
+    # A curl command with no independently visible URL cannot be verified.
+    if grep -qE '(^|[[:space:];&])curl[[:space:]]' <<<"$text"; then
+      return 1
+    fi
+    return 0
+  fi
+  while IFS= read -r url || [[ -n "$url" ]]; do
+    [[ -n "$url" ]] || continue
+    [[ "$url" == "$expected" || "$url" == "$expected/"* ]] || return 1
+  done <<<"$urls"
+  return 0
+}
+
 # client_assert_command_mirror_base <command-text-file-or--> <expected-base>
 # Verifies hop commands use the persisted local Mirror URL (optional --mirror-base).
 client_assert_command_mirror_base() {
@@ -176,6 +200,12 @@ client_assert_command_mirror_base() {
     text="$(cat "$src")"
   else
     text="$src"
+  fi
+  # Source origin and invocation flags are independent trust boundaries.
+  # A correct --mirror-base must never mask an off-mirror curl download.
+  if ! client_gate_all_literal_urls_match "$text" "$expected"; then
+    client_gate_log_err "RUNTIME_COMMAND_GATE=FAIL literal URL source outside pinned mirror or unverifiable curl URL"
+    return 1
   fi
   # Prefer explicit --mirror-base when present; otherwise require curl URL host match.
   if grep -q -- '--mirror-base' <<<"$text"; then

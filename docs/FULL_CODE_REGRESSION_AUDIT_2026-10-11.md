@@ -146,3 +146,45 @@ on `dev-drlink`.
 bringup, no production mirror publishing, and no PR merge. Surface
 Reconciliation, Full User E2E, public smoke and owner release acceptance
 are separate gates requiring an approved disposable lab.
+
+
+---
+
+## A14 — direct executable download origin not bound to Mirror Host-Pin
+
+**Source / classification:** `scripts/lib/client_mirror_gates.sh`,
+`client_assert_command_mirror_base`. A **MEDIUM** integrity weakness in
+a supplementary operator-command validation helper; do not infer any
+production exploit or bypass of signed client verification from this case.
+
+**RED:** A generated-looking command that downloads
+`http://192.0.2.20/client/x.sh` while supplying
+`--mirror-base http://192.0.2.10` incorrectly returns
+`RUNTIME_COMMAND_GATE=PASS expected=http://192.0.2.10`. A second
+external `curl` download and a foreign literal shell URL assignment
+are similarly hidden by the correct runtime flag. A runtime Mirror URL
+pin does not by itself prove the origin of executable bytes.
+The RED cases use only command **strings**; nothing is downloaded or run.
+
+**Narrow remedy:** Independently check every literal HTTP(S) URL present
+in the command, including visible shell URL assignments, against the exact
+persisted Mirror base; strip already verified `--mirror-base`/`--mirror-url`
+argument values before checking the origin to avoid accepting an
+unverifiable `curl` request based solely on the matching runtime flag.
+Allow a local script invocation with a correct explicit pin (no download).
+Do not execute commands or introduce a dependency on the live network.
+
+**GREEN / compatibility cases:** wrong download host, additional foreign
+URL and wrong URL assignment are rejected; direct same-host and visible
+same-host variable-based downloads still pass; an unresolved curl URL
+without a visible origin fails closed; local script execution with the
+correct pin remains supported. Existing Host-Pin literal-matching tests
+(A13), large signed-client metadata fixture, Menu 7 and client command
+generation regression tests remain PASS.
+
+**Evidence:** On `dev-drlink`, in
+`/home/aella/dp-os-upgrade-evidence/20261011/full-code-regression/`:
+`20261011-host-pin-source-origin-red.log`,
+`20261011-host-pin-source-origin-green.log`, and
+`20261011-hostpin-a14-test_*.log`. This remains a code-only, hermetic
+review. No DP OS upgrade, production publication or release authority.
