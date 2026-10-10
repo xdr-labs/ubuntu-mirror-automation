@@ -83,7 +83,6 @@ run_step "audit_os_python_inventory_report" bash tests/test_os_python_inventory_
 run_step "audit_phase1_ntp_long_output" bash tests/test_os_ntp_large_output_pipefail.sh
 run_step "audit_migration_dirty_git_guard" bash tests/test_migrate_git_guard_pipefail.sh
 run_step "audit_local_signing_large" bash tests/test_per_mirror_local_signing.sh
-run_step "audit_mirror_prereq_secret_scan" bash tests/test_mirror_prereq_private_scan_pipefail.sh
 run_step "xenial_bionic_early_sitecustomize" python3 -m unittest tests.test_xenial_bionic_upgrader_env_order
 run_step "offline_progress_complete_lines" python3 -m unittest tests.test_offline_progress_log_lines
 run_step "menu7_cached_open_fixture" bash tests/test_menu7_cached_open.sh

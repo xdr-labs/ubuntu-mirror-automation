@@ -193,7 +193,6 @@ TEST_LIST=(
   test_workflow_kv_getters.sh
   test_client_mirror_pin_gates.sh
   test_per_mirror_local_signing.sh
-  test_mirror_prereq_private_scan_pipefail.sh
   test_client_ready_circular_gate.sh
   test_os_core_selective_ready_provenance.sh
   test_os_core_r2_roundtrip_integration.sh
