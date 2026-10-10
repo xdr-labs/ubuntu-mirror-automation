@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Temporary-checkout GC integration tests: only synthetic /tmp fixtures."""
+import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -9,6 +11,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts/tmp-checkout-gc.py"
@@ -58,6 +61,19 @@ class SafeTempCheckoutGCTests(unittest.TestCase):
         result = self.run_gc("register", str(path))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("REGISTERED", result.stdout)
+
+    def test_mountinfo_octals_cannot_hide_nested_bind_mount(self):
+        spec = importlib.util.spec_from_file_location("um_tmp_gc", SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        target = self.root / "um-test-clone"
+        fake_mount = str(target) + "/mount\tpoint"
+        mount_line = "42 1 0:1 / %s rw - ext4 source rw\n" % (
+            fake_mount.replace("\t", "\\011")
+        )
+        with mock.patch("builtins.open", return_value=io.StringIO(mount_line)):
+            with self.assertRaisesRegex(module.NotSafe, "mounted_subtree"):
+                module.no_mounted_subtrees(target)
 
     def test_default_mode_never_deletes_unregistered_git_checkouts(self):
         existing = self.clone("old-unmanaged")

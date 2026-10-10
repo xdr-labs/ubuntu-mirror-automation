@@ -198,7 +198,14 @@ def register(path, root, entries):
 def no_mounted_subtrees(path):
     try:
         with open("/proc/self/mountinfo", "r", encoding="utf-8") as stream:
-            mounts = [line.split()[4].replace("\\040", " ") for line in stream]
+            # Linux mountinfo escapes whitespace and backslash as octal.
+            # Decode ALL octal escapes, including tabs and newlines; otherwise
+            # a bind mount may evade the subtree guard before rmtree.
+            mounts = [
+                re.sub(r"\\([0-7]{3})", lambda match: chr(int(match.group(1), 8)),
+                       line.split()[4])
+                for line in stream
+            ]
     except OSError:
         raise NotSafe("mountinfo_unavailable")
     prefix = str(path) + "/"
