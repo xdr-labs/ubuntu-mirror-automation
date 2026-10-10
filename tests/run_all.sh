@@ -183,6 +183,7 @@ TEST_LIST=(
   test_distupgrade_source_compat.py
   test_prepare_backup_staging.sh
   test_migrate_apt_mirror_to_root.sh
+  test_migrate_git_guard_pipefail.sh
   test_mirror_host_ip_resolution.sh
   test_mirror_manager_ip_configuration.sh
   test_http_publication_permissions.sh
