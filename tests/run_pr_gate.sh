@@ -73,6 +73,13 @@ run_step "audit99_boundary_regressions" python3 -m unittest \
 run_step "owner_notification_exact_line" python3 -m unittest tests.test_owner_notification_exact_line
 # Preserve both open PRs: Phase 2 SIGPIPE and Python startup/four-hop monitor fixes.
 run_step "phase2_cluster_status_sigpipe" bash tests/test_phase2_validate_cluster_eof_closure.sh
+run_step "audit_phase2_ntp_long_status" bash tests/test_phase2_ntp_pipefail_large_output.sh
+run_step "audit_preflight_json_large" bash tests/test_dp_preflight_internal_json_pipefail.sh
+run_step "audit_host_pin_large" bash tests/test_client_mirror_pin_large_payload.sh
+run_step "audit_mirror_private_key_tree" bash tests/test_mirror_client_private_key_scan_pipefail.sh
+run_step "audit_local_signing_large" bash tests/test_per_mirror_local_signing.sh
+run_step "audit_os_artifact_secret_scan" bash tests/test_os_artifact_secret_scan_pipefail.sh
+run_step "audit_mirror_prereq_secret_scan" bash tests/test_mirror_prereq_private_scan_pipefail.sh
 run_step "xenial_bionic_early_sitecustomize" python3 -m unittest tests.test_xenial_bionic_upgrader_env_order
 run_step "offline_progress_complete_lines" python3 -m unittest tests.test_offline_progress_log_lines
 run_step "menu7_cached_open_fixture" bash tests/test_menu7_cached_open.sh

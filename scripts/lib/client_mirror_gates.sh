@@ -87,11 +87,11 @@ client_assert_mirror_base_match() {
     client_gate_log_err "HOST_PIN_GATE=FAIL PIN_META_B64 decode failed"
     mismatches=$((mismatches + 1))
   else
-    if ! printf '%s' "$meta_text" | grep -Fq "${expected}/"; then
+    if ! grep -Fq "${expected}/" <<<"$meta_text"; then
       client_gate_log_err "HOST_PIN_GATE=FAIL embedded meta-release missing ${expected}"
       mismatches=$((mismatches + 1))
     fi
-    if printf '%s' "$meta_text" | grep -Fq '@MIRROR_BASE@'; then
+    if grep -Fq '@MIRROR_BASE@' <<<"$meta_text"; then
       client_gate_log_err "HOST_PIN_GATE=FAIL embedded meta-release still has placeholder"
       mismatches=$((mismatches + 1))
     fi
@@ -102,9 +102,9 @@ client_assert_mirror_base_match() {
     client_gate_log_err "HOST_PIN_GATE=FAIL PIN_MANIFEST_B64 decode failed"
     mismatches=$((mismatches + 1))
   else
-    if ! printf '%s' "$manifest_text" | grep -Fq "\"mirror_base\": \"${expected}\""; then
+    if ! grep -Fq "\"mirror_base\": \"${expected}\"" <<<"$manifest_text"; then
       # tolerate compact JSON without spaces
-      if ! printf '%s' "$manifest_text" | grep -Fq "\"mirror_base\":\"${expected}\""; then
+      if ! grep -Fq "\"mirror_base\":\"${expected}\"" <<<"$manifest_text"; then
         client_gate_log_err "HOST_PIN_GATE=FAIL manifest mirror_base != ${expected}"
         mismatches=$((mismatches + 1))
       fi
@@ -156,18 +156,18 @@ client_assert_command_mirror_base() {
     text="$src"
   fi
   # Prefer explicit --mirror-base when present; otherwise require curl URL host match.
-  if printf '%s' "$text" | grep -q -- '--mirror-base'; then
-    if ! printf '%s' "$text" | grep -qE -- "--mirror-base[[:space:]]+${expected}([[:space:]]|$)"; then
+  if grep -q -- '--mirror-base' <<<"$text"; then
+    if ! grep -qE -- "--mirror-base[[:space:]]+${expected}([[:space:]]|$)" <<<"$text"; then
       client_gate_log_err "RUNTIME_COMMAND_GATE=FAIL hop command --mirror-base != ${expected}"
       return 1
     fi
-  elif ! printf '%s' "$text" | grep -Fq "${expected}/client/"; then
+  elif ! grep -Fq "${expected}/client/" <<<"$text"; then
     client_gate_log_err "RUNTIME_COMMAND_GATE=FAIL hop command missing ${expected}/client/"
     return 1
   fi
-  if printf '%s' "$text" | grep -q -- 'stage-dp-phase2.sh'; then
-    if printf '%s' "$text" | grep -q -- '--mirror-url'; then
-      if ! printf '%s' "$text" | grep -qE -- "--mirror-url[[:space:]]+${expected}([[:space:]]|$)"; then
+  if grep -q -- 'stage-dp-phase2.sh' <<<"$text"; then
+    if grep -q -- '--mirror-url' <<<"$text"; then
+      if ! grep -qE -- "--mirror-url[[:space:]]+${expected}([[:space:]]|$)" <<<"$text"; then
         client_gate_log_err "RUNTIME_COMMAND_GATE=FAIL phase2 --mirror-url != ${expected}"
         return 1
       fi

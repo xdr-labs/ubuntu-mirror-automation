@@ -174,7 +174,12 @@ local_signing_export_build_env() {
 local_signing_assert_private_not_published() {
   local http_root="${1:-}"
   [[ -n "$http_root" && -d "$http_root" ]] || return 0
-  if find "$http_root" -type f \( -name 'private.gpg' -o -name '*private*.gpg' -o -name '*.private.gpg' \) 2>/dev/null | grep -q .; then
+  local private_match
+  if ! private_match="$(find "$http_root" -type f \( -name 'private.gpg' -o -name '*private*.gpg' -o -name '*.private.gpg' \) -print -quit 2>/dev/null)"; then
+    local_signing_err "PRIVATE_KEY_HTTP_SCAN_FAILED=YES"
+    return 1
+  fi
+  if [[ -n "$private_match" ]]; then
     local_signing_err "PRIVATE_KEY_HTTP_PUBLISHED=YES"
     return 1
   fi

@@ -116,6 +116,26 @@ classify_package_transition_evidence
 package_transition_evidence_present || fail "boolean must be true for authoritative"
 pass "post-baseline dpkg unpack → AUTHORITATIVE"
 
+# A large post-baseline dpkg log is normal during a real release upgrade.
+# A match near the start must not become invisible because grep -q closes
+# its read end early while the producer is still writing under pipefail.
+fx="$(mkfx focal-to-jammy 20.04 focal)"
+activate_hop focal-to-jammy 20.04 22.04 focal jammy "$fx"
+printf 'historical baseline\n' >"$fx/var/log/dpkg.log"
+record_release_upgrade_run_baseline
+python3 - "$fx/var/log/dpkg.log" <<'LARGE_DPKG_FIXTURE'
+import sys
+with open(sys.argv[1], "ab") as stream:
+    stream.write(b"startup archives unpack\n")
+    stream.write(b"unrelated dpkg status line\n" * 12000)
+LARGE_DPKG_FIXTURE
+classify_package_transition_evidence
+[[ "$PACKAGE_TRANSITION_CLASS" == "AUTHORITATIVE_PACKAGE_TRANSITION" ]] \
+  || fail "large post-baseline dpkg evidence must remain authoritative (got $PACKAGE_TRANSITION_CLASS)"
+[[ "$AUTHORITATIVE_PACKAGE_TRANSITION" == "YES" ]] \
+  || fail "long log must not clear authoritative package-transition state"
+pass "large post-baseline dpkg log earliest authoritative event survives pipefail"
+
 # --- Baseline inode rotation must not swallow whole new log ---
 fx="$(mkfx jammy-to-noble 22.04 jammy)"
 mkdir -p "$fx/var/log"
