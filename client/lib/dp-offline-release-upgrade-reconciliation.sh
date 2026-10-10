@@ -674,11 +674,11 @@ collect_package_transition_evidence() {
       recon_append_evidence "AMBIGUOUS_LOG_EVIDENCE" "dpkg.log" "$dpkglog" "current-run log evidence unavailable" "unknown"
       slice=""
     fi
-    if printf '%s' "$slice" | grep -q 'startup archives unpack'; then
+    if grep -q 'startup archives unpack' <<<"$slice"; then
       recon_append_evidence "AUTHORITATIVE_PACKAGE_TRANSITION" "dpkg.log" "$dpkglog" \
         "startup archives unpack (post-baseline)" "yes"
     fi
-    if printf '%s' "$slice" | grep -qiE "status (half-installed|unpacked|installed) .*(libc6|base-files|libc-bin)"; then
+    if grep -qiE "status (half-installed|unpacked|installed) .*(libc6|base-files|libc-bin)" <<<"$slice"; then
       recon_append_evidence "AUTHORITATIVE_PACKAGE_TRANSITION" "dpkg.log" "$dpkglog" \
         "status unpack/install core (post-baseline)" "yes"
     fi
@@ -686,7 +686,7 @@ collect_package_transition_evidence() {
       recon_append_evidence "AMBIGUOUS_LOG_EVIDENCE" "apt/history.log" "$apthist" "current-run log evidence unavailable" "unknown"
       slice=""
     fi
-    if printf '%s' "$slice" | grep -qiE "^(Install|Upgrade|Remove):"; then
+    if grep -qiE "^(Install|Upgrade|Remove):" <<<"$slice"; then
       recon_append_evidence "AUTHORITATIVE_PACKAGE_TRANSITION" "apt/history.log" "$apthist" \
         "Install/Upgrade/Remove (post-baseline)" "yes"
     fi
@@ -731,20 +731,20 @@ classify_package_transition_evidence() {
   STALE_EVIDENCE_COUNT=0
   PRE_TRANSITION_EVIDENCE_COUNT=0
 
-  if printf '%s' "$PACKAGE_TRANSITION_EVIDENCE_LINES" | grep -q '^EVIDENCE_TYPE=ACTIVE_RELEASE_UPGRADE_PROCESS'; then
+  if grep -q '^EVIDENCE_TYPE=ACTIVE_RELEASE_UPGRADE_PROCESS' <<<"$PACKAGE_TRANSITION_EVIDENCE_LINES"; then
     class="ACTIVE_RELEASE_UPGRADE_PROCESS"
   fi
-  if printf '%s' "$PACKAGE_TRANSITION_EVIDENCE_LINES" | grep -q '^EVIDENCE_TYPE=TARGET_RELEASE_REACHED'; then
+  if grep -q '^EVIDENCE_TYPE=TARGET_RELEASE_REACHED' <<<"$PACKAGE_TRANSITION_EVIDENCE_LINES"; then
     class="TARGET_RELEASE_REACHED"
   fi
-  if printf '%s' "$PACKAGE_TRANSITION_EVIDENCE_LINES" | grep -q '^EVIDENCE_TYPE=MIXED_SOURCE_TARGET_PACKAGES'; then
+  if grep -q '^EVIDENCE_TYPE=MIXED_SOURCE_TARGET_PACKAGES' <<<"$PACKAGE_TRANSITION_EVIDENCE_LINES"; then
     class="MIXED_SOURCE_TARGET_PACKAGES"
   fi
-  if printf '%s' "$PACKAGE_TRANSITION_EVIDENCE_LINES" | grep -q '^EVIDENCE_TYPE=INTERRUPTED_DPKG_TRANSACTION'; then
+  if grep -q '^EVIDENCE_TYPE=INTERRUPTED_DPKG_TRANSACTION' <<<"$PACKAGE_TRANSITION_EVIDENCE_LINES"; then
     [[ "$class" == "NONE" || "$class" == "STALE_OR_PREBASELINE" || "$class" == "PRE_TRANSITION_CONFIGURATION_ONLY" ]] \
       && class="INTERRUPTED_DPKG_TRANSACTION"
   fi
-  if printf '%s' "$PACKAGE_TRANSITION_EVIDENCE_LINES" | grep -q '^EVIDENCE_TYPE=AUTHORITATIVE_PACKAGE_TRANSITION'; then
+  if grep -q '^EVIDENCE_TYPE=AUTHORITATIVE_PACKAGE_TRANSITION' <<<"$PACKAGE_TRANSITION_EVIDENCE_LINES"; then
     # Authoritative wins over stale/pre-config unless already target/active.
     case "$class" in
       TARGET_RELEASE_REACHED|ACTIVE_RELEASE_UPGRADE_PROCESS) ;;

@@ -167,6 +167,11 @@ TEST_LIST=(
   test_phase2_prereq_extract_sigpipe.sh
   test_phase2_cluster_readiness.sh
   test_phase2_validate_cluster_eof_closure.sh
+  test_phase2_ntp_pipefail_large_output.sh
+  test_dp_preflight_internal_json_pipefail.sh
+  test_client_mirror_pin_large_payload.sh
+  test_mirror_client_private_key_scan_pipefail.sh
+  test_os_artifact_secret_scan_pipefail.sh
   test_phase2_remote_orchestration_semantics.sh
   test_phase2_remote_hardening.sh
   test_client_manifest_signing.sh
@@ -184,6 +189,7 @@ TEST_LIST=(
   test_workflow_kv_getters.sh
   test_client_mirror_pin_gates.sh
   test_per_mirror_local_signing.sh
+  test_mirror_prereq_private_scan_pipefail.sh
   test_client_ready_circular_gate.sh
   test_os_core_selective_ready_provenance.sh
   test_os_core_r2_roundtrip_integration.sh

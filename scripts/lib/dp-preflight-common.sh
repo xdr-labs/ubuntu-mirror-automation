@@ -340,7 +340,7 @@ pf_json_get_internal() {
   content="$(tr -d '\r' <"$file" 2>/dev/null)" || { printf ''; return 1; }
 
   # Validate minimal structure
-  if ! printf '%s' "$content" | grep -q '"schema_version"'; then
+  if ! grep -q '"schema_version"' <<<"$content"; then
     printf ''
     return 1
   fi
@@ -349,12 +349,12 @@ pf_json_get_internal() {
     # Extract "key": "value" or "key": null from a block of JSON text
     local blob="$1" k="$2"
     local line
-    line="$(printf '%s\n' "$blob" | grep -E "\"${k}\"[[:space:]]*:" | head -1)"
+    line="$(grep -m1 -E "\"${k}\"[[:space:]]*:" <<<"$blob")"
     if [[ -z "$line" ]]; then printf ''; return; fi
-    if printf '%s' "$line" | grep -qE ':[[:space:]]*null'; then printf ''; return; fi
-    if printf '%s' "$line" | grep -qE ':[[:space:]]*true'; then printf 'true'; return; fi
-    if printf '%s' "$line" | grep -qE ':[[:space:]]*false'; then printf 'false'; return; fi
-    if printf '%s' "$line" | grep -qE ':[[:space:]]*-?[0-9]+'; then
+    if grep -qE ':[[:space:]]*null' <<<"$line"; then printf ''; return; fi
+    if grep -qE ':[[:space:]]*true' <<<"$line"; then printf 'true'; return; fi
+    if grep -qE ':[[:space:]]*false' <<<"$line"; then printf 'false'; return; fi
+    if grep -qE ':[[:space:]]*-?[0-9]+' <<<"$line"; then
       printf '%s' "$line" | sed -E 's/.*:[[:space:]]*(-?[0-9]+).*/\1/'
       return
     fi
@@ -365,7 +365,7 @@ pf_json_get_internal() {
   _pf_section() {
     local blob="$1" name="$2"
     # Extract {...} block for "name": { ... } (non-greedy via brace count simplified)
-    printf '%s' "$blob" | awk -v n="$name" '
+    awk -v n="$name" '
       BEGIN { inb=0; depth=0; buf="" }
       $0 ~ "\"" n "\"[[:space:]]*:[[:space:]]*\\{" {
         inb=1; depth=1
@@ -384,7 +384,7 @@ pf_json_get_internal() {
         u=$0; gsub(/[^}]/,"",u); depth-=length(u)
         if (depth<=0) { print buf; exit }
       }
-    '
+    ' <<<"$blob"
   }
 
   case "$path" in

@@ -3322,7 +3322,12 @@ mm_check_client_build_prerequisites_ready() {
     fi
   fi
   # Repo must not ship a private key under client/ or config templates.
-  if find "${root}/client" "${root}/config" -type f \( -name 'private.gpg' -o -name '*private*.gpg' \) 2>/dev/null | grep -q .; then
+  # Avoid find | grep -q: an early match causes SIGPIPE with pipefail enabled.
+  local tree_private_match
+  if ! tree_private_match="$(find "${root}/client" "${root}/config" -type f \( -name 'private.gpg' -o -name '*private*.gpg' \) -print -quit 2>/dev/null)"; then
+    mm_error "CLIENT_BUILD_PREREQ_PRIVATE_KEY_SCAN_FAILED=YES"
+    prereq_fail=1
+  elif [[ -n "$tree_private_match" ]]; then
     mm_error "CLIENT_BUILD_PREREQ_PRIVATE_KEY_IN_TREE=YES"
     prereq_fail=1
   fi
