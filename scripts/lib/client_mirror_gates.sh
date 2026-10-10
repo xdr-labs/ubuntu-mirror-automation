@@ -58,7 +58,7 @@ PY
 # Fail closed unless PIN_MIRROR_BASE and embedded meta/manifest use expected URL.
 client_assert_mirror_base_match() {
   local script="${1:-}" expected="${2:-}"
-  local pin_base meta_text manifest_text mismatches=0
+  local pin_base sample_deb_url meta_text manifest_text mismatches=0
   expected="${expected%/}"
 
   if [[ ! -f "$script" ]]; then
@@ -77,7 +77,9 @@ client_assert_mirror_base_match() {
     mismatches=$((mismatches + 1))
   fi
 
-  if ! grep -qE "^PIN_SAMPLE_DEB_URL='${expected}/" "$script" 2>/dev/null; then
+  # Mirror base is a literal URL, never an ERE: dots in IPv4/FQDN are not wildcards.
+  sample_deb_url="$(client_extract_pin_value "$script" "SAMPLE_DEB_URL" || true)"
+  if [[ "$sample_deb_url" != "${expected}/"* ]]; then
     client_gate_log_err "HOST_PIN_GATE=FAIL PIN_SAMPLE_DEB_URL does not use ${expected}"
     mismatches=$((mismatches + 1))
   fi
@@ -138,6 +140,26 @@ client_assert_generic_artifact() {
   return 0
 }
 
+# Verify EVERY explicit mirror option token uses the exact literal mirror URL.
+# The operator command is not executable here: this is a read-only string check.
+# Checking every occurrence matters because the last repeated CLI flag may win.
+client_gate_all_mirror_flags_match() {
+  local text="$1" option="$2" expected="$3" matches row value
+  case "$option" in
+    --mirror-base|--mirror-url) ;;
+    *) return 1 ;;
+  esac
+  matches="$(grep -oE -- "(^|[[:space:]])${option}[[:space:]]+[^[:space:]]+" <<<"$text")" || return 1
+  [[ -n "$matches" ]] || return 1
+  while IFS= read -r row || [[ -n "$row" ]]; do
+    value="${row#*"$option"}"
+    # Trim whitespace between the flag and its value without interpreting it.
+    value="${value#"${value%%[![:space:]]*}"}"
+    [[ "$value" == "$expected" ]] || return 1
+  done <<<"$matches"
+  return 0
+}
+
 # client_assert_command_mirror_base <command-text-file-or--> <expected-base>
 # Verifies hop commands use the persisted local Mirror URL (optional --mirror-base).
 client_assert_command_mirror_base() {
@@ -157,7 +179,7 @@ client_assert_command_mirror_base() {
   fi
   # Prefer explicit --mirror-base when present; otherwise require curl URL host match.
   if grep -q -- '--mirror-base' <<<"$text"; then
-    if ! grep -qE -- "--mirror-base[[:space:]]+${expected}([[:space:]]|$)" <<<"$text"; then
+    if ! client_gate_all_mirror_flags_match "$text" "--mirror-base" "$expected"; then
       client_gate_log_err "RUNTIME_COMMAND_GATE=FAIL hop command --mirror-base != ${expected}"
       return 1
     fi
@@ -167,7 +189,7 @@ client_assert_command_mirror_base() {
   fi
   if grep -q -- 'stage-dp-phase2.sh' <<<"$text"; then
     if grep -q -- '--mirror-url' <<<"$text"; then
-      if ! grep -qE -- "--mirror-url[[:space:]]+${expected}([[:space:]]|$)" <<<"$text"; then
+      if ! client_gate_all_mirror_flags_match "$text" "--mirror-url" "$expected"; then
         client_gate_log_err "RUNTIME_COMMAND_GATE=FAIL phase2 --mirror-url != ${expected}"
         return 1
       fi

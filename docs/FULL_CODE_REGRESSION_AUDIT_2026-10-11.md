@@ -102,3 +102,47 @@ The audit branch and this document are **not a release authorization**.
 - The full **User E2E**, actual Xenial Python 3.5 runtime and field DP cluster exercise are not covered by this offline audit and must not be marked PASS based on unit/CI results alone.
 - This is an **audit candidate**, not an authorization to merge #112/#114/#115, rebuild the signed production client generation, publish the mirror, or upgrade an actual DP.
 - Exact-HEAD native Gate/CI outcomes for the final review patch belong in the PR #115 discussion; evidence files are retained under `/home/aella/dp-os-upgrade-evidence/20261011/full-code-regression/` on `dev-drlink`.
+
+
+---
+
+## A13 — literal Mirror Host-Pin comparison (2026-10-11 continuation)
+
+**Finding / exact source:** `scripts/lib/client_mirror_gates.sh`, in
+`client_assert_mirror_base_match` and `client_assert_command_mirror_base`.
+The `PIN_SAMPLE_DEB_URL`, `--mirror-base`, and `--mirror-url` checks inserted
+a supposedly exact Mirror URL into an extended regular expression. For example,
+expected `http://192.0.2.10` could incorrectly accept the different hostname
+`http://192-0-2-10` because `.` was interpreted as a wildcard. An operator
+command containing a correct first `--mirror-base` or `--mirror-url` followed
+by a wrong duplicate option was also incorrectly reported `PASS`.
+
+**Classification:** HIGH integrity risk in a repository-owned optional
+host-pin validation helper. This is a verified validation weakness, **not**
+evidence that an attacker published a signed client, exploited a DP, or bypassed
+the separate production signing/generation gates.
+
+**Original RED:** `tests/test_client_mirror_pin_gates.sh` extended with five
+negative hermetic cases: one wrong `PIN_SAMPLE_DEB_URL`, one wrong hop
+`--mirror-base`, one wrong Phase 2 `--mirror-url`, and both kinds of
+conflicting duplicated flag. All five were falsely accepted by the original
+source. Evidence: `20261011-host-pin-regex-red.log`.
+
+**Minimal fix:** compare the exact extracted sample URL as a literal prefix.
+For command flags, extract every explicit option token, compare every parsed
+value against the literal expected URL, and reject malformed/conflicting
+values; do not interpolate untrusted URLs into regular expressions.
+No real network connection, signing, deployment, or OS upgrade is performed
+by these regression tests.
+
+**GREEN / compatibility:** the five incorrect cases are rejected, while
+the existing correct-host and large-metadata cases remain accepted.
+`tests/test_client_mirror_pin_gates.sh` is registered as a permanent
+project-native PR Gate step. RED/GREEN logs live under
+`/home/aella/dp-os-upgrade-evidence/20261011/full-code-regression/`
+on `dev-drlink`.
+
+**Remaining owner/release boundaries:** No actual DP OS upgrade or vendor
+bringup, no production mirror publishing, and no PR merge. Surface
+Reconciliation, Full User E2E, public smoke and owner release acceptance
+are separate gates requiring an approved disposable lab.

@@ -76,6 +76,7 @@ run_step "phase2_cluster_status_sigpipe" bash tests/test_phase2_validate_cluster
 run_step "audit_phase2_ntp_long_status" bash tests/test_phase2_ntp_pipefail_large_output.sh
 run_step "audit_preflight_json_large" bash tests/test_dp_preflight_internal_json_pipefail.sh
 run_step "audit_host_pin_large" bash tests/test_client_mirror_pin_large_payload.sh
+run_step "audit_host_pin_literal_boundary" bash tests/test_client_mirror_pin_gates.sh
 run_step "audit_mirror_private_key_tree" bash tests/test_mirror_client_private_key_scan_pipefail.sh
 run_step "audit_mirror_full_mode_private_scan" bash tests/test_mirror_prereq_private_scan_pipefail.sh
 run_step "audit_os_artifact_private_scan" bash tests/test_os_artifact_secret_scan_pipefail.sh
