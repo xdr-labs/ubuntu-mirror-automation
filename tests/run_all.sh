@@ -172,6 +172,8 @@ TEST_LIST=(
   test_client_mirror_pin_large_payload.sh
   test_mirror_client_private_key_scan_pipefail.sh
   test_os_artifact_secret_scan_pipefail.sh
+  test_os_orphan_log_scan_pipefail.sh
+  test_os_python_inventory_report_pipefail.sh
   test_phase2_remote_orchestration_semantics.sh
   test_phase2_remote_hardening.sh
   test_client_manifest_signing.sh

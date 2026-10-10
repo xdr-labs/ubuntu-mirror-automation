@@ -1715,9 +1715,15 @@ osu_detect_orphaned_state() {
   [[ -d "${OSU_STATE_DIR}/repository-backup" ]] && evidence=1
   [[ -e "${OSU_STATE_DIR}/apt-sources.list.backup" || -e "${OSU_STATE_DIR}/sources.list.backup" ]] && evidence=1
   [[ -f "${OSU_STATE_DIR}/logs/commands.tsv" ]] && evidence=1
-  if [[ -d "${OSU_STATE_DIR}/logs" ]] && \
-     find "${OSU_STATE_DIR}/logs" -type f \( -name '*.log' -o -name 'commands.tsv' \) 2>/dev/null | grep -q .; then
-    evidence=1
+  # Never pipe a potentially large find listing into grep -q under pipefail:
+  # an early match can SIGPIPE the producer and hide real orphan evidence.
+  if [[ -d "${OSU_STATE_DIR}/logs" ]]; then
+    local log_match
+    if ! log_match="$(find "${OSU_STATE_DIR}/logs" -type f \( -name '*.log' -o -name 'commands.tsv' \) -print -quit 2>/dev/null)"; then
+      evidence=1  # unreadable evidence directory requires recovery review
+    elif [[ -n "$log_match" ]]; then
+      evidence=1
+    fi
   fi
   if [[ "$evidence" -eq 1 ]]; then
     return 0
@@ -4054,7 +4060,10 @@ osu_generate_reports() {
     pkg_count="$(find "${OSU_STATE_DIR}/hops" -type f -name '*.deb' 2>/dev/null | wc -l | tr -d ' ')"
     pkg_bytes="$(find "${OSU_STATE_DIR}/hops" -type f -name '*.deb' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END{print s+0}')"
     file_changes="$(find "${OSU_STATE_DIR}/hops" -name 'file-changes.tsv' -exec awk 'END{print NR}' {} + 2>/dev/null | awk '{s+=$1} END{print s+0}')"
-    if find "${OSU_STATE_DIR}/hops" -path '*/python-*/*' -type f 2>/dev/null | grep -q .; then
+    # Detect one matching file without SIGPIPE from an early grep -q match.
+    local py_match
+    py_match="$(find "${OSU_STATE_DIR}/hops" -path '*/python-*/*' -type f -print -quit 2>/dev/null)" || py_match=""
+    if [[ -n "$py_match" ]]; then
       py_captured=true
     fi
   fi
