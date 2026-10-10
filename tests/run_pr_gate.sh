@@ -71,6 +71,7 @@ run_step "python_compile_cross_hop" python3 -m py_compile tests/test_cross_hop_s
 run_step "audit99_boundary_regressions" python3 -m unittest \
   tests.test_audit99_lifecycle tests.test_audit99_phase1 tests.test_audit99_operator
 run_step "owner_notification_exact_line" python3 -m unittest tests.test_owner_notification_exact_line
+run_step "tmp_checkout_safe_gc" python3 -m unittest tests.test_tmp_checkout_gc
 run_step "menu7_cached_open_fixture" bash tests/test_menu7_cached_open.sh
 run_step "login_shell_partial_rollback" bash tests/test_login_shell_partial_rollback.sh
 run_step "phase1_retry_resume" bash tests/test_phase1_retry_resume_regression.sh

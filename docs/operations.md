@@ -1,5 +1,9 @@
 # Operations — Selective Offline Ubuntu Upgrade Mirror
 
+Developer-server /tmp Git checkout retention is documented separately in
+[Temporary Checkout Garbage Collection](tmp-checkout-gc.md). It is **opt-in**,
+runs under the user account, and never prunes unregistered checkouts.
+
 This server builds a **discovery-exact selective offline upgrade mirror** for the DP LTS chain:
 
 `Ubuntu 16.04 Xenial → 18.04 Bionic → 20.04 Focal → 22.04 Jammy → 24.04 Noble`

@@ -16,6 +16,8 @@ Always read `AGENTS.md` and `.engineering/project.yaml` first. Read only what th
 
 Use minimum sufficient context. Do not preload all standards, archives, histories or transcripts. Install missing managed Python dependencies from `.engineering/requirements-engineering-system.txt`, never unpinned versions.
 
+**Developer-server temporary clones:** on `dev-drlink`, create disposable Git checkouts with `~/.local/bin/um-tmp-checkout create --source /path/to/source-repo` rather than unmanaged `/tmp` clones. See `docs/tmp-checkout-gc.md`; never enroll another project's checkout automatically or delete its dirty/unpushed work.
+
 ## Execution rules
 
 - **Execution profile authority:** `.engineering/execution-profile.yaml` selects the runtime unless the current explicit owner instruction overrides it. A continue/resume request authorizes direct implementation, testing, audit and ordinary Git/GitHub work; no additional magic phrase or alternate-runtime handoff is required. Historical prose and retired adapters do not select a runtime.
