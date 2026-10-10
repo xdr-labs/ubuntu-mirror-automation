@@ -171,6 +171,7 @@ TEST_LIST=(
   test_dp_preflight_internal_json_pipefail.sh
   test_client_mirror_pin_large_payload.sh
   test_mirror_client_private_key_scan_pipefail.sh
+  test_mirror_prereq_private_scan_pipefail.sh
   test_os_artifact_secret_scan_pipefail.sh
   test_os_orphan_log_scan_pipefail.sh
   test_os_python_inventory_report_pipefail.sh
