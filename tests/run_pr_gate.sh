@@ -71,8 +71,10 @@ run_step "python_compile_cross_hop" python3 -m py_compile tests/test_cross_hop_s
 run_step "audit99_boundary_regressions" python3 -m unittest \
   tests.test_audit99_lifecycle tests.test_audit99_phase1 tests.test_audit99_operator
 run_step "owner_notification_exact_line" python3 -m unittest tests.test_owner_notification_exact_line
-# Field DR/DL show-status parsing must remain correct under pipefail and long CLI output.
+# Preserve both open PRs: Phase 2 SIGPIPE and Python startup/four-hop monitor fixes.
 run_step "phase2_cluster_status_sigpipe" bash tests/test_phase2_validate_cluster_eof_closure.sh
+run_step "xenial_bionic_early_sitecustomize" python3 -m unittest tests.test_xenial_bionic_upgrader_env_order
+run_step "offline_progress_complete_lines" python3 -m unittest tests.test_offline_progress_log_lines
 run_step "menu7_cached_open_fixture" bash tests/test_menu7_cached_open.sh
 run_step "login_shell_partial_rollback" bash tests/test_login_shell_partial_rollback.sh
 run_step "phase1_retry_resume" bash tests/test_phase1_retry_resume_regression.sh

@@ -68,6 +68,7 @@ TEST_LIST=(
   test_dpkg_updates_empty_listing.sh
   test_dp_client_p1_safety.sh
   test_xenial_bionic_upgrader_env_order.py
+  test_offline_progress_log_lines.py
   test_postboot_shebang_and_state_machine.sh
   test_durable_write_and_lxd_coldstart.sh
   test_lxd_long_operation_heartbeat.sh
