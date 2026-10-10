@@ -165,6 +165,7 @@ TEST_LIST=(
   test_phase2_prereq_version_aware.sh
   test_phase2_prereq_extract_sigpipe.sh
   test_phase2_cluster_readiness.sh
+  test_phase2_validate_cluster_eof_closure.sh
   test_phase2_remote_orchestration_semantics.sh
   test_phase2_remote_hardening.sh
   test_client_manifest_signing.sh
