@@ -137,6 +137,68 @@ class EnvOrderPatchTests(unittest.TestCase):
         got = open(os.path.join(focal, "DistUpgradeController.py"), encoding="utf-8").read()
         self.assertEqual(got, original)
 
+    def test_python2_maintainer_subprocess_skips_python3_hook(self):
+        # Python 2 maintainer subprocesses inherit PYTHONPATH from the upgrader.
+        original_sys = self.mod.sys
+        original_env = os.environ.get("STELLAR_XENIAL_BIONIC_ENV_ORDER_PATCH")
+
+        class Python2Startup(object):
+            version_info = (2, 7)  # Deliberately no argv attribute.
+
+        self.mod.sys = Python2Startup()
+        os.environ["STELLAR_XENIAL_BIONIC_ENV_ORDER_PATCH"] = "1"
+        try:
+            self.mod.maybe_patch_running_upgrader()
+        finally:
+            self.mod.sys = original_sys
+            if original_env is None:
+                os.environ.pop("STELLAR_XENIAL_BIONIC_ENV_ORDER_PATCH", None)
+            else:
+                os.environ["STELLAR_XENIAL_BIONIC_ENV_ORDER_PATCH"] = original_env
+
+    def test_sitecustomize_before_sys_argv_exists(self):
+        # On Python 3.5 during sitecustomize import, sys.argv may not exist.
+        # The actual bionic entry must still be patched via /proc/self/cmdline.
+        root = os.path.join(self.tmp, "early-argv")
+        write_tree(
+            root,
+            "18.04.45",
+            self._controller(self.mod.UNPATCHED_BLOCK),
+            utils=self._utils(),
+        )
+        hook = os.path.join(self.tmp, "early-hook")
+        os.makedirs(hook)
+        with open(MODULE_PATH, encoding="utf-8") as src:
+            module_text = src.read()
+        with open(os.path.join(hook, "sitecustomize.py"), "w", encoding="utf-8") as fh:
+            fh.write("from __future__ import print_function\n")
+            fh.write('import sys\nif hasattr(sys, "argv"): del sys.argv\n')
+            fh.write(module_text.replace("from __future__ import print_function\n", "", 1))
+        env = os.environ.copy()
+        env["PYTHONPATH"] = hook
+        env["STELLAR_XENIAL_BIONIC_ENV_ORDER_PATCH"] = "1"
+
+        patched = subprocess.run(
+            [sys.executable, "-u", os.path.join(root, "bionic")],
+            env=env, capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(patched.returncode, 0, patched.stderr)
+        self.assertIn("ENTRY_OK", patched.stdout)
+        self.assertIn("XENIAL_BIONIC_ENV_ORDER_PATCH=PATCHED", patched.stderr)
+        self.assertNotIn("Error in sitecustomize", patched.stderr)
+        with open(os.path.join(root, "DistUpgradeController.py"), encoding="utf-8") as fh:
+            self.assertIn(self.mod.PATCHED_BLOCK, fh.read())
+
+        # Unrelated Python subprocesses must not emit errors or patch anything.
+        unrelated = subprocess.run(
+            [sys.executable, "-c", 'print("UNRELATED_OK")'],
+            env=env, capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(unrelated.returncode, 0, unrelated.stderr)
+        self.assertIn("UNRELATED_OK", unrelated.stdout)
+        self.assertNotIn("Error in sitecustomize", unrelated.stderr)
+        self.assertNotIn("XENIAL_BIONIC_ENV_ORDER_PATCH=", unrelated.stderr)
+
     def test_sitecustomize_bad_signature_exits_nonzero(self):
         root = os.path.join(self.tmp, "refuse")
         original = self._controller("        pass\n")
