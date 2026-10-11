@@ -39,11 +39,18 @@ CACHE="${MIRROR_ROOT}/.install-cache"
   && pass "ATOMIC_DIR_SWAP_INSTALLED=YES" \
   || fail "ATOMIC_DIR_SWAP_INSTALLED=NO"
 
-# Ensure fixture did not copy non-manifest python (e.g. selective_mirror.py)
-if [[ -f "${RUNTIME_ROOT}/scripts/lib/selective_mirror.py" ]]; then
-  fail "non-manifest selective_mirror.py present (wildcard leak?)"
+# Use the authoritative manifest rather than a hard-coded Python filename:
+# selective_mirror.py is now explicitly shipped; unexpected wildcard copies
+# must still fail without rejecting newly declared runtime dependencies.
+# shellcheck source=../lib/runtime_manifest.sh
+source "${ROOT}/lib/runtime_manifest.sh"
+expected_runtime_python="$(um_runtime_emit_installed_relative_paths | grep -E '^scripts/lib/[^/]+[.]py$' | LC_ALL=C sort -u)"
+actual_runtime_python="$(find "${RUNTIME_ROOT}/scripts/lib" -maxdepth 1 -type f -name '*.py' -printf 'scripts/lib/%f\n' | LC_ALL=C sort -u)"
+unexpected_runtime_python="$(comm -13 <(printf '%s\n' "$expected_runtime_python") <(printf '%s\n' "$actual_runtime_python"))"
+if [[ -n "$unexpected_runtime_python" ]]; then
+  fail "non-manifest Python files installed: $unexpected_runtime_python"
 else
-  pass "no non-manifest python leak"
+  pass "no non-manifest Python files copied"
 fi
 
 LOG="${WORKDIR}/rebuild-installed-runtime.log"
