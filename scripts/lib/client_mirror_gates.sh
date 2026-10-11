@@ -221,11 +221,11 @@ client_assert_command_mirror_base() {
     client_gate_log_err "RUNTIME_COMMAND_GATE=FAIL literal URL source outside pinned mirror or unverifiable curl URL"
     return 1
   fi
-  # An unrelated correct URL is not evidence of the executable's curl source.
-  # Inspect each curl argument against pinned literal/visible URL assignments.
+  # An unrelated correct URL does not verify curl or wget executable sources.
+  # Inspect each downloader against pinned literal/visible URL assignments.
   # Feed the complete command via stdin to avoid ARG_MAX and early-close SIGPIPE.
   if ! python3 "${CLIENT_MIRROR_GATES_LIB_DIR}/client_curl_source_guard.py" "$expected" <<<"$text"; then
-    client_gate_log_err "RUNTIME_COMMAND_GATE=FAIL curl executable source unverified or outside pinned mirror"
+    client_gate_log_err "RUNTIME_COMMAND_GATE=FAIL download source unverified or outside pinned mirror"
     return 1
   fi
   # Prefer explicit --mirror-base when present; otherwise require curl URL host match.

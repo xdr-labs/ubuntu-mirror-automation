@@ -72,6 +72,8 @@ UM_RUNTIME_SCRIPT_LIB_PYTHON_MODULES=(
 # ---------------------------------------------------------------------------
 UM_RUNTIME_SCRIPT_LIB_PYTHON_EXECUTABLES=(
   os_core_package.py
+  client_curl_source_guard.py
+  client_pin_payload_guard.py
   atomic_dir_swap.py
   build_client_xenial_to_bionic.py
   build_client_bionic_to_focal.py

@@ -44,6 +44,18 @@ assert_accept 'explicit curl --url pinned literal' \
   "curl --url $A/client/x.sh -o x.sh && bash x.sh --mirror-base $A"
 assert_reject 'curl config file cannot inject unknown source' \
   "echo $A/client/x.sh; curl -K config.txt && bash x.sh --mirror-base $A"
+# A16: wget downloads also carry executable bytes, and an unrelated pinned
+# echo must not allow an unverified wget URL to be accepted.
+assert_reject 'wget variable origin cannot be masked by echo' \
+  "echo $A/client/x.sh; wget -O x.sh \"\$UNKNOWN_URL\" && bash x.sh --mirror-base $A"
+assert_reject 'second wget source independently verified' \
+  "curl -fsSLo x.sh $A/client/x.sh && wget -O y.sh $B/client/y.sh && bash x.sh --mirror-base $A"
+assert_reject 'wget input-file may inject URLs' \
+  "echo $A/client/x.sh; wget -i urls.txt && bash x.sh --mirror-base $A"
+assert_accept 'wget direct pinned source' \
+  "wget -q -O x.sh $A/client/x.sh && bash x.sh --mirror-base $A"
+assert_accept 'wget visible variable source' \
+  "U='$A'; wget -O x.sh \"\$U/client/x.sh\" && bash x.sh --mirror-base $A"
 # Source-time absolute lookup of helper remains valid when the caller changes cwd.
 ( cd /tmp; assert_accept 'sourced library stable after cd' \
   "curl -fsSLo x.sh $A/client/x.sh && bash x.sh --mirror-base $A" )

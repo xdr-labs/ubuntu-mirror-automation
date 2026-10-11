@@ -29,7 +29,7 @@ while IFS= read -r rel; do
     echo "FAIL closure still PASS after deleting $rel"
     failures=$((failures + 1))
   fi
-done < <(um_runtime_emit_installed_relative_paths | grep -E '^(client/stage-dp-phase2\.sh|client/lib/dp-phase2-bringup-lifecycle\.sh|client/lib/dp-offline-source-product-version\.sh|client/lib/dp-phase2-ubuntu-prerequisites\.sh|client/bringup_py3_dp_lifecycle\.sh|scripts/lib/phase2_helper_generation\.sh)$')
+done < <(um_runtime_emit_installed_relative_paths | grep -E '^(client/stage-dp-phase2\.sh|client/lib/dp-phase2-bringup-lifecycle\.sh|client/lib/dp-offline-source-product-version\.sh|client/lib/dp-phase2-ubuntu-prerequisites\.sh|client/bringup_py3_dp_lifecycle\.sh|scripts/lib/phase2_helper_generation\.sh|scripts/lib/client_curl_source_guard\.py|scripts/lib/client_pin_payload_guard\.py)$')
 
 [[ "$failures" -eq 0 ]] || exit 1
 echo "PASS test_runtime_manifest_closure"

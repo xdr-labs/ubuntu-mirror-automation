@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Read-only fail-closed curl origin check for the optional operator command gate.
+"""Read-only fail-closed download origin check for the operator command gate.
 
-This deliberately does NOT execute or evaluate shell expressions. A curl
-source must be a pinned literal URL or use a shell variable visibly assigned
-to a pinned literal URL before that curl invocation.
+This deliberately does NOT execute or evaluate shell expressions. Every curl
+or wget source must be pinned literally or use a visibly assigned pinned URL
+variable before that invocation.
 """
 import re
 import shlex
@@ -94,6 +94,50 @@ def curl_sources_valid(args, variables, expected):
     return checked > 0
 
 
+def wget_sources_valid(args, variables, expected):
+    """Check wget URL operands independently; reject hidden input files."""
+    output_options = {
+        "-O", "--output-document", "-o", "--output-file",
+        "-P", "--directory-prefix", "-T", "--timeout",
+        "-t", "--tries", "-U", "--user-agent",
+    }
+    safe_options = {
+        "-q", "-nv", "-c", "-N", "--quiet", "--no-verbose",
+        "--continue", "--timestamping", "--no-check-certificate",
+    }
+    checked = 0
+    index = 0
+    while index < len(args):
+        value = args[index]
+        if value in ("-i", "--input-file", "-e", "--execute", "--config") or \
+           value.startswith(("--input-file=", "--execute=", "--config=")):
+            return False  # hidden URL sources and commands cannot be verified
+        if value in output_options:
+            index += 2
+            if index > len(args):
+                return False
+            continue
+        if value.startswith("--") and "=" in value:
+            if value.split("=", 1)[0] not in output_options:
+                return False
+        elif value in safe_options or value == "--":
+            if value == "--":
+                for source in args[index + 1:]:
+                    if not pinned(source, variables, expected):
+                        return False
+                    checked += 1
+                break
+        elif value.startswith("-"):
+            if len(value) <= 2 or not all(ch in "qvncN" for ch in value[1:]):
+                return False
+        else:
+            if not pinned(value, variables, expected):
+                return False
+            checked += 1
+        index += 1
+    return checked > 0
+
+
 def check(text, expected):
     # A single-quoted shell variable does not expand: never trust it as a URL.
     for quoted in re.findall(r"'[^'\n]*'", text):
@@ -122,8 +166,8 @@ def check(text, expected):
 def inspect(words, variables, expected):
     if not words:
         return True
-    curl_at = next((i for i, word in enumerate(words) if word == "curl"), -1)
-    prefix = words if curl_at < 0 else words[:curl_at]
+    source_at = next((i for i, word in enumerate(words) if word in ("curl", "wget")), -1)
+    prefix = words if source_at < 0 else words[:source_at]
     if prefix and prefix[0] == "export":
         prefix = prefix[1:]
     for word in prefix:
@@ -132,7 +176,11 @@ def inspect(words, variables, expected):
             variables[match.group(1)] = match.group(2)
         else:
             break
-    return curl_at < 0 or curl_sources_valid(words[curl_at + 1:], variables, expected)
+    if source_at < 0:
+        return True
+    if words[source_at] == "curl":
+        return curl_sources_valid(words[source_at + 1:], variables, expected)
+    return wget_sources_valid(words[source_at + 1:], variables, expected)
 
 
 if __name__ == "__main__":
