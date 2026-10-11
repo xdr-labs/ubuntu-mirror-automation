@@ -273,8 +273,11 @@ git_repo_ok() {
 }
 
 git_is_clean() {
-  git -C "$REPO_ROOT" status --porcelain 2>/dev/null | grep -q . && return 1
-  return 0
+  local porcelain
+  # Preserve git status failure and avoid git | grep -q SIGPIPE under pipefail:
+  # a dirty worktree must never be mistaken for clean before disk migration.
+  porcelain="$(git -C "$REPO_ROOT" status --porcelain 2>/dev/null)" || return 1
+  [[ -z "$porcelain" ]]
 }
 
 git_head_matches_origin_main() {

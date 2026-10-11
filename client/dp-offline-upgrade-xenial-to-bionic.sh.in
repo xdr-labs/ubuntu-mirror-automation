@@ -4669,6 +4669,7 @@ install_xenial_bionic_glibc_env_order_hook() {
   dest="${dir}/sitecustomize.py"
   tmp="$(mktemp "${dir}/sitecustomize.py.tmp.XXXXXX")" || return 1
   if ! cat >"$tmp" <<'XENIAL_BIONIC_ENV_ORDER_PY'
+# -*- coding: utf-8 -*-
 """Keep the Xenial→Bionic upgrader off the glibc 2.23 getenv/setenv race.
 
 Live RCA (Ubuntu 16.04, glibc 2.23): do-release-upgrade exited 139 before
@@ -5012,14 +5013,51 @@ def patch_upgrader_tree(root):
     return "already"
 
 
+def _running_entry_script():
+    """Find the entry during sitecustomize, before Python 3.5 sets sys.argv.
+
+    The inherited hook runs in *all* upgrader child Python processes.
+    /proc/self/cmdline identifies only a real script entry; -c/-m are never
+    treated as an upgrader script. No mutation or broad Python monkeypatching.
+    """
+    argv = getattr(sys, "argv", None)
+    if argv and argv[0]:
+        return argv[0]
+    try:
+        with open("/proc/self/cmdline", "rb") as fh:
+            raw_args = [arg for arg in fh.read().split(b"\0") if arg]
+    except (IOError, OSError):
+        return ""
+    if len(raw_args) < 2:
+        return ""
+    skip_value = False
+    for arg in raw_args[1:]:
+        if skip_value:
+            skip_value = False
+            continue
+        if arg in (b"-c", b"-m", b"-"):
+            return ""
+        if arg in (b"-W", b"-X"):
+            skip_value = True
+            continue
+        if arg.startswith(b"-"):
+            continue
+        return os.fsdecode(arg)
+    return ""
+
+
 def maybe_patch_running_upgrader():
     """sitecustomize entry. No-op unless this process is the bionic upgrader."""
     if os.environ.get("STELLAR_XENIAL_BIONIC_ENV_ORDER_PATCH") != "1":
         return
-    argv0 = os.path.basename(sys.argv[0]) if sys.argv else ""
-    if argv0 != "bionic":
+    # The upgrader entry is Python 3. Inherited PYTHONPATH also reaches
+    # Python 2 maintainer scripts, which must never load a Python 3 patch.
+    if sys.version_info[0] != 3:
         return
-    root = os.path.dirname(os.path.abspath(sys.argv[0]))
+    entry = _running_entry_script()
+    if os.path.basename(entry) != "bionic":
+        return
+    root = os.path.dirname(os.path.abspath(entry))
     try:
         result = patch_upgrader_tree(root)
     except Exception as exc:
@@ -7680,18 +7718,49 @@ monitor_resolve_runner_pid() {
 
 monitor_emit_new_log_bytes() {
   local logf="$1"
-  local size=0
+  local size=0 start remaining line
+  # Read only newline-terminated records. Partial dpkg/apt output must not
+  # share a terminal line with the next [PROGRESS] heartbeat.
+  local LC_ALL=C
   [[ -f "$logf" ]] || return 0
   size="$(wc -c <"$logf" | tr -d '[:space:]')"
   [[ -n "$size" ]] || size=0
   if [[ "$size" -lt "${MONITOR_LOG_OFFSET:-0}" ]]; then
-    # Log truncated or rotated - resync from start of new file.
+    # Log truncated or rotated: restart at byte zero.
     MONITOR_LOG_OFFSET=0
   fi
-  if [[ "$size" -gt "${MONITOR_LOG_OFFSET:-0}" ]]; then
-    tail -c "+$((MONITOR_LOG_OFFSET + 1))" "$logf" 2>/dev/null || true
-    MONITOR_LOG_OFFSET="$size"
+  start="${MONITOR_LOG_OFFSET:-0}"
+  remaining=$((size - start))
+  if [[ "$remaining" -gt 0 ]]; then
+    while IFS= read -r line; do
+      printf '%s\n' "$line"
+      MONITOR_LOG_OFFSET=$((MONITOR_LOG_OFFSET + ${#line} + 1))
+    done < <(tail -c "+$((start + 1))" "$logf" 2>/dev/null | head -c "$remaining")
   fi
+}
+
+monitor_print_recent_log() {
+  local logf="$1" recent="$2" size=0 pending=0 last_byte
+  local LC_ALL=C
+  [[ -f "$logf" ]] || return 0
+  size="$(wc -c <"$logf" | tr -d '[:space:]')"
+  [[ -n "$size" ]] || size=0
+  if [[ "$size" -gt 0 ]]; then
+    last_byte="$(tail -c 1 "$logf" | od -An -tu1 | tr -d '[:space:]')"
+    if [[ "$last_byte" != "10" ]]; then
+      # The last line is still being written. Show only the prior completed
+      # lines and keep its bytes pending for the next monitor poll.
+      pending="$(tail -n 1 "$logf" | wc -c | tr -d '[:space:]')"
+      while IFS= read -r line; do
+        printf '%s\n' "$line"
+      done < <(tail -n "$((recent + 1))" "$logf" 2>/dev/null)
+    else
+      tail -n "$recent" "$logf" 2>/dev/null || true
+    fi
+  fi
+  MONITOR_LOG_OFFSET=$((size - pending))
+  # Failure-marker scans must not reclassify historical failures as current.
+  MONITOR_ATTACH_LOG_OFFSET="$size"
 }
 
 print_background_upgrade_banner() {
@@ -7937,9 +8006,7 @@ monitor_upgrade_progress() {
   echo ""
   echo "--- recent upgrade log (last ${recent} lines) ---"
   if [[ -f "$logf" ]]; then
-    tail -n "$recent" "$logf" 2>/dev/null || true
-    MONITOR_LOG_OFFSET="$(wc -c <"$logf" | tr -d '[:space:]')"
-    MONITOR_ATTACH_LOG_OFFSET="$MONITOR_LOG_OFFSET"
+    monitor_print_recent_log "$logf" "$recent"
   else
     MONITOR_LOG_OFFSET=0
     MONITOR_ATTACH_LOG_OFFSET=0

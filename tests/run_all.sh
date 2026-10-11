@@ -68,6 +68,7 @@ TEST_LIST=(
   test_dpkg_updates_empty_listing.sh
   test_dp_client_p1_safety.sh
   test_xenial_bionic_upgrader_env_order.py
+  test_offline_progress_log_lines.py
   test_postboot_shebang_and_state_machine.sh
   test_durable_write_and_lxd_coldstart.sh
   test_lxd_long_operation_heartbeat.sh
@@ -165,6 +166,17 @@ TEST_LIST=(
   test_phase2_prereq_version_aware.sh
   test_phase2_prereq_extract_sigpipe.sh
   test_phase2_cluster_readiness.sh
+  test_phase2_validate_cluster_eof_closure.sh
+  test_phase2_ntp_pipefail_large_output.sh
+  test_dp_preflight_internal_json_pipefail.sh
+  test_client_mirror_pin_large_payload.sh
+  test_mirror_client_private_key_scan_pipefail.sh
+  test_mirror_prereq_private_scan_pipefail.sh
+  test_os_artifact_secret_scan_pipefail.sh
+  test_os_orphan_log_scan_pipefail.sh
+  test_os_python_inventory_report_pipefail.sh
+  test_os_ntp_large_output_pipefail.sh
+  test_os_critical_holds_pipefail.sh
   test_phase2_remote_orchestration_semantics.sh
   test_phase2_remote_hardening.sh
   test_client_manifest_signing.sh
@@ -173,6 +185,7 @@ TEST_LIST=(
   test_distupgrade_source_compat.py
   test_prepare_backup_staging.sh
   test_migrate_apt_mirror_to_root.sh
+  test_migrate_git_guard_pipefail.sh
   test_mirror_host_ip_resolution.sh
   test_mirror_manager_ip_configuration.sh
   test_http_publication_permissions.sh

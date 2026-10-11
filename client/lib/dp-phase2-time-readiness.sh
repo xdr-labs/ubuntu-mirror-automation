@@ -205,7 +205,7 @@ dp_phase2_ntpq_leap_ok() {
   else
     return 1
   fi
-  printf '%s\n' "$rv" | grep -qE '(^|[[:space:],])leap=00([[:space:],]|$)'
+  grep -qE '(^|[[:space:],])leap=00([[:space:],]|$)' <<<"$rv"
 }
 
 dp_phase2_timedatectl_synchronized() {
@@ -218,7 +218,7 @@ dp_phase2_timedatectl_synchronized() {
     return 1
   fi
   # ntpsec often reports "NTP service: n/a" — that alone is not a failure.
-  printf '%s\n' "$td" | grep -qiE 'System clock synchronized:[[:space:]]*yes'
+  grep -qiE 'System clock synchronized:[[:space:]]*yes' <<<"$td"
 }
 
 dp_phase2_ntpwait_ok() {

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Keep the Xenial→Bionic upgrader off the glibc 2.23 getenv/setenv race.
 
 Live RCA (Ubuntu 16.04, glibc 2.23): do-release-upgrade exited 139 before
@@ -341,14 +342,51 @@ def patch_upgrader_tree(root):
     return "already"
 
 
+def _running_entry_script():
+    """Find the entry during sitecustomize, before Python 3.5 sets sys.argv.
+
+    The inherited hook runs in *all* upgrader child Python processes.
+    /proc/self/cmdline identifies only a real script entry; -c/-m are never
+    treated as an upgrader script. No mutation or broad Python monkeypatching.
+    """
+    argv = getattr(sys, "argv", None)
+    if argv and argv[0]:
+        return argv[0]
+    try:
+        with open("/proc/self/cmdline", "rb") as fh:
+            raw_args = [arg for arg in fh.read().split(b"\0") if arg]
+    except (IOError, OSError):
+        return ""
+    if len(raw_args) < 2:
+        return ""
+    skip_value = False
+    for arg in raw_args[1:]:
+        if skip_value:
+            skip_value = False
+            continue
+        if arg in (b"-c", b"-m", b"-"):
+            return ""
+        if arg in (b"-W", b"-X"):
+            skip_value = True
+            continue
+        if arg.startswith(b"-"):
+            continue
+        return os.fsdecode(arg)
+    return ""
+
+
 def maybe_patch_running_upgrader():
     """sitecustomize entry. No-op unless this process is the bionic upgrader."""
     if os.environ.get("STELLAR_XENIAL_BIONIC_ENV_ORDER_PATCH") != "1":
         return
-    argv0 = os.path.basename(sys.argv[0]) if sys.argv else ""
-    if argv0 != "bionic":
+    # The upgrader entry is Python 3. Inherited PYTHONPATH also reaches
+    # Python 2 maintainer scripts, which must never load a Python 3 patch.
+    if sys.version_info[0] != 3:
         return
-    root = os.path.dirname(os.path.abspath(sys.argv[0]))
+    entry = _running_entry_script()
+    if os.path.basename(entry) != "bionic":
+        return
+    root = os.path.dirname(os.path.abspath(entry))
     try:
         result = patch_upgrader_tree(root)
     except Exception as exc:

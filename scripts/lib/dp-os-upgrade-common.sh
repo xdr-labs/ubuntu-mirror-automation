@@ -1715,9 +1715,15 @@ osu_detect_orphaned_state() {
   [[ -d "${OSU_STATE_DIR}/repository-backup" ]] && evidence=1
   [[ -e "${OSU_STATE_DIR}/apt-sources.list.backup" || -e "${OSU_STATE_DIR}/sources.list.backup" ]] && evidence=1
   [[ -f "${OSU_STATE_DIR}/logs/commands.tsv" ]] && evidence=1
-  if [[ -d "${OSU_STATE_DIR}/logs" ]] && \
-     find "${OSU_STATE_DIR}/logs" -type f \( -name '*.log' -o -name 'commands.tsv' \) 2>/dev/null | grep -q .; then
-    evidence=1
+  # Never pipe a potentially large find listing into grep -q under pipefail:
+  # an early match can SIGPIPE the producer and hide real orphan evidence.
+  if [[ -d "${OSU_STATE_DIR}/logs" ]]; then
+    local log_match
+    if ! log_match="$(find "${OSU_STATE_DIR}/logs" -type f \( -name '*.log' -o -name 'commands.tsv' \) -print -quit 2>/dev/null)"; then
+      evidence=1  # unreadable evidence directory requires recovery review
+    elif [[ -n "$log_match" ]]; then
+      evidence=1
+    fi
   fi
   if [[ "$evidence" -eq 1 ]]; then
     return 0
@@ -2581,7 +2587,7 @@ osu_critical_holds_present() {
   for pkg in "${crit[@]+"${crit[@]}"}"; do
     pkg="$(printf '%s' "$pkg" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
     [[ -z "$pkg" ]] && continue
-    if printf '%s\n' "$held" | grep -qxF "$pkg"; then
+    if grep -qxF "$pkg" <<<"$held"; then
       printf '%s\n' "$pkg"
     fi
   done
@@ -2626,7 +2632,7 @@ osu_ntp_parse_ntpq_output() {
   OSU_NTP_PARSE_OFFSET=""
 
   [[ -n "$text" ]] || return 2
-  if printf '%s\n' "$text" | grep -qiE 'no association ID'; then
+  if grep -qiE 'no association ID' <<<"$text"; then
     return 1
   fi
 
@@ -2709,14 +2715,14 @@ osu_ntp_probe_chronyc() {
       printf '=== chronyc sources ===\n%s\n' "$sources"
     } >>"$OSU_NTP_RAW_FILE"
   fi
-  if printf '%s\n' "$tracking" | grep -qiE 'Leap status[[:space:]]*:[[:space:]]*Normal'; then
+  if grep -qiE 'Leap status[[:space:]]*:[[:space:]]*Normal' <<<"$tracking"; then
     local ref
     ref="$(printf '%s\n' "$tracking" | awk -F: '/Reference ID/ {sub(/^[[:space:]]+/,"",$2); print $2; exit}')"
     osu_ntp_set_evidence "chronyc" "true" "${ref:-chronyc}" "" "" "leap_status=Normal"
     return 0
   fi
   # chronyc sources: "^*" = current sync source (mode + '*')
-  if printf '%s\n' "$sources" | grep -qE '^\^\*'; then
+  if grep -qE '^\^\*' <<<"$sources"; then
     local peer
     peer="$(printf '%s\n' "$sources" | awk '/^\^\*/ {print $2; exit}')"
     if [[ -n "$peer" ]]; then
@@ -2724,7 +2730,7 @@ osu_ntp_probe_chronyc() {
       return 0
     fi
   fi
-  if printf '%s\n' "$tracking" | grep -qiE 'Leap status[[:space:]]*:[[:space:]]*(Not synchronised|Not synchronized)'; then
+  if grep -qiE 'Leap status[[:space:]]*:[[:space:]]*(Not synchronised|Not synchronized)' <<<"$tracking"; then
     osu_ntp_set_evidence "chronyc" "false" "" "" "" "leap_not_synchronised"
     return 1
   fi
@@ -2745,12 +2751,12 @@ osu_ntp_probe_timedatectl() {
     } >>"$OSU_NTP_RAW_FILE"
   fi
   if [[ "$show_val" =~ ^[Yy][Ee][Ss]$ ]] || \
-     printf '%s\n' "$status" | grep -qiE 'System clock synchronized:[[:space:]]*yes|NTP synchronized:[[:space:]]*yes'; then
+     grep -qiE 'System clock synchronized:[[:space:]]*yes|NTP synchronized:[[:space:]]*yes' <<<"$status"; then
     osu_ntp_set_evidence "timedatectl" "true" "" "" "" "timedatectl_synchronized=yes"
     return 0
   fi
   if [[ "$show_val" =~ ^[Nn][Oo]$ ]] || \
-     printf '%s\n' "$status" | grep -qiE 'System clock synchronized:[[:space:]]*no|NTP synchronized:[[:space:]]*no'; then
+     grep -qiE 'System clock synchronized:[[:space:]]*no|NTP synchronized:[[:space:]]*no' <<<"$status"; then
     # Weak on Ubuntu 16.04 when ntpd is used; only authoritative if no higher source existed.
     osu_ntp_set_evidence "timedatectl" "false" "" "" "" "timedatectl_synchronized=no"
     return 1
@@ -4054,7 +4060,10 @@ osu_generate_reports() {
     pkg_count="$(find "${OSU_STATE_DIR}/hops" -type f -name '*.deb' 2>/dev/null | wc -l | tr -d ' ')"
     pkg_bytes="$(find "${OSU_STATE_DIR}/hops" -type f -name '*.deb' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END{print s+0}')"
     file_changes="$(find "${OSU_STATE_DIR}/hops" -name 'file-changes.tsv' -exec awk 'END{print NR}' {} + 2>/dev/null | awk '{s+=$1} END{print s+0}')"
-    if find "${OSU_STATE_DIR}/hops" -path '*/python-*/*' -type f 2>/dev/null | grep -q .; then
+    # Detect one matching file without SIGPIPE from an early grep -q match.
+    local py_match
+    py_match="$(find "${OSU_STATE_DIR}/hops" -path '*/python-*/*' -type f -print -quit 2>/dev/null)" || py_match=""
+    if [[ -n "$py_match" ]]; then
       py_captured=true
     fi
   fi

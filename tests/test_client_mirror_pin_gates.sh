@@ -71,6 +71,93 @@ out="$(printf '%s\n' "$cmd" | client_assert_command_mirror_base - "$HOST_A" 2>&1
 out="$(printf '%s\n' "$cmd" | client_assert_command_mirror_base - "$HOST_B" 2>&1)" && rc=0 || rc=$?
 [[ "$rc" -ne 0 ]] && pass "runtime command wrong host rejected" || fail "wrong-host command accepted"
 
+# Regression: mirror addresses are LITERAL host pins, never regex patterns.
+# A visually similar but different hostname must not match the IPv4 dots.
+SPOOF="http://192-0-2-10"
+SPOOFED_SAMPLE="${WORKDIR}/sample-spoof.sh"
+python3 - "$PINNED_A" "$SPOOFED_SAMPLE" "$HOST_A" "$SPOOF" <<'PY_HOSTPIN_SPOOF'
+from pathlib import Path
+import sys
+source, dest, correct, wrong = sys.argv[1:]
+data = Path(source).read_text()
+old = "PIN_SAMPLE_DEB_URL='{}{}".format(correct, "/")
+new = "PIN_SAMPLE_DEB_URL='{}{}".format(wrong, "/")
+assert data.count(old) == 1
+Path(dest).write_text(data.replace(old, new))
+PY_HOSTPIN_SPOOF
+out="$(client_assert_mirror_base_match "$SPOOFED_SAMPLE" "$HOST_A" 2>&1)" && rc=0 || rc=$?
+[[ "$rc" -ne 0 ]] && pass "regex-lookalike sample deb host rejected" \
+  || fail "regex-lookalike sample deb host accepted: ${out}"
+
+# A wrong literal --mirror-base/-url must fail even if a correct download URL
+# or an earlier duplicate option is present.
+cmd="curl -fsSL ${HOST_A}/client/x.sh && bash ./x.sh --mirror-base ${SPOOF}"
+out="$(client_assert_command_mirror_base "$cmd" "$HOST_A" 2>&1)" && rc=0 || rc=$?
+[[ "$rc" -ne 0 ]] && pass "regex-lookalike --mirror-base rejected" \
+  || fail "regex-lookalike --mirror-base accepted: ${out}"
+
+cmd="curl -fsSL ${HOST_A}/client/stage-dp-phase2.sh && bash ./stage-dp-phase2.sh --mirror-url ${SPOOF}"
+out="$(client_assert_command_mirror_base "$cmd" "$HOST_A" 2>&1)" && rc=0 || rc=$?
+[[ "$rc" -ne 0 ]] && pass "regex-lookalike --mirror-url rejected" \
+  || fail "regex-lookalike --mirror-url accepted: ${out}"
+
+cmd="curl -fsSL ${HOST_A}/client/x.sh && bash ./x.sh --mirror-base ${HOST_A} --mirror-base ${HOST_B}"
+out="$(client_assert_command_mirror_base "$cmd" "$HOST_A" 2>&1)" && rc=0 || rc=$?
+[[ "$rc" -ne 0 ]] && pass "duplicate conflicting --mirror-base rejected" \
+  || fail "duplicate conflicting --mirror-base accepted: ${out}"
+
+cmd="curl -fsSL ${HOST_A}/client/stage-dp-phase2.sh && bash ./stage-dp-phase2.sh --mirror-url ${HOST_A} --mirror-url ${HOST_B}"
+out="$(client_assert_command_mirror_base "$cmd" "$HOST_A" 2>&1)" && rc=0 || rc=$?
+[[ "$rc" -ne 0 ]] && pass "duplicate conflicting --mirror-url rejected" \
+  || fail "duplicate conflicting --mirror-url accepted: ${out}"
+
+# Valid one-line commands remain supported (positive controls).
+cmd="curl -fsSL ${HOST_A}/client/stage-dp-phase2.sh && bash ./stage-dp-phase2.sh --mirror-url ${HOST_A}"
+out="$(client_assert_command_mirror_base "$cmd" "$HOST_A" 2>&1)" && rc=0 || rc=$?
+[[ "$rc" -eq 0 ]] && pass "literal correct --mirror-url accepted" \
+  || fail "literal correct --mirror-url rejected: ${out}"
+
+# A14: correct runtime flags cannot excuse downloading executable code
+# from a DIFFERENT mirror host. No network request is made in this fixture.
+cmd="curl -fsSLo x.sh $HOST_B/client/x.sh && bash ./x.sh --mirror-base $HOST_A"
+out="$(client_assert_command_mirror_base "$cmd" "$HOST_A" 2>&1)" && rc=0 || rc=$?
+[[ "$rc" -ne 0 ]] && pass "foreign download host with correct --mirror-base rejected" \
+  || fail "foreign download host with correct --mirror-base accepted: $out"
+
+cmd="curl -fsSLo x.sh $HOST_A/client/x.sh && curl -fsSLo y.sh $HOST_B/client/y.sh && bash ./x.sh --mirror-base $HOST_A"
+out="$(client_assert_command_mirror_base "$cmd" "$HOST_A" 2>&1)" && rc=0 || rc=$?
+[[ "$rc" -ne 0 ]] && pass "additional foreign executable download rejected" \
+  || fail "additional foreign executable download accepted: $out"
+
+# A literal U assignment points to Host B, even though --mirror-base uses A.
+cmd="U='$HOST_B'; curl -fsSLo x.sh "\$U/client/x.sh" && bash ./x.sh --mirror-base $HOST_A"
+out="$(client_assert_command_mirror_base "$cmd" "$HOST_A" 2>&1)" && rc=0 || rc=$?
+[[ "$rc" -ne 0 ]] && pass "foreign source declared as URL variable rejected" \
+  || fail "foreign source declared as URL variable accepted: $out"
+
+cmd="curl -fsSLo x.sh $HOST_A/client/x.sh && bash ./x.sh --mirror-base $HOST_A"
+out="$(client_assert_command_mirror_base "$cmd" "$HOST_A" 2>&1)" && rc=0 || rc=$?
+[[ "$rc" -eq 0 ]] && pass "same-host download and runtime pin accepted" \
+  || fail "same-host download and runtime pin wrongly rejected: $out"
+
+# Real operator one-liners can bind the mirror host in a shell URL variable.
+# The validator reads the assignment as literal text; no download is executed.
+cmd="U='$HOST_A'; curl -fsSLo x.sh "\$U/client/x.sh" && bash ./x.sh --mirror-base $HOST_A"
+out="$(client_assert_command_mirror_base "$cmd" "$HOST_A" 2>&1)" && rc=0 || rc=$?
+[[ "$rc" -eq 0 ]] && pass "visible correct variable-pinned download accepted" \
+  || fail "visible correct variable-pinned download rejected: $out"
+
+cmd="curl -fsSLo x.sh "\$UNVERIFIED_URL" && bash ./x.sh --mirror-base $HOST_A"
+out="$(client_assert_command_mirror_base "$cmd" "$HOST_A" 2>&1)" && rc=0 || rc=$?
+[[ "$rc" -ne 0 ]] && pass "unverifiable curl URL rejected" \
+  || fail "unverifiable curl URL accepted: $out"
+
+# Direct local execution without fetching a URL remains supported.
+cmd="bash ./x.sh --mirror-base $HOST_A"
+out="$(client_assert_command_mirror_base "$cmd" "$HOST_A" 2>&1)" && rc=0 || rc=$?
+[[ "$rc" -eq 0 ]] && pass "local command with correct explicit pin accepted" \
+  || fail "local correct explicit pin rejected: $out"
+
 if [[ "$FAIL" -eq 0 ]]; then
   echo "=== test_client_mirror_pin_gates PASS ==="
   exit 0

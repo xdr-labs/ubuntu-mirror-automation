@@ -346,7 +346,13 @@ osu_export_artifacts() {
     cp -a "$hop_dir/." "$stage/" 2>/dev/null || true
     [[ -f "$(osu_state_path)" ]] && cp -a "$(osu_state_path)" "$stage/state.json"
     [[ -d "${OSU_STATE_DIR}/reports" ]] && cp -a "${OSU_STATE_DIR}/reports" "$stage/reports" 2>/dev/null || true
-    if find "$stage" \( -iname '*id_rsa*' -o -iname '*.pem' -o -iname '*password*' \) 2>/dev/null | grep -q .; then
+    local secret_match
+    if ! secret_match="$(find "$stage" \( -iname '*id_rsa*' -o -iname '*.pem' -o -iname '*password*' \) -print -quit 2>/dev/null)"; then
+      osu_log ERROR "secret scan failed; refusing export"
+      rm -rf "$stage"
+      return 1
+    fi
+    if [[ -n "$secret_match" ]]; then
       osu_log ERROR "secret-like paths detected; refusing export"
       rm -rf "$stage"
       return 1

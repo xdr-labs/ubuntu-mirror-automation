@@ -71,6 +71,23 @@ run_step "python_compile_cross_hop" python3 -m py_compile tests/test_cross_hop_s
 run_step "audit99_boundary_regressions" python3 -m unittest \
   tests.test_audit99_lifecycle tests.test_audit99_phase1 tests.test_audit99_operator
 run_step "owner_notification_exact_line" python3 -m unittest tests.test_owner_notification_exact_line
+# Preserve both open PRs: Phase 2 SIGPIPE and Python startup/four-hop monitor fixes.
+run_step "phase2_cluster_status_sigpipe" bash tests/test_phase2_validate_cluster_eof_closure.sh
+run_step "audit_phase2_ntp_long_status" bash tests/test_phase2_ntp_pipefail_large_output.sh
+run_step "audit_preflight_json_large" bash tests/test_dp_preflight_internal_json_pipefail.sh
+run_step "audit_host_pin_large" bash tests/test_client_mirror_pin_large_payload.sh
+run_step "audit_host_pin_literal_boundary" bash tests/test_client_mirror_pin_gates.sh
+run_step "audit_mirror_private_key_tree" bash tests/test_mirror_client_private_key_scan_pipefail.sh
+run_step "audit_mirror_full_mode_private_scan" bash tests/test_mirror_prereq_private_scan_pipefail.sh
+run_step "audit_os_artifact_private_scan" bash tests/test_os_artifact_secret_scan_pipefail.sh
+run_step "audit_os_orphan_log_scan" bash tests/test_os_orphan_log_scan_pipefail.sh
+run_step "audit_os_python_inventory_report" bash tests/test_os_python_inventory_report_pipefail.sh
+run_step "audit_phase1_ntp_long_output" bash tests/test_os_ntp_large_output_pipefail.sh
+run_step "audit_critical_os_hold_long_output" bash tests/test_os_critical_holds_pipefail.sh
+run_step "audit_migration_dirty_git_guard" bash tests/test_migrate_git_guard_pipefail.sh
+run_step "audit_local_signing_large" bash tests/test_per_mirror_local_signing.sh
+run_step "xenial_bionic_early_sitecustomize" python3 -m unittest tests.test_xenial_bionic_upgrader_env_order
+run_step "offline_progress_complete_lines" python3 -m unittest tests.test_offline_progress_log_lines
 run_step "menu7_cached_open_fixture" bash tests/test_menu7_cached_open.sh
 run_step "login_shell_partial_rollback" bash tests/test_login_shell_partial_rollback.sh
 run_step "phase1_retry_resume" bash tests/test_phase1_retry_resume_regression.sh

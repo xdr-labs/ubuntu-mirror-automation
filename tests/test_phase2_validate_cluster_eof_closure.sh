@@ -342,6 +342,83 @@ echo "$ANAL_DA" | grep -q 'CLUSTER_SIGNAL_STATUS_ROLE=DA_DR' \
   && pass "DA/DR role-specific System Ready is accepted without DL license line" \
   || fail "DA/DR ready analysis: $ANAL_DA"
 
+# Real field DR status displayed "System Ready" while the analyzer emitted NO.
+# Under pipefail, grep -q may close the pipe before printf finishes, making a
+# matched readiness line appear absent. Pad after real status to reliably
+# exercise that boundary; status is still exactly the same authoritative text.
+LONG_CLI_DIAGNOSTICS="$(printf 'diagnostic-line-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n%.0s' {1..2400})"
+DA_LONG_TXT="${DA_READY_TXT}"$'\n'"${LONG_CLI_DIAGNOSTICS}"
+ANAL_DA_LONG="$(p2b_analyze_aella_status_text "$DA_LONG_TXT")"
+if grep -qx 'CLUSTER_SIGNAL_STATUS_ROLE=DA_DR' <<<"$ANAL_DA_LONG" \
+  && grep -qx 'CLUSTER_SIGNAL_NODES_READY=YES' <<<"$ANAL_DA_LONG" \
+  && grep -qx 'CLUSTER_SIGNAL_HOST_SERVICES_READY=YES' <<<"$ANAL_DA_LONG" \
+  && grep -qx 'CLUSTER_SIGNAL_SYSTEM_READY=YES' <<<"$ANAL_DA_LONG" \
+  && grep -qx 'CLUSTER_STATUS_SUMMARY=AUTHORITATIVE_SIGNALS_PRESENT' <<<"$ANAL_DA_LONG" \
+  && grep -qx 'CLUSTER_VALIDATION_RECORDABLE_PASS=OPERATOR_JUDGEMENT' <<<"$ANAL_DA_LONG"; then
+  pass "DR field status remains ready despite long stdout under pipefail"
+else
+  fail "DR status false negative under pipefail: $(grep -E '^CLUSTER_(SIGNAL_|STATUS_SUMMARY|VALIDATION_RECORDABLE_PASS)' <<<"$ANAL_DA_LONG" | tr '\n' ' ')"
+fi
+
+DL_LONG_TXT=$'DataProcessor(DL-master)> show status\nAll cluster nodes are ready\nAll host services are ready\nLicense is valid\nSystem Ready\n'"${LONG_CLI_DIAGNOSTICS}"
+ANAL_DL_LONG="$(p2b_analyze_aella_status_text "$DL_LONG_TXT")"
+if grep -qx 'CLUSTER_SIGNAL_STATUS_ROLE=DL_AIO' <<<"$ANAL_DL_LONG" \
+  && grep -qx 'CLUSTER_SIGNAL_LICENSE_VALID=YES' <<<"$ANAL_DL_LONG" \
+  && grep -qx 'CLUSTER_STATUS_SUMMARY=AUTHORITATIVE_SIGNALS_PRESENT' <<<"$ANAL_DL_LONG"; then
+  pass "DL field status remains ready despite long stdout under pipefail"
+else
+  fail "DL status false negative under pipefail"
+fi
+
+# Longer CLI diagnostics cannot override explicit paused or critical status.
+ANAL_DA_LONG_PAUSED="$(p2b_analyze_aella_status_text "${DA_READY_TXT}"$'\nSystem paused. Type resume in cli to start data processor services\n'"${LONG_CLI_DIAGNOSTICS}")"
+if grep -qx 'CLUSTER_STATUS_SUMMARY=PAUSED' <<<"$ANAL_DA_LONG_PAUSED" \
+  && grep -qx 'CLUSTER_VALIDATION_RECORDABLE_PASS=NO' <<<"$ANAL_DA_LONG_PAUSED"; then
+  pass "long DR status stays fail-closed when paused"
+else
+  fail "long DR status incorrectly allows PASS while paused"
+fi
+ANAL_DA_LONG_CRITICAL="$(p2b_analyze_aella_status_text "${DA_READY_TXT}"$'\nLicense is expired\n'"${LONG_CLI_DIAGNOSTICS}")"
+if grep -qx 'CLUSTER_STATUS_SUMMARY=CRITICAL_SIGNAL' <<<"$ANAL_DA_LONG_CRITICAL" \
+  && grep -qx 'CLUSTER_VALIDATION_RECORDABLE_PASS=NO' <<<"$ANAL_DA_LONG_CRITICAL"; then
+  pass "long DR status stays fail-closed with critical signal"
+else
+  fail "long DR status incorrectly allows PASS with critical signal"
+fi
+
+# Exercise the actual --validate-cluster entry path, not only its parser.
+cat >"${BIN}/aella_cli_long_ready.sh" <<'EOF'
+#!/usr/bin/env bash
+while IFS= read -r line || [[ -n "$line" ]]; do
+  case "$line" in
+    "show status")
+      printf '%s\n' 'DataProcessor(DR-master)> All pods are running' \
+        'All cluster nodes are ready' 'All host services are ready' \
+        'System Ready' 'No upgrade image pre-pulling is scheduled yet'
+      printf 'diagnostic-line-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n%.0s' {1..2400}
+      ;;
+    quit|exit) exit 0 ;;
+  esac
+done
+EOF
+chmod +x "${BIN}/aella_cli_long_ready.sh"
+set +e
+AELLA_CLI_PATH="${BIN}/aella_cli_long_ready.sh" \
+  DP_PHASE2_ADMIN_KUBECONFIG="${WORKDIR}/absent-admin.conf" \
+  p2b_run_cluster_validation_surface >"${WORKDIR}/long-real-surface.out" 2>&1
+LONG_SURFACE_RC=$?
+set -e
+if [[ "$LONG_SURFACE_RC" -eq 0 ]] \
+  && grep -qx 'AELLA_CLI_EXIT_REASON=CLEAN_QUIT' "${WORKDIR}/long-real-surface.out" \
+  && grep -qx 'CLUSTER_SIGNAL_SYSTEM_READY=YES' "${WORKDIR}/long-real-surface.out" \
+  && grep -qx 'CLUSTER_VALIDATION_RECORDABLE_PASS=OPERATOR_JUDGEMENT' "${WORKDIR}/long-real-surface.out" \
+  && grep -qx 'CLUSTER_VALIDATION=PENDING' "${WORKDIR}/long-real-surface.out" \
+  && grep -qx 'DP_UPGRADE_COMPLETE=NO' "${WORKDIR}/long-real-surface.out"; then
+  pass "full long DR validation surface detects ready but never auto-confirms PASS"
+else
+  fail "full long DR validation surface did not retain readiness/safety signals (rc=${LONG_SURFACE_RC})"
+fi
+
 # An identified DA/DR role must not pass on a DL-style license signal alone.
 DA_LICENSE_ONLY_TXT="$(cat <<'EOF'
 DataProcessor(DR-master)> show status

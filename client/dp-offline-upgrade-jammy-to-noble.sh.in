@@ -8738,18 +8738,49 @@ monitor_resolve_runner_pid() {
 
 monitor_emit_new_log_bytes() {
   local logf="$1"
-  local size=0
+  local size=0 start remaining line
+  # Read only newline-terminated records. Partial dpkg/apt output must not
+  # share a terminal line with the next [PROGRESS] heartbeat.
+  local LC_ALL=C
   [[ -f "$logf" ]] || return 0
   size="$(wc -c <"$logf" | tr -d '[:space:]')"
   [[ -n "$size" ]] || size=0
   if [[ "$size" -lt "${MONITOR_LOG_OFFSET:-0}" ]]; then
-    # Log truncated or rotated - resync from start of new file.
+    # Log truncated or rotated: restart at byte zero.
     MONITOR_LOG_OFFSET=0
   fi
-  if [[ "$size" -gt "${MONITOR_LOG_OFFSET:-0}" ]]; then
-    tail -c "+$((MONITOR_LOG_OFFSET + 1))" "$logf" 2>/dev/null || true
-    MONITOR_LOG_OFFSET="$size"
+  start="${MONITOR_LOG_OFFSET:-0}"
+  remaining=$((size - start))
+  if [[ "$remaining" -gt 0 ]]; then
+    while IFS= read -r line; do
+      printf '%s\n' "$line"
+      MONITOR_LOG_OFFSET=$((MONITOR_LOG_OFFSET + ${#line} + 1))
+    done < <(tail -c "+$((start + 1))" "$logf" 2>/dev/null | head -c "$remaining")
   fi
+}
+
+monitor_print_recent_log() {
+  local logf="$1" recent="$2" size=0 pending=0 last_byte
+  local LC_ALL=C
+  [[ -f "$logf" ]] || return 0
+  size="$(wc -c <"$logf" | tr -d '[:space:]')"
+  [[ -n "$size" ]] || size=0
+  if [[ "$size" -gt 0 ]]; then
+    last_byte="$(tail -c 1 "$logf" | od -An -tu1 | tr -d '[:space:]')"
+    if [[ "$last_byte" != "10" ]]; then
+      # The last line is still being written. Show only the prior completed
+      # lines and keep its bytes pending for the next monitor poll.
+      pending="$(tail -n 1 "$logf" | wc -c | tr -d '[:space:]')"
+      while IFS= read -r line; do
+        printf '%s\n' "$line"
+      done < <(tail -n "$((recent + 1))" "$logf" 2>/dev/null)
+    else
+      tail -n "$recent" "$logf" 2>/dev/null || true
+    fi
+  fi
+  MONITOR_LOG_OFFSET=$((size - pending))
+  # Failure-marker scans must not reclassify historical failures as current.
+  MONITOR_ATTACH_LOG_OFFSET="$size"
 }
 
 print_background_upgrade_banner() {
@@ -9001,9 +9032,7 @@ monitor_upgrade_progress() {
   echo ""
   echo "--- recent upgrade log (last ${recent} lines) ---"
   if [[ -f "$logf" ]]; then
-    tail -n "$recent" "$logf" 2>/dev/null || true
-    MONITOR_LOG_OFFSET="$(wc -c <"$logf" | tr -d '[:space:]')"
-    MONITOR_ATTACH_LOG_OFFSET="$MONITOR_LOG_OFFSET"
+    monitor_print_recent_log "$logf" "$recent"
   else
     MONITOR_LOG_OFFSET=0
     MONITOR_ATTACH_LOG_OFFSET=0

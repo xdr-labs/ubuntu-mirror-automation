@@ -118,7 +118,7 @@ p2b_aella_cli_show_status_bounded() {
   output="$(cat "$outf" "$errf" 2>/dev/null || true)"
   printf '%s\n' "$output"
 
-  if printf '%s\n' "$output" | grep -qE '\*\*\* Unknown syntax:[[:space:]]*EOF'; then
+  if grep -qE '\*\*\* Unknown syntax:[[:space:]]*EOF' <<<"$output"; then
     unknown_eof=1
   fi
 
@@ -202,40 +202,43 @@ p2b_analyze_aella_status_text() {
   local missing_pods=""
   local authoritative_ready=NO
 
-  if printf '%s\n' "$text" | grep -qiE 'System paused\.[[:space:]]*Type resume'; then
+  # Use a here-string for readiness predicates: under pipefail, printf | grep -q
+  # can return SIGPIPE after an early match and silently turn YES into NO.
+  # Preserve role-specific fail-closed requirements; never auto-record PASS.
+  if grep -qiE 'System paused\.[[:space:]]*Type resume' <<<"$text"; then
     paused=YES
   fi
-  if printf '%s\n' "$text" | grep -qiE 'All cluster nodes are ready'; then
+  if grep -qiE 'All cluster nodes are ready' <<<"$text"; then
     nodes_ready=YES
   fi
-  if printf '%s\n' "$text" | grep -qiE 'All host services are ready'; then
+  if grep -qiE 'All host services are ready' <<<"$text"; then
     host_services_ready=YES
   fi
-  if printf '%s\n' "$text" | grep -qiE 'DataProcessor\((DL|AIO)([-_A-Za-z0-9]*)?\)>'; then
+  if grep -qiE 'DataProcessor\((DL|AIO)([-_A-Za-z0-9]*)?\)>' <<<"$text"; then
     status_role=DL_AIO
-  elif printf '%s\n' "$text" | grep -qiE 'DataProcessor\((DR|DA)([-_A-Za-z0-9]*)?\)>'; then
+  elif grep -qiE 'DataProcessor\((DR|DA)([-_A-Za-z0-9]*)?\)>' <<<"$text"; then
     status_role=DA_DR
   fi
-  if printf '%s\n' "$text" | grep -qiE 'License is valid'; then
+  if grep -qiE 'License is valid' <<<"$text"; then
     license_valid=YES
   fi
   # DA/DR-master status does not necessarily print the DL-side license/index
   # lines. Vendor status uses "System Ready" as its healthy terminal signal,
   # but do not let that relax the DL/AIO license requirement: role evidence
   # must explicitly identify a DA/DR prompt before System Ready can substitute.
-  if printf '%s\n' "$text" | grep -qiE '(^|[[:space:]])System Ready([[:space:]]|$)'; then
+  if grep -qiE '(^|[[:space:]])System Ready([[:space:]]|$)' <<<"$text"; then
     system_ready=YES
   fi
-  if printf '%s\n' "$text" | grep -qiE 'All[[:space:]]+[0-9]+[[:space:]]+indices ready'; then
+  if grep -qiE 'All[[:space:]]+[0-9]+[[:space:]]+indices ready' <<<"$text"; then
     indices_ready=YES
   fi
-  if printf '%s\n' "$text" | grep -qiE 'All DGA models are ready'; then
+  if grep -qiE 'All DGA models are ready' <<<"$text"; then
     models_ready=YES
   fi
-  if printf '%s\n' "$text" | grep -qiE 'Provision service is ready'; then
+  if grep -qiE 'Provision service is ready' <<<"$text"; then
     provision_ready=YES
   fi
-  if printf '%s\n' "$text" | grep -qiE 'CRITICAL|FATAL|Bringup failed|License is (invalid|expired)'; then
+  if grep -qiE 'CRITICAL|FATAL|Bringup failed|License is (invalid|expired)' <<<"$text"; then
     critical_fail=YES
   fi
 
@@ -443,7 +446,7 @@ p2b_record_cluster_validation() {
       return 1
     fi
     status_signals="$(p2b_analyze_aella_status_text "$status_text")"
-    if ! printf '%s\n' "$status_signals" | grep -qx 'CLUSTER_VALIDATION_RECORDABLE_PASS=OPERATOR_JUDGEMENT'; then
+    if ! grep -qx 'CLUSTER_VALIDATION_RECORDABLE_PASS=OPERATOR_JUDGEMENT' <<<"$status_signals"; then
       p2b_release_lock
       echo "ERROR: CLUSTER_VALIDATION=REFUSED reason=native_status_not_ready" >&2
       printf '%s\n' "$status_signals" | grep -E '^CLUSTER_(STATUS_|SIGNAL_|VALIDATION_RECORDABLE_PASS=)' >&2 || true

@@ -166,6 +166,22 @@ else
 fi
 rm -f "${HTTP}/private.gpg"
 
+# A large public tree must never cause find | grep -q to miss a private key
+# due to an upstream SIGPIPE under pipefail. Check repeatedly to expose races.
+BULK_HTTP="${WORKDIR}/http-client-bulk"
+mkdir -p "$BULK_HTTP"
+for n in $(seq -w 1 500); do : >"${BULK_HTTP}/test-private-${n}.gpg"; done
+bulk_rejected=1
+for ((i=0; i<12; i++)); do
+  if local_signing_assert_private_not_published "$BULK_HTTP" >/dev/null 2>&1; then
+    bulk_rejected=0
+    break
+  fi
+done
+[[ "$bulk_rejected" -eq 1 ]] \
+  && pass "large HTTP tree private-key scan always rejects" \
+  || fail "large HTTP tree private-key scan false PASS (SIGPIPE)"
+
 # --- GUI command uses local mirror URL (WRAPPER_V1) ---
 # Menu 7 pins the published upgrade-<hop>.sh SHA256. The launcher download
 # lives inside that wrapper, not in the operator one-liner.
