@@ -281,14 +281,55 @@ class EnvOrderPatchTests(unittest.TestCase):
         os.chmod(fake, 0o755)
         return bindir
 
+    @staticmethod
+    def _pid_running(pid):
+        if pid <= 0:
+            return False
+        path = "/proc/%d" % pid
+        try:
+            with open(path + "/stat", encoding="utf-8") as fh:
+                state_field = fh.read().rsplit(")", 1)
+            if len(state_field) != 2:
+                return True  # malformed proc data must not hide a live process
+            state = state_field[1].strip().split()[0]
+            return state not in ("Z", "X", "x")  # defunct / already dead
+        except FileNotFoundError:
+            return False
+        except (OSError, IndexError):
+            return os.path.exists(path)  # fail closed when state unreadable
+
     def _pids_gone(self, parent, child):
         for _ in range(50):
-            parent_alive = parent > 0 and os.path.exists("/proc/%s" % parent)
-            child_alive = child > 0 and os.path.exists("/proc/%s" % child)
-            if not parent_alive and not child_alive:
+            if not self._pid_running(parent) and not self._pid_running(child):
                 return True
             time.sleep(0.05)
         return False
+
+    def test_v229_defunct_pid_is_not_a_live_process(self):
+        # Linux keeps an exited child under /proc until its parent calls wait.
+        # That is not an executable command still running or a live leak.
+        child = subprocess.Popen([sys.executable, "-c", "import os; os._exit(0)"])
+        try:
+            state = ""
+            deadline = time.time() + 3
+            while time.time() < deadline:
+                with open("/proc/%d/stat" % child.pid, encoding="utf-8") as fh:
+                    state = fh.read().rsplit(")", 1)[1].strip().split()[0]
+                if state == "Z":
+                    break
+                time.sleep(0.02)
+            self.assertEqual(state, "Z", "fixture did not enter zombie state")
+            self.assertTrue(self._pids_gone(0, child.pid), "zombie falsely treated as live leak")
+        finally:
+            child.wait(timeout=5)
+
+    def test_v229_live_pid_still_blocks_reap_assertion(self):
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(8)"])
+        try:
+            self.assertFalse(self._pids_gone(0, child.pid), "live command wrongly ignored")
+        finally:
+            child.terminate()
+            child.wait(timeout=5)
 
     def test_v229_inhibit_close_reaps_parent_and_command(self):
         state = os.path.join(self.tmp, "v229-close")

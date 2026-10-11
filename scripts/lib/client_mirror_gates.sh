@@ -11,6 +11,8 @@ if [[ -n "${CLIENT_MIRROR_GATES_LOADED:-}" ]]; then
   return 0 2>/dev/null || true
 fi
 CLIENT_MIRROR_GATES_LOADED=1
+# Resolve once at source time: callers may cd after loading this library.
+CLIENT_MIRROR_GATES_LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 client_gate_log_err() {
   printf '%s\n' "$*" >&2
@@ -97,6 +99,10 @@ client_assert_mirror_base_match() {
       client_gate_log_err "HOST_PIN_GATE=FAIL embedded meta-release still has placeholder"
       mismatches=$((mismatches + 1))
     fi
+    if ! python3 "${CLIENT_MIRROR_GATES_LIB_DIR}/client_pin_payload_guard.py" meta "$expected" <<<"$meta_text"; then
+      client_gate_log_err "HOST_PIN_GATE=FAIL embedded meta-release has unpinned or unverifiable URLs"
+      mismatches=$((mismatches + 1))
+    fi
   fi
 
   manifest_text="$(client_decode_pin_b64_payload "$script" "MANIFEST_B64" || true)"
@@ -111,6 +117,14 @@ client_assert_mirror_base_match() {
         mismatches=$((mismatches + 1))
       fi
     fi
+  fi
+
+  # A matching JSON substring alone does not rule out duplicate keys or
+  # an off-mirror sample URL in the manifest.
+  if [[ -n "$manifest_text" ]] && \
+     ! python3 "${CLIENT_MIRROR_GATES_LIB_DIR}/client_pin_payload_guard.py" manifest "$expected" <<<"$manifest_text"; then
+    client_gate_log_err "HOST_PIN_GATE=FAIL embedded manifest has conflicting or unpinned mirror fields"
+    mismatches=$((mismatches + 1))
   fi
 
   printf 'HOST_PIN_GATE_MISMATCH_COUNT=%s\n' "$mismatches"
@@ -205,6 +219,13 @@ client_assert_command_mirror_base() {
   # A correct --mirror-base must never mask an off-mirror curl download.
   if ! client_gate_all_literal_urls_match "$text" "$expected"; then
     client_gate_log_err "RUNTIME_COMMAND_GATE=FAIL literal URL source outside pinned mirror or unverifiable curl URL"
+    return 1
+  fi
+  # An unrelated correct URL does not verify curl or wget executable sources.
+  # Inspect each downloader against pinned literal/visible URL assignments.
+  # Feed the complete command via stdin to avoid ARG_MAX and early-close SIGPIPE.
+  if ! python3 "${CLIENT_MIRROR_GATES_LIB_DIR}/client_curl_source_guard.py" "$expected" <<<"$text"; then
+    client_gate_log_err "RUNTIME_COMMAND_GATE=FAIL download source unverified or outside pinned mirror"
     return 1
   fi
   # Prefer explicit --mirror-base when present; otherwise require curl URL host match.

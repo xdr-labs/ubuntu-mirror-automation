@@ -101,6 +101,8 @@ CATEGORY_PATTERNS = {
         "scripts/lib/mirror_install_engine.sh",
         "scripts/lib/local_client_signing.sh",
         "scripts/lib/client_mirror_gates.sh",
+        "scripts/lib/client_curl_source_guard.py",
+        "scripts/lib/client_pin_payload_guard.py",
         "scripts/lib/http_publication_permissions.sh",
         "scripts/lib/atomic_dir_swap.py",
         "scripts/lib/phase2_helper_generation.sh",

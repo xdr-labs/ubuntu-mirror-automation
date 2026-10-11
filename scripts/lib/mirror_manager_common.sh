@@ -3272,6 +3272,8 @@ mm_check_client_build_prerequisites_ready() {
     "${libdir}/mirror_host_ip.sh" \
     "${libdir}/local_client_signing.sh" \
     "${libdir}/client_mirror_gates.sh" \
+    "${libdir}/client_curl_source_guard.py" \
+    "${libdir}/client_pin_payload_guard.py" \
     "$rebuild"
   do
     if [[ ! -f "$f" ]]; then
