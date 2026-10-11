@@ -39,11 +39,29 @@ CACHE="${MIRROR_ROOT}/.install-cache"
   && pass "ATOMIC_DIR_SWAP_INSTALLED=YES" \
   || fail "ATOMIC_DIR_SWAP_INSTALLED=NO"
 
-# Ensure fixture did not copy non-manifest python (e.g. selective_mirror.py)
-if [[ -f "${RUNTIME_ROOT}/scripts/lib/selective_mirror.py" ]]; then
-  fail "non-manifest selective_mirror.py present (wildcard leak?)"
+# Compare against the authoritative installed-runtime manifest, not an old
+# hardcoded assumption: selective_mirror.py and the two Host-Pin validators
+# are all intentionally shipped to the installed runtime.
+# shellcheck source=../lib/runtime_manifest.sh
+source "${ROOT}/lib/runtime_manifest.sh"
+for rel in \
+  scripts/lib/selective_mirror.py \
+  scripts/lib/client_curl_source_guard.py \
+  scripts/lib/client_pin_payload_guard.py; do
+  if ! grep -Fxq "$rel" <<<"$(um_runtime_emit_installed_relative_paths)"; then
+    fail "expected runtime file missing from manifest: $rel"
+  elif [[ ! -f "${RUNTIME_ROOT}/$rel" ]]; then
+    fail "manifest-declared runtime file not installed: $rel"
+  else
+    pass "MANIFEST_DECLARED_RUNTIME_FILE=$rel"
+  fi
+done
+
+# Real non-manifest Python is a valid negative control against wildcard copy.
+if [[ -f "${RUNTIME_ROOT}/scripts/lib/menu7_scroll_viewer.py" ]]; then
+  fail "non-manifest menu7_scroll_viewer.py present (wildcard leak?)"
 else
-  pass "no non-manifest python leak"
+  pass "NO_NON_MANIFEST_PYTHON_LEAK=YES"
 fi
 
 LOG="${WORKDIR}/rebuild-installed-runtime.log"
