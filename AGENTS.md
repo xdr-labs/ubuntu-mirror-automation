@@ -1,5 +1,15 @@
 # Repository Engineering Rules
 
+## Owner-scoped XDR Engineering System direct application (2026-10-11)
+
+The owner explicitly assigns the Engineering System Chat to **directly implement and verify Engineering System adoption, shared standards, and engineering-policy upgrades in this XDR repository**. Unlike DataRelay's roadmap-only delegation, Engineering System itself must inspect this repository's `AGENTS.md`, `.engineering/project.yaml`, Work Packet and real Git/PR state; implement compatible policy changes; run affected tests; commit/push; and verify exact-HEAD PR/CI/review evidence. Do not stop at a GitHub roadmap entry.
+
+This is an **owner-scoped execution responsibility**, not a replacement for repository-specific constraints or a grant of production, credential, permission, destructive, publication, merge, or release authority. Existing platform safety denials and other workers' uncommitted changes remain protected. Universal rules: `datarelay-labs/engineering-system` `standards/CORE.md` and `standards/ADOPTION.md`; owner-specific allocation: `.engineering/owner-delivery.md` in the canonical Engineering System Draft PR #306 (`6872c2b34d643738689bdc6d3ce7a6051497b7b4`). The PR is not yet a merged baseline.
+
+
+This repository follows the canonical Engineering System:
+https://github.com/datarelay-labs/engineering-system
+
 This repository follows the canonical Engineering System:
 https://github.com/datarelay-labs/engineering-system
 
