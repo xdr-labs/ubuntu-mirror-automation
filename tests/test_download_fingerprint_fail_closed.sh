@@ -121,6 +121,32 @@ STATUS_AFTER="$(cksum "$MM_STATUS_FILE" | awk '{print $1" "$2}')"
   || fail "D: public path minted DOWNLOAD_ARTIFACT_FINGERPRINT"
 pass "D: public entrypoint preserves core fail-closed fingerprint contract"
 
+# A changed mode must return to Menu 2 before Menu 4 can mint readiness.
+# Keep the actual download-receipt validator; HTTP work must not even start.
+source "${ROOT}/scripts/lib/dp-phase2-common.sh"
+source "${ROOT}/scripts/lib/mirror_install_engine.sh"
+# Preserve this fixture's explicit paths instead of resolving an installed mirror.
+engine_resolve_paths() { return 0; }
+mm_http_distribution_enabled() { return 0; }
+engine_validate_http_layout() { touch "$TMP/unexpected-http-validation"; return 0; }
+mm_wf_set_many "HTTP_PUBLICATION_GENERATION_ID=gen-stale-mode" >/dev/null
+mm_status_set UPGRADE_READINESS PASS
+mm_status_set READINESS_RESULT PASS
+FP_CURRENT='mode=PHASE2_ONLY;bundle=unchanged'
+mm_status_set DOWNLOAD_ARTIFACT_FINGERPRINT 'mode=FULL;bundle=unchanged'
+set +e
+MODE_OUT="$(engine_validate_upgrade_readiness_live 2>&1)"
+MODE_RC=$?
+set -e
+[[ "$MODE_RC" -ne 0 ]] || fail "mode switch allowed Menu 4 before current preparation"
+printf '%s\n' "$MODE_OUT" | grep -q 'reason=preparation_not_current' \
+  || fail "mode switch did not identify stale preparation: ${MODE_OUT}"
+[[ ! -e "$TMP/unexpected-http-validation" ]] \
+  || fail "mode switch started HTTP/hash work before checking preparation"
+[[ "$(mm_status_get UPGRADE_READINESS)" == FAIL ]] \
+  || fail "mode switch left a stale readiness PASS"
+pass "mode switch requires current preparation before Menu 4"
+
 # --- E. Production Menu 4 never trusts same-stat metadata as byte integrity ---
 # This reproduces the exact audit case: mutate one byte in place, then restore
 # the original nanosecond mtime so dev/inode/size/mtime fingerprint is unchanged.

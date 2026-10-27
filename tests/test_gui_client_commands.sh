@@ -121,6 +121,14 @@ grep -Fxq 'DP OS version: 16.04' <<<"$footer" \
 grep -Fq 'If the DP is already running Ubuntu 24.04, select Phase 2 Only.' <<<"$footer" \
   || fail "Phase 2 Only notice missing"
 pass "Configuration uses Preparation Mode + exact footer"
+PREPARATION_MODE=PHASE2_ONLY
+phase2_footer="$(mm_config_footer_text)"
+grep -Fxq 'DP OS version: 24.04' <<<"$phase2_footer" \
+  || fail "Phase 2 Only footer must show Ubuntu 24.04"
+! grep -Fq 'DP OS version: 16.04' <<<"$phase2_footer" \
+  || fail "Phase 2 Only footer still shows Ubuntu 16.04"
+PREPARATION_MODE=FULL
+pass "Configuration footer follows the selected preparation mode"
 
 # Menu height must fit Configuration instruction+footer (not a fixed +12 chrome).
 # Match production: trailing blank line avoids newt clipping the last footer line.

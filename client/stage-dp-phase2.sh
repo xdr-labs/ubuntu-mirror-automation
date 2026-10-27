@@ -610,22 +610,36 @@ require_phase2_dynamic_space() {
 }
 
 resolve_aella_ownership() {
-  id -u aella >/dev/null 2>&1 || die "aella account missing"
-  local shell
-  shell="$(getent passwd aella | awk -F: '{print $7}')"
+  local passwd_record passwd_uid passwd_gid shell
+  AELLA_OWNERSHIP_CHECK="FAIL"
+  passwd_record="$(getent passwd aella)" \
+    || die "AELLA_OWNERSHIP_CHECK=FAIL reason=passwd_lookup_failed account=aella"
+  [[ "$passwd_record" != *$'\n'* \
+    && "$passwd_record" =~ ^aella:[^:]*:([0-9]+):([0-9]+):[^:]*:[^:]*:([^:]*)$ ]] \
+    || die "AELLA_OWNERSHIP_CHECK=FAIL reason=invalid_passwd_record account=aella"
+  passwd_uid="${BASH_REMATCH[1]}"
+  passwd_gid="${BASH_REMATCH[2]}"
+  shell="${BASH_REMATCH[3]}"
   if [[ "$shell" != "/bin/bash" ]]; then
     die "PHASE2_AELLA_SHELL_PREFLIGHT=FAIL aella shell must be /bin/bash before Phase 2 staging/download (got ${shell:-empty}). Fix the aella login shell, then re-run staging — do not download the 30+ GiB bundle until this passes."
   fi
   log "PHASE2_AELLA_SHELL_PREFLIGHT=PASS shell=/bin/bash"
 
-  AELLA_UID="$(id -u aella)"
-  AELLA_PRIMARY_GID="$(id -g aella)"
-  AELLA_PRIMARY_GROUP="$(id -gn aella)"
+  AELLA_UID="$(id -u aella)" \
+    || die "AELLA_OWNERSHIP_CHECK=FAIL reason=uid_lookup_failed account=aella"
+  AELLA_PRIMARY_GID="$(id -g aella)" \
+    || die "AELLA_OWNERSHIP_CHECK=FAIL reason=gid_lookup_failed account=aella"
   [[ "$AELLA_UID" =~ ^[0-9]+$ ]] || die "AELLA_UID not numeric"
   [[ "$AELLA_PRIMARY_GID" =~ ^[0-9]+$ ]] || die "AELLA_PRIMARY_GID not numeric"
-  [[ -n "$AELLA_PRIMARY_GROUP" ]] || die "AELLA_PRIMARY_GROUP empty"
-  getent group "$AELLA_PRIMARY_GID" >/dev/null 2>&1 \
-    || die "primary GID ${AELLA_PRIMARY_GID} not resolvable via getent group"
+  [[ "$AELLA_UID" == "$passwd_uid" && "$AELLA_PRIMARY_GID" == "$passwd_gid" ]] \
+    || die "AELLA_OWNERSHIP_CHECK=FAIL reason=passwd_id_mismatch account=aella"
+
+  # File ownership uses the verified numeric IDs. The group name is display-only;
+  # id -gn can print the numeric GID and exit nonzero when its name is unresolved.
+  if ! AELLA_PRIMARY_GROUP="$(id -gn aella 2>/dev/null)" || [[ -z "$AELLA_PRIMARY_GROUP" ]]; then
+    AELLA_PRIMARY_GROUP="UNRESOLVED"
+    log "AELLA_PRIMARY_GROUP_LOOKUP=WARN reason=name_unresolved gid=${AELLA_PRIMARY_GID} ownership=numeric_ids"
+  fi
   AELLA_OWNERSHIP_CHECK="PASS"
   log "AELLA_UID=${AELLA_UID}"
   log "AELLA_PRIMARY_GID=${AELLA_PRIMARY_GID}"

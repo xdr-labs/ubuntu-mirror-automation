@@ -3922,6 +3922,19 @@ engine_validate_upgrade_readiness_live() {
     MM_SKIP_BUNDLE_SHA256=0
   fi
 
+  # A mode change preserves reusable payloads but invalidates preparation for
+  # that mode. Menu 3 can rebuild helpers; it cannot certify Menu 2's receipt.
+  # Check before expensive hashes so GUI/CLI cannot mint a contradictory PASS.
+  if ! ( mm_download_completed ) >/dev/null 2>&1; then
+    MM_SKIP_HTTP_VALIDATE="$prev_skip_http"
+    MM_SKIP_BUNDLE_SHA256="$prev_skip_bundle"
+    mm_status_set UPGRADE_READINESS FAIL
+    mm_status_set READINESS_RESULT FAIL
+    mm_error "UPGRADE_READINESS=FAIL reason=preparation_not_current"
+    mm_error "Run 2 Download and Prepare Upgrade Files, then 3 Enable HTTP Distribution and 4 Verify Upgrade Readiness. Verified cached artifacts can be reused."
+    return 1
+  fi
+
   MM_SHA256_OPERATION=verify-readiness
   # A device/inode/size/mtime fingerprint proves that the expected file object
   # is still present, but it is not cryptographic evidence that its bytes are
