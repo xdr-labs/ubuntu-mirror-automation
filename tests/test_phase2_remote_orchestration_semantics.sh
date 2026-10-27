@@ -663,6 +663,8 @@ dp_phase2_bringup_staging_gate() { return 0; }
 EOF
 cat >"$(p2b_dir)/lib/dp-phase2-ubuntu-prerequisites.sh" <<'EOF'
 dp2_install_phase2_ubuntu_prerequisites() { return 0; }
+dp2_validate_installed_product_replacement() { return 0; }
+dp2_validate_apt_dependency_graph() { return 0; }
 EOF
 : >"$PHASE2_BRINGUP_LOG_DEFAULT"
 write_file() { printf '%s\n' "$2" >"$1"; }

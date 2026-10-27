@@ -1203,6 +1203,21 @@ p2b_worker_main() {
       rc=1
       p2b_fail_run "$d" "$run_id" "$$" "$target" "$started" "$logf" "$rc" "CURRENT_RUN_LOG_IDENTITY_INVALID"
     fi
+    # A historical or current PASS log is not fresh package-state evidence.
+    # The vendor's UVP guard checks before services; check again here because
+    # later vendor operations may have changed the actual dependency graph.
+    if ! declare -F dp2_validate_installed_product_replacement >/dev/null 2>&1 \
+      || ! declare -F dp2_validate_apt_dependency_graph >/dev/null 2>&1; then
+      p2b_fail_run "$d" "$run_id" "$$" "$target" "$started" "$logf" 1 "PRODUCT_REPLACEMENT_HELPER_MISSING"
+    fi
+    if ! dp2_validate_installed_product_replacement "$target" >>"$logf" 2>&1; then
+      p2b_fail_run "$d" "$run_id" "$$" "$target" "$started" "$logf" 1 "PRODUCT_REPLACEMENT"
+    fi
+    if ! dp2_validate_apt_dependency_graph lifecycle_completion >>"$logf" 2>&1; then
+      p2b_fail_run "$d" "$run_id" "$$" "$target" "$started" "$logf" 1 "APT_DEPENDENCY_CHECK"
+    fi
+    completed="$(p2b_utc_now)"
+    printf '%s\n' "$completed" | p2b_atomic_write "${d}/completed-at"
     # Write machine-readable sentinel bound to this run — authoritative completion.
     {
       echo "BRINGUP_TERMINAL_STATE=COMPLETED"

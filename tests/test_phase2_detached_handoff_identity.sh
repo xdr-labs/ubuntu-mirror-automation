@@ -53,6 +53,12 @@ cat >"$RUNTIME/lib/dp-phase2-staging-contract.sh" <<'EOF'
 dp_phase2_bringup_staging_gate() { return 0; }
 EOF
 
+cat >"$RUNTIME/lib/dp-phase2-ubuntu-prerequisites.sh" <<'EOF'
+dp2_install_phase2_ubuntu_prerequisites() { return 0; }
+dp2_validate_installed_product_replacement() { return 0; }
+dp2_validate_apt_dependency_graph() { return 0; }
+EOF
+
 cat >"$RUNTIME/bringup_py3_dp_after_os_upgrade.vendor.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail

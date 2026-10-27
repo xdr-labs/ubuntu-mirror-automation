@@ -23,6 +23,8 @@ p2b_ensure_dir
 mkdir -p "$(p2b_dir)/lib"
 cat >"$(p2b_dir)/lib/dp-phase2-ubuntu-prerequisites.sh" <<'EOF'
 dp2_install_phase2_ubuntu_prerequisites() { return 0; }
+dp2_validate_installed_product_replacement() { return 0; }
+dp2_validate_apt_dependency_graph() { return 0; }
 EOF
 cat >"$(p2b_dir)/lib/dp-phase2-time-readiness.sh" <<'EOF'
 dp_phase2_load_time_ref_url() { return 0; }
@@ -1263,5 +1265,48 @@ set -e
 [[ "$SP_T8_RC" -ne 0 ]] || fail "SP-T8 unexpectedly PASS with invalid identity"
 assert_failed_identity "SP-T8"
 pass "SP-T8 vendor rc=0 + invalid current-run identity still FAIL"
+
+# A successful vendor/log does not certify current installed packages or APT.
+for package_case in package_failure apt_failure missing_helper healthy; do
+  reset_lifecycle_files
+  : >"$PHASE2_BRINGUP_LOG_DEFAULT"
+  write_file "$(p2b_dir)/run-id" "run-package-${package_case}"
+  write_file "$(p2b_dir)/target-version" "6.6.0"
+  write_file "$(p2b_dir)/log-path" "$PHASE2_BRINGUP_LOG_DEFAULT"
+  write_file "$(p2b_dir)/started-at" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  cat >"$(p2b_dir)/lib/dp-phase2-ubuntu-prerequisites.sh" <<'EOF'
+dp2_install_phase2_ubuntu_prerequisites() { return 0; }
+dp2_validate_installed_product_replacement() {
+  [[ "$1" == 6.6.0 ]] || return 1
+  echo "FRESH_PRODUCT_CHECK=$1"
+  [[ "$PACKAGE_CASE" != package_failure ]]
+}
+dp2_validate_apt_dependency_graph() {
+  [[ "$1" == lifecycle_completion ]] || return 1
+  echo "FRESH_APT_CHECK=$1"
+  [[ "$PACKAGE_CASE" != apt_failure ]]
+}
+if [[ "$PACKAGE_CASE" == missing_helper ]]; then
+  unset -f dp2_validate_installed_product_replacement
+fi
+EOF
+  export PACKAGE_CASE="$package_case"
+  if (p2b_worker_main "$VENDOR_B1" >/dev/null 2>&1); then package_rc=0; else package_rc=$?; fi
+  if [[ "$package_case" == healthy ]]; then
+    [[ "$package_rc" -eq 0 && "$(p2b_read_state)" == COMPLETED ]] || fail "fresh healthy package check failed"
+    grep -q 'FRESH_APT_CHECK=lifecycle_completion' "$PHASE2_BRINGUP_LOG_DEFAULT" || fail "fresh APT check not run"
+    pass "fresh healthy package metadata and strict APT allow completion"
+  else
+    [[ "$package_rc" -ne 0 && "$(p2b_read_state)" == FAILED ]] || fail "$package_case accepted vendor rc0/log PASS"
+    case "$package_case" in
+      package_failure) reason=PRODUCT_REPLACEMENT ;;
+      apt_failure) reason=APT_DEPENDENCY_CHECK ;;
+      missing_helper) reason=PRODUCT_REPLACEMENT_HELPER_MISSING ;;
+    esac
+    grep -q "FAILURE_REASON=${reason}$" "$(p2b_dir)/completion.sentinel" || fail "$package_case wrong reason"
+    pass "$package_case blocks lifecycle completion despite vendor rc0/log PASS"
+  fi
+done
+unset PACKAGE_CASE
 
 echo "TEST_BRINGUP_LIFECYCLE_RUN_CONTRACT=PASS"
