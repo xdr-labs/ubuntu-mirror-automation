@@ -111,6 +111,7 @@ apt-get() {
       printf 'E: Unmet dependencies.\n' >&2
       return 100
       ;;
+    healthy_warning) printf 'W: package cache warning\n' >&2 ;;
     apt_silent_error) return 100 ;;
   esac
   printf 'Reading package lists... Done\n'
@@ -118,7 +119,7 @@ apt-get() {
 require_dpkg_apt_clean
 printf 'PACKAGE_CHECK_COMPLETED\n'
 PACKAGE_TEST
-for package_case in healthy apt_dependencies audit_issues audit_error audit_silent_error apt_silent_error; do
+for package_case in healthy healthy_warning apt_dependencies audit_issues audit_error audit_silent_error apt_silent_error; do
   package_out="$WORKDIR/$package_case.out"
   package_err="$WORKDIR/$package_case.err"
   package_trace="$WORKDIR/$package_case.trace"
@@ -127,13 +128,20 @@ for package_case in healthy apt_dependencies audit_issues audit_error audit_sile
   else
     package_rc=$?
   fi
-  if [[ "$package_case" == healthy ]]; then
-    if [[ "$package_rc" -eq 0 && ! -s "$package_err" ]] \
+  if [[ "$package_case" == healthy* ]]; then
+    if [[ "$package_rc" -eq 0 ]] \
       && [[ "$(cat "$package_out")" == PACKAGE_CHECK_COMPLETED ]] \
       && grep -Fxq 'apt-get check' "$package_trace"; then
-      pass "healthy package checks are quiet and continue"
+      pass "$package_case continues without routine APT progress output"
     else
-      fail "healthy package checks: rc=$package_rc"
+      fail "$package_case: rc=$package_rc"
+    fi
+    if [[ "$package_case" == healthy_warning ]]; then
+      grep -Fq 'W: package cache warning' "$package_err" \
+        && pass "successful APT warnings remain visible" || fail "successful APT warning was lost"
+    else
+      [[ ! -s "$package_err" ]] && pass "healthy package checks are quiet" \
+        || fail "healthy package checks wrote unexpected stderr"
     fi
     continue
   fi

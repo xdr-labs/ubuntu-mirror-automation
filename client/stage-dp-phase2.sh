@@ -731,8 +731,8 @@ require_dpkg_apt_clean() {
   fi
 
   # APT prints dependency details on stdout and its summary on stderr.
-  # Preserve both on failure so the operator can identify the broken packages.
-  if apt_check="$(apt-get check 2>&1)"; then
+  # Keep stderr visible on success too; surface stdout when the check fails.
+  if apt_check="$(apt-get check)"; then
     return 0
   else
     rc=$?
