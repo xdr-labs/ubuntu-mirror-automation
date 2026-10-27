@@ -35,6 +35,10 @@ class LifecycleIsolation(unittest.TestCase):
             "dp_phase2_bringup_time_gate() { TIME_READINESS=PASS_SYNCED; BRINGUP_READY=YES; return 0; }\n")
         (self.runtime / "lib/dp-phase2-staging-contract.sh").write_text(
             "dp_phase2_bringup_staging_gate() { return 0; }\n")
+        (self.runtime / "lib/dp-phase2-ubuntu-prerequisites.sh").write_text(
+            "dp2_install_phase2_ubuntu_prerequisites() { return 0; }\n"
+            "dp2_validate_installed_product_replacement() { return 0; }\n"
+            "dp2_validate_apt_dependency_graph() { return 0; }\n")
         (self.runtime / "bringup_py3_dp_after_os_upgrade.vendor.sh").write_text('''#!/usr/bin/env bash
 set -eu
 : > "$AUDIT_CASE/entered"

@@ -61,6 +61,11 @@ run_step "bash_n_orphan_cleanup" bash -n tests/test_run_all_orphan_cleanup.sh
 run_step "run_all_orphan_cleanup" bash tests/test_run_all_orphan_cleanup.sh
 run_step "engineering_state_backup" bash tests/test_engineering_state_backup.sh
 run_step "phase2_detached_handoff_identity" bash tests/test_phase2_detached_handoff_identity.sh
+run_step "phase2_legacy_product_transition" bash tests/test_phase2_legacy_product_transition.sh
+run_step "phase2_legacy_stage_contract" bash tests/test_phase2_legacy_stage_contract.sh
+run_step "phase2_product_replacement" python3 tests/test_phase2_product_replacement.py
+run_step "phase2_product_transition_hook" bash tests/test_phase2_product_transition_hook.sh
+run_step "phase2_fresh_package_completion" bash tests/test_bringup_lifecycle_run_contract.sh
 run_step "python_compile_fixture" python3 -m py_compile tests/lib/build_tiny_os_core_lifecycle_fixture.py
 run_step "python_compile_os_core" python3 -m py_compile scripts/lib/os_core_package.py
 run_step "python_compile_field_fix" python3 -m py_compile tests/test_aws_os_core_completeness_field_fix.py

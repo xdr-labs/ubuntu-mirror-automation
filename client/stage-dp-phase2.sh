@@ -113,6 +113,8 @@ source "${_STAGE_LIB_DIR}/dp-phase2-operation-progress.sh"
 source "${_STAGE_LIB_DIR}/dp-phase2-post-bringup-migration.sh"
 # shellcheck source=/dev/null
 source "${_STAGE_LIB_DIR}/dp-phase2-bringup-lifecycle.sh"
+# shellcheck source=/dev/null
+source "${_STAGE_LIB_DIR}/dp-phase2-ubuntu-prerequisites.sh"
 
 readonly MIN_SUPPORTED_SOURCE_DP_VERSION="6.2.0"
 # No built-in mirror address: the address is site-specific and a stale default
@@ -174,6 +176,7 @@ INTERNAL_NTP_REQUIREMENT=""
 BRINGUP_READY="NO"
 BRINGUP_EXECUTED="NO"
 BRINGUP_VENDOR_COMPAT=""
+LEGACY_PRODUCT_REPLACEMENT_REQUIRED="NO"
 
 RUN_ID=""
 STAGE_ROOT=""
@@ -718,6 +721,7 @@ bringup_already_executed() {
 
 require_dpkg_apt_clean() {
   local audit apt_check rc
+  LEGACY_PRODUCT_REPLACEMENT_REQUIRED="NO"
   # A failed audit can be silent; an empty result is clean only after exit 0.
   if audit="$(dpkg --audit 2>&1)"; then
     if [[ -n "${audit// }" ]]; then
@@ -736,6 +740,13 @@ require_dpkg_apt_clean() {
     return 0
   else
     rc=$?
+    # A coherent legacy product stack can retain Python 2 Depends on Noble.
+    # APT itself must prove the rest of the graph healthy in a private copy;
+    # the verified target bundle must then supply every replacement package.
+    if [[ "$rc" -eq 100 ]] && dp2_try_legacy_product_transition staging; then
+      LEGACY_PRODUCT_REPLACEMENT_REQUIRED="YES"
+      return 0
+    fi
     [[ -z "$apt_check" ]] || printf '%s\n' "$apt_check" >&2
     die "apt-get check failed (exit=${rc})"
   fi
@@ -1692,6 +1703,60 @@ verify_installed_bringup_vendor_compat() {
     log "BRINGUP_VENDOR_COMPAT=FAIL reason=vendor_missing_worker_password_validation"
     return 1
   fi
+  if [[ "$LEGACY_PRODUCT_REPLACEMENT_REQUIRED" == "YES" ]]; then
+    # The sealed vendor stays byte-for-byte intact. Its existing Python-stage
+    # helper call arms the current generation's in-memory UVP postcondition.
+    if ! python3 - "$vendor" <<'PY_VENDOR_TRANSITION'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+def body(name):
+    anchor = '\n' + name + '() {\n'
+    if text.count(anchor) != 1:
+        raise ValueError('function_anchor_' + name)
+    return text.split(anchor, 1)[1].split('\n}\n', 1)[0]
+
+try:
+    python = body('install_python3')
+    prerequisite = body('install_phase2_ubuntu_prerequisites')
+    body('install_uvp')
+    body('source_phase2_prereq_lib')
+    hook = '    install_phase2_ubuntu_prerequisites || \\\n        die "PHASE2_PREREQ_INSTALL=FAIL critical Ubuntu prerequisites missing"'
+    if python.count(hook) != 1:
+        raise ValueError('python_prerequisite_hook')
+    before = python.split(hook, 1)[0]
+    if any(line.strip() and not line.lstrip().startswith(('#', 'log_phase '))
+           for line in before.splitlines()):
+        raise ValueError('python_hook_not_first')
+    if '        dp2_install_phase2_ubuntu_prerequisites\n        return $?\n' not in prerequisite + '\n':
+        raise ValueError('prerequisite_not_in_current_shell')
+    main = body('main')
+    calls = ['\n    install_python3\n', '\n    install_uvp\n', '\n    prepare_system\n']
+    if any(main.count(call) != 1 for call in calls):
+        raise ValueError('main_call_shape')
+    positions = [main.index(call) for call in calls]
+    if positions != sorted(positions):
+        raise ValueError('main_call_order')
+    start = '\n    download_artifacts\n'
+    if main.count(start) != 1 or main.index(start) >= positions[0]:
+        raise ValueError('main_download_order')
+    critical = main.split(start, 1)[1].split(calls[-1], 1)[0]
+    commands = [line.strip() for line in critical.splitlines()
+                if line.strip() and not line.lstrip().startswith('#')]
+    if commands != ['install_python3', 'install_pip3_packages',
+                    'install_docker_containerd', 'load_local_images',
+                    'install_kubernetes', 'install_helm', 'install_uvp']:
+        raise ValueError('conditional_or_unknown_install_sequence')
+except ValueError as error:
+    print('PRODUCT_TRANSITION_HOOK=UNSUPPORTED reason=' + str(error))
+    sys.exit(1)
+PY_VENDOR_TRANSITION
+    then
+      log "BRINGUP_VENDOR_COMPAT=FAIL reason=legacy_transition_hook_missing"
+      return 1
+    fi
+  fi
   BRINGUP_VENDOR_COMPAT="PASS"
   log "BRINGUP_VENDOR_COMPAT=PASS"
   return 0
@@ -1788,6 +1853,16 @@ stage_main() {
   verify_sha256_pair \
     "${NEW_ART}/images-${TARGET_DP_VERSION}.tar" \
     "${NEW_ART}/images-${TARGET_DP_VERSION}.tar.sha256"
+
+  if [[ "$LEGACY_PRODUCT_REPLACEMENT_REQUIRED" == "YES" ]]; then
+    local transition_status
+    transition_status="$(dp2_legacy_product_transition_status_path)" \
+      || die "legacy product transition requires the canonical package database"
+    dp2_validate_product_replacement_artifact \
+      "${NEW_ART}/aella-uvp-2404_${TARGET_DP_VERSION}ubuntu1_amd64.deb" \
+      "$TARGET_DP_VERSION" "$transition_status" \
+      || die "legacy product transition lacks a complete target replacement"
+  fi
 
   # Hold verified vendor bringup before trim removes it from the candidate tree.
   # Runnable controller is published only after FINAL_VALIDATION + prerequisites.
@@ -1888,7 +1963,7 @@ ${f}"
     if declare -F dp_phase2_invalidate_staging_contract >/dev/null 2>&1; then
       dp_phase2_invalidate_staging_contract "vendor_compat_fail"
     fi
-    die "installed vendor bringup is incompatible with --worker-password"
+    die "installed vendor bringup is incompatible with the current lifecycle contract"
   fi
   if [[ -n "$BRINGUP_HOLD" && -d "$BRINGUP_HOLD" ]]; then
     rm -rf "$BRINGUP_HOLD"

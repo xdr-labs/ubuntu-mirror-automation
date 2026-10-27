@@ -238,6 +238,36 @@ include it. Prefer `--diagnose-source-version` before supplying an override.
 
 **Bringup (after staging PASS)**
 
+An Ubuntu 24.04 host can still have the complete Python 2 product generation
+installed (for example, all seven `6.2.1ubuntu1` packages). Phase 1 may have
+removed those packages during an OS hop; Phase 2 Only must also handle the
+remaining old generation. `APT_DEPENDENCY_CHECK=DEFERRED_LEGACY_PY2` means only
+the recognized old-product Python dependencies are pending vendor replacement.
+The real package database remains unchanged during staging. A private status
+copy and the real APT solver must prove every other current dependency healthy.
+Partial/mixed product generations, unsupported dependency expressions, dirty
+dpkg state, and unrelated APT failures remain blocking.
+
+Before staging can publish a runnable controller for that transition, it checks
+the trusted UVP meta package and all six nested target packages. A separate
+private projection rejects external consumers pinned to old product versions
+or the retired `aella-uvp` name; it does not claim the new Python dependencies
+are already installed. The sealed vendor must expose the established shared
+prerequisite call before UVP installation. That call arms an in-memory guard
+without changing the vendor or bundle bytes. The guard requires all seven
+target packages fully installed and a fresh, unfiltered dpkg/APT check after
+UVP replacement, before system preparation or services. Lifecycle completion
+checks the actual package state again after the vendor exits.
+
+To deploy this helper-only correction, update the mirror checkout and run
+`sudo ./install.sh` while DP downloads are inactive, then Menu 3 → 4 → 7.
+For an unchanged, valid Phase 2 Only preparation, Menu 2 is unnecessary and
+the sealed bundle is reused. Copy the new Menu 7 STEP 4 command; a previously
+copied wrapper still pins the earlier helper generation. Confirm the DP pause
+completed (`show status` reports `System paused.`) and the planned checkpoint
+exists before staging/bringup. Do not manually purge old Aella packages or run
+generic `apt --fix-broken install` to get past this transition gate.
+
 ```bash
 # Default: detached worker + foreground read-only monitor (survives SSH disconnect)
 sudo bash /home/aella/bringup_py3_dp_after_os_upgrade.sh \

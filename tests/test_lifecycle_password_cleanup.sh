@@ -80,6 +80,16 @@ pass "archived failed lifecycle data contains no plaintext worker password"
 # Detached worker EXIT trap removes owned password after a fake vendor COMPLETED.
 rm -rf "$(p2b_dir)"
 p2b_ensure_dir
+mkdir -p "$(p2b_dir)/lib"
+cat >"$(p2b_dir)/lib/dp-phase2-time-readiness.sh" <<'EOF'
+dp_phase2_load_time_ref_url() { return 0; }
+dp_phase2_bringup_time_gate() { return 0; }
+EOF
+cat >"$(p2b_dir)/lib/dp-phase2-ubuntu-prerequisites.sh" <<'EOF'
+dp2_install_phase2_ubuntu_prerequisites() { return 0; }
+dp2_validate_installed_product_replacement() { return 0; }
+dp2_validate_apt_dependency_graph() { return 0; }
+EOF
 VENDOR="${TMP}/vendor.sh"
 cat >"$VENDOR" <<'EOF'
 #!/usr/bin/env bash
@@ -99,7 +109,10 @@ set +e
 (
   p2b_worker_main "$VENDOR" --version 6.6.0 >/dev/null 2>&1
 )
+completed_rc=$?
 set -e
+[[ "$completed_rc" -eq 0 && "$(p2b_read_state)" == COMPLETED ]] \
+  || fail "fake completed worker did not reach COMPLETED"
 [[ ! -f "$(p2b_dir)/worker-password" ]] \
   || fail "worker_main left owned password after COMPLETED"
 pass "detached worker cleanup after COMPLETED"

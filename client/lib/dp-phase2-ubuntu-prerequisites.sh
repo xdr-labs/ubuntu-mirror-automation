@@ -306,38 +306,200 @@ dp2_prereq_log_unsatisfied_protected_depends() {
   done
 }
 
+dp2_legacy_product_transition_environment() {
+  # There is no operator/environment bypass or alternate live dpkg database.
+  [[ -z "${DPKG_ROOT:-}" && -z "${DPKG_ADMINDIR:-}" ]] || return 1
+  [[ "$(. /etc/os-release; printf '%s:%s:%s' "${ID:-}" "${VERSION_ID:-}" "${VERSION_CODENAME:-}")" == "ubuntu:24.04:noble" ]] || return 1
+  [[ "$(dpkg --print-architecture)" == "amd64" ]]
+}
+
+dp2_legacy_product_transition_status_path() {
+  local configured
+  configured="$(apt-config shell DP2_STATUS Dir::State::status/f)" || return 1
+  [[ "$configured" == "DP2_STATUS='/var/lib/dpkg/status'" ]] || return 1
+  printf '%s\n' /var/lib/dpkg/status
+}
+
+# Pure snapshot transformation, also exercised against isolated real APT in tests.
+# No installed metadata is changed. Only exact legacy Python 2 dependency atoms
+# in a coherent seven-package product generation are omitted from this copy.
+dp2_write_legacy_product_shadow() {
+  python3 - "$1" "$2" <<'PY'
+import hashlib
+import pathlib
+import re
+import sys
+
+expected = {
+    'aella-da-cli': {'python2.7', 'python-openssl', 'python-yaml'},
+    'aella-da-services': {'python2.7', 'openssl', 'python-openssl', 'python-yaml', 'python-concurrent.futures'},
+    'aella-uvp': {'python', 'openssl', 'python-openssl', 'python-yaml', 'python-flask',
+                  'python-concurrent.futures', 'python-configparser', 'python-tabulate',
+                  'python-tornado', 'python-httplib2', 'python-requests', 'python-psutil'},
+    'aellacm': {'python2.7', 'python-yaml', 'python-tornado', 'python-httplib2',
+                'python-requests', 'python-crypto', 'pypki'},
+    'kube-tools': {'python2.7'},
+    'phonehome': set(),
+    'pypki': {'python2.7', 'openssl', 'python-configparser', 'python-tabulate'},
+}
+legacy = set().union(*expected.values()) - {'openssl', 'pypki'}
+legacy_atom = re.compile(r'(?<![a-z0-9+.-])(?:' + '|'.join(re.escape(p) for p in sorted(legacy)) + r')(?![a-z0-9+.-])')
+
+def fail(reason):
+    raise ValueError(reason)
+
+try:
+    raw = pathlib.Path(sys.argv[1]).read_bytes()
+    if len(raw) > 64 * 1024 * 1024 or b'\x00' in raw or b'\r' in raw:
+        fail('status_format')
+    records = re.split(r'\n\n', raw.decode('utf-8'))
+    seen, selected, versions = set(), set(), set()
+    for number, record in enumerate(records):
+        if not record.strip():
+            continue
+        lines = record.splitlines(keepends=True)
+        fields, spans, key = {}, {}, None
+        for index, line in enumerate(lines):
+            if line.startswith((' ', '\t')):
+                if key is None:
+                    fail('orphan_continuation')
+                fields[key] += ' ' + line.strip()
+                spans[key][1] = index + 1
+                continue
+            match = re.fullmatch(r'([A-Za-z0-9][A-Za-z0-9-]*):[ \t]*(.*?)\n?', line)
+            if not match:
+                fail('invalid_field')
+            key, value = match.group(1).lower(), match.group(2).strip()
+            if key in fields:
+                fail('duplicate_field')
+            fields[key], spans[key] = value, [index, index + 1]
+        package = fields.get('package', '')
+        identity = (package, fields.get('architecture', ''))
+        if not package or identity in seen:
+            fail('duplicate_or_missing_package')
+        seen.add(identity)
+        if package == 'aella-uvp-2404' and fields.get('status') not in ('deinstall ok config-files', 'purge ok not-installed'):
+            fail('new_product_present')
+        if package not in expected:
+            continue
+        if package in selected:
+            fail('legacy_multiarch')
+        selected.add(package)
+        if fields.get('status') != 'install ok installed' or fields.get('architecture') != 'amd64':
+            fail('legacy_package_state')
+        version = fields.get('version', '')
+        if not re.fullmatch(r'6\.[234]\.[0-9]+ubuntu[0-9]+', version):
+            fail('legacy_package_version')
+        versions.add(version)
+        if fields.get('pre-depends', ''):
+            fail('legacy_pre_depends')
+        groups = [part.strip() for part in fields.get('depends', '').split(',') if part.strip()]
+        if len(groups) != len(set(groups)) or not expected[package].issubset(set(groups)):
+            fail('legacy_dependency_schema')
+        # Keep unknown/non-Python dependencies for APT to evaluate. Expressions
+        # involving a known Python 2 atom must match its observed plain form.
+        for group in groups:
+            if legacy_atom.search(group) and group not in expected[package]:
+                fail('legacy_dependency_expression')
+        retained = [group for group in groups if group not in legacy]
+        if 'depends' in spans:
+            start, end = spans['depends']
+            replacement = ['Depends: ' + ', '.join(retained) + '\n'] if retained else []
+            lines[start:end] = replacement
+            records[number] = ''.join(lines)
+    if selected != set(expected) or len(versions) != 1:
+        fail('legacy_generation_incomplete_or_mixed')
+    with open(sys.argv[2], 'xb') as output:
+        output.write('\n\n'.join(records).encode('utf-8'))
+    print(hashlib.sha256(raw).hexdigest(), next(iter(versions)))
+except (OSError, UnicodeError, ValueError) as error:
+    print('LEGACY_PRODUCT_TRANSITION=UNSUPPORTED reason=' + str(error), file=sys.stderr)
+    sys.exit(1)
+PY
+}
+
+dp2_try_legacy_product_transition() (
+  local stage="${1:-unspecified}" status dir audit details original_hash version current_hash out rc
+  case "$stage" in staging|prerequisites|python3_apt) ;; *) return 1 ;; esac
+  if ! dp2_legacy_product_transition_environment; then
+    dp2_prereq_log WARN "LEGACY_PRODUCT_TRANSITION=UNSUPPORTED reason=environment stage=${stage}"
+    return 1
+  fi
+  if ! status="$(dp2_legacy_product_transition_status_path)"; then
+    dp2_prereq_log WARN "LEGACY_PRODUCT_TRANSITION=UNSUPPORTED reason=status_path stage=${stage}"
+    return 1
+  fi
+  if ! audit="$(dpkg --audit 2>&1)" || [[ -n "${audit//[[:space:]]/}" ]]; then
+    dp2_prereq_log WARN "LEGACY_PRODUCT_TRANSITION=UNSUPPORTED reason=dpkg_audit stage=${stage}"
+    [[ -z "$audit" ]] || printf '%s\n' "$audit" >&2
+    return 1
+  fi
+  dir="$(mktemp -d "${TMPDIR:-/tmp}/phase2-legacy-graph.XXXXXX")" || return 1
+  trap 'rm -rf -- "$dir"' EXIT
+  if ! details="$(dp2_write_legacy_product_shadow "$status" "${dir}/status")"; then
+    return 1
+  fi
+  read -r original_hash version <<<"$details"
+  [[ "$original_hash" =~ ^[0-9a-f]{64}$ && -n "$version" ]] || return 1
+  if out="$(LC_ALL=C apt-get -o Debug::NoLocking=true \
+      -o "Dir::State::status=${dir}/status" \
+      -o Dir::Cache::pkgcache= -o Dir::Cache::srcpkgcache= check 2>&1)"; then
+    rc=0
+  else
+    rc=$?
+  fi
+  if [[ "$rc" -ne 0 ]]; then
+    dp2_prereq_log WARN "LEGACY_PRODUCT_TRANSITION=UNSUPPORTED reason=other_dependency_failure stage=${stage} rc=${rc}"
+    printf '%s\n' "$out" >&2
+    return 1
+  fi
+  current_hash="$(sha256sum "$status")" || return 1
+  if [[ "${current_hash%% *}" != "$original_hash" ]]; then
+    dp2_prereq_log WARN "LEGACY_PRODUCT_TRANSITION=UNSUPPORTED reason=status_changed stage=${stage}"
+    return 1
+  fi
+  dp2_prereq_log WARN "APT_DEPENDENCY_CHECK=DEFERRED_LEGACY_PY2 stage=${stage} legacy_version=${version} shadow_graph=PASS"
+  dp2_prereq_log WARN "LEGACY_PRODUCT_REPLACEMENT=PENDING stage=${stage}"
+  return 0
+)
+
 dp2_validate_apt_dependency_graph() {
   local stage="${1:-unspecified}"
-  local audit=""
-  # dpkg --audit is informational only. It can be clean while apt still has
-  # unresolved Depends left by dpkg --force-depends. Never treat it as proof.
-  if command -v dpkg >/dev/null 2>&1; then
-    audit="$(dpkg --audit 2>&1 || true)"
-    if [[ -n "${audit// }" ]]; then
-      dp2_prereq_log WARN "DPKG_AUDIT=DIRTY stage=${stage}"
-    else
-      dp2_prereq_log INFO "DPKG_AUDIT=CLEAN stage=${stage} (not sufficient)"
+  local audit="" rc=0 out=""
+  # Both checks are required. A clean audit alone says nothing about Depends;
+  # partial or failing dpkg state must never qualify for the legacy transition.
+  if audit="$(dpkg --audit 2>&1)"; then
+    if [[ -n "${audit//[[:space:]]/}" ]]; then
+      dp2_prereq_log ERROR "APT_DEPENDENCY_CHECK=FAIL stage=${stage} reason=dpkg_audit_dirty"
+      printf '%s\n' "$audit" >&2
+      return 1
     fi
+  else
+    rc=$?
+    dp2_prereq_log ERROR "APT_DEPENDENCY_CHECK=FAIL stage=${stage} reason=dpkg_audit_failed rc=${rc}"
+    [[ -z "$audit" ]] || printf '%s\n' "$audit" >&2
+    return "$rc"
   fi
-  dp2_prereq_log_unsatisfied_protected_depends
+  dp2_prereq_log INFO "DPKG_AUDIT=CLEAN stage=${stage} (not sufficient)"
 
   if ! command -v apt-get >/dev/null 2>&1; then
     dp2_prereq_log ERROR "APT_DEPENDENCY_CHECK=FAIL stage=${stage} reason=apt-get_missing"
     return 1
   fi
 
-  local rc=0
-  local out=""
-  local prev_e=0
-  [[ $- == *e* ]] && prev_e=1
-  set +e
   # Read-only graph check. NoLocking avoids a false FAIL when the wrapper
   # runs without the dpkg frontend lock (non-root tests) and does not
   # change the dependency verdict.
-  out="$(apt-get -o Debug::NoLocking=true check 2>&1)"
-  rc=$?
-  [[ "$prev_e" -eq 1 ]] && set -e
+  if out="$(apt-get -o Debug::NoLocking=true check 2>&1)"; then
+    rc=0
+  else
+    rc=$?
+  fi
   if [[ "$rc" -ne 0 ]]; then
+    if [[ "$rc" -eq 100 ]] && dp2_try_legacy_product_transition "$stage"; then
+      return 0
+    fi
+    dp2_prereq_log_unsatisfied_protected_depends
     dp2_prereq_log ERROR "APT_DEPENDENCY_CHECK=FAIL stage=${stage} rc=${rc}"
     if [[ -n "${out// }" ]]; then
       dp2_prereq_log ERROR "APT_DEPENDENCY_CHECK_DETAIL=$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-400)"
@@ -346,6 +508,376 @@ dp2_validate_apt_dependency_graph() {
   fi
   dp2_prereq_log INFO "APT_DEPENDENCY_CHECK=PASS stage=${stage}"
   return 0
+}
+
+# Product-replacement metadata gates. The caller supplies an already trusted UVP
+# artifact and must run the strict real dependency graph check after replacement.
+# This layer never installs a package or executes a Debian maintainer script.
+dp2_product_replacement_metadata() {
+  local mode="$1" target="$2" artifact="${3:-}" status="${4:-}" out rc
+  if out="$(python3 - "$mode" "$target" "$artifact" "$status" <<'PY_PRODUCT_REPLACEMENT'
+import hashlib
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+
+mode, target, artifact, status_path = sys.argv[1:]
+meta = 'aella-uvp-2404'
+children = ('aella-da-cli', 'aella-da-services', 'aellacm',
+            'kube-tools', 'phonehome', 'pypki')
+packages = (meta,) + children
+prefix = ('PRODUCT_REPLACEMENT_ARTIFACT' if mode == 'artifact'
+          else 'PRODUCT_REPLACEMENT_PACKAGES')
+env = dict(os.environ, LC_ALL='C')
+
+class Invalid(Exception):
+    pass
+
+def require(condition, reason):
+    if not condition:
+        raise Invalid(reason)
+
+def command(args):
+    proc = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          env=env, timeout=60)
+    require(proc.returncode == 0, 'command_failed_' + args[0])
+    require(len(proc.stdout) <= 8 * 1024 * 1024, 'metadata_too_large')
+    return proc.stdout.decode('utf-8')
+
+def control_fields(text):
+    fields = {}
+    previous = None
+    for line in text.splitlines():
+        if not line:
+            continue
+        if line[0].isspace():
+            require(previous is not None, 'control_continuation')
+            fields[previous] += ' ' + line.strip()
+            continue
+        match = re.fullmatch(r'([A-Za-z0-9][A-Za-z0-9-]*):[ \t]*(.*)', line)
+        require(match is not None, 'invalid_control_line')
+        key, value = match.groups()
+        key = key.lower()
+        require(key not in fields, 'duplicate_control_field_' + key)
+        fields[key] = value
+        previous = key
+    return fields
+
+def validate_control(path, expected):
+    fields = control_fields(command(['dpkg-deb', '--field', path]))
+    require(fields.get('package') == expected, 'package_identity_' + expected)
+    require(fields.get('version') == target + 'ubuntu1', 'package_version_' + expected)
+    require(fields.get('architecture') == 'amd64', 'package_architecture_' + expected)
+    # Binary dependency fields contain comma-separated groups and alternatives.
+    # The package-name token is enough to reject Python 2 edges; APT remains the
+    # authority for dependency satisfaction, alternatives and Debian versions.
+    for field in ('depends', 'pre-depends'):
+        value = fields.get(field, '').strip()
+        if not value:
+            continue
+        for alternative in re.split(r'\s*[,|]\s*', value):
+            atom = re.fullmatch(
+                r'([a-z0-9][a-z0-9+.-]*)(?::[a-z0-9-]+)?'
+                r'(?:\s*\(\s*(?:<<|<=|=|>=|>>)\s*[^()\s]+\s*\))?',
+                alternative)
+            require(atom is not None, 'dependency_syntax_' + expected)
+            name = atom.group(1)
+            require(not (name == 'python' or name.startswith('python2')
+                         or name.startswith('python-')
+                         or name.startswith('libpython2')),
+                    'legacy_python_dependency_' + expected + '_' + name)
+    return fields
+
+def validate_consumers(target_controls, tmp):
+    # This proves compatibility of packages that remain installed with the
+    # replacement identities. It is NOT the final target dependency check:
+    # target Python 3 Depends/Pre-Depends are deliberately absent in this copy,
+    # because their installation happens later. All other package records and
+    # target Provides/Conflicts/Breaks/Replaces retain their normal APT meaning.
+    with open(status_path, 'rb') as source:
+        original = source.read(64 * 1024 * 1024 + 1)
+    require(len(original) <= 64 * 1024 * 1024, 'status_too_large')
+    require(b'\x00' not in original and b'\r' not in original, 'status_format')
+    original_hash = hashlib.sha256(original).digest()
+    legacy_packages = set(children) | {'aella-uvp'}
+    retained = []
+    seen_legacy = set()
+    legacy_versions = set()
+    seen = set()
+    for record in original.split(b'\n\n'):
+        if not record.strip():
+            retained.append(record)
+            continue
+        fields = control_fields(record.decode('utf-8'))
+        package = fields.get('package', '')
+        identity = (package, fields.get('architecture', ''))
+        require(package and identity not in seen, 'duplicate_or_missing_status_package')
+        seen.add(identity)
+        if package == meta:
+            require(fields.get('status') in ('deinstall ok config-files',
+                    'purge ok not-installed', 'deinstall ok not-installed'),
+                    'projection_new_product_present')
+            continue
+        if package not in legacy_packages:
+            retained.append(record)
+            continue
+        require(package not in seen_legacy, 'projection_legacy_multiarch')
+        require(fields.get('architecture') == 'amd64'
+                and fields.get('status') == 'install ok installed',
+                'projection_legacy_package_state')
+        require(re.fullmatch(r'6\.[234]\.[0-9]+ubuntu[0-9]+',
+                             fields.get('version', '')) is not None,
+                'projection_legacy_package_version')
+        legacy_versions.add(fields['version'])
+        seen_legacy.add(package)
+    require(seen_legacy == legacy_packages and len(legacy_versions) == 1,
+            'projection_legacy_generation_incomplete_or_mixed')
+    for package in packages:
+        fields = dict(target_controls[package])
+        fields.pop('depends', None)
+        fields.pop('pre-depends', None)
+        fields['status'] = 'install ok installed'
+        retained.append('\n'.join('%s: %s' % item for item in fields.items()).encode('utf-8'))
+    shadow = os.path.join(tmp, 'consumer-status')
+    with open(shadow, 'xb') as output:
+        output.write(b'\n\n'.join(retained) + b'\n')
+    result = subprocess.run([
+        'apt-get', '-o', 'Debug::NoLocking=true',
+        '-o', 'Dir::State::status=' + shadow,
+        '-o', 'Dir::Cache::pkgcache=', '-o', 'Dir::Cache::srcpkgcache=',
+        'check'], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        env=env, timeout=60)
+    if result.returncode != 0:
+        # Keep APT's precise external dependency/conflict explanation visible.
+        for detail in (result.stdout, result.stderr):
+            if detail:
+                sys.stderr.write(detail[:65536].decode('utf-8', 'replace'))
+        raise Invalid('replacement_consumer_graph_rc_' + str(result.returncode))
+    with open(status_path, 'rb') as source:
+        current = source.read(64 * 1024 * 1024 + 1)
+    require(hashlib.sha256(current).digest() == original_hash, 'status_changed')
+    print('PRODUCT_REPLACEMENT_CONSUMERS=PASS target=%s target_depends=deferred_to_uvp' % target)
+
+def artifact_metadata():
+    require(os.path.isfile(artifact), 'artifact_missing')
+    target_controls = {meta: validate_control(artifact, meta)}
+    wanted = {'opt/aelladata/aelladeb/' + p + '_' + target + 'ubuntu1_amd64.deb': p
+              for p in children}
+    # Stream the payload, copy only six regular .deb members to private filenames.
+    # Never extract paths from the archive, follow links, or run postinst scripts.
+    with tempfile.TemporaryDirectory(prefix='phase2-product-metadata.') as tmp:
+        found = {}
+        total = 0
+        count = 0
+        with tempfile.TemporaryFile() as errors:
+            proc = subprocess.Popen(['dpkg-deb', '--fsys-tarfile', artifact],
+                                    stdout=subprocess.PIPE, stderr=errors, env=env)
+            try:
+                with tarfile.open(fileobj=proc.stdout, mode='r|') as archive:
+                    for member in archive:
+                        count += 1
+                        require(count <= 100000, 'too_many_archive_members')
+                        require(member.size >= 0, 'negative_member_size')
+                        total += member.size
+                        require(total <= 1024 * 1024 * 1024, 'payload_too_large')
+                        name = member.name
+                        while name.startswith('./'):
+                            name = name[2:]
+                        require(not name.startswith('/') and '..' not in name.split('/'),
+                                'unsafe_member_path')
+                        if name not in wanted:
+                            # The vendor installs these six basename patterns. A
+                            # second version or path must not create ambiguity.
+                            base = name.rsplit('/', 1)[-1]
+                            require(not any(base.startswith(p + '_') and base.endswith('.deb')
+                                            for p in children), 'unexpected_product_deb')
+                            continue
+                        package = wanted[name]
+                        require(package not in found, 'duplicate_product_deb_' + package)
+                        require(member.isfile(), 'nonregular_product_deb_' + package)
+                        require(0 < member.size <= 512 * 1024 * 1024,
+                                'product_deb_size_' + package)
+                        path = os.path.join(tmp, package + '.deb')
+                        source = archive.extractfile(member)
+                        require(source is not None, 'unreadable_product_deb_' + package)
+                        with source, open(path, 'xb') as output:
+                            shutil.copyfileobj(source, output, 1024 * 1024)
+                        require(os.path.getsize(path) == member.size,
+                                'truncated_product_deb_' + package)
+                        found[package] = path
+                proc.stdout.close()
+                require(proc.wait(timeout=60) == 0, 'payload_read_failed')
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
+                proc.wait()
+                if proc.stdout:
+                    proc.stdout.close()
+        require(set(found) == set(children), 'replacement_package_set')
+        for package in children:
+            target_controls[package] = validate_control(found[package], package)
+        if status_path:
+            validate_consumers(target_controls, tmp)
+
+def installed_metadata():
+    # A successful complete inventory distinguishes an absent old meta from a
+    # failed name-specific dpkg query. It also catches duplicate architectures.
+    inventory = command(['dpkg-query', '-W',
+        '-f=${Package}\t${Version}\t${Architecture}\t${Status}\n'])
+    found = {}
+    for line in inventory.splitlines():
+        parts = line.split('\t')
+        require(len(parts) == 4, 'invalid_inventory_row')
+        package, version, architecture, status = parts
+        if package not in packages and package != 'aella-uvp':
+            continue
+        require(package not in found, 'duplicate_installed_package_' + package)
+        found[package] = (version, architecture, status)
+    old = found.get('aella-uvp')
+    if old is not None:
+        require(old[2] in ('deinstall ok config-files', 'purge ok not-installed',
+                           'deinstall ok not-installed'), 'legacy_meta_still_present')
+    for package in packages:
+        require(package in found, 'installed_package_missing_' + package)
+        version, architecture, status = found[package]
+        require(version == target + 'ubuntu1', 'installed_version_' + package)
+        require(architecture == 'amd64', 'installed_architecture_' + package)
+        require(status == 'install ok installed', 'installed_status_' + package)
+
+try:
+    require(mode in ('artifact', 'installed'), 'invalid_mode')
+    require(re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', target) is not None, 'invalid_target')
+    if mode == 'artifact':
+        artifact_metadata()
+    else:
+        installed_metadata()
+    print('%s=PASS target=%s packages=7' % (prefix, target))
+except (Invalid, OSError, ValueError, UnicodeError, subprocess.SubprocessError,
+        tarfile.TarError) as exc:
+    detail = re.sub(r'[^A-Za-z0-9_.:-]+', '_', str(exc))[:240]
+    print('%s=FAIL reason=%s' % (prefix, detail or type(exc).__name__))
+    sys.exit(1)
+PY_PRODUCT_REPLACEMENT
+  )"; then
+    dp2_prereq_log INFO "$out"
+    return 0
+  else
+    rc=$?
+    dp2_prereq_log ERROR "$out"
+    return "$rc"
+  fi
+}
+
+dp2_validate_product_replacement_artifact() {
+  # Third argument is an internal, explicit status path for the staging-only
+  # reverse-consumer projection. Production callers resolve the canonical live
+  # status path; no environment variable selects an alternate database.
+  dp2_product_replacement_metadata artifact "$2" "$1" "${3:-}"
+}
+
+dp2_validate_installed_product_replacement() {
+  # Metadata only: the caller MUST follow this with the strict unfiltered
+  # dp2_validate_apt_dependency_graph uvp (or lifecycle_completion) check.
+  dp2_product_replacement_metadata installed "$1"
+}
+
+# A sealed release retains its vendor script bytes. The vendor already loads
+# this shared library at the start of install_python3. Arm a post-install_uvp
+# guard in that running Bash process, before the vendor can reach system prep
+# or start services. This is also the existing worker helper-loading path.
+dp2_guarded_install_uvp() {
+  local vendor_rc=0
+  if [[ -z "${_DP2_VENDOR_INSTALL_UVP_DECLARATION:-}" ]] ||
+     [[ "$(declare -f dp2_vendor_install_uvp)" != "$_DP2_VENDOR_INSTALL_UVP_DECLARATION" ]]; then
+    dp2_prereq_log ERROR "PRODUCT_REPLACEMENT=FAIL reason=original_changed"
+    exit 1
+  fi
+  if ! declare -F dp2_validate_installed_product_replacement >/dev/null 2>&1 ||
+     ! declare -F dp2_validate_apt_dependency_graph >/dev/null 2>&1; then
+    dp2_prereq_log ERROR "PRODUCT_REPLACEMENT=FAIL reason=validator_missing"
+    exit 1
+  fi
+  # Keep this as a bare call. Putting it in `if`, `!`, or an AND/OR list would
+  # disable the vendor function's errexit behavior, including nested commands.
+  dp2_vendor_install_uvp "$@"
+  vendor_rc=$?
+  if [[ "$vendor_rc" -ne 0 ]]; then
+    dp2_prereq_log ERROR "PRODUCT_REPLACEMENT=FAIL reason=vendor_install_uvp rc=${vendor_rc}"
+    exit "$vendor_rc"
+  fi
+  if ! dp2_validate_installed_product_replacement "${VERSION:-}"; then
+    dp2_prereq_log ERROR "PRODUCT_REPLACEMENT=FAIL reason=installed_packages"
+    exit 1
+  fi
+  if ! dp2_validate_apt_dependency_graph uvp; then
+    dp2_prereq_log ERROR "PRODUCT_REPLACEMENT=FAIL reason=apt_dependency_graph"
+    exit 1
+  fi
+  dp2_prereq_log INFO "PRODUCT_REPLACEMENT=PASS"
+}
+
+dp2_arm_product_transition_guard() {
+  local original wrapped renamed first_line
+  # Stage/lifecycle prerequisite checks run outside the vendor Bash process.
+  # There is no vendor call to wrap there; the later vendor load arms it.
+  declare -F install_uvp >/dev/null 2>&1 || return 0
+  if ! declare -F dp2_validate_installed_product_replacement >/dev/null 2>&1 ||
+     ! declare -F dp2_validate_apt_dependency_graph >/dev/null 2>&1; then
+    dp2_prereq_log ERROR "PRODUCT_TRANSITION_HOOK=FAIL reason=validator_missing"
+    return 1
+  fi
+  original="$(declare -f install_uvp)" || return 1
+  wrapped="$(declare -f dp2_guarded_install_uvp)" || return 1
+  first_line="${wrapped%%$'\n'*}"
+  if [[ "$first_line" != 'dp2_guarded_install_uvp () ' ]]; then
+    dp2_prereq_log ERROR "PRODUCT_TRANSITION_HOOK=FAIL reason=guard_signature"
+    return 1
+  fi
+  wrapped="install_uvp () ${wrapped#"$first_line"}"
+  if [[ "$original" == "$wrapped" ]]; then
+    if ! declare -F dp2_vendor_install_uvp >/dev/null 2>&1; then
+      dp2_prereq_log ERROR "PRODUCT_TRANSITION_HOOK=FAIL reason=original_missing"
+      return 1
+    fi
+    if [[ -z "${_DP2_VENDOR_INSTALL_UVP_DECLARATION:-}" ]] ||
+       [[ "$(declare -f dp2_vendor_install_uvp)" != "$_DP2_VENDOR_INSTALL_UVP_DECLARATION" ]]; then
+      dp2_prereq_log ERROR "PRODUCT_TRANSITION_HOOK=FAIL reason=original_changed"
+      return 1
+    fi
+    dp2_prereq_log INFO "PRODUCT_TRANSITION_HOOK=ARMED state=existing"
+    return 0
+  fi
+  if declare -F dp2_vendor_install_uvp >/dev/null 2>&1 ||
+     [[ -n "${_DP2_VENDOR_INSTALL_UVP_DECLARATION+x}" ]]; then
+    dp2_prereq_log ERROR "PRODUCT_TRANSITION_HOOK=FAIL reason=reserved_function_conflict"
+    return 1
+  fi
+  first_line="${original%%$'\n'*}"
+  if [[ "$first_line" != 'install_uvp () ' ]]; then
+    dp2_prereq_log ERROR "PRODUCT_TRANSITION_HOOK=FAIL reason=vendor_signature"
+    return 1
+  fi
+  renamed="dp2_vendor_install_uvp () ${original#"$first_line"}"
+  # Only the exact declaration name of the already loaded, verified vendor
+  # function changes. No shell text comes from package metadata or user input.
+  if ! eval "$renamed" || ! eval "$wrapped"; then
+    dp2_prereq_log ERROR "PRODUCT_TRANSITION_HOOK=FAIL reason=definition_failed"
+    return 1
+  fi
+  if [[ "$(declare -f install_uvp)" != "$wrapped" ]] ||
+     [[ "$(declare -f dp2_vendor_install_uvp)" != "$renamed" ]]; then
+    dp2_prereq_log ERROR "PRODUCT_TRANSITION_HOOK=FAIL reason=definition_mismatch"
+    return 1
+  fi
+  if ! declare -gr _DP2_VENDOR_INSTALL_UVP_DECLARATION="$renamed"; then
+    dp2_prereq_log ERROR "PRODUCT_TRANSITION_HOOK=FAIL reason=original_identity"
+    return 1
+  fi
+  dp2_prereq_log INFO "PRODUCT_TRANSITION_HOOK=ARMED state=new"
 }
 
 dp2_validate_critical_python_runtime() {
@@ -614,6 +1146,7 @@ dp2_prereq_verify_manifest_contract() {
 }
 
 dp2_install_phase2_ubuntu_prerequisites() {
+  dp2_arm_product_transition_guard || return 1
   local artifact extract rc=0
   local state="" required="" count="" sha=""
   local verdict="" state_rc=0 prev_e=0
