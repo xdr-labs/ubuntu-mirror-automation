@@ -298,6 +298,117 @@ grep -Fq -- '--same-version-recovery' "$P2_OUT" && fail "same-version-recovery l
 grep -q 'BEGIN STEP\|BEGIN PHASE' "$P2_OUT" && fail "phase2 still has BEGIN markers" || true
 pass "PHASE2_ONLY omits OS hop commands"
 
+# Exercise the exact operator preflight, including the displayed paste block.
+if python3 - "$ROOT" "$P2_OUT" "$TMP" <<'PY_PREFLIGHT'
+from pathlib import Path
+import os
+import shlex
+import subprocess
+import sys
+
+root, canonical_doc, tmp = map(Path, sys.argv[1:])
+text = canonical_doc.read_text()
+section = text.split("STEP 3 — VERIFY UBUNTU 24.04 AND PREREQUISITES", 1)[1].split("STEP 4 —", 1)[0]
+commands = [line for line in section.splitlines()
+            if line.startswith(("( set -euo pipefail;", "set -euo pipefail;"))]
+assert len(commands) == 1, "one canonical prerequisite command required"
+canonical = commands[0] + "\n"
+display_doc = tmp / "preflight-display.txt"
+subprocess.run(["bash", str(root / "scripts/ubuntu-offline-mirror-entrypoint.sh"),
+                "--format-menu7", str(canonical_doc), str(display_doc)], check=True,
+               capture_output=True, text=True)
+display_section = display_doc.read_text().split(
+    "STEP 3 — VERIFY UBUNTU 24.04 AND PREREQUISITES", 1)[1].split("STEP 4 —", 1)[0]
+assert "Copy and paste all 3 lines together" in display_section
+display_lines = display_section.strip().splitlines()[-3:]
+assert len(display_lines) == 3
+assert all(line.endswith("\\") for line in display_lines[:2])
+assert not display_lines[-1].endswith("\\")
+display = "\n".join(display_lines) + "\n"
+assert display.replace("\\\n", "") == canonical, "display must preserve command bytes"
+subprocess.run(["bash", "-n"], input=display, text=True, check=True)
+
+fakebin = tmp / "preflight-bin"
+fakebin.mkdir()
+tools = {
+    "getent": r"""#!/usr/bin/env bash
+case "$PREFLIGHT_CASE" in
+  bad_shell) printf 'aella:x:1000:1000::/home/aella:/bin/false\n' ;;
+  missing_account) exit 2 ;;
+  *) printf 'aella:x:1000:1000::/home/aella:/bin/bash\n' ;;
+esac
+printf 'root:x:0:0:root:/root:/bin/bash\n'
+""",
+    "df": r"""#!/usr/bin/env bash
+[[ "$PREFLIGHT_CASE" != df_error ]] || exit 1
+value=100
+if [[ "$PREFLIGHT_CASE" == root_space && "${!#}" == / ]]; then value=19; fi
+if [[ "$PREFLIGHT_CASE" == data_space && "${!#}" == /opt/aelladata ]]; then value=69; fi
+printf 'Avail\n%sG\n' "$value"
+""",
+    "pgrep": r"""#!/usr/bin/env bash
+case "$PREFLIGHT_CASE" in
+  package_busy) printf '12345 apt-get update\n'; exit 0 ;;
+  pgrep_error) exit 2 ;;
+  *) exit 1 ;;
+esac
+""",
+}
+for name, body in tools.items():
+    path = fakebin / name
+    path.write_text(body)
+    path.chmod(0o755)
+env = dict(os.environ, PATH=str(fakebin) + os.pathsep + os.environ["PATH"])
+os_release = tmp / "preflight-os-release"
+command_file = tmp / "preflight-command.sh"
+runner = r"""set +e
+set +u
+set +o pipefail
+before_flags="$-"
+source "$1"
+rc=$?
+[[ "$-" == "$before_flags" ]] || exit 97
+[[ "$(set -o | awk '$1=="pipefail"{print $2}')" == off ]] || exit 98
+printf 'CALLER_OPTIONS=UNCHANGED\n'
+exit "$rc"
+"""
+cases = [
+    ("success", None), ("wrong_os", "OS"), ("missing_os_field", "OS"),
+    ("bad_shell", "LOGIN_SHELL"), ("missing_account", "LOGIN_SHELL"),
+    ("root_space", "SPACE"), ("data_space", "SPACE"), ("df_error", "SPACE"),
+    ("package_busy", "PACKAGE_ACTIVITY"), ("pgrep_error", "PACKAGE_ACTIVITY"),
+]
+for case, failed_check in cases:
+    os_release.write_text(
+        "ID=ubuntu\nVERSION_ID=" + ("22.04" if case == "wrong_os" else "24.04") + "\n"
+        + ("" if case == "missing_os_field" else "VERSION_CODENAME=noble\n"))
+    command_file.write_text(display.replace("/etc/os-release", shlex.quote(str(os_release))))
+    result = subprocess.run(["bash", "-c", runner, "preflight-test", str(command_file)],
+                            env=dict(env, PREFLIGHT_CASE=case), capture_output=True,
+                            text=True, timeout=10)
+    output = result.stdout + result.stderr
+    assert "CALLER_OPTIONS=UNCHANGED" in output, (case, result.returncode, output)
+    if failed_check is None:
+        assert result.returncode == 0, output
+        for check in ("OS", "LOGIN_SHELL", "SPACE", "PACKAGE_ACTIVITY"):
+            assert check + "=PASS" in output, output
+        assert "PHASE2_PREFLIGHT=PASS" in output, output
+    else:
+        assert result.returncode != 0, (case, output)
+        assert "PHASE2_PREFLIGHT=FAIL check=" + failed_check in output, (case, output)
+        assert "PHASE2_PREFLIGHT=PASS" not in output, (case, output)
+    if case == "root_space":
+        assert "root=19GiB(required=20)" in output, output
+    if case == "data_space":
+        assert "data=69GiB(required=70)" in output, output
+    print("PASS: displayed preflight " + case)
+PY_PREFLIGHT
+then
+  pass "Phase 2 preflight: three-line paste, results, fail-closed checks, caller options"
+else
+  fail "Phase 2 preflight display/execution"
+fi
+
 # Required wrappers: FULL needs all five; PHASE2_ONLY needs upgrade-phase2.sh.
 READY_FULL="$TMP/ready-full"
 cp -a "$MM_CLIENT_ROOT" "$READY_FULL"
