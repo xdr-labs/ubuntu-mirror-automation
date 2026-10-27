@@ -717,10 +717,28 @@ bringup_already_executed() {
 }
 
 require_dpkg_apt_clean() {
-  local audit
-  audit="$(dpkg --audit 2>&1 || true)"
-  [[ -z "${audit// }" ]] || die "dpkg --audit reports issues"
-  apt-get check >/dev/null || die "apt-get check failed"
+  local audit apt_check rc
+  # A failed audit can be silent; an empty result is clean only after exit 0.
+  if audit="$(dpkg --audit 2>&1)"; then
+    if [[ -n "${audit// }" ]]; then
+      printf '%s\n' "$audit" >&2
+      die "dpkg --audit reports issues"
+    fi
+  else
+    rc=$?
+    [[ -z "$audit" ]] || printf '%s\n' "$audit" >&2
+    die "dpkg --audit failed (exit=${rc})"
+  fi
+
+  # APT prints dependency details on stdout and its summary on stderr.
+  # Keep stderr visible on success too; surface stdout when the check fails.
+  if apt_check="$(apt-get check)"; then
+    return 0
+  else
+    rc=$?
+    [[ -z "$apt_check" ]] || printf '%s\n' "$apt_check" >&2
+    die "apt-get check failed (exit=${rc})"
+  fi
 }
 
 # Detect real upgrade/package-manager processes without matching ps/awk/grep or this helper.
