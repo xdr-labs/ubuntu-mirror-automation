@@ -212,6 +212,30 @@ labels_from_collect
 [[ "$READY_L" == "Verify Upgrade Readiness" ]] || fail "C8b ready still completed"
 pass "C8b cleared receipts demote HTTP/readiness labels"
 
+# Case 8c — persisted receipts from the previous mode cannot label the new
+# mode complete. This also repairs display of state saved by older versions.
+seed_config
+seed_artifacts
+mock_nginx_ok
+mm_status_set HTTP_DISTRIBUTION ENABLED
+mm_status_set HTTP_CONFIGURATION_READY PASS
+mm_status_set UPGRADE_READINESS PASS
+mm_status_set READINESS_RESULT PASS
+mm_status_set READINESS_ARTIFACT_FINGERPRINT "$(mm_artifact_fingerprint)"
+mm_status_set READINESS_CONFIG_FINGERPRINT "$(mm_config_fingerprint)"
+sed -i 's/^PREPARATION_MODE=FULL$/PREPARATION_MODE=PHASE2_ONLY/' "$MM_CONFIG_FILE"
+labels_from_collect
+[[ "$DOWN_L" == "Download and Prepare Upgrade Files" ]] \
+  && pass "C8c old FULL receipt does not complete Phase 2 preparation" \
+  || fail "C8c old FULL receipt kept download complete"
+[[ "$READY_L" == "Verify Upgrade Readiness" && "$MM_WF_PROGRESS_COUNT" -eq 1 ]] \
+  && pass "C8c stale mode receipts cannot show 4 of 4 completed" \
+  || fail "C8c stale mode progress=${MM_WF_PROGRESS_COUNT}"
+[[ "$(mm_upgrade_readiness_display)" == "NOT READY" ]] \
+  && pass "C8c status and progress agree after a mode switch" \
+  || fail "C8c stale mode readiness display"
+seed_config
+
 # Case 9 — utility menus never get COMPLETED in dispatch tags
 INST="${ROOT}/scripts/install-dp-upgrade-mirror.sh"
 if grep -E '"5".*\[COMPLETED\]|"6".*\[COMPLETED\]|"7".*\[COMPLETED\]|"0".*\[COMPLETED\]' "$INST"; then

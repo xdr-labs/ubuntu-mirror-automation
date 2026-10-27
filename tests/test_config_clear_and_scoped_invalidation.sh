@@ -75,6 +75,8 @@ seed_ready_workflow() {
   mm_status_set HTTP_DISTRIBUTION ENABLED
   mm_status_set HTTP_CONFIGURATION_READY PASS
   mm_status_set DOWNLOAD_PREPARE_RESULT PASS
+  mm_status_set DOWNLOAD_ARTIFACT_FINGERPRINT "mode=${PREPARATION_MODE:-FULL};fixture=prepared"
+  mm_status_set DOWNLOAD_VALIDATED_AT "2026-10-27T00:00:00Z"
   mm_status_set CLIENT_COMMANDS_MODE "${PREPARATION_MODE:-FULL}"
   mm_status_set READINESS_CONFIG_FINGERPRINT "$(mm_config_fingerprint)"
 }
@@ -355,6 +357,10 @@ expect "I09 client cleared" test -z "$(mm_wf_get CLIENT_SET_GENERATION_ID)"
 expect "I09 next Download and Prepare" \
   test "$(mm_wf_get NEXT_REQUIRED_ACTION)" = "Download and Prepare"
 
+expect "I09 old Download result cleared" test -z "$(mm_status_get DOWNLOAD_PREPARE_RESULT)"
+expect "I09 old Download identity cleared" test -z "$(mm_status_get DOWNLOAD_ARTIFACT_FINGERPRINT)"
+expect "I09 old Download timestamp cleared" test -z "$(mm_status_get DOWNLOAD_VALIDATED_AT)"
+
 # --- I10 PHASE2_ONLY -> FULL ---
 PREPARATION_MODE=PHASE2_ONLY
 mm_save_gui_config_full >/dev/null
@@ -365,6 +371,10 @@ expect "I10 class PREPARE_INPUT" test "$(mm_wf_get CONFIG_CHANGE_CLASS)" = "PREP
 expect "I10 demote PREPARED" test "$(mm_wf_state)" = "PREPARED"
 expect "I10 OS preserved" test "$(mm_wf_get OS_CORE_GENERATION_ID)" = "os-gen-ready-1"
 expect "I10 client cleared" test -z "$(mm_wf_get CLIENT_SET_GENERATION_ID)"
+
+expect "I10 old Download result cleared" test -z "$(mm_status_get DOWNLOAD_PREPARE_RESULT)"
+expect "I10 old Download identity cleared" test -z "$(mm_status_get DOWNLOAD_ARTIFACT_FINGERPRINT)"
+expect "I10 old Download timestamp cleared" test -z "$(mm_status_get DOWNLOAD_VALIDATED_AT)"
 
 # --- I11/I12 command file + dashboard markers ---
 PREPARATION_MODE=PHASE2_ONLY

@@ -373,10 +373,12 @@ mm_is_phase2_only() {
 }
 
 mm_config_footer_text() {
-  cat <<'EOF'
+  local start_os=16.04
+  if mm_is_phase2_only; then start_os=24.04; fi
+  cat <<EOF
 Starting DP Version: 6.2.0 / 6.3.0 / 6.4.0 / 6.5.0
 Phase 2 Target:      6.6.0 (fixed)
-DP OS version: 16.04
+DP OS version: ${start_os}
 
 If the DP is already running Ubuntu 24.04, select Phase 2 Only.
 EOF
@@ -2311,7 +2313,7 @@ mm_readiness_completed() {
 # Python, and artifact re-fingerprinting on every main-menu redraw. Authoritative
 # validation remains on Menu 3 / Menu 4 (and other explicit actions).
 mm_collect_workflow_status() {
-  local download_ck http_dist http_cfg ready_ck ready_res
+  local download_ck download_fp http_dist http_cfg ready_ck ready_res
   MM_WF_CONFIG_COMPLETED=0
   MM_WF_DOWNLOAD_COMPLETED=0
   MM_WF_HTTP_COMPLETED=0
@@ -2329,7 +2331,10 @@ mm_collect_workflow_status() {
   download_ck="$(mm_status_get DOWNLOAD_PREPARE_RESULT 2>/dev/null || true)"
   case "$download_ck" in
     PASS|REUSED)
-      if [[ -n "$(mm_status_get DOWNLOAD_ARTIFACT_FINGERPRINT 2>/dev/null || true)" ]]; then
+      # Reject old-mode receipts without probing HTTP or rehashing artifacts.
+      # This also handles status persisted before mode-change invalidation was fixed.
+      download_fp="$(mm_status_get DOWNLOAD_ARTIFACT_FINGERPRINT 2>/dev/null || true)"
+      if [[ "$download_fp" == "mode=${PREPARATION_MODE};"* ]]; then
         MM_WF_DOWNLOAD_COMPLETED=1
         MM_WF_PROGRESS_COUNT=$((MM_WF_PROGRESS_COUNT + 1))
       fi

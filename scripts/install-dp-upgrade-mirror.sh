@@ -419,6 +419,7 @@ gui_configuration() {
     choice="$(mm_whiptail_menu "Configuration" \
       "Preparation Mode: ${mode_label}
 Mirror Server IP: ${ip_label}
+After changing Preparation Mode, run Menu 2 → 3 → 4 → 7.
 After changing Mirror Server IP, run Menu 3 → 4 → 7.
 DL Worker IPs: ${DL_WORKER_IPS:-(not set)}
 DA Worker IPs: ${DA_WORKER_IPS:-(not set)}

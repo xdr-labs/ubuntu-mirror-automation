@@ -674,6 +674,9 @@ mm_wf_mark_configured() {
     mm_status_set CONFIG_SHA256 "$sha" || return 1
     mm_status_set CONFIG_CHANGE_CLASS PREPARE_INPUT || return 1
     mm_status_set NEXT_REQUIRED_ACTION "Download and Prepare" || return 1
+    mm_status_set DOWNLOAD_PREPARE_RESULT "" || return 1
+    mm_status_set DOWNLOAD_ARTIFACT_FINGERPRINT "" || return 1
+    mm_status_set DOWNLOAD_VALIDATED_AT "" || return 1
     mm_status_set UPGRADE_READINESS FAIL || return 1
     mm_status_set READINESS_RESULT "" || return 1
     mm_status_set CLIENT_COMMANDS_MODE "" || return 1
@@ -876,6 +879,10 @@ mm_wf_invalidate_after_config_change() {
         mm_wf_store_layer_identities || return 1
         if declare -F mm_status_set >/dev/null 2>&1; then
           mm_status_set WORKFLOW_STATE PREPARED || return 1
+          # Payloads remain reusable, but preparation belongs to the old mode.
+          mm_status_set DOWNLOAD_PREPARE_RESULT "" || return 1
+          mm_status_set DOWNLOAD_ARTIFACT_FINGERPRINT "" || return 1
+          mm_status_set DOWNLOAD_VALIDATED_AT "" || return 1
           mm_status_set UPGRADE_READINESS FAIL || return 1
           mm_status_set READINESS_RESULT "" || return 1
           mm_status_set READINESS_CONFIG_FINGERPRINT "" || return 1
