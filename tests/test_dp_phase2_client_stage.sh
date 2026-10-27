@@ -84,6 +84,107 @@ else
   fail "should refuse ACPS mirror-url: $out"
 fi
 
+echo "[test] package health failures preserve diagnostics and stop staging"
+PACKAGE_RUNNER="$WORKDIR/package-check.sh"
+cat >"$PACKAGE_RUNNER" <<'PACKAGE_TEST'
+#!/usr/bin/env bash
+set -euo pipefail
+DP_PHASE2_STAGE_LIB_ONLY=1 source "$1" >/dev/null
+PACKAGE_SCENARIO="$2"
+PACKAGE_TRACE="$3"
+dpkg() {
+  printf 'dpkg %s\n' "$*" >>"$PACKAGE_TRACE"
+  [[ "$*" == "--audit" ]] || exit 96
+  case "$PACKAGE_SCENARIO" in
+    audit_issues) printf 'package-a is unpacked but not configured\n'; return 0 ;;
+    audit_error) printf 'dpkg: unable to read package status\n' >&2; return 2 ;;
+    audit_silent_error) return 2 ;;
+  esac
+  return 0
+}
+apt-get() {
+  printf 'apt-get %s\n' "$*" >>"$PACKAGE_TRACE"
+  [[ "$*" == "check" ]] || exit 97
+  case "$PACKAGE_SCENARIO" in
+    apt_dependencies)
+      printf 'The following packages have unmet dependencies:\n package-a : Depends: package-b (>= 2) but 1 is installed\n'
+      printf 'E: Unmet dependencies.\n' >&2
+      return 100
+      ;;
+    apt_silent_error) return 100 ;;
+  esac
+  printf 'Reading package lists... Done\n'
+}
+require_dpkg_apt_clean
+printf 'PACKAGE_CHECK_COMPLETED\n'
+PACKAGE_TEST
+for package_case in healthy apt_dependencies audit_issues audit_error audit_silent_error apt_silent_error; do
+  package_out="$WORKDIR/$package_case.out"
+  package_err="$WORKDIR/$package_case.err"
+  package_trace="$WORKDIR/$package_case.trace"
+  if bash "$PACKAGE_RUNNER" "$HELPER" "$package_case" "$package_trace" >"$package_out" 2>"$package_err"; then
+    package_rc=0
+  else
+    package_rc=$?
+  fi
+  if [[ "$package_case" == healthy ]]; then
+    if [[ "$package_rc" -eq 0 && ! -s "$package_err" ]] \
+      && [[ "$(cat "$package_out")" == PACKAGE_CHECK_COMPLETED ]] \
+      && grep -Fxq 'apt-get check' "$package_trace"; then
+      pass "healthy package checks are quiet and continue"
+    else
+      fail "healthy package checks: rc=$package_rc"
+    fi
+    continue
+  fi
+  if [[ "$package_rc" -ne 0 ]] && ! grep -Fq PACKAGE_CHECK_COMPLETED "$package_out"; then
+    pass "$package_case stops before subsequent staging"
+  else
+    fail "$package_case must stop staging: rc=$package_rc"
+  fi
+  case "$package_case" in
+    apt_dependencies)
+      if grep -Fq 'package-a : Depends: package-b (>= 2) but 1 is installed' "$package_err" \
+        && grep -Fq 'E: Unmet dependencies.' "$package_err" \
+        && grep -Fq 'apt-get check failed (exit=100)' "$package_err"; then
+        pass "APT dependency details, stderr and exit code are preserved"
+      else
+        fail "APT dependency details, stderr or exit code were lost"
+      fi
+      ;;
+    audit_issues)
+      grep -Fq 'package-a is unpacked but not configured' "$package_err" \
+        && pass "dpkg audit issues are printed even with exit 0" \
+        || fail "dpkg audit issue details were lost"
+      ;;
+    audit_error)
+      if grep -Fq 'dpkg: unable to read package status' "$package_err" \
+        && grep -Fq 'dpkg --audit failed (exit=2)' "$package_err"; then
+        pass "dpkg command error and exit code are preserved"
+      else
+        fail "dpkg command error or exit code were lost"
+      fi
+      ;;
+    audit_silent_error)
+      grep -Fq 'dpkg --audit failed (exit=2)' "$package_err" \
+        && pass "silent dpkg failure is reported" || fail "silent dpkg failure was ignored"
+      ;;
+    apt_silent_error)
+      grep -Fq 'apt-get check failed (exit=100)' "$package_err" \
+        && pass "silent APT failure is reported" || fail "silent APT failure lost its exit code"
+      ;;
+  esac
+  case "$package_case" in
+    audit_*)
+      if ! grep -Fq 'apt-get' "$package_trace"; then
+        pass "$package_case does not run APT after a failed audit"
+      else
+        fail "$package_case continued to APT"
+      fi
+      ;;
+  esac
+done
+
 echo "[test] failed staging cleanup removes STAGE_ROOT"
 grep -q 'STAGE_ROOT' "$HELPER" && grep -A20 '^cleanup()' "$HELPER" | grep -q 'STAGE_ROOT' \
   && pass "cleanup removes STAGE_ROOT" || fail "STAGE_ROOT cleanup"
