@@ -1313,6 +1313,19 @@ EOF
   fi
 }
 
+gui_phase2_prerequisite_command_line() {
+  # Keep the saved command on one line; the public display renders three lines.
+  # Isolate strict mode from the operator's login shell and explain each result.
+  local prereq_script
+  prereq_script="$(cat <<'PREFLIGHT'
+( set -euo pipefail; check=OS; trap 'printf "PHASE2_PREFLIGHT=FAIL check=%s\n" "$check" >&2' ERR; . /etc/os-release; test "${ID:-}:${VERSION_ID:-}:${VERSION_CODENAME:-}" = ubuntu:24.04:noble; printf 'OS=PASS\n'; check=LOGIN_SHELL; getent passwd aella root | awk -F: '$7!="/bin/bash"{exit 1}'; printf 'LOGIN_SHELL=PASS\n';
+check=SPACE; avail_root=$(df -BG --output=avail / | awk 'NR==2{gsub(/G/,""); print $1}'); avail_data=$(df -BG --output=avail /opt/aelladata | awk 'NR==2{gsub(/G/,""); print $1}'); printf 'FREE_SPACE root=%sGiB(required=20) data=%sGiB(required=70)\n' "${avail_root:-0}" "${avail_data:-0}"; test "${avail_root:-0}" -ge 20; test "${avail_data:-0}" -ge 70; printf 'SPACE=PASS\n';
+check=PACKAGE_ACTIVITY; if pgrep -Afa 'apt-get|dpkg|do-release-upgrade|dp-offline-upgrade'; then false; else test "$?" -eq 1; fi; printf 'PACKAGE_ACTIVITY=PASS\nPHASE2_PREFLIGHT=PASS\n' )
+PREFLIGHT
+)"
+  printf '%s\n' "${prereq_script//$'\n'/ }"
+}
+
 gui_build_client_commands() {
   # Writes command text to stdout.
   # Args: mirror topology dl_worker_ips da_worker_ips (no credentials).
@@ -1368,7 +1381,7 @@ gui_build_client_commands() {
   else
     bringup_cmd="sudo bash /home/aella/bringup_py3_dp_after_os_upgrade.sh --version ${ver} --skip-download"
   fi
-  prereq_cmd="set -euo pipefail; . /etc/os-release; test \"\$ID\" = ubuntu; test \"\$VERSION_ID\" = 24.04; test \"\$VERSION_CODENAME\" = noble; getent passwd aella root | awk -F: '\$7!=\"/bin/bash\"{exit 1}'; avail_root=\$(df -BG --output=avail / | awk 'NR==2{gsub(/G/,\"\"); print}'); avail_data=\$(df -BG --output=avail /opt/aelladata 2>/dev/null | awk 'NR==2{gsub(/G/,\"\"); print}'); test \"\${avail_root:-0}\" -ge 20; test \"\${avail_data:-0}\" -ge 70; ! pgrep -fa 'apt-get|dpkg|do-release-upgrade|dp-offline-upgrade' >/dev/null"
+  prereq_cmd="$(gui_phase2_prerequisite_command_line)" || return 1
 
   hop_copy_guide='Copy and paste the following entire line into the DP terminal:'
 

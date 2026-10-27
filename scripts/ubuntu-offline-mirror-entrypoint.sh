@@ -95,6 +95,20 @@ phase2_pat = re.compile(
     r"bash \./(?P=wrapper)$"
 )
 
+prereq_pat = re.compile(
+    r"^(?P<identity>\( set -euo pipefail; check=OS; .*); "
+    r"(?P<space>check=SPACE; .*); "
+    r"(?P<activity>check=PACKAGE_ACTIVITY; .* \))$"
+)
+
+
+def prerequisite_display_lines(match):
+    return [
+        match.group("identity") + "; \\",
+        match.group("space") + "; \\",
+        match.group("activity"),
+    ]
+
 
 def wrapper_display_lines(wrapper, url, sha):
     suffix = f"/client/{wrapper}"
@@ -148,13 +162,14 @@ lines = src.read_text(encoding="utf-8").splitlines()
 out: list[str] = []
 hop_wrapped = 0
 phase2_wrapped = 0
+prereq_wrapped = 0
 i = 0
 while i < len(lines):
     line = lines[i]
 
     if line == COPY_ONE_LINE:
         nxt = next_substantive_line(lines, i + 1)
-        if hop_pat.match(nxt) or phase2_pat.match(nxt):
+        if hop_pat.match(nxt) or phase2_pat.match(nxt) or prereq_pat.match(nxt):
             prev = next((item for item in reversed(out) if item), "")
             if prev != COPY_THREE_LINES:
                 out.append(COPY_THREE_LINES)
@@ -183,6 +198,13 @@ while i < len(lines):
         i += 1
         continue
 
+    prereq = prereq_pat.match(line)
+    if prereq:
+        out.extend(prerequisite_display_lines(prereq))
+        prereq_wrapped += 1
+        i += 1
+        continue
+
     out.append(line)
     i += 1
 
@@ -194,6 +216,8 @@ if phase2_wrapped not in (0, 1):
     raise SystemExit(
         f"MENU7_DISPLAY_FORMAT=FAIL reason=unexpected_phase2_count count={phase2_wrapped}"
     )
+if prereq_wrapped not in (0, 1):
+    raise SystemExit("MENU7_DISPLAY_FORMAT=FAIL reason=unexpected_prerequisite_count")
 if pause_emphasized not in (0, 1) or pause_completion_emphasized not in (0, 1):
     raise SystemExit(
         "MENU7_DISPLAY_FORMAT=FAIL reason=unexpected_pause_section_count "
