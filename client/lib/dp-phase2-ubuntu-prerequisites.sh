@@ -239,6 +239,383 @@ dp2_prereq_scc_group_decision() {
   return 1
 }
 
+# Build/verify a private transaction plan. The projected dpkg status is only
+# input to read-only APT; it is never copied back to the live database.
+dp2_prereq_transaction_metadata() {
+  python3 - "$@" <<'PY'
+import hashlib
+import json
+import pathlib
+import re
+import stat
+import subprocess
+import sys
+
+LIMIT = 64 * 1024 * 1024
+
+
+def fail(reason):
+    print('PHASE2_PREREQ_TRANSACTION=FAIL reason=' + reason, file=sys.stderr)
+    raise SystemExit(1)
+
+
+def regular(path):
+    try:
+        return stat.S_ISREG(path.lstat().st_mode)
+    except OSError:
+        return False
+
+
+def digest(path):
+    if not regular(path):
+        fail('file_not_regular')
+    h = hashlib.sha256()
+    with path.open('rb') as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b''):
+            h.update(block)
+    return h.hexdigest()
+
+
+def read_text(path):
+    if not regular(path) or path.stat().st_size > LIMIT:
+        fail('invalid_metadata_file')
+    return path.read_text(encoding='utf-8')
+
+
+def fields(raw):
+    result = {}
+    key = None
+    for line in raw.splitlines():
+        if line[:1].isspace():
+            if key is None:
+                fail('invalid_control_continuation')
+            result[key] += '\n' + line
+            continue
+        if ':' not in line:
+            fail('invalid_control_field')
+        name, value = line.split(':', 1)
+        key = name.lower()
+        if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9-]*', name) or key in result:
+            fail('duplicate_or_invalid_control_field')
+        result[key] = value.strip()
+    return result
+
+
+def paragraphs(raw):
+    return [p for p in re.split(r'\n[ \t]*\n', raw.strip()) if p.strip()]
+
+
+def order_groups(path):
+    groups = []
+    seen = set()
+    for line in read_text(path).splitlines():
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        group = line.split()
+        for name in group:
+            if (not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9+_.:%~=-]*\.deb', name)
+                    or name in seen):
+                fail('invalid_or_duplicate_ordered_deb')
+            seen.add(name)
+        groups.append(group)
+    return groups
+
+
+def write_private(path, text):
+    path.write_text(text, encoding='utf-8')
+    path.chmod(0o600)
+
+
+def create(args):
+    if len(args) not in (5, 6):
+        fail('invalid_plan_arguments')
+    extract, order, plan, status_path = map(pathlib.Path, args[:4])
+    architecture = args[4]
+    if not re.fullmatch(r'[a-z0-9][a-z0-9-]*', architecture):
+        fail('native_architecture')
+    extract = extract.resolve(strict=True)
+    if not extract.is_dir() or not regular(order):
+        fail('invalid_plan_inputs')
+    groups = order_groups(order)
+    names = [name for group in groups for name in group]
+    available = sorted(p.name for p in (extract / 'debs').glob('*.deb'))
+    if sorted(names) != available:
+        fail('install_order_coverage')
+    raw_status = read_text(status_path)
+    original_hash = digest(status_path)
+    # Bind bytes read above to the database fingerprint used by execution.
+    if hashlib.sha256(raw_status.encode('utf-8')).hexdigest() != original_hash:
+        fail('status_changed')
+    records = []
+    installed = {}
+    identities = set()
+    for raw in paragraphs(raw_status):
+        control = fields(raw)
+        package = control.get('package', '')
+        arch = control.get('architecture', '')
+        if not package:
+            fail('status_package_missing')
+        identity = (package, arch)
+        if identity in identities:
+            fail('duplicate_status_record')
+        identities.add(identity)
+        records.append((raw, control))
+        installed.setdefault(package, []).append(control)
+    artifacts = {}
+    packages = set()
+    needs_install = {}
+    for name in names:
+        path = extract / 'debs' / name
+        if not regular(path):
+            fail('ordered_deb_not_regular')
+        before = digest(path)
+        proc = subprocess.run(['dpkg-deb', '--field', str(path)],
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              text=True, check=False)
+        if proc.returncode or len(proc.stdout) > LIMIT:
+            fail('deb_control_read')
+        control_raw = proc.stdout.strip()
+        control = fields(control_raw)
+        package = control.get('package', '')
+        version = control.get('version', '')
+        arch = control.get('architecture', '')
+        if (not re.fullmatch(r'[a-z0-9][a-z0-9+.-]+', package)
+                or not version or '\n' in version
+                or arch not in ('all', architecture)
+                or 'status' in control):
+            fail('deb_control_identity')
+        if package in packages:
+            fail('duplicate_artifact_package')
+        packages.add(package)
+        if digest(path) != before:
+            fail('artifact_changed')
+        candidates = installed.get(package, [])
+        if len(candidates) > 1:
+            fail('selected_package_multiarch')
+        current = candidates[0] if candidates else None
+        needed = True
+        if current:
+            current_arch = current.get('architecture', '')
+            if current_arch and current_arch not in ('all', architecture):
+                fail('selected_package_architecture')
+            status = current.get('status', '')
+            if status == 'install ok installed':
+                current_version = current.get('version', '')
+                if not current_version:
+                    fail('installed_version_missing')
+                equal = subprocess.run(
+                    ['dpkg', '--compare-versions', current_version, 'eq', version],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode
+                if equal == 0:
+                    needed = False
+                else:
+                    older = subprocess.run(
+                        ['dpkg', '--compare-versions', current_version, 'lt', version],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode
+                    if equal != 1 or older != 0:
+                        fail('version_conflict')
+            elif status not in ('deinstall ok config-files',
+                                'purge ok not-installed',
+                                'deinstall ok not-installed'):
+                fail('selected_package_state')
+        needs_install[name] = needed
+        artifacts[name] = dict(package=package, version=version,
+                               architecture=arch, sha256=before,
+                               control=control_raw)
+    selected = [group for group in groups if any(needs_install[n] for n in group)]
+    # The shell has already checked every SCC. A database/query disagreement
+    # must stop the run, never change the decision silently.
+    if len(args) == 6 and order_groups(pathlib.Path(args[5])) != selected:
+        fail('plan_decision_mismatch')
+    replaced = {artifacts[name]['package']: artifacts[name]['control']
+                for group in selected for name in group}
+    projected = [raw for raw, control in records
+                 if control['package'] not in replaced]
+    projected += [raw + '\nStatus: install ok installed'
+                  for raw in replaced.values()]
+    projected_text = '\n\n'.join(projected) + '\n'
+    data = dict(format=1, extract=str(extract), status_path=str(status_path),
+                status_sha256=original_hash, artifacts=artifacts,
+                projected_sha256=hashlib.sha256(projected_text.encode('utf-8')).hexdigest(),
+                groups=groups, install_groups=selected)
+    pathlib.Path(str(plan) + '.ready').unlink(missing_ok=True)
+    pathlib.Path(str(plan) + '.order').unlink(missing_ok=True)
+    write_private(pathlib.Path(str(plan) + '.status-before'), raw_status)
+    write_private(pathlib.Path(str(plan) + '.status-projected'),
+                  projected_text)
+    write_private(plan, json.dumps(data, sort_keys=True) + '\n')
+
+
+def verify(args, require_ready=True):
+    if len(args) != 2:
+        fail('invalid_plan_arguments')
+    plan, status_path = map(pathlib.Path, args)
+    raw = read_text(plan)
+    if require_ready:
+        ready = read_text(pathlib.Path(str(plan) + '.ready')).strip()
+        if (not re.fullmatch(r'[0-9a-f]{64}', ready)
+                or hashlib.sha256(raw.encode('utf-8')).hexdigest() != ready):
+            fail('invalid_plan')
+    data = json.loads(raw)
+    if (data.get('format') != 1 or data.get('status_path') != str(status_path)
+            or not isinstance(data.get('artifacts'), dict)
+            or not isinstance(data.get('install_groups'), list)):
+        fail('invalid_plan')
+    if digest(status_path) != data['status_sha256']:
+        fail('status_changed')
+    if digest(pathlib.Path(str(plan) + '.status-before')) != data['status_sha256']:
+        fail('snapshot_changed')
+    if digest(pathlib.Path(str(plan) + '.status-projected')) != data['projected_sha256']:
+        fail('projection_changed')
+    extract = pathlib.Path(data['extract'])
+    for name, artifact in data['artifacts'].items():
+        if (not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9+_.:%~=-]*\.deb', name)
+                or digest(extract / 'debs' / name) != artifact['sha256']):
+            fail('artifact_changed')
+    output = []
+    seen = set()
+    for group in data['install_groups']:
+        if not isinstance(group, list) or not group:
+            fail('invalid_plan')
+        for name in group:
+            if name not in data['artifacts'] or name in seen:
+                fail('invalid_plan')
+            seen.add(name)
+        output.append(' '.join(group))
+    if require_ready:
+        write_private(pathlib.Path(str(plan) + '.order'),
+                      ''.join(line + '\n' for line in output))
+        print('PHASE2_PREREQ_TRANSACTION=PASS groups=%d' % len(output))
+
+
+try:
+    if len(sys.argv) < 2:
+        fail('invalid_plan_arguments')
+    if sys.argv[1] == 'create':
+        create(sys.argv[2:])
+    elif sys.argv[1] == 'verify':
+        verify(sys.argv[2:])
+    elif sys.argv[1] == 'inspect':
+        verify(sys.argv[2:], require_ready=False)
+    else:
+        fail('invalid_plan_action')
+except (OSError, ValueError, KeyError, TypeError, UnicodeError) as exc:
+    fail('invalid_plan_metadata_' + type(exc).__name__)
+PY
+}
+
+dp2_prereq_validate_projected_transaction() {
+  local plan="$1" projected="${1}.status-projected" out="" rc=0
+  local before_details="" projected_details="" before_version="" projected_version=""
+  local status plan_hash current_plan_hash
+  rm -f "${plan}.ready" "${plan}.order" || return 1
+  status="$(dp2_legacy_product_transition_status_path)" || return 1
+  plan_hash="$(sha256sum "$plan")" || return 1
+  dp2_prereq_transaction_metadata inspect "$plan" "$status" || return 1
+  if out="$(LC_ALL=C apt-get -o Debug::NoLocking=true \
+      -o "Dir::State::status=$projected" \
+      -o Dir::Cache::pkgcache= -o Dir::Cache::srcpkgcache= check 2>&1)"; then
+    rc=0
+  else
+    rc=$?
+  fi
+  if [[ "$rc" -eq 100 ]] && dp2_legacy_product_transition_environment; then
+    # Both original and projected product generations must fit the existing
+    # narrow classifier. No Ubuntu dependency is removed from either copy.
+    if before_details="$(dp2_write_legacy_product_shadow "${plan}.status-before" "${plan}.legacy-before")" \
+        && projected_details="$(dp2_write_legacy_product_shadow "$projected" "${plan}.legacy-projected")"; then
+      read -r _ before_version <<<"$before_details"
+      read -r _ projected_version <<<"$projected_details"
+      if [[ -n "$before_version" && "$before_version" == "$projected_version" ]]; then
+        if out="$(LC_ALL=C apt-get -o Debug::NoLocking=true \
+            -o "Dir::State::status=${plan}.legacy-projected" \
+            -o Dir::Cache::pkgcache= -o Dir::Cache::srcpkgcache= check 2>&1)"; then
+          rc=0
+          dp2_prereq_log WARN "PHASE2_PREREQ_TRANSACTION_LEGACY=DEFERRED_LEGACY_PY2 legacy_version=$before_version"
+        else
+          rc=$?
+        fi
+      fi
+    fi
+  fi
+  if [[ "$rc" -ne 0 ]]; then
+    dp2_prereq_log ERROR "PHASE2_PREREQ_TRANSACTION=FAIL reason=projected_dependency_graph rc=$rc"
+    [[ -z "$out" ]] || printf '%s\n' "$out" >&2
+    return "$rc"
+  fi
+  # Attest only the exact plan whose projected graph passed.
+  current_plan_hash="$(sha256sum "$plan")" || return 1
+  if [[ "$current_plan_hash" != "$plan_hash" ]]; then
+    dp2_prereq_log ERROR "PHASE2_PREREQ_TRANSACTION=FAIL reason=plan_changed"
+    return 1
+  fi
+  dp2_prereq_transaction_metadata inspect "$plan" "$status" || return 1
+  printf '%s\n' "${plan_hash%% *}" >"${plan}.ready" || return 1
+  chmod 0600 "${plan}.ready" || return 1
+}
+
+dp2_prereq_verify_transaction_snapshot() {
+  local plan="$1" status
+  if ! status="$(dp2_legacy_product_transition_status_path)"; then
+    dp2_prereq_log ERROR "PHASE2_PREREQ_TRANSACTION=FAIL reason=status_path"
+    return 1
+  fi
+  dp2_prereq_transaction_metadata verify "$plan" "$status"
+}
+
+# Preserve exact-version/SCC selection, but decide and validate EVERY group
+# before executing the first one. A late conflict cannot leave earlier groups
+# installed. The execution loop consumes only the attested selected order.
+dp2_prereq_preflight_transaction() {
+  local extract="$1" order="$2" plan="$3" status arch line fn decision prev_e
+  local -a names files
+  if ! dp2_validate_apt_dependency_graph prerequisites; then
+    dp2_prereq_log ERROR "PHASE2_PREREQ_TRANSACTION=FAIL reason=baseline_dependency_graph"
+    return 1
+  fi
+  : >"${plan}.selected-order" || return 1
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    read -r -a names <<<"$line"
+    files=()
+    for fn in "${names[@]}"; do
+      if [[ ! "$fn" =~ ^[A-Za-z0-9][A-Za-z0-9+_.:%~=-]*\.deb$ ]] \
+          || [[ ! -f "${extract}/debs/$fn" || -L "${extract}/debs/$fn" ]]; then
+        dp2_prereq_log ERROR "PHASE2_PREREQ_TRANSACTION=FAIL reason=ordered_deb_missing_or_invalid"
+        return 1
+      fi
+      files+=("${extract}/debs/$fn")
+    done
+    decision=0
+    prev_e=0
+    [[ $- == *e* ]] && prev_e=1
+    set +e
+    dp2_prereq_scc_group_decision "${files[@]}"
+    decision=$?
+    [[ "$prev_e" -eq 1 ]] && set -e
+    if [[ "$decision" -eq 2 ]]; then
+      return 1
+    fi
+    if [[ "$decision" -eq 1 ]]; then
+      printf '%s\n' "${names[*]}" >>"${plan}.selected-order" || return 1
+    elif [[ "$decision" -ne 0 ]]; then
+      dp2_prereq_log ERROR "PHASE2_PREREQ_TRANSACTION=FAIL reason=invalid_decision"
+      return 1
+    fi
+  done <"$order"
+  if ! status="$(dp2_legacy_product_transition_status_path)" \
+      || ! arch="$(dpkg --print-architecture)"; then
+    dp2_prereq_log ERROR "PHASE2_PREREQ_TRANSACTION=FAIL reason=status_or_architecture"
+    return 1
+  fi
+  dp2_prereq_transaction_metadata create "$extract" "$order" "$plan" "$status" "$arch" \
+    "${plan}.selected-order" || return 1
+  dp2_prereq_validate_projected_transaction "$plan" || return 1
+  dp2_prereq_verify_transaction_snapshot "$plan" || return 1
+}
+
 dp2_prereq_parse_simulation_removals() {
   local text="$1"
   printf '%s\n' "$text" | awk '
@@ -1251,45 +1628,24 @@ dp2_install_phase2_ubuntu_prerequisites() {
     return 0
   fi
 
+  local transaction_plan="${extract}/transaction-plan.json"
+  if ! dp2_prereq_preflight_transaction "$extract" "$order_file" "$transaction_plan"; then
+    rm -rf "$extract"
+    return 1
+  fi
+  if [[ ! -f "${transaction_plan}.order" || -L "${transaction_plan}.order" ]]; then
+    dp2_prereq_log ERROR "PHASE2_PREREQ_TRANSACTION=FAIL reason=missing_execution_plan"
+    rm -rf "$extract"
+    return 1
+  fi
+  local -a planned_names
   while IFS= read -r line || [[ -n "$line" ]]; do
-    line="${line#"${line%%[![:space:]]*}"}"
-    [[ -z "$line" || "$line" == \#* ]] && continue
+    read -r -a planned_names <<<"$line"
     files=()
-    # shellcheck disable=SC2086
-    for fn in $line; do
-      files+=("${extract}/debs/${fn}")
-    done
-    if [[ ${#files[@]} -eq 0 ]]; then
-      continue
-    fi
-    for fn in "${files[@]}"; do
-      if [[ ! -f "$fn" ]]; then
-        dp2_prereq_log ERROR "PHASE2_PREREQ_INSTALL=FAIL reason=ordered_deb_missing file=$(basename "$fn")"
-        rm -rf "$extract"
-        return 1
-      fi
-      pkg="$(dpkg-deb -f "$fn" Package 2>/dev/null || true)"
-      if [[ -z "$pkg" ]]; then
-        dp2_prereq_log ERROR "PHASE2_PREREQ_INSTALL=FAIL reason=deb_control_missing file=$(basename "$fn")"
-        rm -rf "$extract"
-        return 1
-      fi
+    for fn in "${planned_names[@]}"; do
+      files+=("${extract}/debs/$fn")
     done
     pkg="$(dpkg-deb -f "${files[0]}" Package 2>/dev/null || true)"
-    local decision=1
-    prev_e=0
-    [[ $- == *e* ]] && prev_e=1
-    set +e
-    dp2_prereq_scc_group_decision "${files[@]}"
-    decision=$?
-    [[ "$prev_e" -eq 1 ]] && set -e
-    if [[ "$decision" -eq 2 ]]; then
-      rm -rf "$extract"
-      return 1
-    fi
-    if [[ "$decision" -eq 0 ]]; then
-      continue
-    fi
     dp2_prereq_dpkg_install "${files[@]}"
     rc=$?
     if [[ "$rc" -ne 0 ]]; then
@@ -1299,7 +1655,7 @@ dp2_install_phase2_ubuntu_prerequisites() {
     fi
     installed_any=1
     dp2_prereq_log INFO "PHASE2_PREREQ_DPKG=PASS package=${pkg} group=${#files[@]}"
-  done < "$order_file"
+  done < "${transaction_plan}.order"
   rm -rf "$extract"
 
   if [[ "$installed_any" -eq 0 ]]; then
@@ -1314,3 +1670,188 @@ dp2_install_phase2_ubuntu_prerequisites() {
   dp2_prereq_log INFO "PHASE2_PREREQ_INSTALL=PASS"
   return 0
 }
+
+# Explicit owner-run recovery for the observed .6 -> .15 prerequisite mismatch.
+# Never called by normal staging, prerequisite installation, or vendor bringup.
+dp2_libssl_recovery_fail() {
+  dp2_prereq_log ERROR "PHASE2_LIBSSL_RECOVERY=FAIL reason=$1" >&2
+  return 1
+}
+
+dp2_libssl_recovery_environment() {
+  [[ "$(id -u)" == 0 ]] || { dp2_libssl_recovery_fail root_required; return 1; }
+  dp2_legacy_product_transition_environment \
+    || { dp2_libssl_recovery_fail ubuntu_noble_amd64_required; return 1; }
+}
+
+dp2_libssl_recovery_lifecycle_dir() {
+  printf '%s\n' /opt/aelladata/os-upgrade/offline/phase2-bringup
+}
+
+dp2_libssl_recovery_lock_lifecycle() {
+  local directory="${1:-$(dp2_libssl_recovery_lifecycle_dir)}" name fd
+  # Open existing files read-only: --check must not create lifecycle records.
+  for name in lock artifact-consumer.lock; do
+    [[ -f "$directory/$name" && ! -L "$directory/$name" ]] \
+      || { dp2_libssl_recovery_fail lifecycle_lock_missing; return 1; }
+    exec {fd}<"$directory/$name" \
+      || { dp2_libssl_recovery_fail lifecycle_lock_open; return 1; }
+    flock -n "$fd" \
+      || { dp2_libssl_recovery_fail lifecycle_busy; return 1; }
+    # The recovery subshell holds both descriptors until it exits.
+  done
+}
+
+dp2_libssl_recovery_idle() {
+  local directory="${1:-$(dp2_libssl_recovery_lifecycle_dir)}" state="" out="" rc=0
+  if [[ -f "$directory/state" ]]; then
+    state="$(cat "$directory/state")" || return 1
+    case "$state" in
+      FAILED|COMPLETED|NOT_STARTED) ;;
+      *) dp2_libssl_recovery_fail lifecycle_not_terminal; return 1 ;;
+    esac
+  fi
+  if out="$(pgrep -Afa '(^|[[:space:]/])(apt|apt-get|dpkg|unattended-upgrade|do-release-upgrade|dp-offline-upgrade)(\.sh)?([[:space:]]|$)|bringup_py3_dp_(after_os_upgrade|lifecycle)|stage-dp-phase2' 2>&1)"; then
+    dp2_libssl_recovery_fail active_package_or_bringup_work
+    printf '%s\n' "$out" >&2
+    return 1
+  else
+    rc=$?
+  fi
+  [[ "$rc" -eq 1 ]] \
+    || { dp2_libssl_recovery_fail activity_check_failed; return 1; }
+}
+
+dp2_libssl_recovery_verify_deb() {
+  local deb="$1" actual package version architecture depends predepends
+  [[ -f "$deb" && ! -L "$deb" ]] \
+    || { dp2_libssl_recovery_fail deb_not_regular; return 1; }
+  actual="$(sha256sum -- "$deb")" || return 1
+  [[ "${actual%% *}" == cefc6371d90d953a4cbb35d72d871f057e4b961a3107186f67fe96a88040cdb8 ]] \
+    || { dp2_libssl_recovery_fail deb_checksum; return 1; }
+  package="$(dpkg-deb --field "$deb" Package)" || return 1
+  version="$(dpkg-deb --field "$deb" Version)" || return 1
+  architecture="$(dpkg-deb --field "$deb" Architecture)" || return 1
+  depends="$(dpkg-deb --field "$deb" Depends)" || return 1
+  predepends="$(dpkg-deb --field "$deb" Pre-Depends)" || return 1
+  if [[ "$package" != libssl-dev || "$version" != 3.0.13-0ubuntu3.15 \
+      || "$architecture" != amd64 \
+      || "$depends" != 'libssl3t64 (= 3.0.13-0ubuntu3.15)' || -n "$predepends" ]]; then
+    dp2_libssl_recovery_fail deb_control
+    return 1
+  fi
+  dp2_prereq_log INFO "PHASE2_LIBSSL_RECOVERY_ARTIFACT=PASS package=libssl-dev version=$version architecture=$architecture"
+}
+
+dp2_libssl_recovery_installed_state() {
+  local inventory="$1"
+  LC_ALL=C dpkg-query -W -f='${Package}\t${Version}\t${Architecture}\t${Status}\n' >"$inventory" \
+    || { dp2_libssl_recovery_fail package_query; return 1; }
+  python3 - "$inventory" <<'PY_LIBSSL_STATE'
+import pathlib
+import sys
+
+try:
+    selected = {}
+    for line in pathlib.Path(sys.argv[1]).read_text().splitlines():
+        parts = line.split('\t')
+        if not parts or parts[0] not in ('libssl-dev', 'libssl3t64', 'openssl'):
+            continue
+        if len(parts) != 4 or parts[0] in selected:
+            raise ValueError('selected_package_multiarch_or_invalid')
+        name, version, arch, state = parts
+        if arch != 'amd64' or state != 'install ok installed':
+            raise ValueError('installed_identity_' + name)
+        if name == 'libssl-dev':
+            if version not in ('3.0.13-0ubuntu3.6', '3.0.13-0ubuntu3.15'):
+                raise ValueError('installed_version_' + name)
+        elif version != '3.0.13-0ubuntu3.15':
+            raise ValueError('installed_version_' + name)
+        selected[name] = version
+    if len(selected) != 3:
+        raise ValueError('installed_package_missing')
+    print('ALREADY_FIXED' if selected['libssl-dev'] == '3.0.13-0ubuntu3.15' else 'PENDING')
+except (OSError, UnicodeError, ValueError) as error:
+    print('PHASE2_LIBSSL_RECOVERY=FAIL reason=' + str(error), file=sys.stderr)
+    sys.exit(1)
+PY_LIBSSL_STATE
+}
+
+dp2_libssl_dev_recovery() (
+  # A subshell keeps descriptors, umask, cleanup and strict options local.
+  set -euo pipefail
+  set +x
+  local mode="${1:-}" input="${2:-}" work="" status="" audit="" state="" after="" rc=0
+  local before_hash="" snapshot_hash="" candidate="" plan="" order=""
+  case "$mode" in --check-libssl-dev|--repair-libssl-dev) ;;
+    *) dp2_libssl_recovery_fail invalid_mode; return 2 ;;
+  esac
+  [[ $# -eq 2 && -n "$input" ]] \
+    || { dp2_libssl_recovery_fail deb_argument_required; return 2; }
+  dp2_libssl_recovery_environment || return 1
+  status="$(dp2_legacy_product_transition_status_path)" \
+    || { dp2_libssl_recovery_fail status_path; return 1; }
+  dp2_libssl_recovery_lock_lifecycle || return 1
+  dp2_libssl_recovery_idle || return 1
+  [[ -f "$input" && ! -L "$input" ]] \
+    || { dp2_libssl_recovery_fail deb_not_regular; return 1; }
+  umask 077
+  work="$(mktemp -d "${TMPDIR:-/tmp}/phase2-libssl-recovery.XXXXXX")" || return 1
+  trap 'rm -rf -- "$work"' EXIT
+  mkdir "$work/debs" || return 1
+  candidate="$work/debs/libssl-dev_3.0.13-0ubuntu3.15_amd64.deb"
+  cp -- "$input" "$candidate" || return 1
+  dp2_libssl_recovery_verify_deb "$candidate" || return 1
+  before_hash="$(sha256sum -- "$status")" || return 1
+  if ! audit="$(dpkg --audit 2>&1)" || [[ -n "${audit//[[:space:]]/}" ]]; then
+    dp2_libssl_recovery_fail dpkg_audit
+    [[ -z "$audit" ]] || printf '%s\n' "$audit" >&2
+    return 1
+  fi
+  state="$(dp2_libssl_recovery_installed_state "$work/installed.tsv")" || return 1
+  order="$work/install-order.txt"
+  plan="$work/transaction.json"
+  printf '%s\n' "${candidate##*/}" >"$order" || return 1
+  # Explicit recovery validates the corrected projection. Normal installation
+  # keeps its original baseline APT gate and never calls this entrypoint.
+  dp2_prereq_transaction_metadata create "$work" "$order" "$plan" "$status" amd64 || return 1
+  snapshot_hash="$(sha256sum -- "$plan.status-before")" || return 1
+  [[ "${snapshot_hash%% *}" == "${before_hash%% *}" ]] \
+    || { dp2_libssl_recovery_fail status_changed; return 1; }
+  dp2_prereq_validate_projected_transaction "$plan" || return 1
+  dp2_libssl_recovery_idle || return 1
+  dp2_prereq_verify_transaction_snapshot "$plan" || return 1
+  if [[ "$mode" == --check-libssl-dev ]]; then
+    dp2_prereq_log INFO "PHASE2_LIBSSL_RECOVERY=CHECK_PASS installed_state=$state package=libssl-dev target=3.0.13-0ubuntu3.15 mutation=NO"
+    return 0
+  fi
+  if [[ "$state" == PENDING ]]; then
+    dp2_prereq_log INFO "PHASE2_LIBSSL_RECOVERY=APPLY package=libssl-dev target=3.0.13-0ubuntu3.15"
+    if dp2_prereq_dpkg_install "$candidate"; then
+      :
+    else
+      rc=$?
+      dp2_prereq_log ERROR "PHASE2_LIBSSL_RECOVERY=FAIL reason=dpkg_install rc=$rc"
+      return "$rc"
+    fi
+  fi
+  after="$(dp2_libssl_recovery_installed_state "$work/installed-after.tsv")" || return 1
+  [[ "$after" == ALREADY_FIXED ]] \
+    || { dp2_libssl_recovery_fail installed_postcondition; return 1; }
+  dp2_validate_apt_dependency_graph prerequisites \
+    || { dp2_libssl_recovery_fail dependency_postcondition; return 1; }
+  dp2_prereq_log INFO "PHASE2_LIBSSL_RECOVERY=PASS package=libssl-dev version=3.0.13-0ubuntu3.15 previous_state=$state"
+)
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  case "${1:-}" in
+    --check-libssl-dev|--repair-libssl-dev)
+      dp2_libssl_dev_recovery "$@"
+      exit $?
+      ;;
+    *)
+      printf 'Usage: sudo bash %s --check-libssl-dev|--repair-libssl-dev LIBSSL_DEV_DEB\n' "$0" >&2
+      exit 2
+      ;;
+  esac
+fi

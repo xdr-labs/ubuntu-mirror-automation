@@ -65,6 +65,10 @@ run_step "phase2_legacy_product_transition" bash tests/test_phase2_legacy_produc
 run_step "phase2_legacy_stage_contract" bash tests/test_phase2_legacy_stage_contract.sh
 run_step "phase2_product_replacement" python3 tests/test_phase2_product_replacement.py
 run_step "phase2_product_transition_hook" bash tests/test_phase2_product_transition_hook.sh
+run_step "phase2_prerequisite_transaction" python3 tests/test_phase2_prereq_transaction.py
+run_step "phase2_libssl_recovery" python3 tests/test_phase2_libssl_recovery.py
+run_step "phase2_prerequisite_versions" bash tests/test_phase2_prereq_version_aware.sh
+run_step "phase2_prerequisite_exit_codes" bash tests/test_phase2_prereq_dpkg_rc.sh
 run_step "phase2_fresh_package_completion" bash tests/test_bringup_lifecycle_run_contract.sh
 run_step "python_compile_fixture" python3 -m py_compile tests/lib/build_tiny_os_core_lifecycle_fixture.py
 run_step "python_compile_os_core" python3 -m py_compile scripts/lib/os_core_package.py
