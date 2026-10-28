@@ -12,6 +12,28 @@ PASS=0
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
 
+# The worker contract also exercises the real whole-plan metadata/APT gate.
+# Keep every package query and APT read confined to this empty fixture database.
+PREREQ_TEST_DB="${WORKDIR}/fixture-dpkg"
+APT_CONFIG="${WORKDIR}/fixture-apt.conf"
+export PREREQ_TEST_DB APT_CONFIG
+python3 - "$WORKDIR" <<'PY'
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+for name in ('fixture-dpkg', 'fixture-empty', 'fixture-lists', 'fixture-cache'):
+    (root / name).mkdir()
+for name in ('fixture-dpkg/status', 'fixture-empty.conf', 'fixture-sources.list'):
+    (root / name).write_text('')
+paths = {'Dir::Etc::parts': 'fixture-empty', 'Dir::Etc::main': 'fixture-empty.conf',
+         'Dir::Etc::sourcelist': 'fixture-sources.list', 'Dir::Etc::sourceparts': 'fixture-empty',
+         'Dir::State::status': 'fixture-dpkg/status', 'Dir::State::lists': 'fixture-lists',
+         'Dir::Cache': 'fixture-cache'}
+(root / 'fixture-apt.conf').write_text(''.join('%s "%s";\n' % (key, root / value)
+                                             for key, value in paths.items()) +
+    'Dir::Cache::pkgcache "";\nDir::Cache::srcpkgcache "";\nDebug::NoLocking "true";\n')
+PY
+
 pass() { echo "  PASS: $*"; PASS=$((PASS + 1)); }
 fail() { echo "  FAIL: $*"; FAIL=$((FAIL + 1)); }
 
@@ -24,19 +46,21 @@ BIN="${WORKDIR}/bin"
 mkdir -p "$BIN"
 cat >"${BIN}/apt-get" <<'EOF'
 #!/usr/bin/env bash
-exit 0
+exec /usr/bin/apt-get "$@"
 EOF
 cat >"${BIN}/dpkg" <<'EOF'
 #!/usr/bin/env bash
-if [[ "$1" == "--compare-versions" ]]; then
+if [[ "$1" == "--compare-versions" || "$1" == "--print-architecture" ]]; then
   exec /usr/bin/dpkg "$@"
 fi
+[[ "$1" == --audit ]] && exit 0
+[[ "$1" == -i ]] || exit 90
 echo "DPKG_CALL $*" >>"${DPKG_LOG:-/dev/null}"
 exit 0
 EOF
 cat >"${BIN}/dpkg-query" <<'EOF'
 #!/usr/bin/env bash
-exit 1
+exec /usr/bin/dpkg-query --admindir="$PREREQ_TEST_DB" "$@"
 EOF
 chmod +x "${BIN}/apt-get" "${BIN}/dpkg" "${BIN}/dpkg-query"
 
@@ -54,7 +78,7 @@ run_install() {
   PATH="${BIN}:$PATH"
   # shellcheck source=/dev/null
   source "$PREREQ_LIB"
-  dp2_validate_apt_dependency_graph() { return 0; }
+  dp2_legacy_product_transition_status_path() { printf '%s\n' "$PREREQ_TEST_DB/status"; }
   dp2_install_phase2_ubuntu_prerequisites
   echo RC=$?
 }
@@ -287,6 +311,7 @@ set -e
 echo "$OUT" | grep -q 'PHASE2_PREREQ_INSTALL=PASS' \
   && echo "$OUT" | grep -q 'PHASE2_PREREQ_SHA256=PASS' \
   && echo "$OUT" | grep -q 'PHASE2_PREREQ_MANIFEST=PASS' \
+  && echo "$OUT" | grep -q 'PHASE2_PREREQ_TRANSACTION=PASS groups=1' \
   && echo "$OUT" | grep -q 'RC=0' \
   && pass "A4 REQUIRED=YES valid contract proceeds" \
   || fail "A4: ${OUT}"

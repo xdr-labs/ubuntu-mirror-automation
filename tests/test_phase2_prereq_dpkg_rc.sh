@@ -10,6 +10,28 @@ PASS=0
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
 
+# Real package controls and APT projection use only this empty private package
+# database. Fake dpkg below records/returns install outcomes without installing.
+PREREQ_TEST_DB="${WORKDIR}/fixture-dpkg"
+APT_CONFIG="${WORKDIR}/fixture-apt.conf"
+export PREREQ_TEST_DB APT_CONFIG
+python3 - "$WORKDIR" <<'PY'
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+for name in ('fixture-dpkg', 'fixture-empty', 'fixture-lists', 'fixture-cache'):
+    (root / name).mkdir()
+for name in ('fixture-dpkg/status', 'fixture-empty.conf', 'fixture-sources.list'):
+    (root / name).write_text('')
+paths = {'Dir::Etc::parts': 'fixture-empty', 'Dir::Etc::main': 'fixture-empty.conf',
+         'Dir::Etc::sourcelist': 'fixture-sources.list', 'Dir::Etc::sourceparts': 'fixture-empty',
+         'Dir::State::status': 'fixture-dpkg/status', 'Dir::State::lists': 'fixture-lists',
+         'Dir::Cache': 'fixture-cache'}
+(root / 'fixture-apt.conf').write_text(''.join('%s "%s";\n' % (key, root / value)
+                                             for key, value in paths.items()) +
+    'Dir::Cache::pkgcache "";\nDir::Cache::srcpkgcache "";\nDebug::NoLocking "true";\n')
+PY
+
 pass() { echo "  PASS: $*"; PASS=$((PASS + 1)); }
 fail() { echo "  FAIL: $*"; FAIL=$((FAIL + 1)); }
 
@@ -42,30 +64,27 @@ build_tiny_deb() {
 for want_rc in 1 42; do
   BIN="${WORKDIR}/bin-dpkg-${want_rc}"
   mkdir -p "$BIN"
-  cat >"${BIN}/dpkg" <<EOF
+  cat >"${BIN}/dpkg" <<'EOF'
 #!/usr/bin/env bash
-echo "fake-dpkg invoked rc=${want_rc}" >&2
-exit ${want_rc}
+if [[ "$1" == --compare-versions || "$1" == --print-architecture ]]; then
+  exec /usr/bin/dpkg "$@"
+fi
+[[ "$1" == --audit ]] && exit 0
+[[ "$1" == -i ]] || exit 90
+echo "fake-dpkg invoked rc=${PREREQ_TEST_DPKG_RC}" >&2
+exit "$PREREQ_TEST_DPKG_RC"
 EOF
   cat >"${BIN}/dpkg-deb" <<'EOF'
 #!/usr/bin/env bash
-if [[ "$1" == "-f" ]]; then
-  base="$(basename "$2")"
-  case "$3" in
-    Package) echo "${base%%_*}"; exit 0 ;;
-    Version) echo 1; exit 0 ;;
-    Architecture) echo all; exit 0 ;;
-  esac
-fi
-exit 0
+exec /usr/bin/dpkg-deb "$@"
 EOF
   cat >"${BIN}/dpkg-query" <<'EOF'
 #!/usr/bin/env bash
-exit 1
+exec /usr/bin/dpkg-query --admindir="$PREREQ_TEST_DB" "$@"
 EOF
   cat >"${BIN}/apt-get" <<'EOF'
 #!/usr/bin/env bash
-exit 0
+exec /usr/bin/apt-get "$@"
 EOF
   chmod +x "${BIN}/dpkg" "${BIN}/dpkg-deb" "${BIN}/dpkg-query" "${BIN}/apt-get"
 
@@ -94,12 +113,12 @@ EOF
   set +e
   OUT="$(
     PATH="${BIN}:$PATH"
+    export PREREQ_TEST_DPKG_RC="$want_rc"
     PHASE2_PREREQ_ARTIFACT="$TAR"
     PHASE2_PREREQ_STATE="${WORKDIR}/yes-${want_rc}.state"
     # shellcheck source=/dev/null
     source "$PREREQ_LIB"
-    dp2_prereq_package_installed() { return 1; }
-    dp2_validate_apt_dependency_graph() { return 0; }
+    dp2_legacy_product_transition_status_path() { printf '%s\n' "$PREREQ_TEST_DB/status"; }
     dp2_install_phase2_ubuntu_prerequisites
     echo RC=$?
   )"
@@ -120,28 +139,25 @@ ORD_BIN="${WORKDIR}/bin-order"
 mkdir -p "$ORD_BIN"
 cat >"${ORD_BIN}/dpkg" <<'EOF'
 #!/usr/bin/env bash
+if [[ "$1" == --compare-versions || "$1" == --print-architecture ]]; then
+  exec /usr/bin/dpkg "$@"
+fi
+[[ "$1" == --audit ]] && exit 0
+[[ "$1" == -i ]] || exit 90
 echo "DPKG_CALL $*" >>"${DPKG_LOG}"
 exit 0
 EOF
 cat >"${ORD_BIN}/dpkg-deb" <<'EOF'
 #!/usr/bin/env bash
-if [[ "$1" == "-f" ]]; then
-  base="$(basename "$2")"
-  case "$3" in
-    Package) echo "${base%%_*}"; exit 0 ;;
-    Version) echo 1; exit 0 ;;
-    Architecture) echo all; exit 0 ;;
-  esac
-fi
-exit 0
+exec /usr/bin/dpkg-deb "$@"
 EOF
 cat >"${ORD_BIN}/dpkg-query" <<'EOF'
 #!/usr/bin/env bash
-exit 1
+exec /usr/bin/dpkg-query --admindir="$PREREQ_TEST_DB" "$@"
 EOF
 cat >"${ORD_BIN}/apt-get" <<'EOF'
 #!/usr/bin/env bash
-exit 0
+exec /usr/bin/apt-get "$@"
 EOF
 chmod +x "${ORD_BIN}/dpkg" "${ORD_BIN}/dpkg-deb" "${ORD_BIN}/dpkg-query" "${ORD_BIN}/apt-get"
 
@@ -179,8 +195,7 @@ OUT2="$(
   PHASE2_PREREQ_STATE="${WORKDIR}/yes-order.state"
   # shellcheck source=/dev/null
   source "$PREREQ_LIB"
-  dp2_prereq_package_installed() { return 1; }
-  dp2_validate_apt_dependency_graph() { return 0; }
+  dp2_legacy_product_transition_status_path() { printf '%s\n' "$PREREQ_TEST_DB/status"; }
   dp2_install_phase2_ubuntu_prerequisites
   echo RC=$?
 )"
@@ -221,8 +236,7 @@ OUT3="$(
   PHASE2_PREREQ_STATE="${WORKDIR}/yes-no-order.state"
   # shellcheck source=/dev/null
   source "$PREREQ_LIB"
-  dp2_prereq_package_installed() { return 1; }
-  dp2_validate_apt_dependency_graph() { return 0; }
+  dp2_legacy_product_transition_status_path() { printf '%s\n' "$PREREQ_TEST_DB/status"; }
   dp2_install_phase2_ubuntu_prerequisites
   echo RC=$?
 )"
@@ -246,7 +260,7 @@ PHASE2_PREREQ_PUBLICATION=PASS
 EOF
   # shellcheck source=/dev/null
   source "$PREREQ_LIB"
-  dp2_validate_apt_dependency_graph() { return 0; }
+  dp2_legacy_product_transition_status_path() { printf '%s\n' "$PREREQ_TEST_DB/status"; }
   dp2_install_phase2_ubuntu_prerequisites
   echo RC=$?
 )"

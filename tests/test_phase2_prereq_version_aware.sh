@@ -58,55 +58,21 @@ make_bin() {
   mkdir -p "$bin"
   cat >"${bin}/dpkg" <<'EOF'
 #!/usr/bin/env bash
-if [[ "$1" == "--compare-versions" ]]; then
+if [[ "$1" == "--compare-versions" || "$1" == "--print-architecture" ]]; then
   exec /usr/bin/dpkg "$@"
 fi
+[[ "$1" == --audit ]] && exit 0
+[[ "$1" == -i ]] || exit 90
 echo "DPKG_CALL $*" >>"${DPKG_LOG}"
 exit 0
 EOF
   cat >"${bin}/dpkg-query" <<'EOF'
 #!/usr/bin/env bash
-pkg=""
-for arg in "$@"; do
-  case "$arg" in
-    -W|-f=*) continue ;;
-    *) pkg="$arg" ;;
-  esac
-done
-lookup_ver() {
-  local p="$1" pair
-  if [[ -n "${INSTALLED_VERSIONS:-}" ]]; then
-    for pair in $INSTALLED_VERSIONS; do
-      if [[ "${pair%%=*}" == "$p" ]]; then
-        printf '%s\n' "${pair#*=}"
-        return 0
-      fi
-    done
-    return 1
-  fi
-  if [[ -n "${INSTALLED_VERSION:-}" ]]; then
-    printf '%s\n' "$INSTALLED_VERSION"
-    return 0
-  fi
-  return 1
-}
-ver=""
-if ! ver="$(lookup_ver "$pkg")"; then
-  exit 1
-fi
-if [[ "$*" == *'${Status}'* ]]; then
-  echo "install ok installed"
-  exit 0
-fi
-if [[ "$*" == *'${Version}'* ]]; then
-  printf '%s\n' "$ver"
-  exit 0
-fi
-exit 1
+exec /usr/bin/dpkg-query --admindir="$PREREQ_TEST_DB" "$@"
 EOF
   cat >"${bin}/apt-get" <<'EOF'
 #!/usr/bin/env bash
-exit 0
+exec /usr/bin/apt-get "$@"
 EOF
   chmod +x "${bin}/dpkg" "${bin}/dpkg-query" "${bin}/apt-get"
 }
@@ -142,6 +108,36 @@ make_bin "$BIN"
 run_case() {
   local art_dir="$1"
   local tar="${art_dir}/phase2-ubuntu-prerequisites.tar.gz"
+  # Give both package queries and the whole-plan APT projection the same
+  # isolated inventory. No real host package state/sources are consulted.
+  PREREQ_TEST_DB="${art_dir}/fixture-dpkg"
+  APT_CONFIG="${art_dir}/fixture-apt.conf"
+  export PREREQ_TEST_DB APT_CONFIG
+  python3 - "$art_dir" <<'PY'
+import os
+from pathlib import Path
+root = Path(__import__('sys').argv[1])
+for name in ('fixture-dpkg', 'fixture-empty', 'fixture-lists', 'fixture-cache'):
+    (root / name).mkdir()
+(root / 'fixture-empty.conf').write_text('')
+(root / 'fixture-sources.list').write_text('')
+versions = os.environ.get('INSTALLED_VERSIONS', '')
+if not versions and os.environ.get('INSTALLED_VERSION'):
+    versions = 'foo=' + os.environ['INSTALLED_VERSION']
+records = []
+for pair in versions.split():
+    package, version = pair.split('=', 1)
+    records.append('Package: %s\nStatus: install ok installed\nVersion: %s\n'
+                   'Architecture: all\nDescription: isolated version fixture\n' % (package, version))
+(root / 'fixture-dpkg/status').write_text('\n'.join(records))
+paths = {'Dir::Etc::parts': 'fixture-empty', 'Dir::Etc::main': 'fixture-empty.conf',
+         'Dir::Etc::sourcelist': 'fixture-sources.list', 'Dir::Etc::sourceparts': 'fixture-empty',
+         'Dir::State::status': 'fixture-dpkg/status', 'Dir::State::lists': 'fixture-lists',
+         'Dir::Cache': 'fixture-cache'}
+(root / 'fixture-apt.conf').write_text(''.join('%s "%s";\n' % (key, root / value)
+                                             for key, value in paths.items()) +
+    'Dir::Cache::pkgcache "";\nDir::Cache::srcpkgcache "";\nDebug::NoLocking "true";\n')
+PY
   PATH="${BIN}:$PATH"
   export DPKG_LOG
   PHASE2_PREREQ_ARTIFACT="$tar"
@@ -149,7 +145,7 @@ run_case() {
   PHASE2_PREREQ_MANIFEST="${art_dir}/phase2-ubuntu-prerequisites.manifest.json"
   # shellcheck source=/dev/null
   source "$PREREQ_LIB"
-  dp2_validate_apt_dependency_graph() { return 0; }
+  dp2_legacy_product_transition_status_path() { printf '%s\n' "$PREREQ_TEST_DB/status"; }
   dp2_install_phase2_ubuntu_prerequisites
   echo RC=$?
 }
@@ -214,7 +210,8 @@ echo "$OUT" | grep -q 'PHASE2_PREREQ_VERSION_CONFLICT package=foo installed=3.0 
   && pass "D3 newer installed version fail-closes (no silent skip/downgrade)" \
   || fail "D3: ${OUT} dpkg=$(cat "$DPKG_LOG")"
 
-# D4. Versioned dependency would be unsatisfied by installed version
+# D4. Older foo must be installed; its selected version's versioned bar
+# dependency is satisfied by the fixture inventory and checked by real APT.
 D4="${WORKDIR}/d4"
 pack_foo "$D4" 2.1 "bar (>= 2.0)"
 write_yes_contract "${D4}/phase2-ubuntu-prerequisites.tar.gz" 1 >/dev/null
@@ -222,8 +219,8 @@ DPKG_LOG="${WORKDIR}/d4-dpkg.log"
 : >"$DPKG_LOG"
 set +e
 OUT="$(
-  INSTALLED_VERSION=1.5
-  export INSTALLED_VERSION
+  INSTALLED_VERSIONS='foo=1.5 bar=2.0'
+  export INSTALLED_VERSIONS
   run_case "$D4"
 )"
 set -e

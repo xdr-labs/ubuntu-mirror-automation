@@ -259,6 +259,59 @@ target packages fully installed and a fresh, unfiltered dpkg/APT check after
 UVP replacement, before system preparation or services. Lifecycle completion
 checks the actual package state again after the vendor exits.
 
+The Ubuntu prerequisite installer validates its complete planned transaction
+before the first `dpkg -i`. It projects the selected packages into a private
+copy of the current dpkg status and asks APT to check every retained dependency,
+including installed packages that depend on those selected packages. All
+install groups and files must be valid before execution, and the installed
+status and planned files must still match the validated snapshot. The existing
+selected-version policy remains in force; package presence alone does not prove
+that an older version satisfies the vendor requirements. A failed transaction
+check leaves package installation unstarted. Actual post-install checks remain
+mandatory.
+
+#### Recovery from the October 2026 OpenSSL prerequisite conflict
+
+The affected run upgraded `libssl3t64` and `openssl` from
+`3.0.13-0ubuntu3.6` to `3.0.13-0ubuntu3.15`, while installed `libssl-dev`
+still required the old runtime exactly. Updating the helper prevents a new
+partial transaction; it does not repair packages already changed by that run.
+Do not restart bringup or resume DP services until the dependency conflict is
+resolved.
+
+For this exact state, the current prerequisite helper has an explicit operator
+recovery entry point. It accepts only the verified Ubuntu amd64
+`libssl-dev_3.0.13-0ubuntu3.15_amd64.deb`, checks the proposed replacement
+against the DP's complete installed graph, and installs that single package
+only when the operator selects `--repair-libssl-dev`. It performs no generic
+APT repair, product removal or runtime downgrade. Normal staging and bringup
+never invoke this recovery entry point automatically.
+
+Obtain the current helper from the verified client generation. The exact
+recovery package is available from
+[Ubuntu's 2026-09-19 snapshot](https://snapshot.ubuntu.com/ubuntu/20260919T000000Z/pool/main/o/openssl/libssl-dev_3.0.13-0ubuntu3.15_amd64.deb).
+Its SHA256 is
+`cefc6371d90d953a4cbb35d72d871f057e4b961a3107186f67fe96a88040cdb8`.
+This digest was checked through the Ubuntu archive key, signed snapshot
+InRelease, Packages index and downloaded package; the helper also enforces it.
+For an offline DP, transfer these verified files from the connected mirror or
+management host without modifying the sealed Phase 2 artifacts.
+
+```bash
+# Read-only: validate the exact package and proposed dependency graph.
+sudo bash ./dp-phase2-ubuntu-prerequisites.sh --check-libssl-dev ./libssl-dev_3.0.13-0ubuntu3.15_amd64.deb
+# Explicit operator action: repeat validation and install only that package.
+sudo bash ./dp-phase2-ubuntu-prerequisites.sh --repair-libssl-dev ./libssl-dev_3.0.13-0ubuntu3.15_amd64.deb
+```
+
+Recovery success concerns this prerequisite conflict only. The old product's
+known Python 2 dependencies may still be explicitly deferred until vendor
+replacement. After recovery, rerun the newly generated staging command, require
+staging/readiness PASS, and run the separate bringup command. Full upgrade
+completion still requires the normal product and cluster checks.
+
+#### Installing updated helpers
+
 To deploy this helper-only correction, update the mirror checkout and run
 `sudo ./install.sh` while DP downloads are inactive, then Menu 3 → 4 → 7.
 For an unchanged, valid Phase 2 Only preparation, Menu 2 is unnecessary and
