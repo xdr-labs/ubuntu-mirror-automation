@@ -189,6 +189,28 @@ dp2_prereq_deb_install_decision() {
     dp2_prereq_log ERROR "PHASE2_PREREQ_INSTALL=FAIL reason=deb_control_missing file=$(basename "$deb")"
     return 2
   fi
+  # The signed prerequisite archive carries the matching development
+  # companion, but only DPs that already installed libssl-dev need it.
+  # A missing/deinstalled optional development package must stay absent.
+  if [[ "$pkg" == libssl-dev ]]; then
+    local pkg_status="" query_rc=0
+    if pkg_status="$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null)"; then
+      :
+    else
+      query_rc=$?
+    fi
+    if [[ "$query_rc" -eq 1 && -z "$pkg_status" ]] \
+        || [[ "$query_rc" -eq 0 && ( "$pkg_status" == "deinstall ok config-files" \
+          || "$pkg_status" == "purge ok not-installed" \
+          || "$pkg_status" == "deinstall ok not-installed" ) ]]; then
+      dp2_prereq_log INFO "PHASE2_PREREQ_OPTIONAL=SKIP package=libssl-dev reason=not_installed"
+      return 0
+    fi
+    if [[ "$query_rc" -ne 0 || "$pkg_status" != "install ok installed" ]]; then
+      dp2_prereq_log ERROR "PHASE2_PREREQ_OPTIONAL=FAIL package=libssl-dev reason=invalid_status"
+      return 2
+    fi
+  fi
   if ! dp2_prereq_package_installed "$pkg"; then
     dp2_prereq_log INFO "PHASE2_PREREQ_INSTALL_NEEDED package=${pkg} version=${ver} arch=${arch} reason=not_installed"
     return 1
@@ -365,6 +387,7 @@ def create(args):
     artifacts = {}
     packages = set()
     needs_install = {}
+    skipped_optional = set()
     for name in names:
         path = extract / 'debs' / name
         if not regular(path):
@@ -419,10 +442,26 @@ def create(args):
                                 'purge ok not-installed',
                                 'deinstall ok not-installed'):
                 fail('selected_package_state')
+        # Optional host companion: do not introduce libssl-dev on hosts
+        # without it. The same decision is enforced by the shell before
+        # the plan is sealed; all artifact identities are still checked.
+        if package == 'libssl-dev' and (
+                current is None or current.get('status', '') in (
+                    'deinstall ok config-files', 'purge ok not-installed',
+                    'deinstall ok not-installed')):
+            needed = False
+            skipped_optional.add(name)
         needs_install[name] = needed
         artifacts[name] = dict(package=package, version=version,
                                architecture=arch, sha256=before,
                                control=control_raw)
+    # A compound SCC must never cause an absent optional companion to be
+    # installed just because another member needs installation.
+    for group in groups:
+        if any(needs_install[n] for n in group) and len(group) > 1:
+            for n in group:
+                if n in skipped_optional:
+                    fail('optional_companion_scc_conflict')
     selected = [group for group in groups if any(needs_install[n] for n in group)]
     # The shell has already checked every SCC. A database/query disagreement
     # must stop the run, never change the decision silently.

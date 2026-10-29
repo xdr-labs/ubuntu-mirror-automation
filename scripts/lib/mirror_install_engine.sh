@@ -1468,6 +1468,33 @@ engine_phase2_prereq_reuse_verified() {
 }
 
 
+# The 2026-10-29 companion policy corrects an already-sealed prerequisite
+# that contained libssl3t64 .15 but omitted its reverse-dependency companion.
+# This predicate is only used AFTER the existing sealed release is verified.
+# Do not republish any other sealed release merely because code changed.
+engine_phase2_ssl_companion_refresh_required() {
+  local ver="${TARGET_DP_VERSION:-${PHASE2_TARGET_VERSION:-6.6.0}}"
+  local manifest="${MM_DP_PHASE2_ROOT}/${ver}/extras/phase2-ubuntu-prerequisites.manifest.json"
+  [[ -f "$manifest" && ! -L "$manifest" ]] || return 1
+  python3 - "$manifest" <<'PY_SSL_COMPANION_REFRESH'
+import json
+import sys
+try:
+    with open(sys.argv[1], encoding='utf-8') as fh:
+        data = json.load(fh)
+    rows = data['packages']
+    packages = {row['package']: row for row in rows}
+    runtime = packages.get('libssl3t64')
+    if (runtime and runtime.get('version') == '3.0.13-0ubuntu3.15'
+            and 'libssl-dev' not in packages):
+        raise SystemExit(0)
+except (OSError, UnicodeError, KeyError, TypeError, ValueError):
+    pass
+raise SystemExit(1)
+PY_SSL_COMPANION_REFRESH
+}
+
+
 engine_prepare_phase2_ubuntu_prerequisites() {
   local script="${MM_PROJECT_ROOT}/scripts/prepare-phase2-ubuntu-prerequisites.sh"
   local work="${1:-}"
@@ -4389,8 +4416,17 @@ engine_download_and_prepare() {
   if [[ "${PHASE2_BUNDLE_ACTION}" == "REUSE" ]]; then
     engine_mark_phase2_reused "$TARGET_DP_VERSION"
     if engine_phase2_prereq_reuse_verified; then
-      mm_info "PHASE2_PREREQ_ACTION=REUSE_VERIFIED"
-      mm_info "VALIDATED_RELEASE_PREREQ_IMMUTABLE=YES"
+      if engine_phase2_ssl_companion_refresh_required; then
+        # Intentional one-time companion repair. The prior seal must be
+        # fully verified before modifying extras and release.env together.
+        # Keep the 29.9GB vendor bundle and its SHA unchanged.
+        mm_info "PHASE2_PREREQ_ACTION=REFRESH_SSL_COMPANION_VERIFIED"
+        engine_prepare_phase2_ubuntu_prerequisites
+        mm_info "PHASE2_PREREQ_SSL_COMPANION_REFRESH=PASS heavy_bundle_rebuilt=NO"
+      else
+        mm_info "PHASE2_PREREQ_ACTION=REUSE_VERIFIED"
+        mm_info "VALIDATED_RELEASE_PREREQ_IMMUTABLE=YES"
+      fi
       if ! engine_phase2_release_sealed "$TARGET_DP_VERSION"; then
         mm_info "PHASE2_RELEASE_SEAL_UPGRADE=START action=metadata_only"
         engine_record_phase2_prereq_release_identity \

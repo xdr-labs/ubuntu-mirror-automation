@@ -407,6 +407,162 @@ class Phase2ClosureIncidentTests(unittest.TestCase):
             self.assertNotIn('url', rec)
 
 
+class SslCompanionBuildTests(unittest.TestCase):
+    """Existing libssl-dev must not be stranded by a selected SSL runtime."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix='phase2-ssl-companion.')
+        self.ubuntu = os.path.join(self.tmp, 'ubuntu')
+        self.acps = os.path.join(self.tmp, 'py3-apt-packages')
+        os.makedirs(self.acps)
+        deb = os.path.join(self.acps, 'python3-ssl-fixture_1_all.deb')
+        write_tiny_deb(deb, 'python3-ssl-fixture', depends='libssl3t64 (>= 3.0.13)')
+        self.dest = os.path.join(self.tmp, 'extras')
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def index(self, companion=True, wrong_version=False, bad_dependency=False):
+        ssl_version = '3.0.13-0ubuntu3.15'
+        rows = [indexed_deb(
+            self.ubuntu, 'libssl3t64', version=ssl_version,
+            component='main', architecture='amd64')]
+        if companion:
+            rows.append(indexed_deb(
+                self.ubuntu, 'libssl-dev',
+                version='3.0.13-0ubuntu3.6' if wrong_version else ssl_version,
+                depends=('libssl3t64 (= 3.0.13-0ubuntu3.6)' if bad_dependency
+                         else 'libssl3t64 (= ' + ssl_version + ')'),
+                component='main', architecture='amd64'))
+        write_packages_index(self.ubuntu, 'noble-updates', 'main', rows)
+
+    def test_matching_companion_is_shipped_and_ordered(self):
+        self.index()
+        rc = p2p.run_build(build_args(source=self.acps, ubuntu_root=self.ubuntu,
+                                      dest=self.dest))
+        self.assertEqual(rc, 0)
+        with open(os.path.join(self.dest, p2p.MANIFEST_NAME)) as stream:
+            manifest = json.load(stream)
+        self.assertEqual([r['package'] for r in manifest['packages']],
+                         ['libssl-dev', 'libssl3t64'])
+        order = manifest['install_order']
+        self.assertLess(order.index('libssl3t64'), order.index('libssl-dev'))
+        with tarfile.open(os.path.join(self.dest, p2p.ARTIFACT_NAME)) as bundle:
+            self.assertTrue(any('libssl-dev_3.0.13-0ubuntu3.15_amd64.deb' in n
+                                for n in bundle.getnames()))
+
+    def test_missing_or_wrong_companion_fails_closed(self):
+        for opts in ({'companion': False}, {'wrong_version': True},
+                     {'bad_dependency': True}):
+            with self.subTest(opts=opts):
+                self.index(**opts)
+                rc = p2p.run_build(build_args(source=self.acps, ubuntu_root=self.ubuntu,
+                                              dest=self.dest))
+                self.assertNotEqual(rc, 0)
+                self.assertFalse(os.path.exists(os.path.join(
+                    self.dest, p2p.ARTIFACT_NAME)))
+
+    def test_authoritative_companion_is_reused_after_root_resolution(self):
+        # Regression for PR #126 review: resolution uses a cloned candidate
+        # map. The companion lookup later receives the original selective
+        # map after the authoritative cache has already been fetched once.
+        version = '3.0.13-0ubuntu3.16'  # deliberately outside the .15 snapshot pin
+        local = indexed_deb(
+            self.ubuntu, 'libssl3t64', version='3.0.13-0ubuntu3.6',
+            component='main', architecture='amd64')
+        write_packages_index(self.ubuntu, 'noble-updates', 'main', [local])
+        authority = os.path.join(self.tmp, 'authoritative')
+        runtime = indexed_deb(
+            authority, 'libssl3t64', version=version,
+            component='main', architecture='amd64')
+        companion = indexed_deb(
+            authority, 'libssl-dev', version=version,
+            depends='libssl3t64 (= ' + version + ')',
+            component='main', architecture='amd64')
+        write_packages_index(authority, 'noble-updates', 'main',
+                             [runtime, companion])
+        for rec in (runtime, companion):
+            source = os.path.join(authority, rec['Filename'])
+            target = os.path.join(self.ubuntu, rec['Filename'])
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            shutil.copy2(source, target)
+        root_deb = os.path.join(self.acps, 'python3-ssl-fixture_1_all.deb')
+        os.unlink(root_deb)
+        write_tiny_deb(
+            root_deb, 'python3-ssl-fixture',
+            depends='libssl3t64 (>= ' + version + ')')
+        rc = p2p.run_build(build_args(
+            source=self.acps, ubuntu_root=self.ubuntu, dest=self.dest,
+            authoritative_root=authority, skip_authoritative_fetch=True))
+        self.assertEqual(rc, 0, 'authoritative SSL companion not reused')
+        with open(os.path.join(self.dest, p2p.MANIFEST_NAME)) as stream:
+            manifest = json.load(stream)
+        rows = {r['package']: r for r in manifest['packages']}
+        self.assertEqual(rows['libssl3t64']['version'], version)
+        self.assertEqual(rows['libssl-dev']['version'], version)
+        order = manifest['install_order']
+        self.assertLess(order.index('libssl3t64'),
+                        order.index('libssl-dev'))
+
+    def test_signed_snapshot_fallback_is_pinned_and_narrow(self):
+        source = p2p.snapshot_ssl_development_companion('3.0.13-0ubuntu3.15')
+        self.assertEqual(source['SHA256'], p2p.SSL_DEV_SNAPSHOT_SHA256)
+        self.assertEqual(source['Depends'],
+                         'libssl3t64 (= 3.0.13-0ubuntu3.15)')
+        self.assertEqual(source['Size'], '2408494')
+        self.assertIsNone(p2p.snapshot_ssl_development_companion('3.0.13-0ubuntu3.16'))
+
+    def test_snapshot_fallback_cannot_publish_without_verified_deb(self):
+        self.index(companion=False)
+        rc = p2p.run_build(build_args(source=self.acps, ubuntu_root=self.ubuntu,
+                                      dest=self.dest, skip_acquire=True))
+        self.assertNotEqual(rc, 0)
+        self.assertFalse(os.path.isfile(os.path.join(self.dest, p2p.ARTIFACT_NAME)))
+
+    def test_snapshot_acquisition_uses_exact_verifiable_url(self):
+        pin = p2p.snapshot_ssl_development_companion('3.0.13-0ubuntu3.15')
+        self.assertIsNotNone(pin)
+        row = p2p.package_record('libssl-dev', pin)
+        row['candidate'] = 'noble-updates/main'
+        row['deb_path'] = ''
+        collected = {'packages': [row], 'missing_deb': ['libssl-dev']}
+        captured = []
+        original = p2p.sm.acquire_file
+
+        def recording_acquire(**kwargs):
+            captured.append(kwargs)
+            raise RuntimeError('no network in regression fixture')
+
+        p2p.sm.acquire_file = recording_acquire
+        try:
+            result = p2p.acquire_missing_debs(
+                collected, self.ubuntu, archive_base='http://untrusted.invalid/ubuntu')
+        finally:
+            p2p.sm.acquire_file = original
+        self.assertIn('libssl-dev', result['failed'])
+        self.assertEqual(len(captured), 1)
+        self.assertEqual(captured[0]['allow_download_url'],
+                         p2p.SSL_DEV_SNAPSHOT_URL)
+        self.assertEqual(captured[0]['expected_sha256'],
+                         p2p.SSL_DEV_SNAPSHOT_SHA256)
+        self.assertEqual(captured[0]['expected_size'], 2408494)
+
+    def test_no_ssl_runtime_does_not_add_companion(self):
+        write_packages_index(self.ubuntu, 'noble-updates', 'main', [
+            indexed_deb(self.ubuntu, 'unused', version='1', component='main'),
+        ])
+        # No libssl3t64 dependency in the root.
+        deb = os.path.join(self.acps, 'python3-ssl-fixture_1_all.deb')
+        os.remove(deb)
+        write_tiny_deb(deb, 'python3-ssl-fixture')
+        rc = p2p.run_build(build_args(source=self.acps, ubuntu_root=self.ubuntu,
+                                      dest=self.dest))
+        self.assertEqual(rc, 0)
+        with open(os.path.join(self.dest, p2p.MANIFEST_NAME)) as stream:
+            self.assertNotIn('libssl-dev', [r['package']
+                                           for r in json.load(stream)['packages']])
+
+
 class TransactionSafetyTests(unittest.TestCase):
     def test_rejects_protected_removals(self):
         sim = (
