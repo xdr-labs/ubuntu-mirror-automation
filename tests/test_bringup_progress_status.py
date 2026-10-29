@@ -206,6 +206,13 @@ class ProgressStatusTests(unittest.TestCase):
                 self.assertNotIn("CLUSTER_VALIDATION=PASS\n", out)
                 self.assertEqual(before, self.cluster.read_bytes())
 
+    def test_failed_confirmation_remains_visible_when_runtime_is_unhealthy(self):
+        self.write_receipts(cluster="FAIL")
+        self.env["TEST_NATIVE_STATUS"] = "DataProcessor(DL-master)> System paused. Type resume"
+        out = self.wrapper("--validate-cluster")
+        self.assertIn("CLUSTER_VALIDATION=FAIL\n", out)
+        self.assertIn("DP_UPGRADE_COMPLETE=NO\n", out)
+
     def test_terminal_monitor_uses_receipts_without_overwriting_them(self):
         out = self.bash(
             f'source "{ROOT}/client/lib/dp-phase2-post-bringup-migration.sh"\n'
@@ -264,4 +271,3 @@ p2b_monitor_loop current
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
-

@@ -420,7 +420,8 @@ p2b_run_cluster_validation_surface() {
     cluster_result="${CLUSTER_VALIDATION:-PENDING}"
   fi
   # A past confirmation must not mask an unhealthy/missing live status.
-  if ! grep -qx 'CLUSTER_RUNTIME_READINESS=READY' <<<"$status_signals"; then
+  if [[ "$cluster_result" == PASS ]] \
+    && ! grep -qx 'CLUSTER_RUNTIME_READINESS=READY' <<<"$status_signals"; then
     cluster_result=PENDING
   fi
   if declare -F p2b_emit_completion_semantics >/dev/null 2>&1; then
