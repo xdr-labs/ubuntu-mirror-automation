@@ -546,99 +546,170 @@ p2b_observability_log_stream() {
   cat "$logf"
 }
 
+# Observability only: these fields never authorize completion or remote actions.
+# Remote vendor lines are prefixed with [worker-ip]; an unprefixed line is local.
+p2b_log_target() {
+  P2B_LOG_TARGET=LOCAL
+  if [[ "$1" =~ \[([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\] ]]; then
+    P2B_LOG_TARGET="${BASH_REMATCH[1]}"
+  fi
+}
+
 p2b_parse_image_import_progress() {
   local logf="${1:-${PHASE2_BRINGUP_LOG_DEFAULT}}"
-  IMAGE_IMPORT_STATE="UNKNOWN"
+  IMAGE_IMPORT_STATE=UNKNOWN
   IMAGE_IMPORT_PROGRESS=""
   IMAGE_IMPORT_NAMESPACE=""
-  if [[ ! -f "$logf" ]]; then
-    return 1
-  fi
-  # Read last IMAGE_IMPORT_* records — do not invent percentages.
-  local line last_prog="" last_ns="" started=0 scoped_log="" progress_token=""
+  IMAGE_IMPORT_TARGET=LOCAL
+  IMAGE_IMPORT_RESULTS=""
+  [[ -f "$logf" ]] || return 1
+  local line scoped_log ns="" key result rc progress_token
+  local -A results=()
+  local -a order=()
   scoped_log="$(mktemp)"
   if ! p2b_observability_log_stream "$logf" >"$scoped_log"; then
     rm -f "$scoped_log"
     return 2
   fi
   while IFS= read -r line || [[ -n "$line" ]]; do
-    if [[ "$line" =~ IMAGE_IMPORT_START ]]; then
-      started=1
-      IMAGE_IMPORT_STATE="RUNNING"
-      # A new namespace/import is a new progress domain. Never carry a prior
-      # namespace's percentage forward while the new import is still UNKNOWN.
-      last_prog=""
-      if [[ "$line" =~ namespace=([^[:space:]]+) ]]; then
-        last_ns="${BASH_REMATCH[1]}"
-      fi
+    [[ "$line" =~ (^|[[:space:]])IMAGE_IMPORT_(START|PROGRESS|END|COMPLETE|FAILED)([[:space:]]|$) ]] || continue
+    local event="${BASH_REMATCH[2]}"
+    p2b_log_target "$line"
+    if [[ "$line" =~ namespace=([^[:space:]]+) ]]; then
+      ns="${BASH_REMATCH[1]}"
+    else
+      ns="${IMAGE_IMPORT_NAMESPACE:-UNKNOWN}"
     fi
-    if [[ "$line" =~ IMAGE_IMPORT_PROGRESS ]]; then
-      started=1
-      IMAGE_IMPORT_STATE="RUNNING"
-      # Parse only the explicit progress= field. A generic "NN%" fallback can
-      # accidentally consume cpu=37.5% when progress=UNKNOWN and fabricate 5%.
-      if [[ "$line" =~ progress=([^[:space:]]+) ]]; then
-        progress_token="${BASH_REMATCH[1]}"
-        if [[ "$progress_token" =~ ^[0-9]+%?$ ]]; then
-          last_prog="$progress_token"
-        else
-          last_prog=""
+    # Never render arbitrary log text as a machine-readable namespace.
+    [[ "$ns" =~ ^[A-Za-z0-9_.-]+$ ]] || ns=UNKNOWN
+    key="${P2B_LOG_TARGET}/${ns}"
+    if [[ -z "${results[$key]+present}" ]]; then order+=("$key"); fi
+    if [[ "$IMAGE_IMPORT_NAMESPACE" != "$ns" || "$IMAGE_IMPORT_TARGET" != "$P2B_LOG_TARGET" ]]; then
+      IMAGE_IMPORT_PROGRESS=""
+    fi
+    IMAGE_IMPORT_NAMESPACE="$ns"
+    IMAGE_IMPORT_TARGET="$P2B_LOG_TARGET"
+    case "$event" in
+      START|PROGRESS)
+        IMAGE_IMPORT_STATE=RUNNING
+        result=RUNNING; rc=UNKNOWN
+        [[ "$event" == START ]] && IMAGE_IMPORT_PROGRESS=""
+        if [[ "$event" == PROGRESS ]]; then
+          IMAGE_IMPORT_PROGRESS=""
+          if [[ "$line" =~ progress=([^[:space:]]+) ]]; then
+            progress_token="${BASH_REMATCH[1]}"
+            # No generic percent matching: cpu=37.5% is not import progress.
+            if [[ "$progress_token" =~ ^[0-9]+%?$ ]]; then
+              IMAGE_IMPORT_PROGRESS="$progress_token"
+            fi
+          fi
         fi
-      fi
-      if [[ "$line" =~ namespace=([^[:space:]]+) ]]; then
-        last_ns="${BASH_REMATCH[1]}"
-      fi
-    fi
-    if [[ "$line" =~ IMAGE_IMPORT_END|IMAGE_IMPORT_COMPLETE ]]; then
-      IMAGE_IMPORT_STATE="DONE"
-      # The final in-flight percentage is not a completed import's progress.
-      # Never replay an old 81% (or 99%) while unrelated bringup work runs.
-      last_prog=""
-      if [[ "$line" =~ namespace=([^[:space:]]+) ]]; then
-        last_ns="${BASH_REMATCH[1]}"
-      fi
-    fi
+        ;;
+      END|COMPLETE|FAILED)
+        IMAGE_IMPORT_PROGRESS=""
+        rc=UNKNOWN; result=UNKNOWN; IMAGE_IMPORT_STATE=UNKNOWN
+        if [[ "$line" =~ rc=([0-9]+)($|[[:space:]]) ]]; then rc="${BASH_REMATCH[1]}"; fi
+        if [[ "$event" == FAILED || ( "$rc" != UNKNOWN && "$rc" != 0 ) ]]; then
+          result=FAIL; IMAGE_IMPORT_STATE=FAILED
+        elif [[ "$event" == COMPLETE || "$rc" == 0 ]]; then
+          result=PASS; rc=0; IMAGE_IMPORT_STATE=DONE
+        fi
+        ;;
+    esac
+    results[$key]="IMAGE_IMPORT_RESULT target=${P2B_LOG_TARGET} namespace=${ns} result=${result} exit_code=${rc}"
   done <"$scoped_log"
   rm -f "$scoped_log"
-  IMAGE_IMPORT_PROGRESS="$last_prog"
-  IMAGE_IMPORT_NAMESPACE="$last_ns"
-  if [[ "$started" -eq 1 && "$IMAGE_IMPORT_STATE" == "UNKNOWN" ]]; then
-    IMAGE_IMPORT_STATE="RUNNING"
-  fi
+  for key in "${order[@]}"; do
+    IMAGE_IMPORT_RESULTS+="${results[$key]}"$'\n'
+  done
   return 0
 }
 
 p2b_current_phase_from_log() {
   local logf="${1:-${PHASE2_BRINGUP_LOG_DEFAULT}}"
-  CURRENT_PHASE="UNKNOWN"
-  CURRENT_OPERATION="UNKNOWN"
+  CURRENT_PHASE=UNKNOWN
+  CURRENT_OPERATION=UNKNOWN
+  CURRENT_TARGET=LOCAL
   [[ -f "$logf" ]] || return 1
-  local line scoped_log=""
+  local line phase event scoped_log=""
   scoped_log="$(mktemp)"
   if ! p2b_observability_log_stream "$logf" >"$scoped_log"; then
     rm -f "$scoped_log"
     return 2
   fi
-  # Prefer last IMAGE_IMPORT markers; else last conspicuous phase line.
   while IFS= read -r line || [[ -n "$line" ]]; do
-    if [[ "$line" =~ IMAGE_IMPORT_START ]]; then
-      CURRENT_PHASE="IMAGE_IMPORT"
-      CURRENT_OPERATION="image_import"
-    elif [[ "$line" =~ IMAGE_IMPORT_PROGRESS ]]; then
-      CURRENT_PHASE="IMAGE_IMPORT"
-      CURRENT_OPERATION="image_import"
-    elif [[ "$line" =~ IMAGE_IMPORT_END|IMAGE_IMPORT_COMPLETE ]]; then
-      CURRENT_PHASE="IMAGE_IMPORT_COMPLETE"
-      CURRENT_OPERATION="image_import_complete"
+    p2b_log_target "$line"
+    if [[ "$line" =~ PHASE:[[:space:]]+(.+) ]]; then
+      phase="${BASH_REMATCH[1]}"
+      CURRENT_TARGET="$P2B_LOG_TARGET"
+      case "$phase" in
+        Pre-flight*|Pre-Upgrade*) CURRENT_PHASE=PREFLIGHT; CURRENT_OPERATION=preflight ;;
+        Download*) CURRENT_PHASE=ARTIFACTS; CURRENT_OPERATION=download_artifacts ;;
+        Install\ Python*) CURRENT_PHASE=PYTHON; CURRENT_OPERATION=install_python3 ;;
+        Install\ pip*) CURRENT_PHASE=PYTHON; CURRENT_OPERATION=install_python_packages ;;
+        Install\ Docker*) CURRENT_PHASE=DOCKER; CURRENT_OPERATION=install_docker ;;
+        Load\ Local\ Image*) CURRENT_PHASE=LOAD_IMAGES; CURRENT_OPERATION=load_images ;;
+        Install\ Kubernetes*) CURRENT_PHASE=KUBERNETES; CURRENT_OPERATION=install_kubernetes ;;
+        Install\ Helm*) CURRENT_PHASE=HELM; CURRENT_OPERATION=install_helm ;;
+        Install\ UVP*) CURRENT_PHASE=UVP; CURRENT_OPERATION=install_uvp ;;
+        System\ Preparation*) CURRENT_PHASE=SYSTEM_PREPARATION; CURRENT_OPERATION=prepare_system ;;
+        Start\ Aella*) CURRENT_PHASE=SERVICES; CURRENT_OPERATION=start_services ;;
+        Initialize\ Kubernetes*) CURRENT_PHASE=KUBERNETES; CURRENT_OPERATION=initialize_master ;;
+        Deploy\ K8s*) CURRENT_PHASE=KUBERNETES; CURRENT_OPERATION=deploy_services ;;
+        Install\ elasticdump*) CURRENT_PHASE=ELASTICDUMP; CURRENT_OPERATION=install_elasticdump ;;
+        Comprehensive\ Validation*) CURRENT_PHASE=VALIDATION; CURRENT_OPERATION=validate_host ;;
+        Orchestrate\ Worker*) CURRENT_PHASE=WORKER_DEPLOYMENT; CURRENT_OPERATION=orchestrate_workers ;;
+        Join\ K8s*) CURRENT_PHASE=WORKER_JOIN; CURRENT_OPERATION=join_cluster ;;
+        Wait\ for\ aella_cli*) CURRENT_PHASE=SERVICE_READINESS; CURRENT_OPERATION=wait_for_services ;;
+        *) CURRENT_PHASE=VENDOR_PHASE; CURRENT_OPERATION=unmapped_vendor_phase ;;
+      esac
+    elif [[ "$line" =~ Deploying\ worker:[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+) ]]; then
+      CURRENT_TARGET="${BASH_REMATCH[1]}"
+      CURRENT_PHASE=WORKER_DEPLOYMENT; CURRENT_OPERATION=deploy_worker
+    elif [[ "$line" =~ Waiting\ for\ master\ token\ API ]]; then
+      CURRENT_TARGET="$P2B_LOG_TARGET"
+      CURRENT_PHASE=MASTER_API; CURRENT_OPERATION=wait_for_master_api
+    elif [[ "$line" =~ (^|[[:space:]])IMAGE_IMPORT_(START|PROGRESS|END|COMPLETE|FAILED)([[:space:]]|$) ]]; then
+      event="${BASH_REMATCH[2]}"
+      CURRENT_TARGET="$P2B_LOG_TARGET"
+      if [[ "$event" == FAILED ]] || { [[ "$line" =~ rc=([0-9]+)($|[[:space:]]) ]] && [[ "${BASH_REMATCH[1]}" != 0 ]]; }; then
+        CURRENT_PHASE=IMAGE_IMPORT_FAILED; CURRENT_OPERATION=image_import_failed
+      else
+        case "$event" in
+          START|PROGRESS) CURRENT_PHASE=IMAGE_IMPORT; CURRENT_OPERATION=image_import ;;
+          COMPLETE) CURRENT_PHASE=IMAGE_IMPORT_COMPLETE; CURRENT_OPERATION=image_import_complete ;;
+          END) CURRENT_PHASE=POST_IMAGE_IMPORT; CURRENT_OPERATION=image_import_end ;;
+        esac
+      fi
     elif [[ "$line" =~ Installing\ Docker|Install\ Docker ]]; then
-      CURRENT_PHASE="DOCKER"
-      CURRENT_OPERATION="install_docker"
-    elif [[ "$line" =~ load_local_images|Loading\ images ]]; then
-      CURRENT_PHASE="LOAD_IMAGES"
-      CURRENT_OPERATION="load_images"
+      CURRENT_TARGET="$P2B_LOG_TARGET"
+      CURRENT_PHASE=DOCKER; CURRENT_OPERATION=install_docker
+    elif [[ "$line" =~ ^[[:space:]]*(\[[^]]*\][[:space:]]*)*(load_local_images|Loading[[:space:]]images)([[:space:]]|$) ]]; then
+      CURRENT_TARGET="$P2B_LOG_TARGET"
+      CURRENT_PHASE=LOAD_IMAGES; CURRENT_OPERATION=load_images
     fi
   done <"$scoped_log"
   rm -f "$scoped_log"
+}
+
+# Read process names only (never arguments, credentials or tokens). ps failure
+# is observational UNKNOWN, never a bringup failure or a reason to kill it.
+p2b_child_process_names() {
+  local pid="${1:-}"
+  [[ "$pid" =~ ^[0-9]+$ ]] || { printf UNKNOWN; return 0; }
+  ps -eo pid=,ppid=,comm= 2>/dev/null | awk -v root="$pid" '
+    { parent[$1]=$2; name[$1]=$3 }
+    END {
+      for (p in parent) {
+        q=p
+        for (depth=0; depth<32 && q in parent && q!=root; depth++) q=parent[q]
+        if (q==root && p!=root && name[p] !~ /^(ps|awk)$/ && count<6) {
+          gsub(/[^a-zA-Z0-9_.-]/, "_", name[p])
+          out=out (out ? "," : "") name[p]; count++
+        }
+      }
+      print out ? out : "UNKNOWN"
+    }' || printf 'UNKNOWN\n'
 }
 
 p2b_status_snapshot() {
@@ -805,6 +876,9 @@ BRINGUP_COMPLETION_SENTINEL=${BRINGUP_COMPLETION_SENTINEL}
 BRINGUP_EXIT_CODE=${BRINGUP_EXIT_CODE}
 CURRENT_PHASE=${CURRENT_PHASE:-UNKNOWN}
 CURRENT_OPERATION=${CURRENT_OPERATION:-UNKNOWN}
+CURRENT_TARGET=${CURRENT_TARGET:-LOCAL}
+BRINGUP_WORKER_SCOPE=LIFECYCLE_PROCESS
+DP_WORKER_READINESS=NOT_CHECKED
 IMAGE_IMPORT_STATE=${IMAGE_IMPORT_STATE:-UNKNOWN}
 IMAGE_IMPORT_PROGRESS=${IMAGE_IMPORT_PROGRESS:-}
 AELLA_CLI_AVAILABLE=${AELLA_CLI_AVAILABLE}
@@ -813,6 +887,7 @@ AELLA_CLI_READY=$([ "$do_not" = YES ] && echo NO || echo YES)
 DO_NOT_RUN_AELLA_CLI_YET=${do_not}
 BRINGUP_LOG=${BRINGUP_LOG}
 EOF
+  [[ -z "${IMAGE_IMPORT_RESULTS:-}" ]] || printf '%s' "$IMAGE_IMPORT_RESULTS"
   local bp=NO
   if [[ "$result" == "PASS" ]]; then bp=YES; fi
   if declare -F p2b_load_cluster_validation >/dev/null 2>&1; then
@@ -1274,6 +1349,8 @@ p2b_monitor_loop() {
   local run_id="$1"
   local d pid logf state start_epoch now elapsed last_log_age
   local monitor_stopped=0
+  local last_detail_key="" last_import_results="" phase_key="" phase_started=0
+  local detail_key new_phase_key phase_elapsed=0 log_activity children hint
   d="$(p2b_dir)"
   logf="$(p2b_read_file "${d}/log-path")"
   [[ -n "$logf" ]] || logf="${PHASE2_BRINGUP_LOG_DEFAULT}"
@@ -1309,6 +1386,11 @@ EOF
       last_log_age=$((now_e - mtime))
     fi
 
+    if [[ "${IMAGE_IMPORT_RESULTS:-}" != "$last_import_results" ]]; then
+      [[ -z "${IMAGE_IMPORT_RESULTS:-}" ]] || printf '%s' "$IMAGE_IMPORT_RESULTS"
+      last_import_results="${IMAGE_IMPORT_RESULTS:-}"
+    fi
+
     if p2b_current_run_completion_coherent; then
       # Verified completion — check CLI postcondition
       AELLA_CLI_AVAILABLE="NO"
@@ -1321,16 +1403,13 @@ BRINGUP_RESULT=PASS
 BRINGUP_STATE=COMPLETED
 BRINGUP_COMPLETION_SENTINEL=PASS
 BRINGUP_EXIT_CODE=0
-BRINGUP_PROCESS_SUCCESS=YES
-CLUSTER_VALIDATION=PENDING
-DP_UPGRADE_COMPLETE=NO
 AELLA_CLI_AVAILABLE=YES
 AELLA_CLI_PATH=${AELLA_CLI_PATH}
 AELLA_CLI_READY=YES
 DO_NOT_RUN_AELLA_CLI_YET=NO
 
 OPERATOR_POST_BRINGUP_SEQUENCE=START
-Bringup process completed successfully. This is NOT yet DP_UPGRADE_COMPLETE.
+Bringup process completed successfully. Completion below reflects current-run confirmations.
 
 1) Inspect status / detect pause (non-interactive):
      sudo bash ${_wrap} --validate-cluster
@@ -1362,8 +1441,13 @@ OPERATOR_POST_BRINGUP_SEQUENCE=END
 DP_RESUME_AUTOMATIC=NO
 CLUSTER_VALIDATION_AUTO_PASS=NO
 EOF
+        if declare -F p2b_load_cluster_validation >/dev/null 2>&1; then
+          p2b_load_cluster_validation || true
+        fi
         if declare -F p2b_emit_completion_semantics >/dev/null 2>&1; then
-          p2b_emit_completion_semantics YES PENDING
+          p2b_emit_completion_semantics YES "${CLUSTER_VALIDATION:-PENDING}"
+        else
+          printf '%s\n' BRINGUP_PROCESS_SUCCESS=YES CLUSTER_VALIDATION=PENDING DP_UPGRADE_COMPLETE=NO
         fi
         return 0
       fi
@@ -1424,21 +1508,31 @@ EOF
       return 1
     fi
 
-    # Still running
+    # Still running. Keep legacy worker= for consumers; identify its scope.
     local worker_flag="GONE"
     [[ "${BRINGUP_WORKER_ALIVE}" == "YES" && "${BRINGUP_PROCESS_IDENTITY_MATCH}" == "YES" ]] && worker_flag="ALIVE"
-    cat <<EOF
-BRINGUP_PROGRESS run_id=${run_id} state=RUNNING elapsed_seconds=${elapsed} worker=${worker_flag} last_log_age_seconds=${last_log_age} current_phase=${CURRENT_PHASE:-UNKNOWN} current_operation=${CURRENT_OPERATION:-UNKNOWN}
-BRINGUP_RESULT=IN_PROGRESS
-AELLA_CLI_AVAILABLE=NOT_CHECKED
-AELLA_CLI_READY=NO
-DO_NOT_RUN_AELLA_CLI_YET=YES
-EOF
-    if [[ "${IMAGE_IMPORT_STATE:-}" == "RUNNING" ]]; then
-      cat <<EOF
-IMAGE_IMPORT_PROGRESS namespace=${IMAGE_IMPORT_NAMESPACE:-UNKNOWN} progress=${IMAGE_IMPORT_PROGRESS:-UNKNOWN} process_alive=${worker_flag}
-IMAGE_IMPORT_STATE=${IMAGE_IMPORT_STATE:-RUNNING}
-EOF
+    now="$(date -u +%s)"
+    new_phase_key="${CURRENT_TARGET:-LOCAL}/${CURRENT_PHASE:-UNKNOWN}/${CURRENT_OPERATION:-UNKNOWN}"
+    if [[ "$phase_key" != "$new_phase_key" ]]; then
+      phase_key="$new_phase_key"; phase_started="$now"
+    fi
+    phase_elapsed=$((now - phase_started))
+    log_activity=UNKNOWN; hint=NONE
+    if [[ "$last_log_age" =~ ^[0-9]+$ ]]; then
+      log_activity=RECENT
+      if [[ "$last_log_age" -ge 300 ]]; then
+        log_activity=QUIET; hint=INSPECT_LOG_AND_CHILD_PROCESSES
+      fi
+    fi
+    children="$(p2b_child_process_names "$pid")"
+    printf '%s\n' "BRINGUP_PROGRESS run_id=${run_id} state=RUNNING elapsed_seconds=${elapsed} worker=${worker_flag} last_log_age_seconds=${last_log_age} current_phase=${CURRENT_PHASE:-UNKNOWN} current_operation=${CURRENT_OPERATION:-UNKNOWN} process_alive=${worker_flag} worker_scope=LIFECYCLE_PROCESS target=${CURRENT_TARGET:-LOCAL} dp_worker_readiness=NOT_CHECKED log_activity=${log_activity} phase_observed_seconds=${phase_elapsed} child_processes=${children} diagnostic_hint=${hint}"
+    detail_key="${new_phase_key}/${worker_flag}/${log_activity}/${IMAGE_IMPORT_STATE:-UNKNOWN}/${IMAGE_IMPORT_NAMESPACE:-}/${IMAGE_IMPORT_PROGRESS:-}"
+    if [[ "$detail_key" != "$last_detail_key" ]]; then
+      printf '%s\n' BRINGUP_RESULT=IN_PROGRESS AELLA_CLI_AVAILABLE=NOT_CHECKED AELLA_CLI_READY=NO DO_NOT_RUN_AELLA_CLI_YET=YES
+      if [[ "${IMAGE_IMPORT_STATE:-}" == RUNNING ]]; then
+        printf '%s\n' "IMAGE_IMPORT_PROGRESS namespace=${IMAGE_IMPORT_NAMESPACE:-UNKNOWN} progress=${IMAGE_IMPORT_PROGRESS:-UNKNOWN} process_alive=${worker_flag} target=${IMAGE_IMPORT_TARGET:-LOCAL}" IMAGE_IMPORT_STATE=RUNNING
+      fi
+      last_detail_key="$detail_key"
     fi
 
     sleep "${PHASE2_BRINGUP_MONITOR_SECONDS}"

@@ -264,6 +264,7 @@ p2b_analyze_aella_status_text() {
   echo "CLUSTER_SIGNAL_POD_COUNT_IS_HARD_GATE=NO"
 
   if [[ "$paused" == "YES" ]]; then
+    echo "CLUSTER_RUNTIME_READINESS=PAUSED"
     echo "CLUSTER_STATUS_SUMMARY=PAUSED"
     echo "OPERATOR_ACTION_REQUIRED=YES"
     echo "OPERATOR_NEXT_STEP=Run: sudo /usr/bin/aella_cli   then inside CLI: resume"
@@ -273,6 +274,7 @@ p2b_analyze_aella_status_text() {
   fi
 
   if [[ "$critical_fail" == "YES" ]]; then
+    echo "CLUSTER_RUNTIME_READINESS=NOT_READY"
     echo "CLUSTER_STATUS_SUMMARY=CRITICAL_SIGNAL"
     echo "CLUSTER_VALIDATION_RECORDABLE_PASS=NO"
     return 0
@@ -290,10 +292,12 @@ p2b_analyze_aella_status_text() {
   fi
 
   if [[ "$authoritative_ready" == "YES" ]]; then
+    echo "CLUSTER_RUNTIME_READINESS=READY"
     echo "CLUSTER_STATUS_SUMMARY=AUTHORITATIVE_SIGNALS_PRESENT"
     echo "CLUSTER_VALIDATION_RECORDABLE_PASS=OPERATOR_JUDGEMENT"
     echo "OPERATOR_NOTE=Pod count 'at least N expected' is informational; require nodes + host services + role-appropriate vendor readiness (License is valid on DL/AIO or System Ready on DA/DR)"
   else
+    echo "CLUSTER_RUNTIME_READINESS=NOT_READY"
     echo "CLUSTER_STATUS_SUMMARY=NOT_READY_OR_INCOMPLETE"
     echo "CLUSTER_VALIDATION_RECORDABLE_PASS=NO"
     echo "OPERATOR_NEXT_STEP=Inspect show status; if paused, resume; then re-run --validate-cluster"
@@ -336,7 +340,7 @@ p2b_run_cluster_validation_surface() {
   local kubectl_env=()
   local status_rc=0
   local status_text=""
-  local tmp_status=""
+  local tmp_status="" status_signals="" bringup_pass=NO cluster_result=PENDING
 
   echo "CLUSTER_VALIDATION_SURFACE=START"
   if [[ -z "$cli" ]] && declare -F p2b_discover_aella_cli >/dev/null 2>&1; then
@@ -372,11 +376,13 @@ p2b_run_cluster_validation_surface() {
         return "$status_rc"
       fi
     fi
-    p2b_analyze_aella_status_text "$status_text"
+    status_signals="$(p2b_analyze_aella_status_text "$status_text")"
+    printf '%s\n' "$status_signals"
   else
     echo "CLUSTER_CHECK=aella_cli_show_status"
     echo "AELLA_CLI_SHOW_STATUS=UNAVAILABLE"
     echo "AELLA_CLI_EXIT_REASON=CLI_MISSING"
+    echo "CLUSTER_RUNTIME_READINESS=UNKNOWN"
   fi
   if [[ -n "${DP_PHASE2_FAKE_K8S:-}" ]]; then
     :
@@ -402,10 +408,33 @@ p2b_run_cluster_validation_surface() {
     fi
   done
   echo "CLUSTER_VALIDATION_SURFACE=DONE"
-  echo "CLUSTER_VALIDATION=PENDING"
-  echo "DP_UPGRADE_COMPLETE=NO"
+  # Reflect existing current-run confirmations instead of hardcoding PENDING.
+  # Native readiness is displayed separately: observing health never records
+  # operator PASS, executes migration, or resumes a paused DP.
+  if declare -F p2b_status_snapshot >/dev/null 2>&1; then
+    p2b_status_snapshot
+    if p2b_current_run_completion_coherent && [[ "${AELLA_CLI_AVAILABLE:-NO}" == YES ]]; then
+      bringup_pass=YES
+    fi
+    p2b_load_cluster_validation || true
+    cluster_result="${CLUSTER_VALIDATION:-PENDING}"
+  fi
+  # A past confirmation must not mask an unhealthy/missing live status.
+  if ! grep -qx 'CLUSTER_RUNTIME_READINESS=READY' <<<"$status_signals"; then
+    cluster_result=PENDING
+  fi
+  if declare -F p2b_emit_completion_semantics >/dev/null 2>&1; then
+    p2b_emit_completion_semantics "$bringup_pass" "$cluster_result"
+  else
+    printf '%s\n' "CLUSTER_VALIDATION=${cluster_result}" DP_UPGRADE_COMPLETE=NO
+  fi
   p2b_emit_validate_cluster_operator_guidance
-  echo "NEXT_ACTION=Review signals above; record PASS with --record-cluster-validation PASS only when not paused and authoritative readiness looks healthy"
+  if [[ "$cluster_result" == PASS && "$bringup_pass" == YES \
+      && ( "${POST_BRINGUP_MIGRATION:-}" == PASS || "${POST_BRINGUP_MIGRATION:-}" == NOT_REQUIRED ) ]]; then
+    echo "NEXT_ACTION=Upgrade confirmations are complete for the current run"
+  else
+    echo "NEXT_ACTION=Review live readiness and current-run confirmations above; record outstanding validation/migration only after successful verification"
+  fi
   return 0
 }
 
