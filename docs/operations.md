@@ -310,6 +310,40 @@ replacement. After recovery, rerun the newly generated staging command, require
 staging/readiness PASS, and run the separate bringup command. Full upgrade
 completion still requires the normal product and cluster checks.
 
+#### Completing the sealed 6.6.0 SSL companion transaction
+
+On Ubuntu 24.04 DPs with 6.2.1 Python 2 products, Phase 2 Only may start
+with `libssl3t64 3.0.13-0ubuntu3.6` and `libssl-dev` of the same version.
+A prerequisite artifact containing only the newer `libssl3t64 .15` correctly
+fails the pre-mutation projected dependency graph: installing it would break
+the existing `libssl-dev` exact-version dependency.
+
+The prerequisite builder now includes the **exact matching** `libssl-dev`
+companion when it selects `libssl3t64`. The observed `.15` companion has
+a pinned SHA256 from the verified Ubuntu 2026-09-19 signed snapshot; the
+builder validates the actual DEB before publishing. The DP transaction
+**upgrades that companion only when it was already installed**. A DP with
+no `libssl-dev` retains that absence. Unrelated dependency errors, invalid
+package controls, newer installed versions, or incomplete dpkg state still
+block the transaction before its first package modification.
+
+An existing sealed 6.6.0 release whose verified prerequisite manifest
+contains `libssl3t64 .15` but omits `libssl-dev` is eligible for exactly one
+prerequisite-only refresh in Menu 2. The refresh preserves the validated
+29.9-GB vendor bundle, rebuilds only the extra prerequisite archive,
+atomically publishes it and binds the new prerequisite identity to the release.
+Any other sealed artifact remains immutable; seal or checksum corruption
+still fails closed.
+
+**Operator flow:** after the new code is installed on the mirror, run
+**Menu 2 → 3 → 4 (PASS) → 7** to obtain new STEP 4/5 commands. The existing
+large bundle is reused; do not execute an old hash-pinned client command.
+On a DP whose SSL runtime is still `.6`, do not run the `--repair-libssl-dev`
+entrypoint (that separate recovery is only for the already-partial `.15`
+runtime state). Re-stage with the newly generated STEP 4 and proceed to
+bringup only after staging/readiness PASS. **No DP changes happen when
+committing or publishing source code.**
+
 #### Installing updated helpers
 
 To deploy this helper-only correction, update the mirror checkout and run

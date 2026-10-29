@@ -1240,6 +1240,94 @@ def resolve_phase2_dependency_closure(
     ])
 
 
+# Immutable Ubuntu-signed snapshot evidence for the exact Noble SSL companion
+# required by the field's libssl3t64 3.0.13-0ubuntu3.15 prerequisite.
+# Signed index, DEB control and SHA256 were verified in issue #109 / PR #125.
+SSL_DEV_SNAPSHOT_VERSION = '3.0.13-0ubuntu3.15'
+SSL_DEV_SNAPSHOT_SHA256 = 'cefc6371d90d953a4cbb35d72d871f057e4b961a3107186f67fe96a88040cdb8'
+SSL_DEV_SNAPSHOT_FILENAME = 'pool/main/o/openssl/libssl-dev_3.0.13-0ubuntu3.15_amd64.deb'
+SSL_DEV_SNAPSHOT_URL = (
+    'https://snapshot.ubuntu.com/ubuntu/20260919T000000Z/'
+    + SSL_DEV_SNAPSHOT_FILENAME
+)
+
+
+def snapshot_ssl_development_companion(version):
+    if version != SSL_DEV_SNAPSHOT_VERSION:
+        return None
+    return OrderedDict([
+        ('Package', 'libssl-dev'),
+        ('Version', SSL_DEV_SNAPSHOT_VERSION),
+        ('Architecture', 'amd64'),
+        ('Depends', 'libssl3t64 (= %s)' % SSL_DEV_SNAPSHOT_VERSION),
+        ('Pre-Depends', ''),
+        ('Filename', SSL_DEV_SNAPSHOT_FILENAME),
+        ('SHA256', SSL_DEV_SNAPSHOT_SHA256),
+        ('Size', '2408494'),
+        ('_suite', 'noble-updates'),
+        ('_component', 'main'),
+        ('_source', 'ubuntu_signed_snapshot_20260919'),
+    ])
+
+
+def include_ssl_development_companion(closure, unsatisfied, candidates, on_missing):
+    """Ship an exact-version SSL companion when libssl3t64 is upgraded.
+
+    Phase 2 closure does not know which optional Ubuntu development packages
+    are installed on each DP. libssl-dev has an exact libssl3t64 dependency,
+    so the matching verified Noble artifact must be staged for hosts already
+    using it; the DP installation gate skips it when not installed.
+    """
+    names = unsatisfied.get('unsatisfied') or []
+    if 'libssl3t64' not in names:
+        return False
+    selected = closure.get('selected') or OrderedDict()
+    runtime = selected.get('libssl3t64') or {}
+    version = (runtime.get('Version') or '').strip()
+    if not version:
+        raise ValueError('libssl3t64_version_missing')
+    required_depends = 'libssl3t64 (= %s)' % version
+
+    def matching():
+        return [
+            rec for rec in candidates.get('libssl-dev', [])
+            if rec.get('Package') == 'libssl-dev'
+            and rec.get('Version') == version
+            and rec.get('Architecture') == 'amd64'
+            and (rec.get('Depends') or '').strip() == required_depends
+            and not (rec.get('Pre-Depends') or '').strip()
+            and not required_index_metadata_reason(rec)
+        ]
+
+    available = matching()
+    if not available:
+        # This exact artifact and its signed snapshot metadata are already
+        # verified. Do not fetch a moving Ubuntu index merely to rediscover
+        # a retired version from the current field prerequisite set.
+        pinned = snapshot_ssl_development_companion(version)
+        if pinned is not None:
+            available = [pinned]
+            eprint('PHASE2_PREREQ_SSL_COMPANION_SOURCE=VERIFIED_SNAPSHOT')
+    if not available and on_missing is not None:
+        on_missing('libssl-dev', candidates)
+        available = matching()
+    if not available:
+        raise ValueError('matching_libssl_dev_unavailable_for_%s' % version)
+    companion = select_best_candidate(available)
+    if companion is None:
+        raise ValueError('matching_libssl_dev_unselectable')
+    selected['libssl-dev'] = companion
+    closure['selected'] = selected
+    if 'libssl-dev' not in names:
+        names.append('libssl-dev')
+        names.sort()
+    unsatisfied['unsatisfied'] = names
+    eprint('PHASE2_PREREQ_SSL_COMPANION=PASS runtime=%s package=libssl-dev version=%s' % (
+        version, companion.get('Version'),
+    ))
+    return True
+
+
 def unsatisfied_from_acps(closure, acps_names):
     """Ubuntu packages in the closure that ACPS did not already ship.
 
@@ -1919,6 +2007,14 @@ def acquire_missing_debs(
         url = package_upstream_url(
             rec.get('suite'), filename, archive_base, security_base,
         )
+        # A known superseded Noble package is retained by a signed Ubuntu
+        # snapshot. The URL override is bound to its exact verified identity,
+        # not to an arbitrary manifest-supplied field.
+        if (rec.get('package') == 'libssl-dev'
+                and rec.get('version') == SSL_DEV_SNAPSHOT_VERSION
+                and filename == SSL_DEV_SNAPSHOT_FILENAME
+                and (rec.get('sha256') or '').lower() == SSL_DEV_SNAPSHOT_SHA256):
+            url = SSL_DEV_SNAPSHOT_URL
         rec['url'] = url
         expected_sha = (rec.get('sha256') or '').strip() or None
         expected_size = _parse_size(rec.get('size'))
@@ -2451,6 +2547,11 @@ def run_resolve(args):
     )
     missing, failures = _report_unresolved_closure(closure)
     unsat = unsatisfied_from_acps(closure, root_names)
+    try:
+        include_ssl_development_companion(closure, unsat, candidates, on_missing)
+    except ValueError as exc:
+        eprint('PHASE2_PREREQ_SSL_COMPANION=FAIL reason=%s' % exc)
+        return 2
     selected = closure.get('selected') or OrderedDict()
     packages = _packages_from_selected(selected, unsat['unsatisfied'])
     collected = collect_artifact_packages(
@@ -2506,6 +2607,15 @@ def run_build(args):
     )
     missing, failures = _report_unresolved_closure(closure)
     unsat = unsatisfied_from_acps(closure, root_names)
+    try:
+        include_ssl_development_companion(closure, unsat, candidates, on_missing)
+    except ValueError as exc:
+        eprint('PHASE2_PREREQ_SSL_COMPANION=FAIL reason=%s' % exc)
+        _emit_prereq_state(
+            dest, 'YES', len(unsat['unsatisfied']), 'FAIL', 'FAIL',
+            target_version=target_version,
+        )
+        return 2
     selected = closure.get('selected') or OrderedDict()
     packages = _packages_from_selected(selected, unsat['unsatisfied'])
     collected = collect_artifact_packages(

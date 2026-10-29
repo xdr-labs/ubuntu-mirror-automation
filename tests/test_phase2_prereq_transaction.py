@@ -264,6 +264,78 @@ dp2_install_phase2_ubuntu_prerequisites
             ['libssl-dev=' + NEW]])
         self.assertIn('PHASE2_PREREQ_INSTALL=PASS', result.stdout)
 
+    def test_optional_ssl_companion_updates_existing_development_package(self):
+        self.bundle([self.early(), {'name': 'libssl3t64', 'version': NEW},
+                     {'name': 'libssl-dev', 'version': NEW,
+                      'depends': 'libssl3t64 (= ' + NEW + ')'}])
+        result = self.invoke()
+        self.assertEqual(result.returncode, 0, result.stdout)
+        calls = [json.loads(line) for line in self.calls.read_text().splitlines()]
+        self.assertEqual(calls[-2:], [['libssl3t64=' + NEW], ['libssl-dev=' + NEW]])
+        self.assertIn('PHASE2_PREREQ_INSTALL=PASS', result.stdout)
+
+    def test_optional_ssl_companion_not_installed_on_clean_host(self):
+        self.status.write_text('\n'.join((package('libssl3t64', OLD),
+                          package('openssl', OLD, 'libssl3t64 (>= 3.0.9)'),
+                          package('libkrb5support0', '1.20.1-6ubuntu2.6'))))
+        self.bundle([self.early(), {'name': 'libssl3t64', 'version': NEW},
+                     {'name': 'libssl-dev', 'version': NEW,
+                      'depends': 'libssl3t64 (= ' + NEW + ')'}])
+        result = self.invoke()
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertNotIn('libssl-dev=', self.calls.read_text())
+        self.assertIn('PHASE2_PREREQ_OPTIONAL=SKIP package=libssl-dev', result.stdout)
+
+    def test_optional_ssl_companion_config_files_not_reinstalled(self):
+        self.status.write_text(ssl_status().replace(
+            'Package: libssl-dev\nStatus: install ok installed',
+            'Package: libssl-dev\nStatus: deinstall ok config-files'))
+        self.bundle([self.early(), {'name': 'libssl3t64', 'version': NEW},
+                     {'name': 'libssl-dev', 'version': NEW,
+                      'depends': 'libssl3t64 (= ' + NEW + ')'}])
+        result = self.invoke()
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertNotIn('libssl-dev=', self.calls.read_text())
+
+    def test_optional_companion_absent_in_scc_group_blocks(self):
+        self.status.write_text('\n'.join((package('libssl3t64', OLD),
+                          package('openssl', OLD, 'libssl3t64 (>= 3.0.9)'),
+                          package('libkrb5support0', '1.20.1-6ubuntu2.6'))))
+        self.bundle([self.early(), {'name': 'libssl3t64', 'version': NEW},
+                     {'name': 'libssl-dev', 'version': NEW,
+                      'depends': 'libssl3t64 (= ' + NEW + ')'}],
+                    groups=lambda names: [names[0], ' '.join(names[1:])])
+        before = self.status.read_bytes()
+        self.blocked(self.invoke(), before, 'reason=optional_companion_scc_conflict')
+
+    def test_optional_companion_config_only_in_scc_group_blocks(self):
+        self.status.write_text(ssl_status().replace(
+            'Package: libssl-dev\nStatus: install ok installed',
+            'Package: libssl-dev\nStatus: deinstall ok config-files'))
+        self.bundle([self.early(), {'name': 'libssl3t64', 'version': NEW},
+                     {'name': 'libssl-dev', 'version': NEW,
+                      'depends': 'libssl3t64 (= ' + NEW + ')'}],
+                    groups=lambda names: [names[0], ' '.join(names[1:])])
+        before = self.status.read_bytes()
+        self.blocked(self.invoke(), before, 'reason=optional_companion_scc_conflict')
+
+    def test_optional_ssl_companion_partial_state_blocks_before_mutation(self):
+        self.status.write_text(ssl_status().replace(
+            'Package: libssl-dev\nStatus: install ok installed',
+            'Package: libssl-dev\nStatus: install ok unpacked'))
+        self.bundle([self.early(), {'name': 'libssl3t64', 'version': NEW},
+                     {'name': 'libssl-dev', 'version': NEW,
+                      'depends': 'libssl3t64 (= ' + NEW + ')'}])
+        before = self.status.read_bytes()
+        self.blocked(self.invoke(), before)
+
+    def test_optional_ssl_companion_invalid_exact_version_blocks(self):
+        self.bundle([self.early(), {'name': 'libssl3t64', 'version': NEW},
+                     {'name': 'libssl-dev', 'version': NEW,
+                      'depends': 'libssl3t64 (= ' + OLD + ')'}])
+        before = self.status.read_bytes()
+        self.blocked(self.invoke(), before, 'libssl-dev')
+
     def test_known_legacy_python_edges_allow_valid_transaction(self):
         self.status.write_text(ssl_status() + '\n' + legacy_status())
         self.bundle([self.early()])
