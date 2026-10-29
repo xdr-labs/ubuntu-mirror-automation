@@ -2474,7 +2474,7 @@ def _target_version_from_args(args):
 
 
 def _make_authoritative_loader(args, dest=None):
-    loaded = {'done': False, 'error': None}
+    loaded = {'done': False, 'error': None, 'authoritative': None, 'enriched_maps': []}
     skip_fetch = bool(getattr(args, 'skip_authoritative_fetch', False))
     auth_root = getattr(args, 'authoritative_root', None) or None
     cache_root = getattr(args, 'authoritative_cache', None) or None
@@ -2507,11 +2507,19 @@ def _make_authoritative_loader(args, dest=None):
                 eprint('PHASE2_PREREQ_AUTH=FAIL reason=%s' % type(exc).__name__)
                 loaded['done'] = True
                 return False
-            merged = merge_candidate_indexes(candidates, auth)
+            loaded['authoritative'] = auth
+            loaded['done'] = True
+            eprint('PHASE2_PREREQ_AUTH=LOADED packages=%d' % len(auth))
+        # The closure resolver clones the candidate map. Reuse the same
+        # authoritative metadata with each distinct caller map, including
+        # the later SSL companion lookup against the original selective map.
+        # Track objects by identity so repeated dependency lookups do not
+        # rebuild the full index, and no additional network fetch occurs.
+        if not any(previous is candidates for previous in loaded['enriched_maps']):
+            merged = merge_candidate_indexes(candidates, loaded['authoritative'])
             candidates.clear()
             candidates.update(merged)
-            loaded['done'] = True
-            eprint('PHASE2_PREREQ_AUTH=LOADED packages=%d' % len(candidates))
+            loaded['enriched_maps'].append(candidates)
         return bool(candidates.get(name))
 
     return on_missing, loaded

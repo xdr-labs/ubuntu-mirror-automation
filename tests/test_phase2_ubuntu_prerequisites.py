@@ -462,6 +462,48 @@ class SslCompanionBuildTests(unittest.TestCase):
                 self.assertFalse(os.path.exists(os.path.join(
                     self.dest, p2p.ARTIFACT_NAME)))
 
+    def test_authoritative_companion_is_reused_after_root_resolution(self):
+        # Regression for PR #126 review: resolution uses a cloned candidate
+        # map. The companion lookup later receives the original selective
+        # map after the authoritative cache has already been fetched once.
+        version = '3.0.13-0ubuntu3.16'  # deliberately outside the .15 snapshot pin
+        local = indexed_deb(
+            self.ubuntu, 'libssl3t64', version='3.0.13-0ubuntu3.6',
+            component='main', architecture='amd64')
+        write_packages_index(self.ubuntu, 'noble-updates', 'main', [local])
+        authority = os.path.join(self.tmp, 'authoritative')
+        runtime = indexed_deb(
+            authority, 'libssl3t64', version=version,
+            component='main', architecture='amd64')
+        companion = indexed_deb(
+            authority, 'libssl-dev', version=version,
+            depends='libssl3t64 (= ' + version + ')',
+            component='main', architecture='amd64')
+        write_packages_index(authority, 'noble-updates', 'main',
+                             [runtime, companion])
+        for rec in (runtime, companion):
+            source = os.path.join(authority, rec['Filename'])
+            target = os.path.join(self.ubuntu, rec['Filename'])
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            shutil.copy2(source, target)
+        root_deb = os.path.join(self.acps, 'python3-ssl-fixture_1_all.deb')
+        os.unlink(root_deb)
+        write_tiny_deb(
+            root_deb, 'python3-ssl-fixture',
+            depends='libssl3t64 (>= ' + version + ')')
+        rc = p2p.run_build(build_args(
+            source=self.acps, ubuntu_root=self.ubuntu, dest=self.dest,
+            authoritative_root=authority, skip_authoritative_fetch=True))
+        self.assertEqual(rc, 0, 'authoritative SSL companion not reused')
+        with open(os.path.join(self.dest, p2p.MANIFEST_NAME)) as stream:
+            manifest = json.load(stream)
+        rows = {r['package']: r for r in manifest['packages']}
+        self.assertEqual(rows['libssl3t64']['version'], version)
+        self.assertEqual(rows['libssl-dev']['version'], version)
+        order = manifest['install_order']
+        self.assertLess(order.index('libssl3t64'),
+                        order.index('libssl-dev'))
+
     def test_signed_snapshot_fallback_is_pinned_and_narrow(self):
         source = p2p.snapshot_ssl_development_companion('3.0.13-0ubuntu3.15')
         self.assertEqual(source['SHA256'], p2p.SSL_DEV_SNAPSHOT_SHA256)
