@@ -71,13 +71,23 @@ source "$ROOT/scripts/lib/mirror_manager_common.sh"
 f1="$MM_SELECTIVE_ROOT/hops/xenial-to-bionic/ubuntu/pool/main/a/a.deb"
 f2="$MM_SELECTIVE_ROOT/hops/bionic-to-focal/ubuntu/pool/main/b/b.deb"
 printf 'a\n' >"$f1"; printf 'b\n' >"$f2"
-before="$(mm_selective_os_identity)"
-[[ -n "$before" && "$before" == "$(mm_selective_os_identity)" ]]
+before="$(mm_selective_pool_witness)"
+legacy_fp="$(mm_selective_os_identity)"
+[[ -n "$before" && "$before" == "$(mm_selective_pool_witness)" ]]
+# Legacy Download receipt remains unchanged by the new pool check.
+mm_status_get() { [[ "$1" == "READINESS_POOL_WITNESS" ]] && printf '%s' "$before"; }
+mm_selective_pool_witness_current
 rm "$f1"
-after="$(mm_selective_os_identity)"
+after="$(mm_selective_pool_witness)"
 [[ "$before" != "$after" ]] || { echo 'FAIL: hop1 removal unseen' >&2; exit 1; }
+if mm_selective_pool_witness_current; then
+  echo 'FAIL: stale pool witness accepted' >&2; exit 1
+fi
+[[ "$legacy_fp" == "$(mm_selective_os_identity)" ]] || {
+  echo 'FAIL: legacy Download fingerprint invalidated' >&2; exit 1
+}
 rm "$f2"
-[[ "$after" != "$(mm_selective_os_identity)" ]] || {
+[[ "$after" != "$(mm_selective_pool_witness)" ]] || {
   echo 'FAIL: hop2 removal unseen' >&2; exit 1;
 }
-echo 'PASS: per-hop pool file removal invalidates readiness witness'
+echo 'PASS: per-hop pool witness detects removal without staling Download receipt'

@@ -1981,13 +1981,12 @@ mm_phase2_paths() {
   MM_WF_PHASE2_STABLE="$stable"
 }
 
-# Lightweight selective OS identity bound to READY provenance, index witnesses,
-# and per-hop package metadata. Never hash multi-GB pool contents on status:
-# full package SHA validation belongs to the explicit readiness verification.
-# Package paths/sizes/mtime witness removal or replacement after verification.
+# Lightweight selective OS identity bound to READY provenance + index witnesses.
+# Does NOT hash the multi-GB pool. Directory inode/mtime alone is insufficient:
+# mutating an existing Packages/InRelease (or READY provenance) changes this.
 mm_selective_os_identity() {
   local ready="${MM_SELECTIVE_ROOT}/state/READY"
-  local plan="" disc="" payload="" manifest="" release_id="" indexes="" pools="" ubuntu
+  local plan="" disc="" payload="" manifest="" release_id="" indexes="" ubuntu
   [[ -f "$ready" ]] || { printf ''; return 1; }
   plan="$(awk -F= '$1=="selective_plan_checksum"{print substr($0,index($0,"=")+1);exit}' "$ready")"
   [[ -n "$plan" ]] || plan="$(awk -F= '$1=="plan_checksum"{print substr($0,index($0,"=")+1);exit}' "$ready")"
@@ -2008,17 +2007,35 @@ mm_selective_os_identity() {
         | sha256sum | awk '{print $1}'
     )"
   fi
-  # The actual per-hop pool lives under hops/<hop>/ubuntu/pool. A READY
-  # receipt cannot remain current if files disappear without index changes.
-  if [[ -d "${MM_SELECTIVE_ROOT}/hops" ]]; then
-    pools="$(
-      find -L "${MM_SELECTIVE_ROOT}/hops" -type f -name '*.deb' \
-        -printf '%P\t%s\t%T@\n' 2>/dev/null \
-        | LC_ALL=C sort | sha256sum | awk '{print $1}'
-    )" || return 1
-  fi
-  printf 'plan=%s;disc=%s;payload=%s;manifest=%s;release=%s;indexes=%s;pools=%s\n' \
-    "$plan" "$disc" "${payload:-}" "${manifest:-}" "${release_id:-}" "${indexes:-}" "${pools:-}"
+  printf 'plan=%s;disc=%s;payload=%s;manifest=%s;release=%s;indexes=%s\n' \
+    "$plan" "$disc" "${payload:-}" "${manifest:-}" "${release_id:-}" "${indexes:-}"
+}
+
+# Lightweight post-readiness pool witness. Keep it independent from the
+# historical DOWNLOAD_ARTIFACT_FINGERPRINT so an already-prepared Mirror does
+# not require Menu 2/re-downloading a large OS bundle merely after upgrade.
+# Filename, size, and mtime detect removed/replaced DEBs; explicit Menu 4
+# remains responsible for cryptographic package validation.
+mm_selective_pool_witness() {
+  local hops="${MM_SELECTIVE_ROOT}/hops" digest
+  [[ -d "$hops" ]] || return 1
+  digest="$(
+    find -L "$hops" -type f -name '*.deb' -printf '%P\t%s\t%T@\n' \
+      2>/dev/null | LC_ALL=C sort | sha256sum | awk '{print $1}'
+  )" || return 1
+  [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || return 1
+  printf '%s' "$digest"
+}
+
+# Validation receipt is minted only at Menu 4. Missing legacy witness
+# invalidates Menu 7 until Menu 4 is re-run; it does NOT invalidate Menu 2.
+mm_selective_pool_witness_current() {
+  local stored current
+  [[ "${PREPARATION_MODE:-FULL}" == "PHASE2_ONLY" ]] && return 0
+  stored="$(mm_status_get READINESS_POOL_WITNESS 2>/dev/null || true)"
+  [[ -n "$stored" ]] || return 1
+  current="$(mm_selective_pool_witness)" || return 1
+  [[ "$stored" == "$current" ]]
 }
 
 mm_artifact_fingerprint() {
@@ -2310,6 +2327,11 @@ mm_readiness_completed() {
     return 1
   fi
   [[ "$stored_art" == "$cur_art" ]] || return 1
+  # Additional post-Menu4 integrity guard; historical Download receipts keep
+  # their identity so live Mirror upgrade does not force Menu 2.
+  if ! mm_is_phase2_only; then
+    mm_selective_pool_witness_current || return 1
+  fi
   cur_cfg="$(mm_config_fingerprint)"
   stored_cfg="$(mm_status_get READINESS_CONFIG_FINGERPRINT)"
   if [[ -n "$stored_cfg" && "$stored_cfg" != "$cur_cfg" ]]; then
@@ -2488,8 +2510,11 @@ mm_record_http_validated() {
 }
 
 mm_record_readiness_validated() {
-  local fp txn
+  local fp txn pool_witness=""
   fp="$(mm_artifact_fingerprint)"
+  if ! mm_is_phase2_only; then
+    pool_witness="$(mm_selective_pool_witness)" || return 1
+  fi
   txn="$(mm_wf_transition_snapshot)" || return 1
   # Persist authoritative workflow receipt BEFORE publishing PASS status.
   if declare -F mm_wf_mark_readiness_verified >/dev/null 2>&1; then
@@ -2503,6 +2528,7 @@ mm_record_readiness_validated() {
   fi
   if ! mm_status_set READINESS_VALIDATED_AT "$(mm_ts)" \
     || ! mm_status_set READINESS_ARTIFACT_FINGERPRINT "$fp" \
+    || ! mm_status_set READINESS_POOL_WITNESS "$pool_witness" \
     || ! mm_status_set READINESS_CONFIG_FINGERPRINT "$(mm_config_fingerprint)" \
     || ! mm_status_set READINESS_RESULT PASS \
     || ! mm_status_set UPGRADE_READINESS PASS; then

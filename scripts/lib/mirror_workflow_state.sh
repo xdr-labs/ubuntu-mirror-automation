@@ -1408,6 +1408,14 @@ mm_wf_commands_preflight() {
   # FULL mode: Menu 7 must bind to the live selective generation tuple, not
   # only generation IDs. PHASE2_ONLY skips OS-hop selective requirements.
   if [[ "$mode" == "FULL" ]]; then
+    # After a code update, an old verified Mirror may need Menu 4 once to mint
+    # the pool witness, but never Menu 2 merely for a new fingerprint schema.
+    if declare -F mm_selective_pool_witness_current >/dev/null 2>&1 \
+      && ! mm_selective_pool_witness_current; then
+      MM_WF_BLOCK_REASON="STALE_SELECTIVE_POOL_WITNESS"
+      MM_WF_REQUIRED_ACTION="Verify Upgrade Readiness"
+      return 1
+    fi
     if ! mm_wf_selective_generation_current; then
       # MM_WF_BLOCK_REASON / MM_WF_REQUIRED_ACTION already set.
       [[ -n "${MM_WF_BLOCK_REASON:-}" ]] || MM_WF_BLOCK_REASON="STALE_SELECTIVE_GENERATION"
