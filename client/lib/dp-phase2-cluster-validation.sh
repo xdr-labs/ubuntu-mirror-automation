@@ -198,6 +198,7 @@ p2b_analyze_aella_status_text() {
   local models_ready=NO
   local provision_ready=NO
   local critical_fail=NO
+  local degraded=NO
   local pods_line=""
   local missing_pods=""
   local authoritative_ready=NO
@@ -208,11 +209,19 @@ p2b_analyze_aella_status_text() {
   if grep -qiE 'System paused\.[[:space:]]*Type resume' <<<"$text"; then
     paused=YES
   fi
-  if grep -qiE 'All cluster nodes are ready' <<<"$text"; then
+  # Match affirmative status on its own line. A substring search also matches
+  # "Not all cluster nodes are ready" and can falsely report READY.
+  if grep -qiE '^[[:space:]]*All cluster nodes are ready[[:space:]]*$' <<<"$text"; then
     nodes_ready=YES
   fi
-  if grep -qiE 'All host services are ready' <<<"$text"; then
+  if grep -qiE '^[[:space:]]*All host services are ready[[:space:]]*$' <<<"$text"; then
     host_services_ready=YES
+  fi
+  # Explicit negative vendor statements override any affirmative lines (e.g.
+  # a CLI response with more than one snapshot). Missing index lines alone are
+  # informational on DA/DR and must not become a new hard requirement.
+  if grep -qiE 'Not all cluster nodes are ready|Not all host services are ready|[0-9]+ out of [0-9]+ nodes joined|[0-9]+ out of [0-9]+ indices are still recovering' <<<"$text"; then
+    degraded=YES
   fi
   if grep -qiE 'DataProcessor\((DL|AIO)([-_A-Za-z0-9]*)?\)>' <<<"$text"; then
     status_role=DL_AIO
@@ -255,6 +264,7 @@ p2b_analyze_aella_status_text() {
   echo "CLUSTER_SIGNAL_MODELS_READY=${models_ready}"
   echo "CLUSTER_SIGNAL_PROVISION_READY=${provision_ready}"
   echo "CLUSTER_SIGNAL_CRITICAL_FAIL=${critical_fail}"
+  echo "CLUSTER_SIGNAL_DEGRADED=${degraded}"
   if [[ -n "$pods_line" ]]; then
     echo "CLUSTER_SIGNAL_PODS_LINE=${pods_line}"
   fi
@@ -273,9 +283,13 @@ p2b_analyze_aella_status_text() {
     return 0
   fi
 
-  if [[ "$critical_fail" == "YES" ]]; then
+  if [[ "$critical_fail" == "YES" || "$degraded" == "YES" ]]; then
     echo "CLUSTER_RUNTIME_READINESS=NOT_READY"
-    echo "CLUSTER_STATUS_SUMMARY=CRITICAL_SIGNAL"
+    if [[ "$critical_fail" == "YES" ]]; then
+      echo "CLUSTER_STATUS_SUMMARY=CRITICAL_SIGNAL"
+    else
+      echo "CLUSTER_STATUS_SUMMARY=DEGRADED_VENDOR_SIGNAL"
+    fi
     echo "CLUSTER_VALIDATION_RECORDABLE_PASS=NO"
     return 0
   fi

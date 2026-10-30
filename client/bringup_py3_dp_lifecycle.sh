@@ -350,8 +350,28 @@ print_diagnose() {
   echo "DIAGNOSE_SIGNALS_SENT=NO"
 }
 
+# Non-secret topology identity for idempotent reentry. Do not bind the SSH
+# password, which can legitimately change without changing the cluster.
+p2b_requested_topology_identity() {
+  local workers="" standby="" i
+  for ((i=0; i<${#PASSTHRU[@]}; i++)); do
+    case "${PASSTHRU[$i]}" in
+      --worker-ips)
+        workers="${PASSTHRU[$((i+1))]:-}"
+        ;;
+      --standby)
+        standby="${PASSTHRU[$((i+1))]:-}"
+        ;;
+      --worker-ips=*) workers="${PASSTHRU[$i]#*=}" ;;
+      --standby=*) standby="${PASSTHRU[$i]#*=}" ;;
+    esac
+  done
+  printf 'workers=%s;standby=%s' "$workers" "$standby"
+}
+
 start_or_monitor() {
   local d run_id pid logf started
+  local requested_topology stored_topology
   d="$(p2b_dir)"
   logf="${PHASE2_BRINGUP_LOG_DEFAULT}"
 
@@ -365,6 +385,8 @@ start_or_monitor() {
   p2b_install_parent_pre_handoff_trap
 
   p2b_status_snapshot
+  requested_topology="$(p2b_requested_topology_identity)"
+  stored_topology="$(p2b_read_file "${d}/orchestration-topology")"
   local existing_target
   existing_target="$(p2b_read_file "${d}/target-version")"
   if [[ -n "$TARGET_VERSION" && -n "${BRINGUP_RUN_ID}" \
@@ -393,6 +415,18 @@ start_or_monitor() {
   fi
 
   if p2b_current_run_completion_coherent; then
+    # A completed vendor bringup is never silently reused for another worker
+    # set. Legacy completions without a stored topology cannot prove equality.
+    if [[ "$requested_topology" != "workers=;standby=" && "$requested_topology" != "$stored_topology" ]]; then
+      echo "BRINGUP_RETRY_BLOCKED=YES"
+      echo "ACTION=BLOCK_COMPLETED_TOPOLOGY_MISMATCH"
+      echo "FAILURE_REASON=COMPLETED_TOPOLOGY_UNVERIFIED_OR_CHANGED"
+      echo "NEXT_COMMAND=sudo bash ${P2B_WRAPPER_PATH} --validate-cluster"
+      echo "OPERATOR_NOTE=Bringup is already completed. Changed/unverified worker routing requires an explicit reviewed recovery plan; this command did not rerun the vendor."
+      p2b_release_lock
+      trap - EXIT
+      return 1
+    fi
     echo "BRINGUP_ALREADY_COMPLETED=YES"
     p2b_print_status
     if p2b_discover_aella_cli; then
@@ -512,6 +546,7 @@ start_or_monitor() {
 
   printf '%s\n' "$run_id" | p2b_atomic_write "${d}/run-id"
   printf '%s\n' "$TARGET_VERSION" | p2b_atomic_write "${d}/target-version"
+  printf '%s\n' "$requested_topology" | p2b_atomic_write "${d}/orchestration-topology"
   printf '%s\n' "$logf" | p2b_atomic_write "${d}/log-path"
   printf '%s\n' "$started" | p2b_atomic_write "${d}/started-at"
   rm -f "${d}/completed-at" "${d}/exit-code" "${d}/completion.sentinel" "${d}/result.env" \

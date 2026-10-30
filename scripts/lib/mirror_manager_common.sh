@@ -1981,12 +1981,13 @@ mm_phase2_paths() {
   MM_WF_PHASE2_STABLE="$stable"
 }
 
-# Lightweight selective OS identity bound to READY provenance + index witnesses.
-# Does NOT hash the multi-GB pool. Directory inode/mtime alone is insufficient:
-# mutating an existing Packages/InRelease (or READY provenance) changes this.
+# Lightweight selective OS identity bound to READY provenance, index witnesses,
+# and per-hop package metadata. Never hash multi-GB pool contents on status:
+# full package SHA validation belongs to the explicit readiness verification.
+# Package paths/sizes/mtime witness removal or replacement after verification.
 mm_selective_os_identity() {
   local ready="${MM_SELECTIVE_ROOT}/state/READY"
-  local plan="" disc="" payload="" manifest="" release_id="" indexes="" ubuntu
+  local plan="" disc="" payload="" manifest="" release_id="" indexes="" pools="" ubuntu
   [[ -f "$ready" ]] || { printf ''; return 1; }
   plan="$(awk -F= '$1=="selective_plan_checksum"{print substr($0,index($0,"=")+1);exit}' "$ready")"
   [[ -n "$plan" ]] || plan="$(awk -F= '$1=="plan_checksum"{print substr($0,index($0,"=")+1);exit}' "$ready")"
@@ -2007,8 +2008,17 @@ mm_selective_os_identity() {
         | sha256sum | awk '{print $1}'
     )"
   fi
-  printf 'plan=%s;disc=%s;payload=%s;manifest=%s;release=%s;indexes=%s\n' \
-    "$plan" "$disc" "${payload:-}" "${manifest:-}" "${release_id:-}" "${indexes:-}"
+  # The actual per-hop pool lives under hops/<hop>/ubuntu/pool. A READY
+  # receipt cannot remain current if files disappear without index changes.
+  if [[ -d "${MM_SELECTIVE_ROOT}/hops" ]]; then
+    pools="$(
+      find -L "${MM_SELECTIVE_ROOT}/hops" -type f -name '*.deb' \
+        -printf '%P\t%s\t%T@\n' 2>/dev/null \
+        | LC_ALL=C sort | sha256sum | awk '{print $1}'
+    )" || return 1
+  fi
+  printf 'plan=%s;disc=%s;payload=%s;manifest=%s;release=%s;indexes=%s;pools=%s\n' \
+    "$plan" "$disc" "${payload:-}" "${manifest:-}" "${release_id:-}" "${indexes:-}" "${pools:-}"
 }
 
 mm_artifact_fingerprint() {
