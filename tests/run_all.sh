@@ -168,6 +168,7 @@ TEST_LIST=(
   test_phase2_prereq_extract_sigpipe.sh
   test_phase2_cluster_readiness.sh
   test_phase2_validate_cluster_eof_closure.sh
+  test_verified_audit_safety.sh
   test_phase2_ntp_pipefail_large_output.sh
   test_dp_preflight_internal_json_pipefail.sh
   test_client_mirror_pin_large_payload.sh

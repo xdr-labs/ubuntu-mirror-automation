@@ -913,7 +913,7 @@ p2b_archive_failed_run() {
   chmod 0700 "$dest" 2>/dev/null || true
   for f in state result.env completion.sentinel run-id exit-code \
     completed-at started-at log-path worker.pid worker-start-ticks target-version \
-    log-start-offset
+    orchestration-topology log-start-offset
   do
     if [[ -f "${d}/${f}" ]]; then
       cp -a "${d}/${f}" "${dest}/${f}" 2>/dev/null || true

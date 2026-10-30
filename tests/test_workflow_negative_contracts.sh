@@ -317,6 +317,8 @@ if (
     esac
   }
   mm_wf_selective_generation_current() { return 0; }
+  # Tests I/J isolate HTTP gating; pool witness has its own negative test.
+  mm_selective_pool_witness_current() { return 0; }
   mm_client_set_current_source() { return 0; }
   mm_client_launchers_ready() { return 0; }
   mm_http_completed() { return 1; }
@@ -352,6 +354,8 @@ if (
     esac
   }
   mm_wf_selective_generation_current() { return 0; }
+  # Tests I/J isolate HTTP gating; pool witness has its own negative test.
+  mm_selective_pool_witness_current() { return 0; }
   mm_client_set_current_source() { return 0; }
   mm_client_launchers_ready() { return 0; }
   mm_http_completed() { return 0; }

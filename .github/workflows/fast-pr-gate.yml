@@ -82,3 +82,4 @@ jobs:
           bash tests/test_http_publication_quiesce.sh
           bash tests/test_audit_p1_publication_followups.sh
           bash tests/test_phase2_prereq_stage_failclosed.sh
+          bash tests/test_verified_audit_safety.sh
