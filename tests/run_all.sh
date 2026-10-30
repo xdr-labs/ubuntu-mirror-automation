@@ -131,6 +131,7 @@ TEST_LIST=(
   test_bringup_lifecycle.sh
   test_audit99_lifecycle.py
   test_bringup_lifecycle_run_contract.sh
+  test_bringup_progress_status.py
   test_bringup_lifecycle_failed_retry.sh
   test_phase2_detached_handoff_identity.sh
   test_mirror_download_and_space_regressions.sh
