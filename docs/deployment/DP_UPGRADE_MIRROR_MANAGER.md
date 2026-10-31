@@ -2,6 +2,8 @@
 
 ## Purpose
 
+Real-DP owner acceptance procedure: [DP 6.6.0 Field E2E](../DP_FIELD_E2E_6_6_0.md).
+
 Build a DP Ubuntu upgrade HTTP mirror server in one fixed workflow:
 
 1. Bootstrap a clean Ubuntu 24.04 host with `sudo ./install.sh`
@@ -31,7 +33,7 @@ CLIENT_DOWNLOAD_SOURCE=MIRROR_SERVER_ONLY
 Fresh host bootstrap (authoritative):
 
 ```bash
-git clone https://github.com/RickLee-kr/ubuntu-mirror-automation.git
+git clone https://github.com/xdr-labs/ubuntu-mirror-automation.git
 cd ubuntu-mirror-automation
 sudo ./install.sh
 ```
