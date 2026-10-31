@@ -17,6 +17,8 @@ pass() { echo "  PASS: $*"; }
 fail() { echo "  FAIL: $*"; FAIL=1; }
 
 WORKDIR="$(mktemp -d /tmp/runtime-prov-recovery.XXXXXX)"
+# www-data needs traversal through fixture ancestors for real publication gates.
+chmod 0711 "$WORKDIR"
 cleanup() { rm -rf "$WORKDIR"; }
 trap cleanup EXIT
 
@@ -156,8 +158,10 @@ run_rebuild() {
     >"$log" 2>&1
 }
 
-SRC_CLIENT="${WORKDIR}/client-from-source"
-RT_CLIENT="${WORKDIR}/client-from-runtime"
+# Published Client roots must remain within the approved Mirror spool root.
+# Do not bypass production HTTP_PUBLIC_ROOT_CONTAINMENT checks in fixtures.
+SRC_CLIENT="${MIRROR_ROOT}/client-from-source"
+RT_CLIENT="${MIRROR_ROOT}/client-from-runtime"
 mkdir -p "$SRC_CLIENT" "$RT_CLIENT"
 
 if run_rebuild "$ROOT" "$SRC_CLIENT" "${WORKDIR}/rebuild-src.log"; then

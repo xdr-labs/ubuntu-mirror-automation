@@ -196,6 +196,25 @@ source "$LIB"
 
 FAKE_HOME="${WORKDIR}/home-aella"
 mkdir -p "$FAKE_HOME"
+# The signed launcher/runner must perform all trust checks, but this isolated
+# fixture must not require host privilege escalation to run its harmless stub.
+# Only allow the exact signed test hop invocation; never mock gpgv or hashes.
+FIXTURE_BIN="${WORKDIR}/fixture-bin"
+mkdir -p "$FIXTURE_BIN"
+cat >"${FIXTURE_BIN}/sudo" <<'SHIM'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$#" -ne 4 || "$1" != bash || "$2" != ./dp-offline-upgrade-xenial-to-bionic.sh \
+      || "$3" != --mirror-base || "$4" != http://127.0.0.1:* ]]; then
+  echo 'FIXTURE_SUDO=FAIL unexpected invocation' >&2
+  exit 1
+fi
+printf 'INVOKED\n' >>"${FIXTURE_SUDO_RECORD:?}"
+exec bash "$2" "$3" "$4"
+SHIM
+chmod 0755 "${FIXTURE_BIN}/sudo"
+export FIXTURE_SUDO_RECORD="${WORKDIR}/sudo-runs"
+export PATH="${FIXTURE_BIN}:${PATH}"
 
 # --- operator command shape ---
 # shellcheck source=/dev/null
@@ -316,8 +335,8 @@ export HOME="$FAKE_HOME"
 REAL_GNUPG_BEFORE=0
 [[ -e /home/aella/.gnupg ]] && REAL_GNUPG_BEFORE=1
 
-# Instrument runner invoke count via stub wrapper in PATH? Runner is downloaded.
-# Count STUB_UPGRADE_OK from hop script instead.
+# The fixture sudo shim records the authenticated runner's exact execution.
+: >"$FIXTURE_SUDO_RECORD"
 set +e
 bash "${CLIENT_ROOT}/${LAUNCHER}" >"${WORKDIR}/launch-ok.out" 2>"${WORKDIR}/launch-ok.err"
 OK_RC=$?
@@ -338,7 +357,8 @@ else
 fi
 RUN_COUNT="$(grep -c 'STUB_UPGRADE_OK' "${WORKDIR}/launch-ok.out" 2>/dev/null || true)"
 RUN_COUNT="${RUN_COUNT:-0}"
-if [[ "$RUN_COUNT" -eq 1 ]] || [[ "$OK_RC" -eq 0 ]]; then
+SUDO_COUNT="$(wc -l <"$FIXTURE_SUDO_RECORD")"
+if [[ "$RUN_COUNT" -eq 1 && "$SUDO_COUNT" -eq 1 && "$OK_RC" -eq 0 ]]; then
   pass "launcher authenticates and invokes runner once (rc=${OK_RC} count=${RUN_COUNT})"
 else
   echo "  INFO launcher rc=${OK_RC}"
