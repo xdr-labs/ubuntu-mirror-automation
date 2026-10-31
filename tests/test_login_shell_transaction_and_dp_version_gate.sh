@@ -84,6 +84,10 @@ version_ge() {
   ((a3 >= b3))
 }
 EOS
+  # The production-generated client sources this authoritative guard before
+  # shell helpers; the extracted harness must retain its fail-closed test gate.
+  printf 'source %q\n' "${ROOT}/client/lib/dp-offline-hermetic-escapes.sh"
+  printf '%s\n' 'export MM_HERMETIC_TEST_MODE=1'
   # Extract change_login_shells function from template
   awk '/^change_login_shells\(\)/,/^install_runner_and_units\(\)/ {
     if (/^install_runner_and_units/) exit

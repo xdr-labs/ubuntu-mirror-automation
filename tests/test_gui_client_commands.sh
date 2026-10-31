@@ -676,6 +676,16 @@ MIRROR_SERVER_IP="192.0.2.10"
 # Persist FULL before stubbing save — gui_client_instructions reloads config.
 mm_save_gui_config >/dev/null
 # Seed generation-bound readiness so Menu 7 preflight passes.
+# The current FULL-mode preflight also checks the Menu 4 selective pool
+# witness. Keep that real fail-closed guard active: seed a small local pool
+# and its matching readiness receipt instead of stubbing the validator.
+export MM_SELECTIVE_ROOT="$TMP/selective"
+for hop in xenial-to-bionic bionic-to-focal focal-to-jammy jammy-to-noble; do
+  mkdir -p "$MM_SELECTIVE_ROOT/hops/$hop/ubuntu/pool/main/f/fixture"
+  printf 'menu7 fixture %s\n' "$hop" \
+    >"$MM_SELECTIVE_ROOT/hops/$hop/ubuntu/pool/main/f/fixture/fixture.deb"
+done
+mm_status_set READINESS_POOL_WITNESS "$(mm_selective_pool_witness)"
 export MM_WORKFLOW_FILE="$TMP/config/dp-upgrade-workflow.state"
 mm_wf_ensure_file
 mm_status_set HTTP_DISTRIBUTION ENABLED

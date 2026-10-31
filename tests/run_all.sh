@@ -12,6 +12,18 @@ source "${ROOT}/tests/lib/worktree_fingerprint.sh"
 DEFAULT_TIMEOUT_SECS="${TEST_TIMEOUT_SECS:-300}"
 # test_dp_os_upgrade.sh alone is ~9 minutes on this host; keep headroom.
 LONG_TIMEOUT_SECS="${TEST_LONG_TIMEOUT_SECS:-900}"
+# Optional lab-only mixed-privilege suite: keep all normal tests non-root,
+# while the Docker userspace matrix runs under the root orchestrator. No host
+# Docker group membership, sudoers change, or test guard bypass is required.
+RUN_ALL_NONROOT_USER="${RUN_ALL_NONROOT_USER:-}"
+RUN_ALL_NONROOT_HOME=""
+if [[ -n "$RUN_ALL_NONROOT_USER" ]]; then
+  [[ "${EUID}" -eq 0 ]] || { echo "RUN_ALL_USER_SWITCH=FAIL reason=root_required" >&2; exit 2; }
+  RUN_ALL_NONROOT_HOME="$(getent passwd "$RUN_ALL_NONROOT_USER" | cut -d: -f6)"
+  [[ -n "$RUN_ALL_NONROOT_HOME" && -d "$RUN_ALL_NONROOT_HOME" ]] \
+    || { echo "RUN_ALL_USER_SWITCH=FAIL reason=unknown_user" >&2; exit 2; }
+  echo "RUN_ALL_USER_SWITCH=ENABLED standard_user=${RUN_ALL_NONROOT_USER} root_only=test_client_os_userspace_matrix.sh"
+fi
 FAIL=0
 INTEGRATION_RAN=0
 INTEGRATION_PASS=0
@@ -306,6 +318,10 @@ run_one() {
   local t="$1"
   local timeout_secs="$DEFAULT_TIMEOUT_SECS"
   local rc=0
+  local -a test_user_cmd=()
+  if [[ -n "$RUN_ALL_NONROOT_USER" && "$t" != "test_client_os_userspace_matrix.sh" ]]; then
+    test_user_cmd=(runuser -u "$RUN_ALL_NONROOT_USER" -- env "HOME=$RUN_ALL_NONROOT_HOME")
+  fi
   if is_long_test "$t"; then
     timeout_secs="$LONG_TIMEOUT_SECS"
   fi
@@ -317,12 +333,12 @@ run_one() {
   if [[ "$t" == *.py ]]; then
     env -u STELLAR_OFFLINE_TEST_ROOT -u DP_OFFLINE_TEST_HANDOFF -u DETACH_AFTER_HANDOFF \
       -u SKIP_MIRROR_HOST_VALIDATE \
-      timeout --signal=TERM --kill-after=30s "$timeout_secs" python3 "$t"
+      timeout --signal=TERM --kill-after=30s "$timeout_secs" "${test_user_cmd[@]}" python3 "$t"
     rc=$?
   else
     env -u STELLAR_OFFLINE_TEST_ROOT -u DP_OFFLINE_TEST_HANDOFF -u DETACH_AFTER_HANDOFF \
       -u SKIP_MIRROR_HOST_VALIDATE \
-      timeout --signal=TERM --kill-after=30s "$timeout_secs" bash "$t"
+      timeout --signal=TERM --kill-after=30s "$timeout_secs" "${test_user_cmd[@]}" bash "$t"
     rc=$?
   fi
   set -e

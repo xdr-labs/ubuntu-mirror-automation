@@ -5968,18 +5968,29 @@ runner_pre_dro_rollback() {
   PRE_DRO_ROLLBACK_DONE=1
   log INFO "PRE_DRO_ROLLBACK_BEGIN"
   log INFO "ROLLBACK_ELIGIBLE=YES"
-  local hold_restore_rc=0
+  local hold_restore_rc=0 apt_restore_rc=0 shell_restore_rc=0
   restore_critical_holds_pre_upgrade || hold_restore_rc=$?
-  restore_apt_sources_pre_upgrade || true
-  restore_login_shells_pre_upgrade || true
+  restore_apt_sources_pre_upgrade || apt_restore_rc=$?
+  restore_login_shells_pre_upgrade || shell_restore_rc=$?
   clear_runner_pid
-  log INFO "APT_SOURCES_RESTORE_RESULT=PASS"
-  log INFO "AELLA_SHELL_RESTORE_RESULT=PASS"
+  if [[ "$apt_restore_rc" -eq 0 ]]; then
+    log INFO "APT_SOURCES_RESTORE_RESULT=PASS"
+  else
+    log ERROR "APT_SOURCES_RESTORE_RESULT=FAIL"
+  fi
+  if [[ "$shell_restore_rc" -eq 0 ]]; then
+    log INFO "AELLA_SHELL_RESTORE_RESULT=PASS"
+  else
+    log ERROR "AELLA_SHELL_RESTORE_RESULT=FAIL"
+  fi
   if [[ "$hold_restore_rc" -eq 0 ]]; then
     log INFO "CRITICAL_OS_HOLD_RESTORE_RESULT=PASS"
-    log INFO "PRE_DRO_ROLLBACK_RESULT=PASS"
   else
     log ERROR "CRITICAL_OS_HOLD_RESTORE_RESULT=FAIL"
+  fi
+  if [[ "$hold_restore_rc" -eq 0 && "$apt_restore_rc" -eq 0 && "$shell_restore_rc" -eq 0 ]]; then
+    log INFO "PRE_DRO_ROLLBACK_RESULT=PASS"
+  else
     log ERROR "PRE_DRO_ROLLBACK_RESULT=INCOMPLETE"
   fi
 }

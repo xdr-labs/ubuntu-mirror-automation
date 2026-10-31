@@ -195,20 +195,43 @@ p2b_record_post_bringup_migration() {
 p2b_emit_completion_semantics() {
   local bringup_pass="${1:-NO}"
   local cluster_validation="${2:-PENDING}"
-  local migration
+  local migration topology="" worker_readiness=NOT_CHECKED upgrade_scope=LOCAL_ONLY
+  local dp_complete=NO cluster_complete=NO log_path=""
   p2b_load_post_bringup_migration || true
   migration="${POST_BRINGUP_MIGRATION:-NOT_CHECKED}"
-  local dp_complete=NO
+  # Keep local/AIO completion intact. If a multi-node topology was configured,
+  # also require current-run worker orchestration evidence.
+  if declare -F p2b_dir >/dev/null 2>&1 && declare -F p2b_read_file >/dev/null 2>&1; then
+    topology="$(p2b_read_file "$(p2b_dir)/orchestration-topology")"
+  fi
+  if [[ "$topology" == workers=* && "$topology" != "workers=;standby=" ]]; then
+    upgrade_scope=CONFIGURED_WORKERS
+    worker_readiness=NOT_VERIFIED
+    if [[ "$bringup_pass" == "YES" ]] && declare -F p2b_current_run_log_contains >/dev/null 2>&1; then
+      log_path="$(p2b_read_file "$(p2b_dir)/log-path")"
+      if [[ -n "$log_path" ]] && p2b_current_run_log_contains "$log_path" 'WORKER_ORCHESTRATION=PASS'; then
+        worker_readiness=PASS
+      fi
+    fi
+  fi
   if [[ "$bringup_pass" == "YES" \
     && "$cluster_validation" == "PASS" \
     && ( "$migration" == "NOT_REQUIRED" || "$migration" == "PASS" ) ]]; then
-    dp_complete=YES
+    if [[ "$upgrade_scope" == LOCAL_ONLY || "$worker_readiness" == PASS ]]; then
+      dp_complete=YES
+    fi
+    if [[ "$upgrade_scope" == CONFIGURED_WORKERS && "$worker_readiness" == PASS ]]; then
+      cluster_complete=YES
+    fi
   fi
   cat <<EOF
 BRINGUP_PROCESS_SUCCESS=${bringup_pass}
 CLUSTER_VALIDATION=${cluster_validation}
 POST_BRINGUP_MIGRATION=${migration}
 REQUIRED_POST_BRINGUP_ACTION=${REQUIRED_POST_BRINGUP_ACTION:-UNKNOWN}
+DP_WORKER_READINESS=${worker_readiness}
+DP_UPGRADE_SCOPE=${upgrade_scope}
+DP_CLUSTER_UPGRADE_COMPLETE=${cluster_complete}
 DP_UPGRADE_COMPLETE=${dp_complete}
 EOF
 }

@@ -20,6 +20,9 @@ pass() { echo "  PASS: $*"; }
 fail() { echo "  FAIL: $*"; FAIL=1; }
 
 WORKDIR="$(mktemp -d)"
+# Nginx www-data must traverse the fixture parent during real publish gates.
+# mktemp creates it as 0700, which is too restrictive for the fixture only.
+chmod 0711 "$WORKDIR"
 cleanup() { rm -rf "$WORKDIR"; }
 trap cleanup EXIT
 

@@ -15,6 +15,10 @@ pass() { echo "  PASS: $*"; }
 fail() { echo "  FAIL: $*"; FAIL=1; RESULT="FAIL"; }
 
 WORKDIR="$(mktemp -d /tmp/test-os-userspace-matrix.XXXXXX)"
+# Nginx's unprivileged www-data account must traverse this fixture ancestor
+# during post-publish verification. Keep contents unlistable (0711), while
+# allowing traversal; mktemp defaults to 0700 and blocks a valid build.
+chmod 0711 "$WORKDIR"
 
 cleanup() {
   # Never block a noninteractive suite on a sudo password prompt. Most fixture
