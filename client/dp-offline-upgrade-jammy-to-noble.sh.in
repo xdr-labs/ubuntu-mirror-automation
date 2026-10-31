@@ -1304,6 +1304,8 @@ unhold_critical_os_packages() {
   local dir pkg
   dir="$(critical_holds_dir)"
   mkdir -p "$dir"
+  # Old restore evidence must not apply to a fresh unhold operation.
+  rm -f "$dir/restore-result"
   : >"$dir/package-results.tsv"
   CRITICAL_HOLDS_REMOVED=""
   [[ -n "$PLANNED_CRITICAL_OS_HOLDS" ]] || {
@@ -1415,11 +1417,13 @@ restore_critical_os_holds_if_safe() {
   done
   CRITICAL_HOLD_RESTORE_ON_EXIT=0
   if [[ -n "$failed" ]]; then
+    printf 'FAIL\n' | atomic_write_file "$dir/restore-result"
     write_critical_holds_state_json "accepted" "true" "FAIL" "$reason"
     log ERROR "CRITICAL_OS_HOLD_RESTORE_RESULT=FAIL"
     return 1
   fi
   write_critical_holds_state_json "accepted" "true" "PASS" "$reason"
+  printf 'PASS\n' | atomic_write_file "$dir/restore-result"
   log INFO "CRITICAL_OS_HOLD_RESTORE_RESULT=PASS"
   log INFO "critical_holds_restored=$(printf '%s' "$restored" | sed 's/[[:space:]]*$//')"
   return 0
@@ -1661,6 +1665,23 @@ verify_prior_critical_hold_resume_consistency() {
     fi
   done
   if [[ -n "$unexpectedly_held" ]]; then
+    # A fully re-held pre-transaction rollback can safely be re-planned, but
+    # only with explicit PASS evidence and no package transaction.
+    local restore_pass=NO all_restored=YES
+    if [[ -f "$dir/restore-result" ]]       && grep -qx 'PASS' "$dir/restore-result"; then
+      restore_pass=YES
+    elif [[ -f "$dir/critical-holds-state.json" ]]       && grep -q '"restore_attempted": true' "$dir/critical-holds-state.json"       && grep -q '"restore_result": "PASS"' "$dir/critical-holds-state.json"; then
+      restore_pass=YES
+    fi
+    for pkg in $removed; do
+      if ! is_package_currently_held "$pkg"; then all_restored=NO; break; fi
+    done
+    load_release_upgrade_started_flag
+    if [[ "$restore_pass" == YES && "$all_restored" == YES       && "$RELEASE_UPGRADE_PACKAGE_TRANSITION_STARTED" != "true" ]]       && ! package_transition_evidence_present; then
+      log INFO "CRITICAL_OS_HOLD_STATE=RESTORED_AFTER_PRE_TRANSITION_FAILURE"
+      log INFO "CRITICAL_OS_HOLD_RECONCILE_ACTION=REPLAN_UNHOLD_AFTER_CONFIRMATION"
+      return 0
+    fi
     log ERROR "FAIL_CRITICAL_OS_HOLD_STATE_INCONSISTENT"
     log ERROR "REASON=prior_removed_but_currently_held"
     log ERROR "PACKAGES=${unexpectedly_held}"
@@ -6570,8 +6591,10 @@ restore_critical_holds_pre_upgrade() {
   done <"$removed_file"
   printf 'true\n' >"${HOLDS_DIR}/restore_attempted"
   if [[ "$failed" -eq 0 ]]; then
+    printf 'PASS\n' >"${HOLDS_DIR}/restore-result"
     log INFO "CRITICAL_OS_HOLD_RESTORE_RESULT=PASS"
   else
+    printf 'FAIL\n' >"${HOLDS_DIR}/restore-result"
     log ERROR "CRITICAL_OS_HOLD_RESTORE_RESULT=FAIL"
     return 1
   fi
@@ -6682,14 +6705,20 @@ runner_pre_dro_rollback() {
   PRE_DRO_ROLLBACK_DONE=1
   log INFO "PRE_DRO_ROLLBACK_BEGIN"
   log INFO "ROLLBACK_ELIGIBLE=YES"
-  restore_critical_holds_pre_upgrade || true
+  local hold_restore_rc=0
+  restore_critical_holds_pre_upgrade || hold_restore_rc=$?
   restore_apt_sources_pre_upgrade || true
   restore_login_shells_pre_upgrade || true
   clear_runner_pid
-  log INFO "CRITICAL_OS_HOLD_RESTORE_RESULT=${CRITICAL_OS_HOLD_RESTORE_RESULT:-PASS}"
   log INFO "APT_SOURCES_RESTORE_RESULT=PASS"
   log INFO "AELLA_SHELL_RESTORE_RESULT=PASS"
-  log INFO "PRE_DRO_ROLLBACK_RESULT=PASS"
+  if [[ "$hold_restore_rc" -eq 0 ]]; then
+    log INFO "CRITICAL_OS_HOLD_RESTORE_RESULT=PASS"
+    log INFO "PRE_DRO_ROLLBACK_RESULT=PASS"
+  else
+    log ERROR "CRITICAL_OS_HOLD_RESTORE_RESULT=FAIL"
+    log ERROR "PRE_DRO_ROLLBACK_RESULT=INCOMPLETE"
+  fi
 }
 
 assert_ascii_meta_release() {

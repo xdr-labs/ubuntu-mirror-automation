@@ -4023,10 +4023,12 @@ osu_post_hop_validate() {
     return 1
   fi
   osu_verify_critical_checksums || return 1
-  # dpkg audit
+  # dpkg --audit may return zero even when it prints broken-package records.
   if command -v dpkg >/dev/null 2>&1; then
-    if ! dpkg --audit >/dev/null 2>&1; then
-      osu_log ERROR "dpkg --audit reported issues"
+    local dpkg_audit_output="" dpkg_audit_rc=0
+    dpkg_audit_output="$(dpkg --audit 2>&1)" || dpkg_audit_rc=$?
+    if [[ "$dpkg_audit_rc" -ne 0       || -n "${dpkg_audit_output//[[:space:]]/}" ]]; then
+      osu_log ERROR "dpkg --audit reported issues (rc=${dpkg_audit_rc})"
       return 1
     fi
   fi
