@@ -83,3 +83,5 @@ jobs:
           bash tests/test_audit_p1_publication_followups.sh
           bash tests/test_phase2_prereq_stage_failclosed.sh
           bash tests/test_verified_audit_safety.sh
+          bash tests/test_audit_05_06_07_regression.sh
+          python3 -m unittest -q tests.test_selective_mirror.SelectivePlanTests tests.test_selective_mirror.SelectiveComponentPathTests

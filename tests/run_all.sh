@@ -67,6 +67,7 @@ TEST_LIST=(
   test_dp_offline_upgrade_xenial_to_bionic.sh
   test_dpkg_updates_empty_listing.sh
   test_dp_client_p1_safety.sh
+  test_audit_05_06_07_regression.sh
   test_xenial_bionic_upgrader_env_order.py
   test_offline_progress_log_lines.py
   test_postboot_shebang_and_state_machine.sh

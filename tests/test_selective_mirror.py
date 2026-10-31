@@ -58,11 +58,6 @@ def write_bytes(path, data):
 
 
 class SelectivePlanTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        if not os.path.isdir(os.path.join(DISCOVERY, 'xenial-to-bionic')):
-            raise unittest.SkipTest('discovery artifacts missing')
-
     def test_profile_is_selective(self):
         profile = json.load(open(PROFILE))
         self.assertEqual(profile['profile_name'], 'offline-upgrade-selective')
@@ -71,6 +66,8 @@ class SelectivePlanTests(unittest.TestCase):
         self.assertEqual(profile['schema_version'], 2)
 
     def test_parser_four_hops_and_dedupe(self):
+        if not os.path.isdir(os.path.join(DISCOVERY, 'xenial-to-bionic')):
+            self.skipTest('external four-hop discovery evidence not shipped in repo')
         tmp = tempfile.mkdtemp(prefix='sel-plan-')
         try:
             plan, packages, files, urls = bsp.build_plan(
@@ -670,12 +667,9 @@ class SelectiveDownloadDiagnosticsTests(unittest.TestCase):
 class SelectiveComponentPathTests(unittest.TestCase):
     """Component/path rules: no main default; URL wins; 404 path correction."""
 
-    @classmethod
-    def setUpClass(cls):
-        if not os.path.isdir(os.path.join(DISCOVERY, 'xenial-to-bionic')):
-            raise unittest.SkipTest('discovery artifacts missing')
-
     def test_discovery_universe_url_keeps_universe(self):
+        if not os.path.isdir(os.path.join(DISCOVERY, 'xenial-to-bionic')):
+            self.skipTest('external four-hop discovery evidence not shipped in repo')
         plan, _packages, _files, _urls = bsp.build_plan(
             DISCOVERY, seed_root='', profile_name='offline-upgrade-selective',
             resolve_missing_pool_paths=False,
@@ -768,7 +762,12 @@ class SelectiveComponentPathTests(unittest.TestCase):
             plan, packages, _f, _u = bsp.build_plan(
                 tmp, seed_root='', resolve_missing_pool_paths=False,
             )
-            self.assertEqual(plan['validation_result'], 'PASS', plan.get('errors'))
+            # This focused fixture lacks the required 4 tar+4 GPG upgrader
+            # artifacts. Full-plan validation must stay fail-closed; only the
+            # cross-hop URL/component merge contract is under test here.
+            self.assertEqual(plan['validation_result'], 'FAIL')
+            self.assertTrue(any('expected 8 upgrader artifacts' in err
+                                for err in plan['errors']), plan['errors'])
             self.assertEqual(len(plan['debs']), 1)
             deb = plan['debs'][0]
             self.assertEqual(deb['component'], 'universe')
