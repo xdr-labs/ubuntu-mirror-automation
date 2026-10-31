@@ -1340,7 +1340,7 @@ EOF
     cat <<EOF
 NEXT_COMMAND=sudo bash ${BRINGUP_SCRIPT} --version ${TARGET_DP_VERSION} --skip-download
 NEXT_COMMAND_BEHAVIOR=START_DETACHED_WORKER_AND_ATTACH_MONITOR
-NEXT_COMMAND_NOTE=Only run after TIME_READINESS=PASS_SYNCED|PASS_WITH_WARNING and operator snapshot confirmation. Default attaches a foreground monitor; use --detach to return after handoff. Do not check aella_cli until BRINGUP_RESULT=PASS.
+NEXT_COMMAND_NOTE=Local/standalone DP command only. For multi-node clusters, use the per-master Menu 7 command with --worker-ips; this command alone does not prove worker upgrades. Run after TIME_READINESS=PASS_SYNCED|PASS_WITH_WARNING and snapshot confirmation. Default attaches a foreground monitor; use --detach to return after handoff. Do not check aella_cli until BRINGUP_RESULT=PASS.
 EOF
   else
     cat <<EOF

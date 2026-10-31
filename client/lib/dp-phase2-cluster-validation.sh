@@ -220,7 +220,9 @@ p2b_analyze_aella_status_text() {
   # Explicit negative vendor statements override any affirmative lines (e.g.
   # a CLI response with more than one snapshot). Missing index lines alone are
   # informational on DA/DR and must not become a new hard requirement.
-  if grep -qiE 'Not all cluster nodes are ready|Not all host services are ready|[0-9]+ out of [0-9]+ nodes joined|[0-9]+ out of [0-9]+ indices are still recovering' <<<"$text"; then
+  # Match vendor negative status lines, not arbitrary prose. Do not gate on
+  # pod count alone: healthy field DPs can legitimately show 52/54 pods.
+  if grep -qiE '^[[:space:]]*(Not all (cluster nodes|host services) are ready([,[:space:]]|$).*|[0-9]+ out of [0-9]+ (nodes joined|indices are still recovering)|([Ww]arning:[[:space:]]*)?[0-9]+ nodes? (are |is )?not ready|Some host services are not ready|Cluster health:[[:space:]]*(RED|YELLOW)|[Ii]ndices:[^[:cntrl:]]*(red|yellow|unassigned)|Some indices are recovering|Provision service (is )?not ready)[[:space:]]*$' <<<"$text"; then
     degraded=YES
   fi
   if grep -qiE 'DataProcessor\((DL|AIO)([-_A-Za-z0-9]*)?\)>' <<<"$text"; then
@@ -247,7 +249,8 @@ p2b_analyze_aella_status_text() {
   if grep -qiE 'Provision service is ready' <<<"$text"; then
     provision_ready=YES
   fi
-  if grep -qiE 'CRITICAL|FATAL|Bringup failed|License is (invalid|expired)' <<<"$text"; then
+  # "Critical alerts: 0" is a count, not evidence of a fatal failure.
+  if grep -qiE '^[[:space:]]*(CRITICAL:|FATAL:|Bringup failed([[:space:]:]|$)|License is (invalid|expired)([[:space:]]|$))' <<<"$text"; then
     critical_fail=YES
   fi
 
