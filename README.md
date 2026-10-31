@@ -188,6 +188,7 @@ Repository references:
 - [DP Upgrade Mirror Manager](docs/deployment/DP_UPGRADE_MIRROR_MANAGER.md)
 - [OS Core Artifact Format](docs/deployment/OS_CORE_ARTIFACT_FORMAT.md)
 - [Testing Guide](docs/development/testing.md)
+- [Real DP 6.6.0 Field E2E Checklist](docs/DP_FIELD_E2E_6_6_0.md)
 
 ---
 

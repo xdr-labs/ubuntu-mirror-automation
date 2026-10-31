@@ -89,6 +89,7 @@ run_step "phase2_cluster_status_sigpipe" bash tests/test_phase2_validate_cluster
 run_step "verified_audit_safety" bash tests/test_verified_audit_safety.sh
 run_step "aud05_06_07_regression" bash tests/test_audit_05_06_07_regression.sh
 run_step "consolidated_audit_behaviors" bash tests/test_consolidated_audit_behaviors.sh
+run_step "field_e2e_document_contract" python3 tests/test_field_e2e_document_contract.py
 run_step "selective_mirror_hermetic_classes" python3 -m unittest -q tests.test_selective_mirror.SelectivePlanTests tests.test_selective_mirror.SelectiveComponentPathTests
 run_step "audit_phase2_ntp_long_status" bash tests/test_phase2_ntp_pipefail_large_output.sh
 run_step "audit_preflight_json_large" bash tests/test_dp_preflight_internal_json_pipefail.sh

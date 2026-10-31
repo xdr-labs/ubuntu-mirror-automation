@@ -1,5 +1,15 @@
 # Operations — Selective Offline Ubuntu Upgrade Mirror
 
+> **Historical selective-mirror reference, not the current DP 6.6.0
+> Mirror Manager Menu 1–7 operator procedure.** This document describes
+> the earlier `publish-selective` / `mirrorctl sync` code path. The
+> currently supported R2-backed DP upgrade workflow is
+> `sudo ubuntu-offline-mirror mirror-manager` with
+> **Menu 1 → Menu 2 (only when needed) → Menu 3 → Menu 4 PASS → Menu 7**.
+> Do **not** mix these legacy publishing instructions with a deployed
+> Menu 1–7 Mirror Server. For actual DP execution use the
+> [Field E2E Checklist](DP_FIELD_E2E_6_6_0.md).
+
 This server builds a **discovery-exact selective offline upgrade mirror** for the DP LTS chain:
 
 `Ubuntu 16.04 Xenial → 18.04 Bionic → 20.04 Focal → 22.04 Jammy → 24.04 Noble`

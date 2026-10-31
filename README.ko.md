@@ -133,6 +133,7 @@ RECOVERY_METHOD=HYPERVISOR_SNAPSHOT
 - [DP Upgrade Mirror Manager](docs/deployment/DP_UPGRADE_MIRROR_MANAGER.md)
 - [OS Core Artifact Format](docs/deployment/OS_CORE_ARTIFACT_FORMAT.md)
 - [Testing Guide](docs/development/testing.md)
+- **[실제 DP E2E 현장 체크리스트](docs/DP_FIELD_E2E_6_6_0.ko.md)**
 - 영문 README에는 전체 운영 reference가 포함되어 있습니다: [README.md](README.md)
 
 ---

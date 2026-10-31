@@ -220,6 +220,7 @@ TEST_LIST=(
   test_phase2_existing_reuse_progress.sh
   test_client_os_userspace_matrix.sh
   test_menu7_normal_width_display.sh
+  test_field_e2e_document_contract.py
   test_phase2_extract_progress_separator.sh
   test_phase2_controller_dependency_fetch.sh
   test_phase2_helper_generation_trust.sh
