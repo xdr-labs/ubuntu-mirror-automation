@@ -320,6 +320,28 @@ replacement. After recovery, rerun the newly generated staging command, require
 staging/readiness PASS, and run the separate bringup command. Full upgrade
 completion still requires the normal product and cluster checks.
 
+#### Phase 2 Only: missing Noble indexes during initial preparation
+
+`PHASE2_ONLY` does not download or materialize the OS Core selective mirror.
+On a fresh mirror, the Noble index under
+`selective/hops/jammy-to-noble/ubuntu/dists/` may therefore be absent.
+The prerequisite builder uses a private staging directory and its existing
+authoritative Noble index/verified-DEB acquisition path in that case; the
+original ACPS common archive and the published Phase 2 vendor bundle are
+unchanged. Acquired DEBs must match index SHA256 and size before the separate
+prerequisite archive can be published. This requires Ubuntu repository reachability
+from the **mirror server** unless a local authoritative source/cache is supplied;
+a dark-site **DP** never fetches packages from Ubuntu during staging.
+
+`FULL` preparation still requires the selective Noble index from the verified
+OS Core and fails closed with `noble_index_missing` if it is absent.
+A non-existent explicit `PHASE2_PREREQ_INDEX_ROOT` also fails closed; no
+untrusted default override is silently accepted. Failed prerequisites do not
+publish an incomplete generation or invalidate a previously verified vendor
+bundle. After updating the mirror's installed code, repeat Menu 2 and then
+Menu 3 → Menu 4 (PASS) → Menu 7; let the verified existing large bundle be
+reused when eligible, and never bypass missing dependency checks.
+
 #### Completing the sealed 6.6.0 SSL companion transaction
 
 On Ubuntu 24.04 DPs with 6.2.1 Python 2 products, Phase 2 Only may start
