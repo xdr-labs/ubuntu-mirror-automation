@@ -213,9 +213,21 @@ prepare_phase2_ubuntu_prerequisites() {
   dp2_info "PHASE2_PREREQ_ACPS_SHA1=$(sha1sum "$common" | awk '{print $1}')"
 
   if ! ubuntu_root="$(dp2_find_noble_ubuntu_root)"; then
-    rm -rf "$work"
-    dp2_error "PHASE2_PREREQ=FAIL reason=noble_index_missing"
-    return 1
+    # PHASE2_ONLY deliberately does not acquire the OS Core selective mirror.
+    # The resolver already supports Ubuntu authoritative Noble indexes and
+    # SHA256/size-verified DEBs; give it a private workspace for those files.
+    # FULL mode and a mistyped explicit override must remain fail-closed.
+    if [[ "${PREPARATION_MODE:-FULL}" != "PHASE2_ONLY" ||
+          -n "${PHASE2_PREREQ_INDEX_ROOT:-}" ]]; then
+      rm -rf "$work"
+      dp2_error "PHASE2_PREREQ=FAIL reason=noble_index_missing"
+      return 1
+    fi
+    ubuntu_root="${work}/noble-bootstrap"
+    mkdir -p "$ubuntu_root"
+    PHASE2_PREREQ_AUTHORITATIVE_CACHE="${PHASE2_PREREQ_AUTHORITATIVE_CACHE:-${DP_PHASE2_ROOT}/.phase2-noble-authoritative}"
+    dp2_info "PHASE2_PREREQ_INDEX_SOURCE=AUTHORITATIVE_BOOTSTRAP mode=PHASE2_ONLY"
+    dp2_info "PHASE2_PREREQ_AUTHORITATIVE_CACHE=${PHASE2_PREREQ_AUTHORITATIVE_CACHE}"
   fi
   dp2_info "PHASE2_PREREQ_UBUNTU_ROOT=${ubuntu_root}"
 

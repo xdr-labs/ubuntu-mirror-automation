@@ -1521,6 +1521,7 @@ engine_prepare_phase2_ubuntu_prerequisites() {
   if DP_PHASE2_VERSION="${TARGET_DP_VERSION}" \
     DP_PHASE2_ROOT="${MM_DP_PHASE2_ROOT}" \
     MM_SELECTIVE_ROOT="${MM_SELECTIVE_ROOT}" \
+    PREPARATION_MODE="${PREPARATION_MODE}" \
     PHASE2_PREREQ_WORK_DIR="$work" \
     PHASE2_PREREQ_OUT_DIR="$candidate" \
     bash "$script" "${TARGET_DP_VERSION}" >"$child_log" 2>&1

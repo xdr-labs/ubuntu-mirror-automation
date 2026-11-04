@@ -465,6 +465,7 @@ cmd_sync() {
     PHASE2_PREREQ_OUT_DIR="${STAGING_DIR}/extras" \
     PHASE2_PREREQ_ACPS_COMMON="${STAGING_DIR}/files/aelladeb_py3_common.tar.gz" \
     DP_PHASE2_ROOT="$DP_PHASE2_ROOT" \
+    PREPARATION_MODE=PHASE2_ONLY \
       bash "${SCRIPT_DIR}/prepare-phase2-ubuntu-prerequisites.sh" "$DP_PHASE2_VERSION" \
       || dp2_die "PHASE2_PREREQ=FAIL (publication not updated)"
   else
