@@ -5,6 +5,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKDIR="$(mktemp -d)"
+# Allow www-data to traverse the test fixture root during the HTTP publication
+# scenario without listing private test files; production permissions stay strict.
+chmod 0711 "$WORKDIR"
 trap 'rm -rf "$WORKDIR"' EXIT
 # Isolate workflow state from host /etc/ubuntu-mirror (may be root-only 0600).
 # Must be set before sourcing mirror_manager_common → mirror_workflow_state.

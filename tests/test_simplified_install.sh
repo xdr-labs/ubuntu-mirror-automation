@@ -3,6 +3,10 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# A unique per-run log prevents stale fixed-path collisions and
+# fs.protected_regular write denial when prior tests ran as another user.
+DRY_RUN_LOG="$(mktemp)"
+trap 'rm -f "$DRY_RUN_LOG"' EXIT
 # shellcheck source=../lib/common.sh
 source "${ROOT}/lib/common.sh"
 # shellcheck source=../lib/config.sh
@@ -59,21 +63,21 @@ rm -f "$MOCK_CORE"
 
 echo "[test_dry_run_bootstrap]"
 set +e
-bash "${ROOT}/install.sh" --dry-run --no-gui >/tmp/um-dry.out 2>&1
+bash "${ROOT}/install.sh" --dry-run --no-gui >"$DRY_RUN_LOG" 2>&1
 RC=$?
 set -e
 if [[ "$RC" -eq 0 ]]; then
   pass "dry-run exit 0"
 else
   fail "dry-run exit $RC"
-  tail -40 /tmp/um-dry.out || true
+  tail -40 "$DRY_RUN_LOG" || true
 fi
-grep -q 'Would install packages:' /tmp/um-dry.out || fail "missing package dry-run"
-grep -q 'whiptail' /tmp/um-dry.out || fail "dry-run missing whiptail"
-grep -q 'nginx' /tmp/um-dry.out || fail "dry-run missing nginx"
-grep -qiE 'plan-selective|Would start initial synchronization' /tmp/um-dry.out \
+grep -q 'Would install packages:' "$DRY_RUN_LOG" || fail "missing package dry-run"
+grep -q 'whiptail' "$DRY_RUN_LOG" || fail "dry-run missing whiptail"
+grep -q 'nginx' "$DRY_RUN_LOG" || fail "dry-run missing nginx"
+grep -qiE 'plan-selective|Would start initial synchronization' "$DRY_RUN_LOG" \
   && fail "dry-run still starts old selective sync" || pass "dry-run no old sync"
-grep -qiE 'mkfs|wipefs' /tmp/um-dry.out && fail "dry-run mentioned format" || pass "no format in dry-run"
+grep -qiE 'mkfs|wipefs' "$DRY_RUN_LOG" && fail "dry-run mentioned format" || pass "no format in dry-run"
 
 echo "[test_package_list_no_apt_mirror]"
 pkgs="$(um_bootstrap_required_packages)"
