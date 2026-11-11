@@ -14,6 +14,9 @@ pass() { echo "  PASS: $*"; }
 fail() { echo "  FAIL: $*"; FAIL=1; }
 
 WORKDIR="$(mktemp -d)"
+# The public HTTP fixture must be traversable by www-data even when the
+# runner creates mktemp roots as 0700; keep directory listing private.
+chmod 0711 "$WORKDIR"
 trap 'rm -rf "$WORKDIR"' EXIT
 
 echo "=== test_installed_runtime_client_finalization ==="
