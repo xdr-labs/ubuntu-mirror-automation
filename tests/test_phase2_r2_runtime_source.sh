@@ -8,7 +8,7 @@ FAIL=0
 pass() { echo "PASS: $*"; }
 fail() { echo "FAIL: $*"; FAIL=1; }
 
-R2_BASE='https://downloads.xdr.ooo/dp-os-upgrade/phase2/6.6.0/validated-20260919'
+R2_BASE='https://downloads.xdr.ooo/dp-os-upgrade/phase2/6.6.0/candidate-20261111-ntpsec-v2'
 OS_CORE='https://downloads.xdr.ooo/ubuntu-os-core/ubuntu-os-core-xenial-to-noble.tar'
 RUNTIME_SCRIPTS=(
   "${ROOT}/scripts/download-dp-phase2.sh"
@@ -61,10 +61,10 @@ set -e
 [[ "$rc" -eq 0 ]] \
   && printf '%s' "$out" | grep -qx "BASE=${R2_BASE}" \
   && printf '%s' "$out" | grep -qx "R2=${R2_BASE}" \
-  && printf '%s' "$out" | grep -qx 'RELEASE=validated-20260919' \
+  && printf '%s' "$out" | grep -qx 'RELEASE=candidate-20261111-ntpsec-v2' \
   && printf '%s' "$out" | grep -qx 'AUTH_N=0' \
   && ! printf '%s' "$out" | grep -q 'acps.stellarcyber.ai' \
-  && pass "production Phase 2 source is immutable R2 validated-20260919" \
+  && pass "production Phase 2 source is immutable R2 candidate-20261111-ntpsec-v2" \
   || fail "production source is not frozen R2 (rc=${rc} out=${out})"
 
 # Env cannot retarget the frozen prefix.
@@ -416,11 +416,11 @@ printf '%s\n' "${DP_PHASE2_REQUIRED_FILES[@]}" | grep -qx 'images-6.6.0.tar' \
   || fail "6.6.0 required file set changed"
 
 # Frozen identity constants match the validated freeze.
-[[ "${PHASE2_R2_BRINGUP_SHA256}" == "6a69ff8671a1bd396efb4d103314cd5d347003fbda957e49a20c99fb5957e622" ]] \
-  && [[ "${PHASE2_R2_IMAGES_SHA256}" == "91cf6a2c4de178b616d539e0c22817bf86952ae6020a14f248d32efe9f453fe0" ]] \
-  && [[ "${PHASE2_R2_IMAGES_BYTES}" == "29579332096" ]] \
-  && [[ "${PHASE2_R2_MANIFEST_SHA256}" == "606e2967652ad4d0f0bfad4a23b562217a062ea17ccb54c47d2a5ea8bdf7c898" ]] \
-  && pass "frozen R2 identity pins match validated-20260919" \
+[[ "${PHASE2_R2_BRINGUP_SHA256}" == "426d8cdc2763642e9e598efe9c80c70983c019025b99abcbac163c09be73be16" ]] \
+  && [[ "${PHASE2_R2_IMAGES_SHA256}" == "f70546644a89275177afc526c30709af5afb00245acf14b4278fb31dd178a374" ]] \
+  && [[ "${PHASE2_R2_IMAGES_BYTES}" == "31903754240" ]] \
+  && [[ "${PHASE2_R2_MANIFEST_SHA256}" == "e70c8ab102a2c1a7564c6ad48bb836c57757e198895aab95abbecbb2ad6dc48c" ]] \
+  && pass "frozen R2 identity pins match candidate-20261111-ntpsec-v2" \
   || fail "frozen identity pins drifted"
 
 echo "PHASE2_RUNTIME_ACPS_REFERENCE_COUNT=${runtime_acps_download_assigns}"
