@@ -9,6 +9,19 @@ pass() { echo "PASS: $*"; }
 fail() { echo "FAIL: $*"; FAIL=1; }
 
 R2_BASE='https://downloads.xdr.ooo/dp-os-upgrade/phase2/6.6.0/candidate-20261111-ntpsec-v2'
+
+# R2 checksums and SHA1 sidecars are independent of executable provenance.
+# Fail closed if a new immutable R2 release was pinned without prior review.
+APPROVED_BRINGUP_SHA256_LIST="${ROOT}/vendor/dp-phase2/approved-upstream-bringup.sha256"
+PINNED_R2_BRINGUP_SHA256="$(awk -F= '/^PHASE2_R2_BRINGUP_SHA256=/{gsub(/"/, "", $2); print $2; exit}' "${ROOT}/scripts/lib/dp-phase2-common.sh")"
+if [[ "$PINNED_R2_BRINGUP_SHA256" =~ ^[0-9a-f]{64}$ ]] \
+  && [[ -f "$APPROVED_BRINGUP_SHA256_LIST" ]] \
+  && grep -Eiq "^${PINNED_R2_BRINGUP_SHA256}([[:space:]]|$)" "$APPROVED_BRINGUP_SHA256_LIST"; then
+  pass "immutable R2 bringup SHA256 is approved for executable provenance"
+else
+  fail "immutable R2 bringup SHA256 absent from executable provenance allowlist"
+fi
+
 OS_CORE='https://downloads.xdr.ooo/ubuntu-os-core/ubuntu-os-core-xenial-to-noble.tar'
 RUNTIME_SCRIPTS=(
   "${ROOT}/scripts/download-dp-phase2.sh"

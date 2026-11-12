@@ -34,3 +34,8 @@
 
 # Reviewed ACPS generation 3af369 (SHA1 3af369660c3e0dfb0b7421ab455dee1ced365b1d)
 6a69ff8671a1bd396efb4d103314cd5d347003fbda957e49a20c99fb5957e622  production-3af369
+
+# Reviewed R2 6.6.0 NTPSEC candidate-20261111-ntpsec-v2
+# SHA1 ee123c17369838ddcbc19b3fb19d2506ce603850; same bytes as pinned R2
+# bringup from immutable manifest e70c8ab102a2c1a7564c6ad48bb836c57757e198895aab95abbecbb2ad6dc48c.
+426d8cdc2763642e9e598efe9c80c70983c019025b99abcbac163c09be73be16  production-6.6.0-candidate-20261111-ntpsec-v2
