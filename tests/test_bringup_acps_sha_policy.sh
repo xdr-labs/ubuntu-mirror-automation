@@ -22,6 +22,7 @@ HIST_3AF369_PATH="tests/fixtures/dp-phase2/production-3af369/bringup_py3_dp_afte
 # Expected production allowlist digests (SHA256 of exact historical ACPS bytes).
 REAL_F1A73_SHA256="1d956d8b1221e2bfd621319951fc7665eed4cdbc046860b36e3f6e2eba885c9c"
 REAL_3AF369_SHA256="6a69ff8671a1bd396efb4d103314cd5d347003fbda957e49a20c99fb5957e622"
+REAL_NTPSEC_6_6_0_SHA256="426d8cdc2763642e9e598efe9c80c70983c019025b99abcbac163c09be73be16"
 REAL_F1A73_SHA1="f1a73c1d4502e2efcf55197865d2ade345d9c82f"
 REAL_3AF369_SHA1="3af369660c3e0dfb0b7421ab455dee1ced365b1d"
 
@@ -161,15 +162,22 @@ else
   pass "SANITIZED_FIXTURE_DIGEST_IN_PRODUCTION_ALLOWLIST=NO"
 fi
 real_count="$(awk '/^[0-9a-fA-F]{64}([[:space:]]|$)/ {c++} END{print c+0}' "$APPROVED_LIST")"
-[[ "$real_count" -eq 2 ]] \
+[[ "$real_count" -eq 3 ]] \
   && pass "REAL_REVIEWED_UPSTREAM_DIGEST_COUNT=${real_count}" \
-  || fail "REAL_REVIEWED_UPSTREAM_DIGEST_COUNT want=2 got=${real_count}"
+  || fail "REAL_REVIEWED_UPSTREAM_DIGEST_COUNT want=3 got=${real_count}"
 grep -Eiq "^${REAL_F1A73_SHA256}([[:space:]]|$)" "$APPROVED_LIST" \
   && pass "production allowlist has real f1a73 digest" \
   || fail "production allowlist missing real f1a73 digest"
 grep -Eiq "^${REAL_3AF369_SHA256}([[:space:]]|$)" "$APPROVED_LIST" \
   && pass "production allowlist has real 3af369 digest" \
   || fail "production allowlist missing real 3af369 digest"
+
+grep -Eiq "^${REAL_NTPSEC_6_6_0_SHA256}([[:space:]]|$)" "$APPROVED_LIST" \
+  && pass "production allowlist has reviewed 6.6.0 NTPSEC R2 digest" \
+  || fail "production allowlist missing reviewed 6.6.0 NTPSEC R2 digest"
+[[ "${PHASE2_R2_BRINGUP_SHA256}" == "${REAL_NTPSEC_6_6_0_SHA256}" ]] \
+  && pass "R2 bringup immutability pin equals reviewed provenance digest" \
+  || fail "R2 bringup pin does not match reviewed provenance digest"
 
 # Confirm historical bytes match expected digests (no content printed).
 HIST_TMP="${WORKDIR}/hist"; mkdir -p "$HIST_TMP"
