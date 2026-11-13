@@ -334,10 +334,12 @@ tools = {
     "getent": r"""#!/usr/bin/env bash
 case "$PREFLIGHT_CASE" in
   bad_shell) printf 'aella:x:1000:1000::/home/aella:/bin/false\n' ;;
+  stellar_cli) printf 'aella:x:1000:1000::/home/aella:/usr/bin/aella_cli\n' ;;
+  usr_bin_bash) printf 'aella:x:1000:1000::/home/aella:/usr/bin/bash\n' ;;
   missing_account) exit 2 ;;
   *) printf 'aella:x:1000:1000::/home/aella:/bin/bash\n' ;;
 esac
-printf 'root:x:0:0:root:/root:/bin/bash\n'
+[[ "$PREFLIGHT_CASE" == missing_root ]] || printf 'root:x:0:0:root:/root:%s\n' "$(if [[ "$PREFLIGHT_CASE" == bad_root_shell ]]; then printf /bin/false; else printf /bin/bash; fi)"
 """,
     "df": r"""#!/usr/bin/env bash
 [[ "$PREFLIGHT_CASE" != df_error ]] || exit 1
@@ -373,8 +375,10 @@ printf 'CALLER_OPTIONS=UNCHANGED\n'
 exit "$rc"
 """
 cases = [
-    ("success", None), ("wrong_os", "OS"), ("missing_os_field", "OS"),
+    ("success", None), ("stellar_cli", None), ("usr_bin_bash", None),
+    ("wrong_os", "OS"), ("missing_os_field", "OS"),
     ("bad_shell", "LOGIN_SHELL"), ("missing_account", "LOGIN_SHELL"),
+    ("missing_root", "LOGIN_SHELL"), ("bad_root_shell", "LOGIN_SHELL"),
     ("root_space", "SPACE"), ("data_space", "SPACE"), ("df_error", "SPACE"),
     ("package_busy", "PACKAGE_ACTIVITY"), ("pgrep_error", "PACKAGE_ACTIVITY"),
 ]

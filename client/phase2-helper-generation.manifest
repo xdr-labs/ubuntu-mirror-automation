@@ -1,4 +1,4 @@
-1694d8af48ac85facf805be09bf5b91aae30737ed57b5a0a5097c6b2942716a2  stage-dp-phase2.sh
+0d2494e4b10f7f6cdcd40faff519042e7a3c05018f7c8ab1ba4f052763fc1954  stage-dp-phase2.sh
 8a1615584ccc6df74acc73a7a136057f0006c95eb7d6593e31002fb633b08c7b  bringup_py3_dp_lifecycle.sh
 8477f799819fb0391e8af6de9ebdcaff0e4afcecc1bdbfaf088118a998547dc3  lib/dp-offline-source-product-version.sh
 48490ad6ac393096069c264a80a7386f32c25db7d267fd6ddd56276977a78aeb  lib/dp-phase2-operation-progress.sh
