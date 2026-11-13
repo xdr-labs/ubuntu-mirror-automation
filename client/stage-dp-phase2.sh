@@ -1744,9 +1744,15 @@ try:
     critical = main.split(start, 1)[1].split(calls[-1], 1)[0]
     commands = [line.strip() for line in critical.splitlines()
                 if line.strip() and not line.lstrip().startswith('#')]
-    if commands != ['install_python3', 'install_pip3_packages',
-                    'install_docker_containerd', 'load_local_images',
-                    'install_kubernetes', 'install_helm', 'install_uvp']:
+    expected = ['install_python3', 'install_pip3_packages',
+                'install_docker_containerd', 'load_local_images',
+                'install_kubernetes', 'install_helm', 'install_uvp']
+    # The approved 6.6.0 NTPSEC vendor release installs its daemon after UVP.
+    # Admit only this explicit unconditional call, never arbitrary additions,
+    # reordered installation, or conditional bypass of the legacy guard.
+    if commands == expected + ['ensure_ntp_daemon']:
+        body('ensure_ntp_daemon')  # unique vendor function must exist
+    elif commands != expected:
         raise ValueError('conditional_or_unknown_install_sequence')
 except ValueError as error:
     print('PRODUCT_TRANSITION_HOOK=UNSUPPORTED reason=' + str(error))
