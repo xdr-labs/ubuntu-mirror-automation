@@ -623,10 +623,15 @@ resolve_aella_ownership() {
   passwd_uid="${BASH_REMATCH[1]}"
   passwd_gid="${BASH_REMATCH[2]}"
   shell="${BASH_REMATCH[3]}"
-  if [[ "$shell" != "/bin/bash" ]]; then
-    die "PHASE2_AELLA_SHELL_PREFLIGHT=FAIL aella shell must be /bin/bash before Phase 2 staging/download (got ${shell:-empty}). Fix the aella login shell, then re-run staging — do not download the 30+ GiB bundle until this passes."
-  fi
-  log "PHASE2_AELLA_SHELL_PREFLIGHT=PASS shell=/bin/bash"
+  # A DP installed directly on Ubuntu 24.04 may still use the original CLI
+  # login shell: unlike Phase 1, Phase 2 has not yet normalized it. Validate
+  # known shells here, but do not mutate until all pre-download gates pass.
+  case "$shell" in
+    /bin/bash|/usr/bin/bash|/usr/bin/aella_cli) ;;
+    *) die "PHASE2_AELLA_SHELL_PREFLIGHT=FAIL reason=unsupported_shell shell=${shell:-empty}" ;;
+  esac
+  [[ -x /bin/bash ]] || die "PHASE2_AELLA_SHELL_PREFLIGHT=FAIL reason=bash_missing"
+  log "PHASE2_AELLA_SHELL_PREFLIGHT=PASS shell=${shell}"
 
   AELLA_UID="$(id -u aella)" \
     || die "AELLA_OWNERSHIP_CHECK=FAIL reason=uid_lookup_failed account=aella"
@@ -648,6 +653,51 @@ resolve_aella_ownership() {
   log "AELLA_PRIMARY_GID=${AELLA_PRIMARY_GID}"
   log "AELLA_PRIMARY_GROUP=${AELLA_PRIMARY_GROUP}"
   log "AELLA_OWNERSHIP_CHECK=${AELLA_OWNERSHIP_CHECK}"
+}
+
+# Phase 2-only must normalize the known Stellar CLI shell itself, without
+# requiring a Phase 1 OS upgrade. Run after preflight/compatibility checks and
+# before any large bundle download or artifact replacement. Never alter root.
+normalize_phase2_aella_login_shell() {
+  local record uid gid shell after_record after_uid after_gid after_shell
+  record="$(getent passwd aella)" \
+    || die "PHASE2_AELLA_SHELL_CHANGE=FAIL reason=passwd_lookup_failed"
+  [[ "$record" != *$'\n'* \
+    && "$record" =~ ^aella:[^:]*:([0-9]+):([0-9]+):[^:]*:[^:]*:([^:]*)$ ]] \
+    || die "PHASE2_AELLA_SHELL_CHANGE=FAIL reason=invalid_passwd_record"
+  uid="${BASH_REMATCH[1]}"
+  gid="${BASH_REMATCH[2]}"
+  shell="${BASH_REMATCH[3]}"
+  [[ "$uid" == "$AELLA_UID" && "$gid" == "$AELLA_PRIMARY_GID" ]] \
+    || die "PHASE2_AELLA_SHELL_CHANGE=FAIL reason=account_identity_changed"
+  case "$shell" in
+    /bin/bash)
+      log "PHASE2_AELLA_SHELL_CHANGE=UNCHANGED shell=/bin/bash"
+      return 0
+      ;;
+    /usr/bin/aella_cli|/usr/bin/bash)
+      [[ -x /bin/bash ]] \
+        || die "PHASE2_AELLA_SHELL_CHANGE=FAIL reason=bash_missing"
+      command -v usermod >/dev/null 2>&1 \
+        || die "PHASE2_AELLA_SHELL_CHANGE=FAIL reason=usermod_missing"
+      if ! usermod -s /bin/bash aella; then
+        die "PHASE2_AELLA_SHELL_CHANGE=FAIL reason=usermod_failed original=${shell}"
+      fi
+      ;;
+    *) die "PHASE2_AELLA_SHELL_CHANGE=FAIL reason=unsupported_shell shell=${shell:-empty}" ;;
+  esac
+  after_record="$(getent passwd aella)" \
+    || die "PHASE2_AELLA_SHELL_CHANGE=FAIL reason=verify_lookup_failed"
+  [[ "$after_record" != *$'\n'* \
+    && "$after_record" =~ ^aella:[^:]*:([0-9]+):([0-9]+):[^:]*:[^:]*:([^:]*)$ ]] \
+    || die "PHASE2_AELLA_SHELL_CHANGE=FAIL reason=verify_invalid_passwd_record"
+  after_uid="${BASH_REMATCH[1]}"
+  after_gid="${BASH_REMATCH[2]}"
+  after_shell="${BASH_REMATCH[3]}"
+  [[ "$after_uid" == "$AELLA_UID" && "$after_gid" == "$AELLA_PRIMARY_GID" \
+    && "$after_shell" == "/bin/bash" ]] \
+    || die "PHASE2_AELLA_SHELL_CHANGE=FAIL reason=verify_mismatch shell=${after_shell}"
+  log "PHASE2_AELLA_SHELL_CHANGE=CHANGED from=${shell} to=/bin/bash"
 }
 
 read_os_upgrade_state() {
@@ -1815,6 +1865,7 @@ stage_main() {
   resolve_source_dp_version
   evaluate_version_compatibility
   load_release_env_from_mirror
+  normalize_phase2_aella_login_shell
 
   ensure_verified_bundle
   require_phase2_dynamic_space
