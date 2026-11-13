@@ -139,6 +139,8 @@ hook = '    install_phase2_ubuntu_prerequisites || \\\n        die "PHASE2_PRERE
 assert golden.count(hook) == 1
 assert golden.count('\n    install_uvp\n') == 1
 variants = {
+    'ntpsec_after_uvp': golden.replace('\n    install_uvp\n', '\n    install_uvp\n    ensure_ntp_daemon\n')
+        + '\nensure_ntp_daemon() {\n    : # explicit approved NTPSEC step\n}\n',
     'early_hook_missing': golden.replace(hook, '    : # missing prerequisite hook'),
     'helper_missing': golden.replace('\ninstall_phase2_ubuntu_prerequisites() {\n', '\nobsolete_prerequisite_helper() {\n'),
     'subshell_helper': golden.replace('        dp2_install_phase2_ubuntu_prerequisites\n        return $?\n', '        ( dp2_install_phase2_ubuntu_prerequisites )\n        return $?\n'),
@@ -147,13 +149,23 @@ variants = {
     'conditional_uvp': golden.replace('\n    install_uvp\n', '\n    if false; then\n    install_uvp\n    fi\n'),
     'wrong_order': golden.replace('\n    install_python3\n', '\n    TEMP_SWAP\n').replace('\n    install_uvp\n', '\n    install_python3\n').replace('\n    TEMP_SWAP\n', '\n    install_uvp\n'),
     'late_hook': golden.replace(hook, '    unexpected_mutation\n' + hook),
+    'ntpsec_definition_missing': golden.replace('\n    install_uvp\n',
+        '\n    install_uvp\n    ensure_ntp_daemon\n'),
+    'ntpsec_before_uvp': golden.replace('\n    install_uvp\n',
+        '\n    ensure_ntp_daemon\n    install_uvp\n'),
+    'ntpsec_conditional': golden.replace('\n    install_uvp\n',
+        '\n    install_uvp\n    if true; then\n    ensure_ntp_daemon\n    fi\n'),
+    'unknown_extra': golden.replace('\n    install_uvp\n',
+        '\n    install_uvp\n    unexpected_command\n'),
 }
 for name, text in variants.items():
     assert text != golden, name
     (work / (name + '.sh')).write_text(text)
 PY
 
-for variant in early_hook_missing helper_missing subshell_helper conditional_uvp wrong_order late_hook; do
+check_vendor ntpsec_after_uvp "$TEST_ROOT/ntpsec_after_uvp.sh" pass
+for variant in early_hook_missing helper_missing subshell_helper conditional_uvp wrong_order late_hook \
+               ntpsec_definition_missing ntpsec_before_uvp ntpsec_conditional unknown_extra; do
   check_vendor "$variant" "$TEST_ROOT/${variant}.sh" fail
 done
 printf 'PASS phase2 legacy staging contract (%s behavior cases plus trust order)\n' "$count"
