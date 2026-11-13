@@ -3,6 +3,7 @@ import fcntl
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -143,6 +144,20 @@ test -z "${WORKER_SSH_PASSWORD:-}"
         self.assertEqual(q.returncode, 0, q.stdout + q.stderr)
 
     def test_recovery_is_excluded_while_consumer_holds_lock(self):
+        # The tested staging script is part of a generation-hashed helper set.
+        # Copy the actual current client files into an isolated fixture and
+        # regenerate only that fixture's manifest. Never relax the runtime
+        # integrity gate or rewrite the repository's signed helper artifacts.
+        fixture_client = self.p / "client"
+        shutil.copytree(ROOT / "client", fixture_client)
+        subprocess.run(
+            ["bash", "-c", (
+                'source scripts/lib/phase2_helper_generation.sh; '
+                'phase2_helper_generation_write "$1" >/dev/null; '
+                'phase2_helper_generation_verify "$1"'
+            ), "_", str(fixture_client)],
+            check=True, cwd=ROOT, capture_output=True, text=True,
+        )
         for held in (True, False):
             with self.subTest(held=held):
                 live = self.p / "artifacts"
@@ -154,7 +169,7 @@ test -z "${WORKER_SSH_PASSWORD:-}"
                     if held:
                         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     q = self.run_script(r'''
-source "$AUDIT_ROOT/client/stage-dp-phase2.sh"
+source "$CASE_ROOT/client/stage-dp-phase2.sh"
 ARTIFACT_DIR="$CASE_ROOT/artifacts"
 require_root() { :; }
 require_noble() { :; }
