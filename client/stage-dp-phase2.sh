@@ -655,6 +655,139 @@ resolve_aella_ownership() {
   log "AELLA_OWNERSHIP_CHECK=${AELLA_OWNERSHIP_CHECK}"
 }
 
+
+# Each DP stages its own root-only recovery tool before changing aella's login
+# shell. Do not attempt a cluster-wide auto-restore: vendor master->worker SSH
+# and post-bringup migration may still need bash after process-level PASS.
+# Restore explicitly after the entire intended cluster and migration are ready.
+install_phase2_aella_shell_recovery() {
+  local dir="${AELLA_SHELL_RECOVERY_DIR:-/var/lib/dp-phase2-shell-recovery}"
+  local receipt="${dir}/original-shell.record" script="${dir}/restore-aella-shell.sh"
+  local record uid gid current saved_shell saved_uid saved_gid tmp
+  record="$(getent passwd aella)" || die "AELLA_SHELL_RESTORE=FAIL reason=account_lookup"
+  [[ "$record" != *$'\n'* && "$record" =~ ^aella:[^:]*:([0-9]+):([0-9]+):[^:]*:[^:]*:([^:]*)$ ]] \
+    || die "AELLA_SHELL_RESTORE=FAIL reason=account_record_invalid"
+  uid="${BASH_REMATCH[1]}"
+  gid="${BASH_REMATCH[2]}"
+  current="${BASH_REMATCH[3]}"
+  [[ "$uid" == "$AELLA_UID" && "$gid" == "$AELLA_PRIMARY_GID" ]] \
+    || die "AELLA_SHELL_RESTORE=FAIL reason=account_identity_changed"
+  [[ ! -L "$dir" ]] || die "AELLA_SHELL_RESTORE=FAIL reason=symlink_dir"
+  mkdir -p -m 0700 "$dir" || die "AELLA_SHELL_RESTORE=FAIL reason=mkdir"
+  [[ ! -L "$dir" ]] || die "AELLA_SHELL_RESTORE=FAIL reason=symlink_dir"
+  chmod 0700 "$dir" || die "AELLA_SHELL_RESTORE=FAIL reason=dir_permissions"
+  if [[ -e "$receipt" || -L "$receipt" ]]; then
+    [[ -f "$receipt" && ! -L "$receipt" ]] \
+      || die "AELLA_SHELL_RESTORE=FAIL reason=receipt_not_regular"
+    local -a saved=()
+    mapfile -t saved < "$receipt"
+    [[ "${#saved[@]}" -eq 3 ]] || die "AELLA_SHELL_RESTORE=FAIL reason=receipt_format"
+    saved_shell="${saved[0]#SHELL=}"
+    saved_uid="${saved[1]#UID=}"
+    saved_gid="${saved[2]#GID=}"
+    [[ "${saved[0]}" == "SHELL=$saved_shell" \
+      && "${saved[1]}" == "UID=$saved_uid" \
+      && "${saved[2]}" == "GID=$saved_gid" \
+      && ( "$saved_shell" == /usr/bin/aella_cli || "$saved_shell" == /usr/bin/bash ) ]] \
+      || die "AELLA_SHELL_RESTORE=FAIL reason=receipt_format"
+    [[ "$saved_uid" == "$uid" && "$saved_gid" == "$gid" ]] \
+      || die "AELLA_SHELL_RESTORE=FAIL reason=receipt_identity_mismatch"
+    [[ "$current" == /bin/bash || "$current" == "$saved_shell" ]] \
+      || die "AELLA_SHELL_RESTORE=FAIL reason=shell_changed_externally"
+    chmod 0600 "$receipt" || die "AELLA_SHELL_RESTORE=FAIL reason=receipt_permissions"
+    log "AELLA_SHELL_ORIGINAL=${saved_shell} source=preserved_receipt"
+  elif [[ "$current" == /usr/bin/aella_cli || "$current" == /usr/bin/bash ]]; then
+    tmp="$(mktemp "${dir}/.original-shell.XXXXXXXX")" \
+      || die "AELLA_SHELL_RESTORE=FAIL reason=receipt_temp"
+    printf 'SHELL=%s\nUID=%s\nGID=%s\n' "$current" "$uid" "$gid" >"$tmp"
+    chmod 0600 "$tmp"
+    mv -f "$tmp" "$receipt" || die "AELLA_SHELL_RESTORE=FAIL reason=receipt_write"
+    log "AELLA_SHELL_ORIGINAL=${current} source=observed_before_change"
+  elif [[ "$current" == /bin/bash ]]; then
+    # A pre-normalized node has no provable original shell. Never guess.
+    log "AELLA_SHELL_ORIGINAL=UNKNOWN reason=already_bash_without_receipt"
+  else
+    die "AELLA_SHELL_RESTORE=FAIL reason=unsupported_current_shell"
+  fi
+  [[ ! -L "$script" ]] || die "AELLA_SHELL_RESTORE=FAIL reason=symlink_script"
+  tmp="$(mktemp "${dir}/.restore-aella-shell.XXXXXXXX")" \
+    || die "AELLA_SHELL_RESTORE=FAIL reason=script_temp"
+  cat >"$tmp" <<'AELLA_SHELL_RESTORE_SCRIPT'
+#!/usr/bin/env bash
+# Per-node manual recovery only; never copy an older /etc/passwd over a live one.
+set -euo pipefail
+set +x
+dir="${AELLA_SHELL_RECOVERY_DIR:-/var/lib/dp-phase2-shell-recovery}"
+receipt="${dir}/original-shell.record"
+usage='Usage: sudo bash restore-aella-shell.sh --check|--apply [--assume-original-aella-cli]'
+case "$*" in
+  --check) mode=check; assume=no ;;
+  --apply) mode=apply; assume=no ;;
+  '--apply --assume-original-aella-cli') mode=apply; assume=yes ;;
+  *) echo "$usage" >&2; exit 2 ;;
+esac
+[[ "$(id -u)" == 0 ]] || { echo 'AELLA_SHELL_RESTORE=FAIL reason=root_required' >&2; exit 1; }
+record="$(getent passwd aella)" || { echo 'AELLA_SHELL_RESTORE=FAIL reason=account_lookup' >&2; exit 1; }
+[[ "$record" != *$'\n'* && "$record" =~ ^aella:[^:]*:([0-9]+):([0-9]+):[^:]*:[^:]*:([^:]*)$ ]] \
+  || { echo 'AELLA_SHELL_RESTORE=FAIL reason=account_record_invalid' >&2; exit 1; }
+uid="${BASH_REMATCH[1]}"
+gid="${BASH_REMATCH[2]}"
+current="${BASH_REMATCH[3]}"
+original=""
+if [[ -e "$receipt" || -L "$receipt" ]]; then
+  [[ -f "$receipt" && ! -L "$receipt" ]] \
+    || { echo 'AELLA_SHELL_RESTORE=FAIL reason=receipt_not_regular' >&2; exit 1; }
+  [[ "$assume" == no ]] \
+    || { echo 'AELLA_SHELL_RESTORE=FAIL reason=override_with_receipt' >&2; exit 1; }
+  mapfile -t saved <"$receipt"
+  [[ "${#saved[@]}" == 3 ]] \
+    || { echo 'AELLA_SHELL_RESTORE=FAIL reason=receipt_format' >&2; exit 1; }
+  original="${saved[0]#SHELL=}"
+  [[ "${saved[0]}" == "SHELL=$original" \
+    && "${saved[1]}" == "UID=$uid" \
+    && "${saved[2]}" == "GID=$gid" ]] \
+    || { echo 'AELLA_SHELL_RESTORE=FAIL reason=receipt_identity_mismatch' >&2; exit 1; }
+elif [[ "$assume" == yes ]]; then
+  # For nodes staged by an older release: operator explicitly asserts the old CLI.
+  original=/usr/bin/aella_cli
+fi
+if [[ "$mode" == check ]]; then
+  printf 'AELLA_SHELL_CURRENT=%s\nAELLA_SHELL_SAVED=%s\n' "$current" "${original:-UNKNOWN}"
+  [[ -n "$original" ]] || echo 'AELLA_SHELL_RESTORE=NO_RECEIPT (explicit override required)'
+  exit 0
+fi
+case "$original" in
+  /usr/bin/aella_cli|/usr/bin/bash) ;;
+  *) echo 'AELLA_SHELL_RESTORE=FAIL reason=original_unknown' >&2; exit 1 ;;
+esac
+[[ -x "$original" ]] || { echo 'AELLA_SHELL_RESTORE=FAIL reason=target_not_executable' >&2; exit 1; }
+if [[ "$current" == "$original" ]]; then
+  echo "AELLA_SHELL_RESTORE=ALREADY_RESTORED shell=$original"
+  exit 0
+fi
+[[ "$current" == /bin/bash ]] \
+  || { echo 'AELLA_SHELL_RESTORE=FAIL reason=unexpected_current_shell' >&2; exit 1; }
+# This is a last-mile manual operation. Refuse to modify SSH login during
+# staging, bringup or known vendor migration processes.
+if pgrep -f 'bringup_py3_dp_after_os_upgrade[.]sh|stage-dp-phase2[.]sh|upgrade-phase2[.]sh|upgrade_script[.]sh' >/dev/null 2>&1; then
+  echo 'AELLA_SHELL_RESTORE=FAIL reason=upgrade_process_active' >&2
+  exit 1
+fi
+command -v usermod >/dev/null 2>&1 \
+  || { echo 'AELLA_SHELL_RESTORE=FAIL reason=usermod_missing' >&2; exit 1; }
+usermod -s "$original" aella \
+  || { echo 'AELLA_SHELL_RESTORE=FAIL reason=usermod_failed' >&2; exit 1; }
+after="$(getent passwd aella)" \
+  || { echo 'AELLA_SHELL_RESTORE=FAIL reason=verify_lookup' >&2; exit 1; }
+[[ "$after" =~ ^aella:[^:]*:$uid:$gid:[^:]*:[^:]*:$original$ ]] \
+  || { echo 'AELLA_SHELL_RESTORE=FAIL reason=verify_mismatch' >&2; exit 1; }
+echo "AELLA_SHELL_RESTORE=PASS shell=$original"
+AELLA_SHELL_RESTORE_SCRIPT
+  chmod 0700 "$tmp" || die "AELLA_SHELL_RESTORE=FAIL reason=script_permissions"
+  mv -f "$tmp" "$script" || die "AELLA_SHELL_RESTORE=FAIL reason=script_write"
+  log "AELLA_SHELL_RESTORE_SCRIPT=READY path=$script operation=MANUAL_AFTER_ALL_NODES_COMPLETE"
+}
+
 # Phase 2-only must normalize the known Stellar CLI shell itself, without
 # requiring a Phase 1 OS upgrade. Run after preflight/compatibility checks and
 # before any large bundle download or artifact replacement. Never alter root.
@@ -1865,6 +1998,7 @@ stage_main() {
   resolve_source_dp_version
   evaluate_version_compatibility
   load_release_env_from_mirror
+  install_phase2_aella_shell_recovery
   normalize_phase2_aella_login_shell
 
   ensure_verified_bundle
