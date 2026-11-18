@@ -148,6 +148,43 @@ failed**; it means that run alone did not certify a Worker cluster.
 Require final OS release, source/target DP version, services, index/model
 health, Worker participation and no paused state to match the test plan.
 
+### Aella login-shell restoration and clock-skew warnings
+
+Phase 2 stages an independent, root-owned recovery command on **each staged
+node** before it changes the `aella` login shell to `/bin/bash`.
+Its original shell is recorded at
+`/opt/aelladata/os-upgrade/offline/aella-shell-restore.state` (root only).
+The recovery script is installed at
+`/root/restore-aella-shell.sh`.
+
+After the **current run** has an explicitly recorded
+`CLUSTER_VALIDATION=PASS`, completed required migration, and
+`DP_UPGRADE_COMPLETE=YES`, the Master restores its **local** original shell.
+Worker shells are **not** changed remotely: from each Worker, after the full
+cluster upgrade is confirmed, run:
+
+```bash
+sudo /root/restore-aella-shell.sh --status
+sudo /root/restore-aella-shell.sh --restore
+getent passwd aella | cut -d: -f1,7
+```
+
+The command is idempotent, checks the preserved UID/GID and executable target,
+and modifies only `aella`'s login-shell field through `usermod`; it does
+not replace `/etc/passwd`. **Do not restore while Bringup, required migration
+or Worker recovery is still running.** If an older staging generation already
+switched `aella` to bash without recording its original shell, do not assume
+the original was `/usr/bin/aella_cli`. Verify the original account
+configuration first; an operator can then use explicit
+`--target /usr/bin/aella_cli` with the installed utility after validation.
+Do not re-stage healthy completed DP nodes just to deploy the utility.
+
+Clock skew **exceeding** `DP_MAX_CLOCK_SKEW_SECONDS` is reported as
+`WARNING: CLOCK_SKEW_EXCEEDS_TOLERANCE`, with measured/threshold seconds,
+and no longer blocks Phase 2. An entirely unverifiable time source remains
+blocked. NTP is never silently changed; time-dependent APT/package verification
+is still independent.
+
 ## 5. Capture the evidence for PASS/FAIL
 
 Record these fields before claiming field E2E PASS:

@@ -499,7 +499,7 @@ start_or_monitor() {
       echo "BRINGUP_READINESS_RESULT=NO"
       echo "VENDOR_BRINGUP_EXECUTED=NO"
       echo "ARTIFACT_STAGING_RESULT=NOT_CHECKED_HERE"
-      p2b_lifecycle_die "bringup blocked: TIME_READINESS=${TIME_READINESS:-UNKNOWN} (fix clock skew / unverifiable time before vendor bringup)"
+      p2b_lifecycle_die "bringup blocked: TIME_READINESS=${TIME_READINESS:-UNKNOWN} (time unverifiable; excessive measured skew is warning-only)"
     fi
   else
     p2b_lifecycle_die "bringup blocked: time readiness helper missing"
@@ -628,6 +628,32 @@ start_or_monitor() {
   p2b_monitor_loop "$run_id"
 }
 
+p2b_try_auto_restore_local_aella_shell() {
+  # Explicit operator PASS and coherent current-run completion are required.
+  # Worker shells are never remotely changed by this controller.
+  local bp=NO fields="" helper="/root/restore-aella-shell.sh"
+  declare -F p2b_emit_completion_semantics >/dev/null 2>&1 || return 0
+  p2b_status_snapshot || true
+  if p2b_current_run_completion_coherent; then bp=YES; fi
+  p2b_load_cluster_validation || true
+  fields="$(p2b_emit_completion_semantics "$bp" "${CLUSTER_VALIDATION:-PENDING}")"
+  printf "%s\n" "$fields"
+  if ! grep -qx "DP_UPGRADE_COMPLETE=YES" <<<"$fields"; then
+    echo "PHASE2_AELLA_SHELL_RESTORE=DEFERRED reason=upgrade_not_complete"
+    return 0
+  fi
+  if [[ -f "$helper" ]]; then
+    if bash "$helper" --auto; then
+      echo "PHASE2_AELLA_SHELL_RESTORE=AUTO_LOCAL_PASS"
+    else
+      echo "PHASE2_AELLA_SHELL_RESTORE=WARN reason=local_restore_failed command=$helper" >&2
+    fi
+  else
+    echo "PHASE2_AELLA_SHELL_RESTORE=MANUAL_REQUIRED reason=legacy_staging_missing_helper"
+  fi
+  echo "PHASE2_WORKER_SHELL_RESTORE=MANUAL_PER_NODE command=sudo_${helper}_--restore"
+}
+
 main() {
   parse_args "$@"
 
@@ -642,22 +668,16 @@ main() {
   if [[ -n "$RECORD_MIGRATION" ]]; then
     declare -F p2b_record_post_bringup_migration >/dev/null 2>&1 \
       || p2b_lifecycle_die "post-bringup migration helper missing"
-    p2b_record_post_bringup_migration "$RECORD_MIGRATION"
-    exit $?
+    p2b_record_post_bringup_migration "$RECORD_MIGRATION" || exit $?
+    p2b_try_auto_restore_local_aella_shell
+    exit 0
   fi
   if [[ -n "$RECORD_CLUSTER_VALIDATION" ]]; then
     declare -F p2b_record_cluster_validation >/dev/null 2>&1 \
       || p2b_lifecycle_die "cluster validation helper missing"
-    p2b_record_cluster_validation "$RECORD_CLUSTER_VALIDATION"
-    # Recompute DP_UPGRADE_COMPLETE when possible.
-    if declare -F p2b_emit_completion_semantics >/dev/null 2>&1; then
-      p2b_status_snapshot || true
-      local bp=NO
-      if p2b_current_run_completion_coherent; then bp=YES; fi
-      p2b_load_cluster_validation || true
-      p2b_emit_completion_semantics "$bp" "${CLUSTER_VALIDATION:-PENDING}"
-    fi
-    exit $?
+    p2b_record_cluster_validation "$RECORD_CLUSTER_VALIDATION" || exit $?
+    p2b_try_auto_restore_local_aella_shell
+    exit 0
   fi
   if [[ "$RUN_CLUSTER_VALIDATION" -eq 1 ]]; then
     declare -F p2b_run_cluster_validation_surface >/dev/null 2>&1 \

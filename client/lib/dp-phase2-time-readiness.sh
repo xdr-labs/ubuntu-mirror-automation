@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 2 time/NTP readiness helpers (staging guidance + bringup hard gate).
+# Phase 2 time/NTP readiness helpers (skew warning-only; unverifiable time still gates).
 # shellcheck shell=bash
 # Staging may complete with BRINGUP_READY=NO. Vendor bringup must re-check and hard-block.
 
@@ -356,11 +356,15 @@ check_ntp_bringup_readiness() {
       log "BRINGUP_READY=YES"
       return 0
     fi
-    TIME_READINESS="FAIL_CLOCK_SKEW"
-    BRINGUP_READY="NO"
-    NTP_BRINGUP_READINESS="FAIL"
-    log "TIME_READINESS=FAIL_CLOCK_SKEW"
-    log "BRINGUP_READY=NO"
+    # Measured clock skew is advisory only. Independent package signature, APT
+    # and bringup safety gates are unchanged.
+    TIME_READINESS="PASS_WITH_WARNING"
+    BRINGUP_READY="YES"
+    NTP_BRINGUP_READINESS="WARN_CLOCK_SKEW"
+    log "WARNING: CLOCK_SKEW_EXCEEDS_TOLERANCE skew_seconds=$skew max_seconds=$MAX_CLOCK_SKEW_SECONDS upgrade_not_blocked=YES"
+    log "TIME_READINESS=PASS_WITH_WARNING"
+    log "BRINGUP_READY=YES"
+    _dp_phase2_warn_if_no_internal_ntp
     return 0
   fi
 

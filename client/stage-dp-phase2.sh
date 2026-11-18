@@ -655,6 +655,148 @@ resolve_aella_ownership() {
   log "AELLA_OWNERSHIP_CHECK=${AELLA_OWNERSHIP_CHECK}"
 }
 
+
+# Durable local recovery script is installed before the login shell is changed.
+# Re-staging never replaces the recorded original shell.
+prepare_phase2_aella_shell_recovery() {
+  local dir="/opt/aelladata/os-upgrade/offline"
+  local state="$dir/aella-shell-restore.state"
+  local helper="/root/restore-aella-shell.sh"
+  local record user pw uid gid gecos home original saved saved_user saved_uid saved_gid saved_shell extra
+  local temp_state temp_helper
+  record="$(getent passwd aella)" || die "AELLA_SHELL_RECOVERY=FAIL reason=no_account"
+  [[ "$record" != *$'\n'* ]] || die "AELLA_SHELL_RECOVERY=FAIL reason=multiline_account"
+  IFS=: read -r user pw uid gid gecos home original <<<"$record"
+  [[ "$user" == aella && "$uid" == "$AELLA_UID" && "$gid" == "$AELLA_PRIMARY_GID" ]] ||
+    die "AELLA_SHELL_RECOVERY=FAIL reason=identity_changed"
+  case "$original" in
+    /bin/bash|/usr/bin/bash|/usr/bin/aella_cli) ;;
+    *) die "AELLA_SHELL_RECOVERY=FAIL reason=unknown_shell" ;;
+  esac
+  mkdir -p "$dir" || die "AELLA_SHELL_RECOVERY=FAIL reason=mkdir"
+  if [[ -e "$state" || -L "$state" ]]; then
+    [[ -f "$state" && ! -L "$state" && "$(stat -c %u "$state")" == 0 ]] ||
+      die "AELLA_SHELL_RECOVERY=FAIL reason=untrusted_state"
+    saved="$(cat "$state")"
+    [[ "$saved" != *$'\n'* ]] || die "AELLA_SHELL_RECOVERY=FAIL reason=multiline_state"
+    IFS=: read -r saved_user saved_uid saved_gid saved_shell extra <<<"$saved"
+    [[ "$saved_user" == aella && "$saved_uid" == "$uid" && "$saved_gid" == "$gid" && -z "$extra" ]] ||
+      die "AELLA_SHELL_RECOVERY=FAIL reason=state_identity_changed"
+    case "$saved_shell" in
+      /bin/bash|/usr/bin/bash|/usr/bin/aella_cli) ;;
+      *) die "AELLA_SHELL_RECOVERY=FAIL reason=unknown_recorded_shell" ;;
+    esac
+  else
+    temp_state="$(mktemp "$dir/.aella-shell-state.XXXXXX")" ||
+      die "AELLA_SHELL_RECOVERY=FAIL reason=mktemp_state"
+    printf 'aella:%s:%s:%s\n' "$uid" "$gid" "$original" >"$temp_state"
+    chmod 0600 "$temp_state"
+    chown root:root "$temp_state"
+    if [[ -e "$state" || -L "$state" ]]; then
+      rm -f "$temp_state"
+      die "AELLA_SHELL_RECOVERY=FAIL reason=state_race"
+    fi
+    mv "$temp_state" "$state" || die "AELLA_SHELL_RECOVERY=FAIL reason=save_state"
+    saved_shell="$original"
+  fi
+  temp_helper="$(mktemp "$dir/.aella-shell-helper.XXXXXX")" ||
+    die "AELLA_SHELL_RECOVERY=FAIL reason=mktemp_helper"
+  cat >"$temp_helper" <<'DP_SHELL_RESTORE_EMBEDDED_SCRIPT'
+#!/usr/bin/env bash
+# Local aella login-shell restoration after Phase 2 bringup.
+# This script is installed before staging changes aella to /bin/bash.
+set -euo pipefail
+set +x
+
+STATE=/opt/aelladata/os-upgrade/offline/aella-shell-restore.state
+mode=restore
+override=""
+while (($#)); do
+  case "$1" in
+    --status) mode=status; shift ;;
+    --restore) mode=restore; shift ;;
+    --auto) mode=auto; shift ;;
+    --target)
+      if (($# < 2)); then echo "AELLA_SHELL_RESTORE=FAIL reason=missing_target" >&2; exit 2; fi
+      override="$2"; shift 2 ;;
+    *) echo "Usage: sudo bash $0 [--status|--restore|--auto] [--target /usr/bin/aella_cli]" >&2; exit 2 ;;
+  esac
+done
+if [[ -n "$override" && "$mode" != restore ]]; then
+  echo "AELLA_SHELL_RESTORE=FAIL reason=override_requires_manual_mode" >&2
+  exit 2
+fi
+if (( EUID != 0 )); then
+  echo "AELLA_SHELL_RESTORE=FAIL reason=root_required" >&2
+  exit 1
+fi
+record="$(getent passwd aella)" || { echo "AELLA_SHELL_RESTORE=FAIL reason=account_missing" >&2; exit 1; }
+[[ "$record" != *$'\n'* ]] || { echo "AELLA_SHELL_RESTORE=FAIL reason=invalid_account" >&2; exit 1; }
+IFS=: read -r user password uid gid comment home current <<<"$record"
+if [[ "$user" != aella || ! "$uid" =~ ^[0-9]+$ || ! "$gid" =~ ^[0-9]+$ ]]; then
+  echo "AELLA_SHELL_RESTORE=FAIL reason=invalid_account_identity" >&2
+  exit 1
+fi
+
+original=""
+if [[ -e "$STATE" || -L "$STATE" ]]; then
+  if [[ ! -f "$STATE" || -L "$STATE" ]] || [[ "$(stat -c %u "$STATE")" != 0 ]]; then
+    echo "AELLA_SHELL_RESTORE=FAIL reason=untrusted_state" >&2
+    exit 1
+  fi
+  saved="$(cat "$STATE")"
+  [[ "$saved" != *$'\n'* ]] || { echo "AELLA_SHELL_RESTORE=FAIL reason=state_multiline" >&2; exit 1; }
+  IFS=: read -r saved_user saved_uid saved_gid original extra <<<"$saved"
+  if [[ "$saved_user" != aella || "$saved_uid" != "$uid" || "$saved_gid" != "$gid" || -n "$extra" ]]; then
+    echo "AELLA_SHELL_RESTORE=FAIL reason=state_identity_mismatch" >&2
+    exit 1
+  fi
+fi
+if [[ "$mode" == status ]]; then
+  printf 'AELLA_SHELL_CURRENT=%s\nAELLA_SHELL_RECORDED=%s\n' "$current" "$original"
+  exit 0
+fi
+target="$original"
+if [[ -n "$override" ]]; then target="$override"; fi
+case "$target" in
+  /usr/bin/aella_cli|/usr/bin/bash|/bin/bash) ;;
+  *) echo "AELLA_SHELL_RESTORE=FAIL reason=unknown_original_shell (manual --target required)" >&2; exit 1 ;;
+esac
+case "$current" in
+  /usr/bin/aella_cli|/usr/bin/bash|/bin/bash) ;;
+  *) echo "AELLA_SHELL_RESTORE=FAIL reason=unexpected_current_shell" >&2; exit 1 ;;
+esac
+if [[ ! -x "$target" ]]; then
+  echo "AELLA_SHELL_RESTORE=FAIL reason=target_not_executable target=$target" >&2
+  exit 1
+fi
+if [[ "$current" == "$target" ]]; then
+  echo "AELLA_SHELL_RESTORE=ALREADY target=$target"
+  exit 0
+fi
+command -v usermod >/dev/null 2>&1 ||
+  { echo "AELLA_SHELL_RESTORE=FAIL reason=usermod_missing" >&2; exit 1; }
+if ! usermod -s "$target" aella; then
+  echo "AELLA_SHELL_RESTORE=FAIL reason=usermod_failed" >&2
+  exit 1
+fi
+after="$(getent passwd aella)" ||
+  { echo "AELLA_SHELL_RESTORE=FAIL reason=verify_lookup_failed" >&2; exit 1; }
+IFS=: read -r after_user after_pw after_uid after_gid after_gecos after_home after_shell <<<"$after"
+if [[ "$after_user" != aella || "$after_uid" != "$uid" || "$after_gid" != "$gid" || "$after_shell" != "$target" ]]; then
+  echo "AELLA_SHELL_RESTORE=FAIL reason=verify_mismatch" >&2
+  exit 1
+fi
+echo "AELLA_SHELL_RESTORE=PASS from=$current to=$target"
+DP_SHELL_RESTORE_EMBEDDED_SCRIPT
+  bash -n "$temp_helper" || die "AELLA_SHELL_RECOVERY=FAIL reason=helper_syntax"
+  [[ ! -L "$helper" ]] || die "AELLA_SHELL_RECOVERY=FAIL reason=helper_symlink"
+  install -o root -g root -m 0755 "$temp_helper" "$helper" ||
+    die "AELLA_SHELL_RECOVERY=FAIL reason=install_helper"
+  rm -f "$temp_helper"
+  log "PHASE2_AELLA_SHELL_RECOVERY=READY path=$helper recorded_shell=$saved_shell"
+}
+
 # Phase 2-only must normalize the known Stellar CLI shell itself, without
 # requiring a Phase 1 OS upgrade. Run after preflight/compatibility checks and
 # before any large bundle download or artifact replacement. Never alter root.
@@ -1395,7 +1537,7 @@ EOF
   else
     cat <<EOF
 NEXT_COMMAND=NOT_READY
-NEXT_COMMAND_NOTE=Fix local clock readiness (skew/unverifiable time) before bringup; staging does not execute bringup; missing internal NTP alone is not a hard gate
+NEXT_COMMAND_NOTE=Unverifiable time may still block bringup. Measured clock skew is warning-only and does not block Phase 2; staging does not execute bringup
 EOF
   fi
 }
@@ -1865,6 +2007,7 @@ stage_main() {
   resolve_source_dp_version
   evaluate_version_compatibility
   load_release_env_from_mirror
+  prepare_phase2_aella_shell_recovery
   normalize_phase2_aella_login_shell
 
   ensure_verified_bundle
